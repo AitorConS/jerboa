@@ -283,3 +283,36 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/scheduler/` | 7.6+ | Internal DNS resolver, name-to-IP resolution |
 | `pkg/` | 6+ | Public shared libraries |
 | `tests/unit/` | — | Empty; unit tests are co-located with source files |
+
+## Session Handoff (2026-05-07)
+
+### Completed Today
+
+- Added API behavior tests for VM lifecycle RPCs and network RPCs (`internal/api/server_test.go`).
+- Added signal parsing table-driven tests (`internal/api/parseSig_test.go`).
+- Added CLI command tests for `uni network` and `uni status` (`cmd/uni/network_test.go`, `cmd/uni/status_test.go`).
+- Extended compose tests for service run-params mapping (`health_check`, `restart`) and port parsing (`cmd/uni/compose_test.go`).
+- Added kernel tools unit tests for manifest and mkfs command construction (`internal/tools/mkfs_test.go`).
+
+### Coverage Snapshot
+
+- `internal/api`: 72.0%
+- `internal/tools`: 72.0%
+- `cmd/uni`: 57.0%
+
+### Next Steps (Tomorrow)
+
+1. Raise `cmd/uni` coverage first (highest remaining gap):
+   - `cmd/uni/run.go`: `resolveVolumes`, `parseVolumePortString`, `extractMask`
+   - `cmd/uni/kernel.go`: list/use/update command paths
+   - `cmd/uni/upgrade.go`: `runUpgrade`, version listing/check paths
+2. Raise `internal/api` from 72% toward 80%:
+   - add tests for attach flow and remaining error branches in `server.go`
+3. Raise `internal/tools` from 72% toward 80%:
+   - extend `version_test.go` and add failure-path tests for artifact download/save logic
+
+### Validation Commands
+
+- `go test ./...`
+- `go test -cover ./internal/api/... ./internal/tools/... ./cmd/uni/...`
+- `golangci-lint run --timeout 5m ./...`

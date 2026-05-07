@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -199,4 +200,371 @@ func TestServer_UnknownMethod(t *testing.T) {
 
 	_, err = client.Get(context.Background(), "nonexistent")
 	require.Error(t, err)
+}
+
+// --- Kill ---
+
+func TestServer_Kill(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	require.NoError(t, client.Kill(context.Background(), info.ID))
+
+	require.Eventually(t, func() bool {
+		got, err := client.Get(context.Background(), info.ID)
+		return err == nil && got.State == "stopped"
+	}, 5*time.Second, 50*time.Millisecond, "VM did not stop after Kill")
+}
+
+func TestServer_KillNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+	err := client.Kill(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+// --- Signal ---
+
+func TestServer_Signal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("signal delivery not supported on Windows")
+	}
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	require.NoError(t, client.Signal(context.Background(), info.ID, "SIGTERM"))
+}
+
+func TestServer_SignalInvalid(t *testing.T) {
+	client, _ := startTestServer(t)
+	err := client.Signal(context.Background(), "any-id", "INVALIDSIG")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unknown signal")
+}
+
+// --- Remove ---
+
+func TestServer_Remove(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	require.NoError(t, client.Stop(context.Background(), info.ID, true))
+	require.Eventually(t, func() bool {
+		got, err := client.Get(context.Background(), info.ID)
+		return err == nil && got.State == "stopped"
+	}, 5*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, client.Remove(context.Background(), info.ID))
+
+	_, err = client.Get(context.Background(), info.ID)
+	require.Error(t, err)
+}
+
+func TestServer_RemoveRunning(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	err = client.Remove(context.Background(), info.ID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "must be stopped")
+}
+
+func TestServer_RemoveNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+	err := client.Remove(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+// --- Logs ---
+
+func TestServer_Logs(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	resp, err := client.Logs(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, info.ID, resp.ID)
+}
+
+func TestServer_LogsNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+	_, err := client.Logs(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+// --- Inspect ---
+
+func TestServer_Inspect(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath: "test.img",
+		Memory:    "512M",
+		CPUs:      2,
+		Name:      "inspect-test",
+		Env:       []string{"KEY=VAL"},
+	})
+	require.NoError(t, err)
+
+	detail, err := client.Inspect(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, info.ID, detail.ID)
+	require.Equal(t, "inspect-test", detail.Name)
+	require.Equal(t, "512M", detail.Memory)
+	require.Equal(t, 2, detail.CPUs)
+	require.Equal(t, []string{"KEY=VAL"}, detail.Env)
+	require.Equal(t, "running", detail.State)
+}
+
+func TestServer_InspectNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+	_, err := client.Inspect(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+// --- Run with HealthCheck and Restart ---
+
+func TestServer_Run_WithHealthCheckAndRestart(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath: "test.img",
+		Memory:    "256M",
+		HealthCheck: &api.HealthCheckSpec{
+			Type:     "tcp",
+			Port:     8080,
+			Interval: 5,
+			Timeout:  3,
+			Retries:  3,
+		},
+		Restart: &api.RestartSpec{
+			Policy:     "on-failure",
+			MaxRetries: 5,
+		},
+	})
+	require.NoError(t, err)
+
+	detail, err := client.Inspect(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, "on-failure", detail.RestartPolicy)
+	require.Equal(t, "starting", detail.Health)
+}
+
+func TestServer_Run_WithVolumes(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath: "test.img",
+		Memory:    "256M",
+		Volumes: []api.VolumeMountSpec{
+			{DiskPath: "/path/to/disk.img", GuestPath: "/mnt/data", ReadOnly: true},
+		},
+	})
+	require.NoError(t, err)
+
+	detail, err := client.Inspect(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Volumes, 1)
+	require.Equal(t, "/mnt/data", detail.Volumes[0].GuestPath)
+	require.True(t, detail.Volumes[0].ReadOnly)
+}
+
+// --- Daemon ---
+
+func TestServer_DaemonVersion(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	mgr := vm.NewQEMUManager("fake-qemu")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "test-v1.2.3")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	defer func() { _ = client.Close() }()
+
+	version, err := client.DaemonVersion(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "test-v1.2.3", version)
+}
+
+func TestServer_DaemonShutdown(t *testing.T) {
+	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	mgr := vm.NewQEMUManager("fake-qemu")
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	var shutdownCalled atomic.Bool
+	shutdownFn := func() { shutdownCalled.Store(true) }
+
+	srv, err := api.NewServer(mgr, netStore, socketPath, shutdownFn, "")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	defer func() { _ = client.Close() }()
+
+	require.NoError(t, client.Shutdown(context.Background()))
+	require.Eventually(t, shutdownCalled.Load, 2*time.Second, 10*time.Millisecond)
+}
+
+// --- Network ---
+
+func TestServer_NetworkCreate(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.NetworkCreate(context.Background(), "testnet", "", "")
+	require.NoError(t, err)
+	require.Equal(t, "testnet", info.Name)
+	require.Equal(t, "bridge", info.Driver)
+	require.NotEmpty(t, info.Subnet)
+	require.NotEmpty(t, info.Gateway)
+	require.NotEmpty(t, info.Bridge)
+	require.NotEmpty(t, info.CreatedAt)
+}
+
+func TestServer_NetworkCreateWithSubnet(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.NetworkCreate(context.Background(), "custom", "10.200.0.0/24", "")
+	require.NoError(t, err)
+	require.Equal(t, "custom", info.Name)
+	require.Equal(t, "10.200.0.0/24", info.Subnet)
+}
+
+func TestServer_NetworkCreateDuplicate(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkCreate(context.Background(), "dupnet", "", "")
+	require.NoError(t, err)
+	_, err = client.NetworkCreate(context.Background(), "dupnet", "", "")
+	require.Error(t, err)
+}
+
+func TestServer_NetworkList(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkCreate(context.Background(), "net1", "", "")
+	require.NoError(t, err)
+	_, err = client.NetworkCreate(context.Background(), "net2", "", "")
+	require.NoError(t, err)
+
+	nets, err := client.NetworkList(context.Background())
+	require.NoError(t, err)
+	require.Len(t, nets, 2)
+}
+
+func TestServer_NetworkListEmpty(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	nets, err := client.NetworkList(context.Background())
+	require.NoError(t, err)
+	require.Empty(t, nets)
+}
+
+func TestServer_NetworkGet(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	created, err := client.NetworkCreate(context.Background(), "mynet", "", "")
+	require.NoError(t, err)
+
+	got, err := client.NetworkGet(context.Background(), "mynet")
+	require.NoError(t, err)
+	require.Equal(t, created.Name, got.Name)
+	require.Equal(t, created.Subnet, got.Subnet)
+}
+
+func TestServer_NetworkGetNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkGet(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+func TestServer_NetworkRemove(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkCreate(context.Background(), "todelete", "", "")
+	require.NoError(t, err)
+
+	require.NoError(t, client.NetworkRemove(context.Background(), "todelete"))
+
+	_, err = client.NetworkGet(context.Background(), "todelete")
+	require.Error(t, err)
+}
+
+func TestServer_NetworkRemoveNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	err := client.NetworkRemove(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+func TestServer_NetworkAllocateIP(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkCreate(context.Background(), "ipnet", "", "")
+	require.NoError(t, err)
+
+	ip, err := client.NetworkAllocateIP(context.Background(), "ipnet")
+	require.NoError(t, err)
+	require.NotEmpty(t, ip)
+}
+
+func TestServer_NetworkAllocateIPMultiple(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkCreate(context.Background(), "multinet", "", "")
+	require.NoError(t, err)
+
+	ip1, err := client.NetworkAllocateIP(context.Background(), "multinet")
+	require.NoError(t, err)
+	ip2, err := client.NetworkAllocateIP(context.Background(), "multinet")
+	require.NoError(t, err)
+	require.NotEqual(t, ip1, ip2, "allocated IPs should be unique")
+}
+
+func TestServer_NetworkAllocateIPNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkAllocateIP(context.Background(), "nonexistent")
+	require.Error(t, err)
+}
+
+func TestServer_NetworkReleaseIP(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NetworkCreate(context.Background(), "relnet", "", "")
+	require.NoError(t, err)
+
+	ip, err := client.NetworkAllocateIP(context.Background(), "relnet")
+	require.NoError(t, err)
+
+	require.NoError(t, client.NetworkReleaseIP(context.Background(), "relnet", ip))
 }

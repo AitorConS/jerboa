@@ -208,3 +208,70 @@ func TestStateServiceNames_Sorted(t *testing.T) {
 	names := stateServiceNames(state)
 	require.Equal(t, []string{"a", "m", "z"}, names)
 }
+
+func TestBuildServiceRunParams_HealthCheckAndRestart(t *testing.T) {
+	storePath := t.TempDir()
+	svc := compose.Service{
+		Image:       "disk.img",
+		Memory:      "256M",
+		Environment: []string{"FOO=bar"},
+		HealthCheck: "http:8080:/healthz",
+		Restart:     "always:3",
+	}
+
+	params, err := buildServiceRunParams(svc, "disk.img", "256M", storePath)
+	require.NoError(t, err)
+	require.NotNil(t, params.HealthCheck)
+	require.Equal(t, "http", params.HealthCheck.Type)
+	require.Equal(t, 8080, params.HealthCheck.Port)
+	require.Equal(t, "/healthz", params.HealthCheck.Path)
+	require.NotNil(t, params.Restart)
+	require.Equal(t, "always", params.Restart.Policy)
+	require.Equal(t, 3, params.Restart.MaxRetries)
+}
+
+func TestBuildServiceRunParams_InvalidHealthCheck(t *testing.T) {
+	storePath := t.TempDir()
+	svc := compose.Service{Image: "disk.img", HealthCheck: "udp:53"}
+
+	_, err := buildServiceRunParams(svc, "disk.img", "256M", storePath)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "health_check")
+}
+
+func TestBuildServiceRunParams_InvalidRestart(t *testing.T) {
+	storePath := t.TempDir()
+	svc := compose.Service{Image: "disk.img", Restart: "sometimes"}
+
+	_, err := buildServiceRunParams(svc, "disk.img", "256M", storePath)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "restart")
+}
+
+func TestParseComposePortSpec(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		host  uint16
+		guest uint16
+		proto string
+	}{
+		{name: "tcp default", in: "8080:80", host: 8080, guest: 80, proto: "tcp"},
+		{name: "udp explicit", in: "5353:53/udp", host: 5353, guest: 53, proto: "udp"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pm, err := parseComposePortSpec(tc.in)
+			require.NoError(t, err)
+			require.Equal(t, tc.host, pm.HostPort)
+			require.Equal(t, tc.guest, pm.GuestPort)
+			require.Equal(t, tc.proto, pm.Protocol)
+		})
+	}
+}
+
+func TestParseComposePortSpec_Invalid(t *testing.T) {
+	_, err := parseComposePortSpec("bad")
+	require.Error(t, err)
+}
