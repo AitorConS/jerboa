@@ -161,6 +161,49 @@ func TestComposeDown_StopsServices(t *testing.T) {
 	require.True(t, os.IsNotExist(statErr))
 }
 
+func TestComposeDown_UsesStateForIPRelease(t *testing.T) {
+	client, socketPath := startComposeDaemon(t)
+	storePath := t.TempDir()
+
+	diskPath := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
+
+	composeFile := filepath.Join(t.TempDir(), "uni-compose.yaml")
+	composeYAML := `
+version: "1"
+services:
+  api:
+    image: ` + filepath.ToSlash(diskPath) + `
+    memory: 256M
+    networks:
+      - app-a
+networks:
+  app-a:
+    subnet: 10.220.1.0/24
+  app-b:
+    subnet: 10.220.2.0/24
+`
+	require.NoError(t, os.WriteFile(composeFile, []byte(composeYAML), 0o600))
+
+	execRoot(t, socketPath, storePath, "compose", "up", composeFile)
+
+	_, err := client.Run(context.Background(), api.RunParams{
+		ImagePath:   diskPath,
+		Memory:      "256M",
+		Name:        "api",
+		NetworkName: "app-b",
+		IPAddress:   "10.220.2.2",
+		GatewayIP:   "10.220.2.1",
+		BridgeName:  "uni-br-app-b",
+		SubnetMask:  "24",
+	})
+	require.NoError(t, err)
+
+	out := execRoot(t, socketPath, storePath, "compose", "down", "--force", composeFile)
+	require.NotContains(t, out, "warning: release ip")
+	require.Contains(t, out, "stopped api")
+}
+
 func TestComposeDown_NoState(t *testing.T) {
 	_, socketPath := startComposeDaemon(t)
 	storePath := t.TempDir()

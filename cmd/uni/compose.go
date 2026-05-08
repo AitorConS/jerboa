@@ -86,7 +86,6 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 			}()
 
 			var createdNetworks []string
-			networkIPs := make(map[string]string)
 			for netName, netCfg := range f.Networks {
 				driver := netCfg.Driver
 				if driver == "" {
@@ -108,6 +107,8 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 			state := compose.State{
 				Project:         filepath.Base(filepath.Dir(composeFile)),
 				Services:        make(map[string]string, len(f.Services)),
+				ServiceNetworks: make(map[string]string, len(f.Services)),
+				ServiceIPs:      make(map[string]string, len(f.Services)),
 				CreatedVolumes:  createdVolumes,
 				CreatedNetworks: createdNetworks,
 			}
@@ -143,7 +144,8 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 						return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
 					}
 					params.IPAddress = ip
-					networkIPs[name] = ip
+					state.ServiceNetworks[name] = netName
+					state.ServiceIPs[name] = ip
 				}
 
 				info, runErr := client.Run(cmd.Context(), params)
@@ -192,15 +194,23 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 			for i := len(names) - 1; i >= 0; i-- {
 				name := names[i]
 				id := state.Services[name]
-				rec, dnsErr := client.DNSResolve(cmd.Context(), name, "")
+				releaseNetwork := state.ServiceNetworks[name]
+				releaseIP := state.ServiceIPs[name]
+				if releaseNetwork == "" || releaseIP == "" {
+					rec, dnsErr := client.DNSResolve(cmd.Context(), name, "")
+					if dnsErr == nil {
+						releaseNetwork = rec.Network
+						releaseIP = rec.IP
+					}
+				}
 				if stopErr := client.Stop(cmd.Context(), id, force); stopErr != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: stop %s (%s): %v\n", name, id, stopErr)
 					continue
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
-				if dnsErr == nil {
-					if relErr := client.NetworkReleaseIP(cmd.Context(), rec.Network, rec.IP); relErr != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "warning: release ip for %s (%s): %v\n", name, rec.IP, relErr)
+				if releaseNetwork != "" && releaseIP != "" {
+					if relErr := client.NetworkReleaseIP(cmd.Context(), releaseNetwork, releaseIP); relErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: release ip for %s (%s): %v\n", name, releaseIP, relErr)
 					}
 				}
 			}
@@ -397,8 +407,10 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 	}
 
 	state := compose.State{
-		Services:       make(map[string]string, len(f.Services)),
-		CreatedVolumes: createdVolumes,
+		Services:        make(map[string]string, len(f.Services)),
+		ServiceNetworks: make(map[string]string, len(f.Services)),
+		ServiceIPs:      make(map[string]string, len(f.Services)),
+		CreatedVolumes:  createdVolumes,
 	}
 	for _, name := range order {
 		svc := f.Services[name]

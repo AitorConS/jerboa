@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/httpclient"
 	"github.com/stretchr/testify/require"
 )
 
@@ -105,4 +110,63 @@ func TestDownloadTo_ServerError(t *testing.T) {
 	var buf bytes.Buffer
 	err := downloadTo(ctx, "http://127.0.0.1:0/nonexistent", &buf)
 	require.Error(t, err)
+}
+
+type rewriteTransport struct {
+	baseURL string
+	base    http.RoundTripper
+}
+
+func (rt rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = "http"
+	clone.URL.Host = strings.TrimPrefix(rt.baseURL, "http://")
+	clone.Host = clone.URL.Host
+	return rt.base.RoundTrip(clone)
+}
+
+func TestUpgradeListAndCheckCommands(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases") {
+			_, _ = io.WriteString(w, `[
+				{"tag_name":"v0.3.0"},
+				{"tag_name":"v0.2.1"},
+				{"tag_name":"kernel-v0.1.0"}
+			]`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	orig := httpclient.Default
+	httpclient.Default = &http.Client{Timeout: 3 * time.Second, Transport: rewriteTransport{baseURL: ts.URL, base: http.DefaultTransport}}
+	t.Cleanup(func() { httpclient.Default = orig })
+
+	out := execRoot(t, socketPath, storePath, "upgrade", "list")
+	require.Contains(t, out, "v0.3.0")
+	require.Contains(t, out, "v0.2.1")
+
+	out = execRoot(t, socketPath, storePath, "upgrade", "check")
+	require.Contains(t, out, "Latest:")
+}
+
+func TestUpgradeListCommandError(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer ts.Close()
+
+	orig := httpclient.Default
+	httpclient.Default = &http.Client{Timeout: 3 * time.Second, Transport: rewriteTransport{baseURL: ts.URL, base: http.DefaultTransport}}
+	t.Cleanup(func() { httpclient.Default = orig })
+
+	msg := execRootExpectError(t, socketPath, storePath, "upgrade", "list")
+	require.Contains(t, msg, "upgrade list")
 }

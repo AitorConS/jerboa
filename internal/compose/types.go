@@ -53,6 +53,8 @@ func (vc VolumeConfig) DefaultSize() string {
 type State struct {
 	Project         string            `json:"project"`
 	Services        map[string]string `json:"services"`
+	ServiceNetworks map[string]string `json:"service_networks,omitempty"`
+	ServiceIPs      map[string]string `json:"service_ips,omitempty"`
 	CreatedVolumes  []string          `json:"created_volumes,omitempty"`
 	CreatedNetworks []string          `json:"created_networks,omitempty"`
 }

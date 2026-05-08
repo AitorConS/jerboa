@@ -115,7 +115,7 @@ Currently in **Phase 7** (Orchestrator) — phases 7.0–7.7 complete.
 | 7.3 — Auto-Restart | ✅ done | `RestartPolicy` (never/on-failure/always), `--restart` flag, exponential backoff, `RestartCount`, `explicitStop` tracking |
 | 7.4 — Service/Status | ✅ done | `uni status` command, health/restart columns in `uni ps`, `RestartSpec` in API |
 | 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
-| 7.6 — DNS | ⬜ | Internal DNS resolver in `unid`, name-to-IP resolution for VMs |
+| 7.6 — DNS | ✅ done | Internal DNS resolver in `unid` (`DNS.Resolve`/`DNS.List`), scoped names (`name.network`), ambiguity detection, and `uni dns` CLI |
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
 | 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
@@ -144,6 +144,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - `uni network create <name>` auto-allocates a `/24` from `10.100.0.0/16` if `--subnet` is not specified. Bridges are named `uni-br-<name>`.
 - `uni run --network <name>` resolves the network, auto-allocates an IP via IPAM, and passes `BridgeName`/`SubnetMask`/`GatewayIP` to the daemon.
 - Compose `networks:` section creates networks on `compose up` and removes them on `compose down`. Services with `networks:` get auto-allocated IPs.
+- Internal DNS resolves only running VMs with `NetworkName` + `IPAddress`; duplicate names across networks require explicit scope (`--network` or `name.network`).
 
 ## CLI Subcommands
 
@@ -165,6 +166,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni compose up/down/ps/logs` | `--volumes` | Multi-service orchestration |
 | `uni volume create/ls/rm/inspect` | — | Manage persistent volumes |
 | `uni network create/ls/inspect/rm` | `--subnet`, `--driver` | Manage networks |
+| `uni dns resolve/list` | `--network` | Resolve and inspect internal VM DNS records |
 | `uni run --network <name>` | `--network`, `--ip` | Auto-allocate IP from network |
 | `uni kernel check/update/list/use` | — | Manage kernel tools |
 | `uni pkg list/search/get/remove` | — | Manage packages |
@@ -271,7 +273,7 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding (Linux-only), **Network Store + IPAM** (`store.go`) with persistent `~/.uni/networks/<name>/` directories. Network type with subnet allocator (10.100.0.0/16 → /24 blocks), AllocateIP/ReleaseIP, bridge-per-network convention (`uni-br-<name>`). |
 | `internal/package/` | Package index fetch, local store, download (SHA-256 verified), extract (tar.gz), search, remove. |
 | `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
-| `internal/scheduler/` | **Empty stub.** Placeholder for Phase 7.5+ orchestrator features. |
+| `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
