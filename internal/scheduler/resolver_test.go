@@ -56,3 +56,19 @@ func TestResolverList(t *testing.T) {
 	recs = r.List("")
 	require.Len(t, recs, 3)
 }
+
+func TestResolverResolveAmbiguous(t *testing.T) {
+	vms := []*vm.VM{
+		{ID: "vm-1", State: vm.StateRunning, Cfg: vm.Config{Name: "api", NetworkName: "app-a", IPAddress: "10.100.1.2"}, CreatedAt: time.Now()},
+		{ID: "vm-2", State: vm.StateRunning, Cfg: vm.Config{Name: "api", NetworkName: "app-b", IPAddress: "10.100.2.2"}, CreatedAt: time.Now()},
+	}
+	r := NewResolver(&fakeSource{vms: vms})
+
+	_, err := r.Resolve("api", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ambiguous")
+
+	rec, err := r.Resolve("api", "app-b")
+	require.NoError(t, err)
+	require.Equal(t, "10.100.2.2", rec.IP)
+}

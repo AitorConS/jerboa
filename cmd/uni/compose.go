@@ -192,11 +192,17 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 			for i := len(names) - 1; i >= 0; i-- {
 				name := names[i]
 				id := state.Services[name]
+				rec, dnsErr := client.DNSResolve(cmd.Context(), name, "")
 				if stopErr := client.Stop(cmd.Context(), id, force); stopErr != nil {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: stop %s (%s): %v\n", name, id, stopErr)
 					continue
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
+				if dnsErr == nil {
+					if relErr := client.NetworkReleaseIP(cmd.Context(), rec.Network, rec.IP); relErr != nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: release ip for %s (%s): %v\n", name, rec.IP, relErr)
+					}
+				}
 			}
 
 			if removeVolumes && len(state.CreatedVolumes) > 0 {

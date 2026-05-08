@@ -42,10 +42,17 @@ func (r *Resolver) Resolve(name, network string) (Record, error) {
 		network = scope
 	}
 
+	matches := make([]Record, 0, 1)
 	for _, rec := range r.records(network) {
 		if rec.Name == host || rec.VMID == host {
-			return rec, nil
+			matches = append(matches, rec)
 		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 && network == "" {
+		return Record{}, fmt.Errorf("record %q is ambiguous across networks; specify network", host)
 	}
 	if network != "" {
 		return Record{}, fmt.Errorf("record %q not found in network %q", host, network)
