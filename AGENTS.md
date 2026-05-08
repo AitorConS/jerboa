@@ -30,11 +30,11 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
                  Nanos kernel (C+ASM fork) ← image loader
 ```
 
-**CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `kernel`, `pkg`, `cp`, `upgrade`.
+**CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `dns`, `kernel`, `pkg`, `cp`, `upgrade`.
 
 **Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling. Creates `~/.uni/networks/` Network Store on startup.
 
-**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Inspect`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`.
+**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Attach`, `VM.Inspect`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`, `DNS.Resolve`, `DNS.List`.
 
 **VM Manager (`internal/vm/`)** — KVM/QEMU wrapper. `VM` struct is concurrent-safe (`sync.RWMutex`). State machine: `created → starting → running → stopping → stopped`. KVM ioctls wrapped in testable interfaces — never call ioctls directly in business logic.
 
@@ -46,7 +46,7 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 **Volume System (`internal/volume/`)** — named persistent virtio-blk disks at `~/.uni/volumes/<name>/disk.img`. Sparse files via seek+write. Created with `uni volume create`, mounted with `uni run -v name:/guest/path[:ro]`. Survive VM restarts.
 
-**Compose (`internal/compose/`)** — YAML parser + validator. Topological sort via Kahn's algorithm with cycle detection. Writes `.uni-compose-state.json` alongside compose file: `{"project": "...", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}, "created_networks": ["mynet"]}`. Networks section creates/destroys bridges on `compose up`/`compose down`. Services support `health_check` (tcp/http probes) and `restart` (never/on-failure/always[:N]) directives.
+**Compose (`internal/compose/`)** — YAML parser + validator. Topological sort via Kahn's algorithm with cycle detection. Writes `.uni-compose-state.json` alongside compose file: `{"project": "...", "services": {"frontend": "<vm-id>", "backend": "<vm-id>"}, "service_networks": {"frontend": "app"}, "service_ips": {"frontend": "10.100.0.2"}, "created_networks": ["mynet"]}`. Networks section creates/destroys bridges on `compose up`/`compose down`. Services support `health_check` (tcp/http probes) and `restart` (never/on-failure/always[:N]) directives.
 
 **Kernel Tools (`internal/tools/`)** — auto-downloads `mkfs`, `kernel.img`, `boot.img` from GitHub releases to `~/.uni/tools/`. Handles version checking and updates. Platform-specific mkfs resolution.
 
@@ -282,39 +282,38 @@ Both the CLI and the kernel are independently versioned with semver.
 
 | Path | Phase | Purpose |
 |---|---|---|
-| `internal/scheduler/` | 7.6+ | Internal DNS resolver, name-to-IP resolution |
 | `pkg/` | 6+ | Public shared libraries |
 | `tests/unit/` | — | Empty; unit tests are co-located with source files |
 
-## Session Handoff (2026-05-07)
+## Session Handoff (2026-05-08)
 
 ### Completed Today
 
-- Added API behavior tests for VM lifecycle RPCs and network RPCs (`internal/api/server_test.go`).
-- Added signal parsing table-driven tests (`internal/api/parseSig_test.go`).
-- Added CLI command tests for `uni network` and `uni status` (`cmd/uni/network_test.go`, `cmd/uni/status_test.go`).
-- Extended compose tests for service run-params mapping (`health_check`, `restart`) and port parsing (`cmd/uni/compose_test.go`).
-- Added kernel tools unit tests for manifest and mkfs command construction (`internal/tools/mkfs_test.go`).
+- Added internal DNS resolver package (`internal/scheduler/resolver.go`) and tests (`internal/scheduler/resolver_test.go`).
+- Added JSON-RPC DNS methods (`DNS.Resolve`, `DNS.List`) in API server/client (`internal/api/server.go`, `internal/api/client.go`, `internal/api/types.go`) with API tests.
+- Added `uni dns resolve` and `uni dns list` CLI commands (`cmd/uni/dns.go`) with tests (`cmd/uni/dns_test.go`).
+- Updated compose state to persist per-service network/IP (`service_networks`, `service_ips`) and use them during `compose down` IP release.
+- Extended coverage for `cmd/uni/run.go` helpers, `cmd/uni/kernel.go`, and `cmd/uni/upgrade.go` with focused tests.
 
 ### Coverage Snapshot
 
-- `internal/api`: 72.0%
+- `internal/api`: 73.2%
 - `internal/tools`: 72.0%
-- `cmd/uni`: 57.0%
+- `internal/scheduler`: 90.9%
+- `cmd/uni`: 64.9%
 
 ### Next Steps (Tomorrow)
 
-1. Raise `cmd/uni` coverage first (highest remaining gap):
-   - `cmd/uni/run.go`: `resolveVolumes`, `parseVolumePortString`, `extractMask`
-   - `cmd/uni/kernel.go`: list/use/update command paths
-   - `cmd/uni/upgrade.go`: `runUpgrade`, version listing/check paths
-2. Raise `internal/api` from 72% toward 80%:
-   - add tests for attach flow and remaining error branches in `server.go`
-3. Raise `internal/tools` from 72% toward 80%:
-   - extend `version_test.go` and add failure-path tests for artifact download/save logic
+1. Raise `internal/tools` coverage from 72% toward 80%:
+   - extend `version_test.go` and add failure-path tests for artifact download/save logic.
+2. Add compose/network integration tests for IP release stability across `compose up/down/up` cycles.
+3. Start Phase 8 planning doc split:
+   - OCI compatibility scope,
+   - image signing strategy,
+   - JWT auth boundaries.
 
 ### Validation Commands
 
 - `go test ./...`
-- `go test -cover ./internal/api/... ./internal/tools/... ./cmd/uni/...`
+- `go test -cover ./internal/api/... ./internal/scheduler/... ./internal/tools/... ./cmd/uni/...`
 - `golangci-lint run --timeout 5m ./...`

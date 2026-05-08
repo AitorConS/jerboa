@@ -25,8 +25,9 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │                                                         │
 │  build · run · ps · status · logs · stop · rm · inspect · exec · cp │
 │  compose up · compose down · compose ps · compose logs  │
-│  compose up · compose down · compose ps · compose logs  │
 │  volume create · volume ls · volume rm · volume inspect │
+│  network create · network ls · network inspect · network rm │
+│  dns resolve · dns list                                  │
 │  pkg list · pkg search · pkg get · pkg remove           │
 │  kernel check · kernel update · kernel list · kernel use│
 │  upgrade · upgrade check · upgrade list                 │
@@ -188,6 +189,10 @@ JSON-RPC 2.0 over a Unix domain socket.
 | `VM.Logs` | Get captured serial output (snapshot) |
 | `VM.Attach` | Stream serial console output in real-time |
 | `VM.Inspect` | Full VM details |
+| `Network.Create/List/Get/Remove` | Manage named networks |
+| `Network.AllocateIP/ReleaseIP` | IPAM allocation lifecycle |
+| `DNS.Resolve` | Resolve service/VM names to IP |
+| `DNS.List` | List active DNS records |
 
 ### Compose (`internal/compose/`)
 

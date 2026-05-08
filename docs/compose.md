@@ -204,6 +204,16 @@ Content:
     "api": "b4e9d3e2-8c5f-5b2g-9d3e-2b3c4d5e6f7a",
     "web": "c5f0e4f3-9d6a-6c3h-ae4f-3c4d5e6f7a8b"
   },
+  "service_networks": {
+    "db": "backend-net",
+    "api": "backend-net",
+    "web": "frontend-net"
+  },
+  "service_ips": {
+    "db": "10.100.0.2",
+    "api": "10.100.0.3",
+    "web": "10.100.1.2"
+  },
   "created_volumes": [
     "dbdata",
     "staticfiles"
@@ -211,7 +221,7 @@ Content:
 }
 ```
 
-Commands `down`, `ps`, and `logs` read this file to know which VM IDs belong to the stack.
+Commands `down`, `ps`, and `logs` read this file to know which VM IDs belong to the stack. `service_networks` and `service_ips` are used during `compose down` to deterministically release allocated IPs back to IPAM.
 
 {: .warning }
 Do not delete `.uni-compose-state.json` manually while the stack is running. If it gets lost, use `uni ps` to find the VM IDs and stop them individually with `uni stop`.

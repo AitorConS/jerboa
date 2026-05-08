@@ -60,7 +60,7 @@ uni run <image> [flags]
 | `--attach` | `false` | Attach to VM serial console (blocks until VM stops) |
 | `-d`, `--detach` | `true` | Run VM in the background (overridden by `--attach`) |
 | `--ip` | — | Static IP address, configured in the guest via fw_cfg (requires `--network`) |
-| `--network` | — | TAP interface name to attach (Linux only) |
+| `--network` | — | Managed network name created by `uni network create` |
 | `--health-check` | — | Health check probe: `tcp:PORT` or `http:PORT:/path` |
 | `--restart` | — | Restart policy: `never`, `on-failure`, or `always[:max-retries]` |
 
@@ -100,8 +100,12 @@ uni run hello:latest --attach
 # Attach with a named instance and port
 uni run myapp:latest --name api --attach -p 8080:8080
 
-# Run with TAP networking and static IP (Linux only)
-uni run myapp:latest --network tap0 --ip 192.168.100.10 -p 8080:80
+# Run on a managed network with auto-IP allocation
+uni network create app
+uni run myapp:latest --network app -p 8080:80
+
+# Run on a managed network with explicit static IP
+uni run myapp:latest --network app --ip 10.100.0.10 -p 8080:80
 
 # Run with a health check (TCP probe on port 8080)
 uni run myapp:latest --health-check tcp:8080
@@ -639,6 +643,43 @@ This is irreversible. All data stored in the volume will be lost.
 ```bash
 uni volume rm mydata
 # mydata
+```
+
+---
+
+## Network and DNS Commands
+
+### `uni network create`
+
+Create a managed network. When `--subnet` is omitted, Uni auto-allocates a `/24` from `10.100.0.0/16`.
+
+```
+uni network create <name> [--subnet <cidr>] [--driver bridge]
+```
+
+### `uni dns resolve`
+
+Resolve a running VM/service name to its IP address.
+
+```
+uni dns resolve <name> [--network <name>]
+```
+
+Examples:
+
+```bash
+uni dns resolve frontend --network app
+uni dns resolve frontend.app
+```
+
+If the same service name exists in multiple networks, `--network` (or `name.network`) is required.
+
+### `uni dns list`
+
+List resolvable records from running VMs.
+
+```
+uni dns list [--network <name>]
 ```
 
 ---

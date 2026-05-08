@@ -37,7 +37,9 @@ Compared to containers:
 uni build ./myapp          # package ELF binary into an image
 uni run hello:latest       # start a unikernel VM (detached by default)
 uni run hello:latest --attach  # start and stream serial output
-uni run hello:latest --ip 192.168.1.10 --network tap0  # static IP with TAP
+uni network create app
+uni run hello:latest --network app                      # auto-allocated IP from IPAM
+uni dns list --network app                              # inspect DNS records
 uni ps                     # list running VMs
 uni logs <id>              # read serial console output
 uni stop <id>              # graceful shutdown
@@ -74,6 +76,7 @@ uni upgrade                # self-update uni and unid
 - **Build once, run anywhere** — image format is a JSON manifest + raw disk, content-addressed by SHA256
 - **Full VM isolation** — every service runs in its own KVM virtual machine
 - **Compose support** — define multi-service stacks in YAML with dependency ordering
+- **Internal DNS** — resolve running services by name (`uni dns resolve web --network app`)
 - **Registry** — push/pull images over HTTP like a private Docker registry
 - **Attach mode** — stream VM serial console output in real-time with `--attach` (default is detached with `-d`)
 - **Static IP assignment** — assign a static IP to VMs when using TAP networking with `--ip`
