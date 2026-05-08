@@ -155,3 +155,17 @@ type NetworkConnectParams struct {
 	VMID    string `json:"vm_id"`
 	IP      string `json:"ip,omitempty"`
 }
+
+// DNSResolveParams are the parameters for DNS.Resolve.
+type DNSResolveParams struct {
+	Name    string `json:"name"`
+	Network string `json:"network,omitempty"`
+}
+
+// DNSRecord is the serialisable representation of an internal DNS record.
+type DNSRecord struct {
+	Name    string `json:"name"`
+	Network string `json:"network"`
+	IP      string `json:"ip"`
+	VMID    string `json:"vm_id"`
+}

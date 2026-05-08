@@ -187,6 +187,28 @@ func (c *Client) NetworkReleaseIP(_ context.Context, networkName, ip string) err
 	return nil
 }
 
+// DNSResolve resolves a VM name to an IP address inside an optional network.
+func (c *Client) DNSResolve(_ context.Context, name, network string) (DNSRecord, error) {
+	var rec DNSRecord
+	p := DNSResolveParams{Name: name, Network: network}
+	if err := c.call("DNS.Resolve", p, &rec); err != nil {
+		return DNSRecord{}, fmt.Errorf("client dns resolve: %w", err)
+	}
+	return rec, nil
+}
+
+// DNSList lists resolvable VM records, optionally filtered by network.
+func (c *Client) DNSList(_ context.Context, network string) ([]DNSRecord, error) {
+	var recs []DNSRecord
+	p := struct {
+		Network string `json:"network,omitempty"`
+	}{Network: network}
+	if err := c.call("DNS.List", p, &recs); err != nil {
+		return nil, fmt.Errorf("client dns list: %w", err)
+	}
+	return recs, nil
+}
+
 // Inspect returns full details for the VM.
 func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
 	var detail VMDetail

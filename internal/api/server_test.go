@@ -325,6 +325,34 @@ func TestServer_Inspect(t *testing.T) {
 	require.Equal(t, "running", detail.State)
 }
 
+func TestServer_DNSResolveAndList(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.Run(context.Background(), api.RunParams{
+		ImagePath:   "test.img",
+		Memory:      "256M",
+		Name:        "frontend",
+		NetworkName: "app",
+		IPAddress:   "10.100.1.2",
+	})
+	require.NoError(t, err)
+
+	rec, err := client.DNSResolve(context.Background(), "frontend", "app")
+	require.NoError(t, err)
+	require.Equal(t, "10.100.1.2", rec.IP)
+
+	rec, err = client.DNSResolve(context.Background(), "frontend.app", "")
+	require.NoError(t, err)
+	require.Equal(t, "app", rec.Network)
+
+	recs, err := client.DNSList(context.Background(), "app")
+	require.NoError(t, err)
+	require.Len(t, recs, 1)
+
+	_, err = client.DNSResolve(context.Background(), "missing", "app")
+	require.Error(t, err)
+}
+
 func TestServer_InspectNotFound(t *testing.T) {
 	client, _ := startTestServer(t)
 	_, err := client.Inspect(context.Background(), "nonexistent")

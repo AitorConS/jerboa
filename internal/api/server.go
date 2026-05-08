@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/network"
+	"github.com/AitorConS/unikernel-engine/internal/scheduler"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 )
 
@@ -22,6 +23,7 @@ type Server struct {
 	listener   net.Listener
 	shutdownFn func()
 	version    string
+	resolver   *scheduler.Resolver
 }
 
 // NewServer creates a Server that will listen on socketPath.
@@ -37,7 +39,7 @@ func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutd
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
-	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version}, nil
+	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr)}, nil
 }
 
 // Serve accepts connections and handles them until ctx is cancelled.
@@ -138,6 +140,10 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any
 		return s.handleNetworkAllocateIP(req.Params)
 	case "Network.ReleaseIP":
 		return s.handleNetworkReleaseIP(req.Params)
+	case "DNS.Resolve":
+		return s.handleDNSResolve(req.Params)
+	case "DNS.List":
+		return s.handleDNSList(req.Params)
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -560,6 +566,35 @@ func networkToInfo(n *network.Network) NetworkInfo {
 		Bridge:    n.Bridge,
 		CreatedAt: n.CreatedAt.Format(time.RFC3339),
 	}
+}
+
+func (s *Server) handleDNSResolve(params json.RawMessage) (any, *RPCError) {
+	var p DNSResolveParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	rec, err := s.resolver.Resolve(p.Name, p.Network)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}, nil
+}
+
+func (s *Server) handleDNSList(params json.RawMessage) (any, *RPCError) {
+	var p struct {
+		Network string `json:"network,omitempty"`
+	}
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &p); err != nil {
+			return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		}
+	}
+	recs := s.resolver.List(p.Network)
+	out := make([]DNSRecord, len(recs))
+	for i, rec := range recs {
+		out[i] = DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
+	}
+	return out, nil
 }
 
 func (s *Server) writeError(conn net.Conn, id int64, rpcErr *RPCError) {

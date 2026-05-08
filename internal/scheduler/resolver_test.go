@@ -1,0 +1,58 @@
+package scheduler
+
+import (
+	"testing"
+	"time"
+
+	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/stretchr/testify/require"
+)
+
+type fakeSource struct {
+	vms []*vm.VM
+}
+
+func (f *fakeSource) List() []*vm.VM {
+	return f.vms
+}
+
+func TestResolverResolve(t *testing.T) {
+	vms := []*vm.VM{
+		{ID: "vm-1", State: vm.StateRunning, Cfg: vm.Config{Name: "frontend", NetworkName: "app", IPAddress: "10.100.1.2"}, CreatedAt: time.Now()},
+		{ID: "vm-2", State: vm.StateStopped, Cfg: vm.Config{Name: "db", NetworkName: "app", IPAddress: "10.100.1.3"}, CreatedAt: time.Now()},
+	}
+	r := NewResolver(&fakeSource{vms: vms})
+
+	rec, err := r.Resolve("frontend", "app")
+	require.NoError(t, err)
+	require.Equal(t, "10.100.1.2", rec.IP)
+
+	rec, err = r.Resolve("vm-1", "app")
+	require.NoError(t, err)
+	require.Equal(t, "frontend", rec.Name)
+
+	rec, err = r.Resolve("frontend.app", "")
+	require.NoError(t, err)
+	require.Equal(t, "app", rec.Network)
+
+	_, err = r.Resolve("db", "app")
+	require.Error(t, err)
+
+	_, err = r.Resolve("", "app")
+	require.Error(t, err)
+}
+
+func TestResolverList(t *testing.T) {
+	vms := []*vm.VM{
+		{ID: "vm-1", State: vm.StateRunning, Cfg: vm.Config{Name: "frontend", NetworkName: "app", IPAddress: "10.100.1.2"}, CreatedAt: time.Now()},
+		{ID: "vm-2", State: vm.StateRunning, Cfg: vm.Config{Name: "backend", NetworkName: "app", IPAddress: "10.100.1.3"}, CreatedAt: time.Now()},
+		{ID: "vm-3", State: vm.StateRunning, Cfg: vm.Config{Name: "cache", NetworkName: "cache", IPAddress: "10.100.2.2"}, CreatedAt: time.Now()},
+	}
+	r := NewResolver(&fakeSource{vms: vms})
+
+	recs := r.List("app")
+	require.Len(t, recs, 2)
+
+	recs = r.List("")
+	require.Len(t, recs, 3)
+}
