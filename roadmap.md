@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 5 — complete
+## Current status: Phase 7.7 — complete (Phase 8 next)
 
 ---
 
@@ -99,7 +99,7 @@
 - [x] 4.2 — YAML parser + validator (`internal/compose/`)
 - [x] 4.3 — Dependency graph: topological sort for startup ordering (Kahn's algorithm)
 - [x] 4.4 — Internal virtual network between compose services (network refs in YAML)
-- [ ] 4.5 — Shared volumes (virtio-blk backed)
+- [x] 4.5 — Shared volumes (virtio-blk backed)
 - [x] 4.6 — `uni compose up / down / logs / ps`
 - [x] 4.7 — E2E test: 2-service compose, services communicate via network
 
@@ -157,7 +157,7 @@ because packages are useless without a working runtime model.
 
 ---
 
-## Phase 6 — Package System `Weeks 18–21`
+## Phase 6 — Package System `Weeks 18–21` ✅ complete
 
 **Goal:** `uni pkg load node:v20 app.js -p 3000:3000` runs a Node.js app with zero manual compilation.
 
@@ -168,59 +168,33 @@ with user code to produce a ready-to-run unikernel image in one command.
 
 ### 6.1 — Package Format & Local Cache
 
-- [ ] 6.1.1 — Define `package.manifest` JSON schema in `internal/pkg/manifest.go`:
-  ```json
-  {
-    "name": "node",
-    "version": "v20.11.0",
-    "program": "node/node",
-    "args": [],
-    "runtime": "node",
-    "arch": "x86_64",
-    "libs": ["lib/libssl.so.3", "lib/libcrypto.so.3"],
-    "description": "Node.js JavaScript runtime",
-    "homepage": "https://nodejs.org"
-  }
-  ```
-- [ ] 6.1.2 — Local package cache at `~/.uni/packages/<name>/<version>/` (program binary + lib/ dir)
-- [ ] 6.1.3 — `internal/pkg/store.go`: install, list, remove, lookup packages by name:version
-- [ ] 6.1.4 — Package integrity: SHA256 checksum verified on download, stored in manifest
+- [x] 6.1.1 — Package index + metadata model implemented in `internal/package/`
+- [x] 6.1.2 — Local package cache at `~/.uni/packages/<name>/<version>/` (`files.tar.gz`, `files/`, `meta.json`)
+- [x] 6.1.3 — `internal/package` store: install/list/remove/lookup by name:version
+- [x] 6.1.4 — SHA256 verification on download when checksum is provided
 
 ### 6.2 — `uni pkg` CLI
 
-- [ ] 6.2.1 — `uni pkg list` — list all available packages from index (table: name, version, description)
-- [ ] 6.2.2 — `uni pkg search <query>` — regex/substring search across name + description
-- [ ] 6.2.3 — `uni pkg get <name:version>` — download package to local cache
-- [ ] 6.2.4 — `uni pkg describe <name:version>` — full metadata + included files
-- [ ] 6.2.5 — `uni pkg contents <name:version>` — list all files inside the package
-- [ ] 6.2.6 — `uni pkg rm <name:version>` — remove from local cache
-- [ ] 6.2.7 — `uni pkg ls` — list locally cached packages
+- [x] 6.2.1 — `uni pkg list`
+- [x] 6.2.2 — `uni pkg search <query>`
+- [x] 6.2.3 — `uni pkg get <name:version>`
+- [x] 6.2.4 — `uni pkg remove <name:version>` / remove all versions by name
 
-### 6.3 — `uni pkg load` — Build & Run with a Runtime
+### 6.3 — Build integration with `uni build --pkg`
 
-- [ ] 6.3.1 — `uni pkg load <name:version> <app-file> [flags]` — build image from package + user code, then run it
-  ```bash
-  uni pkg load node:v20 server.js -p 3000:3000
-  uni pkg load python:3.12 app.py -e PORT=8080 -p 8080:8080
-  uni pkg load nginx:1.24 -v ./html:/var/www/html:ro -p 80:80
-  ```
-- [ ] 6.3.2 — `--args` flag: extra arguments forwarded to the runtime (e.g. `--args="--max-old-space-size=512"`)
-- [ ] 6.3.3 — Bundle pipeline: package binary + libs + user app files → disk image via existing image builder
-- [ ] 6.3.4 — `--output-image <name:tag>` flag: save the resulting image instead of running immediately
-- [ ] 6.3.5 — `--local` flag: load from a local directory instead of cache
+- [x] 6.3.1 — `uni build --pkg <name[:version]>` downloads and resolves package files
+- [x] 6.3.2 — Package files are included in image manifest (`BuildManifest`)
+- [x] 6.3.3 — End-to-end package pipeline tests (download → extract → manifest)
 
-### 6.4 — Package Index Server
+### 6.4 — Package Index
 
-- [ ] 6.4.1 — `internal/pkgindex/` HTTP server — serves package manifests + download URLs
-- [ ] 6.4.2 — Index JSON format: paginated list of `{name, versions[], latest, description, homepage}`
-- [ ] 6.4.3 — Client in `internal/pkg/client.go` hits the index URL (configurable, default `https://packages.unikernel.dev`)
-- [ ] 6.4.4 — Offline mode: if index unreachable, fall back to locally cached manifests
-- [ ] 6.4.5 — `uni config set packages.index <url>` to point at a self-hosted index
+- [x] 6.4.1 — JSON index client in `internal/package` with configurable `IndexURL` (test-overridable var)
+- [x] 6.4.2 — Package metadata consumed from index + archive URLs
+- [ ] 6.4.3 — Self-hosted index server tooling (deferred)
 
 ### 6.5 — Official Package Library (first wave)
 
-Build and publish these packages to the official index. Each requires: cross-compiled binary, required
-libs bundled, `package.manifest`, integration test.
+Build and publish these packages to the official index. Deferred to a dedicated distribution track.
 
 **Language runtimes:**
 - [ ] 6.5.1 — `node:v20` — Node.js 20 LTS (most common web backend runtime)
@@ -251,28 +225,28 @@ libs bundled, `package.manifest`, integration test.
 - [ ] 6.6.4 — `uni pkg push <name:version>` — push a locally created package to the index (requires `uni login`)
 - [ ] 6.6.5 — CI pipeline for building official packages: cross-compile on GitHub Actions, publish to index on tag
 
-**Done when:** `uni pkg load node:v20 server.js -p 3000:3000` runs a Node.js HTTP server. All first-wave packages published. Integration tests pass for Node, Python, Redis, Nginx.
+**Done when:** package download/search/get/remove works, package files can be injected into built images with `--pkg`, and pipeline tests are green.
 
 ---
 
-## Phase 7 — Orchestrator `Weeks 22–25`
+## Phase 7 — Orchestrator `Weeks 22–25` ✅ complete (7.0–7.7)
 
 **Goal:** self-healing, scalable service management.
 
 ### Steps
 
-- [ ] 7.1 — Health check probes: TCP + HTTP, configurable interval/threshold
+- [x] 7.1 — Health check probes: TCP + HTTP, configurable interval/threshold
   - Compose syntax: `healthcheck: {test: ["HTTP", "http://localhost:8080/health"], interval: 10s, retries: 3}`
-- [ ] 7.2 — Restart policy: `on-failure`, `always`, `unless-stopped` with exponential backoff (max 5 min)
-- [ ] 7.3 — Auto-restart on crash: daemon monitors VM exit code, re-applies restart policy
-- [ ] 7.4 — Rolling updates: drain old → start new → verify healthy → repeat; zero downtime
-- [ ] 7.5 — `uni scale <name>=N` — spawn or kill instances to reach target count
-- [ ] 7.6 — Internal DNS resolver in `unid`: service name → IP, round-robin for scaled services
-- [ ] 7.7 — `uni status` — cluster-wide view: all services, health, replica count, recent events
-- [ ] 7.8 — E2E test: crash a service → verify auto-restart within 30s
-- [ ] 7.9 — E2E test: scale web service to 3 → verify 3 instances → scale to 1 → 2 stopped
+- [x] 7.2 — Restart policy: `on-failure`, `always` with exponential backoff
+- [x] 7.3 — Auto-restart on crash: daemon monitors VM exit code, re-applies restart policy
+- [ ] 7.4 — Rolling updates: drain old → start new → verify healthy → repeat; zero downtime (deferred)
+- [ ] 7.5 — `uni scale <name>=N` — spawn or kill instances to reach target count (deferred)
+- [x] 7.6 — Internal DNS resolver in `unid`: service name/IP lookup for running VMs, scoped names (`name.network`), ambiguity detection, CLI `uni dns`
+- [x] 7.7 — `uni status` — VM summary view with health/restart info
+- [x] 7.8 — Compose integration with health checks + restart directives + wait-for-healthy
+- [x] 7.9 — Network Store + IPAM + `uni network` + compose network lifecycle
 
-**Done when:** health checks, restart, scale, DNS, rolling updates all work. E2E green.
+**Done when:** health checks, restart, status, DNS, network/IPAM, and compose integration are stable and fully tested. (Scale + rolling updates move to a future orchestrator expansion.)
 
 ---
 
@@ -390,13 +364,13 @@ so developers can point at a project directory and get a runnable image.
 | `uni cp` | 5 | ✅ done (from stopped VMs) |
 | TAP/bridge iptables DNAT | 5 | ✅ done (Linux) |
 | Volume integration test | 5 | ✅ done |
-| Package system (`uni pkg list/get/load`) | 6 | ⬜ |
+| Package system (`uni pkg list/search/get/remove`) | 6 | ✅ done |
 | Node.js runtime package | 6 | ⬜ |
 | Python runtime package | 6 | ⬜ |
 | Redis / Nginx packages | 6 | ⬜ |
-| Health checks + restart policies | 7 | ⬜ |
-| Auto-scaling (`uni scale`) | 7 | ⬜ |
-| Internal DNS | 7 | ⬜ |
+| Health checks + restart policies | 7 | ✅ done |
+| Auto-scaling (`uni scale`) | 7 | ⬜ deferred |
+| Internal DNS | 7 | ✅ done |
 | OCI-compatible registry | 8 | ⬜ (basic server/client exists) |
 | Image signing | 8 | ⬜ |
 | Registry auth (JWT) | 8 | ⬜ |
