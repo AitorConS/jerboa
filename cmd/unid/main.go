@@ -14,6 +14,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
+	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/spf13/cobra"
@@ -82,9 +83,13 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 		if err != nil {
 			return fmt.Errorf("unid: image store: %w", err)
 		}
+		blobStore, err := ociblob.NewStore(blobsDir())
+		if err != nil {
+			return fmt.Errorf("unid: blob store: %w", err)
+		}
 		regSrv := &http.Server{
 			Addr:    registryAddr,
-			Handler: registry.NewServer(imgStore).Handler(),
+			Handler: registry.NewServer(imgStore, registry.WithBlobStore(blobStore)).Handler(),
 		}
 		go func() {
 			slog.Info("registry listening", "addr", registryAddr)
@@ -136,4 +141,12 @@ func networksDir() string {
 		return ".uni/networks"
 	}
 	return home + "/.uni/networks"
+}
+
+func blobsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".uni/blobs"
+	}
+	return home + "/.uni/blobs"
 }

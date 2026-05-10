@@ -328,6 +328,10 @@ Both the CLI and the kernel are independently versioned with semver.
 - Expanded `internal/registry/server_test.go` with remove and bad-payload cases for `/v2/images` handlers.
 - Added OCI foundation types in `internal/ociregistry/types.go` with parser/validator tests.
 - Added content-addressable blob store foundation in `internal/ociblob/store.go` with CRUD/dedup tests.
+- Added initial OCI registry HTTP routes in `internal/registry/server.go` (`/v2/_catalog`, blob upload start/complete/get/delete, manifest put/get/delete).
+- Added initial OCI client flows in `internal/registry/client.go` (`PushOCI`/`PullOCI`) with layer tar+gzip packing/unpacking.
+- Wired `unid` registry startup to pass an OCI blob store (`~/.uni/blobs`) via `registry.WithBlobStore`.
+- Added OCI integration tests in `internal/registry/oci_test.go` covering v2 base/catalog, blob upload, manifest roundtrip, and digest mismatch.
 
 ### Next Validation
 
