@@ -456,6 +456,10 @@ uni rmi hello:latest
 
 Push a local image to a registry.
 
+`uni push` now prefers the OCI Distribution flow (`/v2/<name>/blobs/...` + `/v2/<name>/manifests/<tag>`).
+If the target registry does not support OCI endpoints yet, it automatically falls back to the legacy
+`/v2/images` API.
+
 ```
 uni push <ref> <registry-url>
 ```
@@ -472,6 +476,9 @@ uni push hello:latest http://registry.example.com:5000
 ### `uni pull`
 
 Pull an image from a registry into the local store.
+
+`uni pull` now prefers the OCI Distribution flow and automatically falls back to the legacy
+`/v2/images` API when needed.
 
 ```
 uni pull <ref> <registry-url>

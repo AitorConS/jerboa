@@ -77,7 +77,7 @@ uni upgrade                # self-update uni and unid
 - **Full VM isolation** — every service runs in its own KVM virtual machine
 - **Compose support** — define multi-service stacks in YAML with dependency ordering
 - **Internal DNS** — resolve running services by name (`uni dns resolve web --network app`)
-- **Registry** — push/pull images over HTTP like a private Docker registry
+- **Registry** — hybrid legacy + OCI v2 registry; `uni push/pull` prefer OCI with automatic legacy fallback
 - **Attach mode** — stream VM serial console output in real-time with `--attach` (default is detached with `-d`)
 - **Static IP assignment** — assign a static IP to VMs when using TAP networking with `--ip`
 - **TAP/bridge DNAT** — port forwarding works with TAP interfaces via iptables rules (Linux only)

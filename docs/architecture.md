@@ -252,17 +252,34 @@ The format is `IP/CIDR,GATEWAY` (e.g. `10.0.0.2/24,10.0.0.1`). This is x86-64 on
 
 ## Image Registry
 
-When started with `--registry-addr :5000`, `unid` serves an HTTP registry:
+When started with `--registry-addr :5000`, `unid` serves an HTTP registry.
+
+Current behavior is hybrid:
+- Legacy API under `/v2/images` is still available for backward compatibility.
+- OCI v2 foundations are available under `/v2/...` for blob upload/download and manifest put/get/delete.
+- OCI blobs are persisted in `~/.uni/blobs`.
+- OCI manifest refs/bodies are persisted in `~/.uni/oci` and survive daemon restarts.
 
 ```
-GET    /v2/images              list all images
-GET    /v2/images/{ref}        get manifest (name:tag or sha256:hex)
-GET    /v2/images/{ref}/disk   download raw disk image
-POST   /v2/images              push image (multipart: manifest + disk)
-DELETE /v2/images/{ref}        remove image
+GET    /v2/images                          list all images (legacy)
+GET    /v2/images/{ref}                    get manifest (legacy)
+GET    /v2/images/{ref}/disk               download raw disk image (legacy)
+POST   /v2/images                          push image multipart (legacy)
+DELETE /v2/images/{ref}                    remove image (legacy)
+
+GET    /v2/                                base (auth challenge placeholder)
+GET    /v2/_catalog                        list OCI repositories
+POST   /v2/{name}/blobs/uploads/           start OCI blob upload
+PUT    /v2/{name}/blobs/uploads/{uuid}     complete OCI blob upload
+GET    /v2/{name}/blobs/{digest}           download OCI blob
+DELETE /v2/{name}/blobs/{digest}           delete OCI blob
+PUT    /v2/{name}/manifests/{ref}          store OCI manifest ref
+GET    /v2/{name}/manifests/{ref}          read OCI manifest ref
+DELETE /v2/{name}/manifests/{ref}          delete OCI manifest ref
 ```
 
-This is intentionally simple — not OCI-compliant, designed for internal use between `uni` instances on a local network.
+Full OCI compliance/auth/signing is tracked in Phase 8, but the migration path is active:
+`uni push/pull` use OCI first and fall back to legacy endpoints if needed.
 
 ---
 
