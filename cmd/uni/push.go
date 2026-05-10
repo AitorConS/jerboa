@@ -24,8 +24,10 @@ func newPushCmd(storePath *string) *cobra.Command {
 				return fmt.Errorf("push: %w", err)
 			}
 			client := registry.NewClient(registryURL)
-			if err := client.Push(cmd.Context(), m, diskPath); err != nil {
-				return fmt.Errorf("push: %w", err)
+			if err := client.PushOCI(cmd.Context(), m, diskPath); err != nil {
+				if errLegacy := client.Push(cmd.Context(), m, diskPath); errLegacy != nil {
+					return fmt.Errorf("push: OCI error: %v; legacy error: %w", err, errLegacy)
+				}
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "pushed %s to %s\n", ref, registryURL)
 			return nil
@@ -45,9 +47,13 @@ func newPullCmd(storePath *string) *cobra.Command {
 				return fmt.Errorf("pull: open store: %w", err)
 			}
 			client := registry.NewClient(registryURL)
-			m, err := client.Pull(cmd.Context(), ref, store)
+			m, err := client.PullOCI(cmd.Context(), ref, store)
 			if err != nil {
-				return fmt.Errorf("pull: %w", err)
+				mLegacy, errLegacy := client.Pull(cmd.Context(), ref, store)
+				if errLegacy != nil {
+					return fmt.Errorf("pull: OCI error: %v; legacy error: %w", err, errLegacy)
+				}
+				m = mLegacy
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s\n", m.DiskDigest, m.Name, m.Tag)
 			return nil

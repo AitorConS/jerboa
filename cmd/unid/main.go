@@ -87,9 +87,13 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 		if err != nil {
 			return fmt.Errorf("unid: blob store: %w", err)
 		}
+		ociStore, err := registry.NewOCIStore(ociDir())
+		if err != nil {
+			return fmt.Errorf("unid: OCI store: %w", err)
+		}
 		regSrv := &http.Server{
 			Addr:    registryAddr,
-			Handler: registry.NewServer(imgStore, registry.WithBlobStore(blobStore)).Handler(),
+			Handler: registry.NewServer(imgStore, registry.WithBlobStore(blobStore), registry.WithOCIStore(ociStore)).Handler(),
 		}
 		go func() {
 			slog.Info("registry listening", "addr", registryAddr)
@@ -149,4 +153,12 @@ func blobsDir() string {
 		return ".uni/blobs"
 	}
 	return home + "/.uni/blobs"
+}
+
+func ociDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".uni/oci"
+	}
+	return home + "/.uni/oci"
 }

@@ -18,9 +18,12 @@ import (
 func startOCIServer(t *testing.T) (*httptest.Server, *image.Store) {
 	t.Helper()
 	store := makeStore(t)
+	root := t.TempDir()
 	blobs, err := ociblob.NewStore(filepath.Join(t.TempDir(), "blobs"))
 	require.NoError(t, err)
-	h := registry.NewServer(store, registry.WithBlobStore(blobs)).Handler()
+	ociStore, err := registry.NewOCIStore(filepath.Join(root, "oci"))
+	require.NoError(t, err)
+	h := registry.NewServer(store, registry.WithBlobStore(blobs), registry.WithOCIStore(ociStore)).Handler()
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv, store
@@ -85,4 +88,41 @@ func TestOCICompleteUploadDigestMismatch(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestOCIPersistedManifestAcrossServerRestart(t *testing.T) {
+	root := t.TempDir()
+	store := makeStore(t)
+	blobs, err := ociblob.NewStore(filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	ociStore, err := registry.NewOCIStore(filepath.Join(root, "oci"))
+	require.NoError(t, err)
+
+	srv1 := httptest.NewServer(registry.NewServer(store, registry.WithBlobStore(blobs), registry.WithOCIStore(ociStore)).Handler())
+	client1 := registry.NewClient(srv1.URL)
+	disk := makeDiskFile(t)
+	m := image.Manifest{
+		SchemaVersion: image.SchemaVersion,
+		Name:          "persistapp",
+		Tag:           "v1",
+		Created:       time.Now().UTC(),
+		Config:        image.Config{Memory: "256M", CPUs: 1},
+		DiskDigest:    "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1",
+		DiskSize:      1024,
+	}
+	require.NoError(t, client1.PushOCI(context.Background(), m, disk))
+	srv1.Close()
+
+	store2 := makeStore(t)
+	blobs2, err := ociblob.NewStore(filepath.Join(root, "blobs"))
+	require.NoError(t, err)
+	ociStore2, err := registry.NewOCIStore(filepath.Join(root, "oci"))
+	require.NoError(t, err)
+	srv2 := httptest.NewServer(registry.NewServer(store2, registry.WithBlobStore(blobs2), registry.WithOCIStore(ociStore2)).Handler())
+	defer srv2.Close()
+
+	resp, err := http.Get(srv2.URL + "/v2/persistapp/manifests/v1")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 }

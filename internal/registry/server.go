@@ -28,6 +28,7 @@ import (
 type Server struct {
 	store      *image.Store
 	blobStore  *ociblob.Store
+	ociStore   *OCIStore
 	manifestMu sync.RWMutex
 	manifests  map[string]map[string]ociregistry.Manifest
 	uploadMu   sync.Mutex
@@ -41,6 +42,14 @@ type Option func(*Server) error
 func WithBlobStore(store *ociblob.Store) Option {
 	return func(s *Server) error {
 		s.blobStore = store
+		return nil
+	}
+}
+
+// WithOCIStore configures persistent OCI manifest storage.
+func WithOCIStore(store *OCIStore) Option {
+	return func(s *Server) error {
+		s.ociStore = store
 		return nil
 	}
 }
@@ -142,6 +151,15 @@ func (s *Server) handleOCIBase(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleOCICatalog(w http.ResponseWriter, _ *http.Request) {
+	if s.ociStore != nil {
+		repos, err := s.ociStore.Repositories()
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"repositories": repos})
+		return
+	}
 	s.manifestMu.RLock()
 	repos := make([]string, 0, len(s.manifests))
 	for name := range s.manifests {
@@ -286,6 +304,12 @@ func (s *Server) handleOCIPutManifest(w http.ResponseWriter, r *http.Request) {
 	s.manifests[name][ref] = m
 	s.manifests[name][manifestDigest] = m
 	s.manifestMu.Unlock()
+	if s.ociStore != nil {
+		if err := s.ociStore.Save(name, ref, manifestDigest, m); err != nil {
+			httpErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 
 	w.Header().Set("Docker-Content-Digest", manifestDigest)
 	w.Header().Set("Content-Type", ociregistry.MediaTypeImageManifest)
@@ -295,6 +319,25 @@ func (s *Server) handleOCIPutManifest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOCIGetManifest(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	ref := r.PathValue("ref")
+	if s.ociStore != nil {
+		m, manifestDigest, err := s.ociStore.Get(name, ref)
+		if err != nil {
+			httpErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		data, err := ociregistry.MarshalManifest(m)
+		if err != nil {
+			httpErr(w, http.StatusInternalServerError, "marshal OCI manifest: "+err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", ociregistry.MediaTypeImageManifest)
+		w.Header().Set("Docker-Content-Digest", manifestDigest)
+		w.WriteHeader(http.StatusOK)
+		if _, err := w.Write(data); err != nil {
+			slog.Warn("registry: write OCI manifest", "err", err)
+		}
+		return
+	}
 	s.manifestMu.RLock()
 	repo, ok := s.manifests[name]
 	if !ok {
@@ -324,6 +367,14 @@ func (s *Server) handleOCIGetManifest(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleOCIDeleteManifest(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	ref := r.PathValue("ref")
+	if s.ociStore != nil {
+		if err := s.ociStore.Delete(name, ref); err != nil {
+			httpErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
 	s.manifestMu.Lock()
 	defer s.manifestMu.Unlock()
 	repo, ok := s.manifests[name]

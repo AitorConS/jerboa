@@ -263,6 +263,8 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.1.1 — Content-addressable blob store foundation (`internal/ociblob/store.go`)
   - [x] 8.1.2 — Initial OCI registry endpoints (`/v2/_catalog`, blob uploads, manifest put/get/delete) in `internal/registry/server.go`
   - [x] 8.1.3 — Initial OCI client push/pull flow using blob + manifest APIs in `internal/registry/client.go`
+  - [x] 8.1.4 — Persistent OCI manifest refs/store on disk (`internal/registry/ocistore.go`)
+  - [x] 8.1.5 — `uni push/pull` prefer OCI flow with legacy fallback (`cmd/uni/push.go`)
 - [ ] 8.2 — Image signing with `cosign` or built-in Ed25519 keypair; signature stored as OCI referrer
 - [ ] 8.3 — Signature verification on `uni pull` and `uni run` (configurable: warn / enforce / off)
 - [ ] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials

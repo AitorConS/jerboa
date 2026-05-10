@@ -332,6 +332,9 @@ Both the CLI and the kernel are independently versioned with semver.
 - Added initial OCI client flows in `internal/registry/client.go` (`PushOCI`/`PullOCI`) with layer tar+gzip packing/unpacking.
 - Wired `unid` registry startup to pass an OCI blob store (`~/.uni/blobs`) via `registry.WithBlobStore`.
 - Added OCI integration tests in `internal/registry/oci_test.go` covering v2 base/catalog, blob upload, manifest roundtrip, and digest mismatch.
+- Added persistent OCI manifest storage in `internal/registry/ocistore.go` (`~/.uni/oci`) and wired it into the registry server via `registry.WithOCIStore`.
+- Updated `uni push/pull` to prefer OCI flows (`PushOCI`/`PullOCI`) with automatic fallback to legacy `/v2/images` endpoints.
+- Added persistence coverage to OCI integration tests (`manifest survives server restart` case).
 
 ### Next Validation
 
