@@ -259,6 +259,8 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 - [x] 8.0 — Pre-flight hardening: cross-platform TAP stubs + registry/tools failure-path test expansion
 
 - [ ] 8.1 — OCI Distribution Spec v1.1 compatible API (push/pull/list/delete, manifests + blobs)
+  - [x] 8.1.0 — OCI manifest foundational types and validation (`internal/ociregistry/types.go`)
+  - [x] 8.1.1 — Content-addressable blob store foundation (`internal/ociblob/store.go`)
 - [ ] 8.2 — Image signing with `cosign` or built-in Ed25519 keypair; signature stored as OCI referrer
 - [ ] 8.3 — Signature verification on `uni pull` and `uni run` (configurable: warn / enforce / off)
 - [ ] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials

@@ -326,6 +326,8 @@ Both the CLI and the kernel are independently versioned with semver.
 - Added non-Linux TAP stubs in `internal/network/tap_stub.go` to make TAP API compile safely on all platforms.
 - Expanded `internal/tools/mkfs_test.go` with `downloadArtifact()` success and failure-path tests (HTTP errors, request build error, write/create-dir failures, cancelled context).
 - Expanded `internal/registry/server_test.go` with remove and bad-payload cases for `/v2/images` handlers.
+- Added OCI foundation types in `internal/ociregistry/types.go` with parser/validator tests.
+- Added content-addressable blob store foundation in `internal/ociblob/store.go` with CRUD/dedup tests.
 
 ### Next Validation
 
