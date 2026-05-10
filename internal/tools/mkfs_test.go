@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,4 +66,94 @@ func TestResolveMkfs_UsesExistingToolsDir(t *testing.T) {
 
 	cmd := mkfs(context.Background(), "/tmp/disk.img", "app", "")
 	require.Equal(t, filepath.Join(toolsDir, "mkfs"), cmd.Path)
+}
+
+func TestDownloadArtifact_Success(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("artifact"))
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "nested", "mkfs")
+	err := downloadArtifact(context.Background(), srv.URL+"/mkfs", dest)
+	require.NoError(t, err)
+
+	data, readErr := os.ReadFile(dest)
+	require.NoError(t, readErr)
+	require.Equal(t, "artifact", string(data))
+}
+
+func TestDownloadArtifact_HTTPError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	err := downloadArtifact(context.Background(), srv.URL+"/missing", filepath.Join(t.TempDir(), "mkfs"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "HTTP 404")
+}
+
+func TestDownloadArtifact_CreateDirError(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	filePath := filepath.Join(base, "not-a-dir")
+	require.NoError(t, os.WriteFile(filePath, []byte("x"), 0o644))
+	err := downloadArtifact(context.Background(), "https://example.com/mkfs", filepath.Join(filePath, "mkfs"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "create dir")
+}
+
+func TestDownloadArtifact_WriteError(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("artifact"))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	err := downloadArtifact(context.Background(), srv.URL+"/mkfs", dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "create")
+	require.Contains(t, err.Error(), "is a directory")
+}
+
+func TestDownloadArtifact_RequestBuildError(t *testing.T) {
+	t.Parallel()
+
+	err := downloadArtifact(context.Background(), "://bad-url", filepath.Join(t.TempDir(), "mkfs"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "build request")
+}
+
+func TestDownloadArtifact_DownloadError(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := downloadArtifact(ctx, "https://example.com/mkfs", filepath.Join(t.TempDir(), "mkfs"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "download")
+}
+
+func TestDownloadArtifact_DestinationNameInErrors(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	dest := filepath.Join(t.TempDir(), "bin", "custom-tool")
+	err := downloadArtifact(context.Background(), srv.URL+"/x", dest)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), fmt.Sprintf("download %s failed", filepath.Base(dest)))
 }

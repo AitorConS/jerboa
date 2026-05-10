@@ -2,9 +2,12 @@ package registry_test
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -140,4 +143,72 @@ func TestServer_Push_Pull_roundtrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "myapp", pulled.Name)
 	require.Equal(t, "v1", pulled.Tag)
+}
+
+func TestServer_Remove(t *testing.T) {
+	srv, store := startServer(t)
+	seedStore(t, store)
+
+	req, err := http.NewRequest(http.MethodDelete, srv.URL+"/v2/images/hello:latest", nil)
+	require.NoError(t, err)
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	_, _, getErr := store.Get("hello:latest")
+	require.Error(t, getErr)
+}
+
+func TestServer_GetDisk_NotFound(t *testing.T) {
+	srv, _ := startServer(t)
+
+	resp, err := http.Get(srv.URL + "/v2/images/missing/disk")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestServer_Push_MissingManifest(t *testing.T) {
+	srv, _ := startServer(t)
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/images", nil)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=missing")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+func TestServer_Push_MissingDiskField(t *testing.T) {
+	srv, _ := startServer(t)
+
+	manifest := `{` +
+		`"schemaVersion":1,` +
+		`"name":"hello",` +
+		`"tag":"latest",` +
+		`"created":"2026-05-10T00:00:00Z",` +
+		`"config":{"memory":"256M","cpus":1},` +
+		`"diskDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",` +
+		`"diskSize":1` +
+		`}`
+
+	body := "--x\r\n" +
+		"Content-Disposition: form-data; name=\"manifest\"\r\n\r\n" + manifest + "\r\n" +
+		"--x--\r\n"
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/images", io.NopCloser(strings.NewReader(body)))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

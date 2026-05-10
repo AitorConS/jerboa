@@ -128,6 +128,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - `Stop()` (graceful) sends SIGTERM → 30s → SIGKILL. On Windows SIGTERM is unsupported; falls back to SIGKILL immediately.
 - `isFilePath()` handles Windows drive-letter paths (`C:\...`) in addition to Unix prefixes.
 - TAP networking (`internal/network/tap.go`) is `//go:build linux` only.
+- Non-Linux builds include `internal/network/tap_stub.go` so TAP symbols compile cross-platform and fail with explicit runtime errors.
 - Bridge creation (`internal/network/bridge_linux.go`) is `//go:build linux` only.
 - `parseSig()` uses integer literals for SIGUSR1/SIGUSR2 (`syscall.Signal(10/12)`) for cross-platform compatibility.
 - `volume.ParseSize` uses `strconv.ParseInt` (not `fmt.Sscanf`) — Sscanf accepts trailing junk like `"1X"` silently.
@@ -317,3 +318,16 @@ Both the CLI and the kernel are independently versioned with semver.
 - `go test ./...`
 - `go test -cover ./internal/api/... ./internal/scheduler/... ./internal/tools/... ./cmd/uni/...`
 - `golangci-lint run --timeout 5m ./...`
+
+## Session Update (2026-05-10)
+
+### Completed
+
+- Added non-Linux TAP stubs in `internal/network/tap_stub.go` to make TAP API compile safely on all platforms.
+- Expanded `internal/tools/mkfs_test.go` with `downloadArtifact()` success and failure-path tests (HTTP errors, request build error, write/create-dir failures, cancelled context).
+- Expanded `internal/registry/server_test.go` with remove and bad-payload cases for `/v2/images` handlers.
+
+### Next Validation
+
+- `go test ./internal/tools ./internal/registry ./internal/network`
+- `go test -cover ./internal/tools/... ./internal/registry/...`

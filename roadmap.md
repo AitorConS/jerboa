@@ -256,6 +256,8 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 
 ### Steps
 
+- [x] 8.0 — Pre-flight hardening: cross-platform TAP stubs + registry/tools failure-path test expansion
+
 - [ ] 8.1 — OCI Distribution Spec v1.1 compatible API (push/pull/list/delete, manifests + blobs)
 - [ ] 8.2 — Image signing with `cosign` or built-in Ed25519 keypair; signature stored as OCI referrer
 - [ ] 8.3 — Signature verification on `uni pull` and `uni run` (configurable: warn / enforce / off)
