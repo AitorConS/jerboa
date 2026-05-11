@@ -14,6 +14,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/ociregistry"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,6 +82,68 @@ func TestOCIAuthRequiresBearerToken(t *testing.T) {
 		DiskSize:      1024,
 	}
 	require.NoError(t, client.PushOCI(context.Background(), m, disk))
+}
+
+func TestOCIAuthJWTScopes(t *testing.T) {
+	store := makeStore(t)
+	blobs, err := ociblob.NewStore(filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	ociStore, err := registry.NewOCIStore(filepath.Join(t.TempDir(), "oci"))
+	require.NoError(t, err)
+
+	h := registry.NewServer(
+		store,
+		registry.WithBlobStore(blobs),
+		registry.WithOCIStore(ociStore),
+		registry.WithJWTAuth("jwt-secret", "uni-test"),
+	).Handler()
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	pullOnly := mustSignJWT(t, "jwt-secret", "repository:secureapp:pull")
+	pushOnly := mustSignJWT(t, "jwt-secret", "repository:secureapp:push")
+
+	client := registry.NewClient(srv.URL)
+	client.SetToken(pushOnly)
+	disk := makeDiskFile(t)
+	m := image.Manifest{
+		SchemaVersion: image.SchemaVersion,
+		Name:          "secureapp",
+		Tag:           "latest",
+		Created:       time.Now().UTC(),
+		Config:        image.Config{Memory: "256M", CPUs: 1},
+		DiskDigest:    "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1",
+		DiskSize:      1024,
+	}
+	require.NoError(t, client.PushOCI(context.Background(), m, disk))
+
+	headReq, err := http.NewRequest(http.MethodHead, srv.URL+"/v2/secureapp/manifests/latest", nil)
+	require.NoError(t, err)
+	headReq.Header.Set("Authorization", "Bearer "+pushOnly)
+	headResp, err := http.DefaultClient.Do(headReq)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = headResp.Body.Close() })
+	require.Equal(t, http.StatusForbidden, headResp.StatusCode)
+
+	headReq2, err := http.NewRequest(http.MethodHead, srv.URL+"/v2/secureapp/manifests/latest", nil)
+	require.NoError(t, err)
+	headReq2.Header.Set("Authorization", "Bearer "+pullOnly)
+	headResp2, err := http.DefaultClient.Do(headReq2)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = headResp2.Body.Close() })
+	require.Equal(t, http.StatusOK, headResp2.StatusCode)
+}
+
+func mustSignJWT(t *testing.T, secret, scope string) string {
+	t.Helper()
+	claims := jwt.MapClaims{
+		"scope": scope,
+		"exp":   time.Now().Add(1 * time.Hour).Unix(),
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := tok.SignedString([]byte(secret))
+	require.NoError(t, err)
+	return signed
 }
 
 func TestOCIUploadBlobRoundTrip(t *testing.T) {

@@ -289,6 +289,13 @@ Registry auth is now available as an optional static bearer token gate:
 - When enabled, registry endpoints require `Authorization: Bearer <token>`
 - Unauthorized requests return `401` with `WWW-Authenticate: Bearer realm="uni-registry"`
 
+Scoped JWT auth is also available for registry endpoints:
+
+- Start daemon with `--registry-jwt-secret <secret>` (or `UNI_REGISTRY_JWT_SECRET=<secret>`)
+- Tokens are validated as HMAC JWTs and must include a `scope` claim
+- Supported scope format is Docker-style: `repository:<name>:pull,push` (supports `*` repo wildcard)
+- Missing/invalid tokens return `401`; valid tokens without required action scope return `403`
+
 ---
 
 ## File Copy (`uni cp`)

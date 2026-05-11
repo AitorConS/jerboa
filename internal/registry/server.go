@@ -15,6 +15,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/ociregistry"
+	"github.com/golang-jwt/jwt/v5"
 )
 
 // Server is an HTTP image registry backed by an image.Store.
@@ -32,6 +33,7 @@ type Server struct {
 	ociStore   *OCIStore
 	authToken  string
 	authRealm  string
+	jwtSecret  string
 	manifestMu sync.RWMutex
 	manifests  map[string]map[string]ociregistry.Manifest
 	uploadMu   sync.Mutex
@@ -61,6 +63,18 @@ func WithOCIStore(store *OCIStore) Option {
 func WithBearerToken(token, realm string) Option {
 	return func(s *Server) error {
 		s.authToken = strings.TrimSpace(token)
+		s.authRealm = strings.TrimSpace(realm)
+		if s.authRealm == "" {
+			s.authRealm = "uni-registry"
+		}
+		return nil
+	}
+}
+
+// WithJWTAuth enables JWT bearer token auth with scope validation.
+func WithJWTAuth(secret, realm string) Option {
+	return func(s *Server) error {
+		s.jwtSecret = strings.TrimSpace(secret)
 		s.authRealm = strings.TrimSpace(realm)
 		if s.authRealm == "" {
 			s.authRealm = "uni-registry"
@@ -583,7 +597,7 @@ func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authorized(w http.ResponseWriter, r *http.Request) bool {
-	if strings.TrimSpace(s.authToken) == "" {
+	if strings.TrimSpace(s.authToken) == "" && strings.TrimSpace(s.jwtSecret) == "" {
 		return true
 	}
 	if r == nil {
@@ -593,11 +607,114 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request) bool {
 	}
 	auth := r.Header.Get("Authorization")
 	token := strings.TrimPrefix(auth, "Bearer ")
-	if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) == 1 {
+	if strings.TrimSpace(s.authToken) != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) == 1 {
 		return true
+	}
+	if strings.TrimSpace(s.jwtSecret) != "" {
+		allowed, err := s.jwtAuthorized(r, token)
+		if err == nil && allowed {
+			return true
+		}
+		if err == nil && !allowed {
+			httpErr(w, http.StatusForbidden, "insufficient scope")
+			return false
+		}
 	}
 	w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", s.authRealm))
 	httpErr(w, http.StatusUnauthorized, "unauthorized")
+	return false
+}
+
+func (s *Server) jwtAuthorized(r *http.Request, raw string) (bool, error) {
+	if strings.TrimSpace(raw) == "" {
+		return false, fmt.Errorf("missing bearer token")
+	}
+	parsed, err := jwt.Parse(raw, func(token *jwt.Token) (any, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return []byte(s.jwtSecret), nil
+	})
+	if err != nil || !parsed.Valid {
+		if err == nil {
+			err = fmt.Errorf("invalid token")
+		}
+		return false, err
+	}
+	claims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return false, fmt.Errorf("invalid claims")
+	}
+	if !hasRequiredScope(claims, requiredRepo(r), requiredAction(r)) {
+		return false, nil
+	}
+	return true, nil
+}
+
+func requiredRepo(r *http.Request) string {
+	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
+	if path == "" || path == "_catalog" {
+		return "*"
+	}
+	if strings.HasPrefix(path, "images") {
+		parts := strings.Split(path, "/")
+		if len(parts) < 2 {
+			return "*"
+		}
+		ref := parts[1]
+		if strings.HasPrefix(ref, "sha256:") {
+			return "*"
+		}
+		idx := strings.LastIndex(ref, ":")
+		if idx <= 0 {
+			return "*"
+		}
+		return ref[:idx]
+	}
+	parts := strings.Split(path, "/")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return "*"
+}
+
+func requiredAction(r *http.Request) string {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead:
+		return "pull"
+	case http.MethodPost, http.MethodPut, http.MethodDelete:
+		return "push"
+	default:
+		return "pull"
+	}
+}
+
+func hasRequiredScope(claims jwt.MapClaims, repo, action string) bool {
+	scopeValue, ok := claims["scope"]
+	if !ok {
+		return false
+	}
+	scope, ok := scopeValue.(string)
+	if !ok {
+		return false
+	}
+	entries := strings.Fields(scope)
+	for _, e := range entries {
+		parts := strings.Split(e, ":")
+		if len(parts) != 3 || parts[0] != "repository" {
+			continue
+		}
+		target := parts[1]
+		if target != "*" && target != repo {
+			continue
+		}
+		actions := strings.Split(parts[2], ",")
+		for _, a := range actions {
+			if strings.TrimSpace(a) == action {
+				return true
+			}
+		}
+	}
 	return false
 }
 

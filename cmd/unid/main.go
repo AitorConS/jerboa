@@ -35,6 +35,7 @@ func newRootCmd() *cobra.Command {
 		qemuBin       string
 		registryAddr  string
 		registryToken string
+		registryJWT   string
 		storePath     string
 	)
 	root := &cobra.Command{
@@ -42,7 +43,7 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, storePath)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, storePath)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -53,12 +54,14 @@ func newRootCmd() *cobra.Command {
 		"HTTP address for image registry (e.g. :5000); empty disables it")
 	root.Flags().StringVar(&registryToken, "registry-token", os.Getenv("UNI_REGISTRY_TOKEN"),
 		"Optional bearer token for registry auth (or set UNI_REGISTRY_TOKEN)")
+	root.Flags().StringVar(&registryJWT, "registry-jwt-secret", os.Getenv("UNI_REGISTRY_JWT_SECRET"),
+		"Optional JWT HMAC secret for scoped registry auth (or set UNI_REGISTRY_JWT_SECRET)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
 	return root
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, storePath string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, storePath string) error {
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
 	netStore, err := network.NewStore(networksDir())
@@ -97,6 +100,9 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		opts := []registry.Option{registry.WithBlobStore(blobStore), registry.WithOCIStore(ociStore)}
 		if registryToken != "" {
 			opts = append(opts, registry.WithBearerToken(registryToken, "uni-registry"))
+		}
+		if registryJWT != "" {
+			opts = append(opts, registry.WithJWTAuth(registryJWT, "uni-registry"))
 		}
 		regSrv := &http.Server{
 			Addr:    registryAddr,
