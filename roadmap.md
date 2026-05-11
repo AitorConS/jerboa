@@ -4,7 +4,12 @@
 
 ---
 
-## Current status: Phase 7.7 — complete (Phase 8 next)
+## Current status: Phase 8 — in progress (security + compatibility nearly complete)
+
+### Phase 8 snapshot (2026-05-11)
+
+- Done: OCI manifests/blobs persistence, HEAD support, nested repo paths, Docker-style auth challenges, JWT scope + issuer/audience validation, registry TLS (custom cert/key), CLI registry auth/TLS flags, `uni search`, and `unid gc` safe blob cleanup.
+- Remaining to close Phase 8: image signing + signature verification, registry self-signed bootstrapping option, and final Docker CLI `login/push/pull` compatibility validation.
 
 ---
 

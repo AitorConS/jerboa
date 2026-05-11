@@ -98,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 8** (Registry & Distribution) — OCI foundation implemented, auth/signing/TLS pending.
+Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search mostly implemented; signing and final Docker CLI validation pending.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -117,7 +117,7 @@ Currently in **Phase 8** (Registry & Distribution) — OCI foundation implemente
 | 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
 | 7.6 — DNS | ✅ done | Internal DNS resolver in `unid` (`DNS.Resolve`/`DNS.List`), scoped names (`name.network`), ambiguity detection, and `uni dns` CLI |
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
-| 8 — Registry & Distribution | ⬜ | OCI-compatible registry, image signing, JWT auth (basic server/client exists) |
+| 8 — Registry & Distribution | ⬜ | OCI-compatible registry with auth/TLS/GC/search largely done; signing + Docker CLI validation pending |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
 
@@ -367,6 +367,19 @@ Both the CLI and the kernel are independently versioned with semver.
 ### Validation
 
 - `go test ./internal/registry ./cmd/unid`
+
+## Session Checkpoint (2026-05-11, end-of-day)
+
+### Phase 8 Progress Saved
+
+- Registry now supports: OCI-first push/pull, nested repositories, HEAD endpoints, Docker-style auth challenges, bearer + JWT auth (with issuer/audience checks), registry TLS (custom cert/key), CLI auth/TLS flags, remote search, and safe blob GC.
+- Documentation and roadmap have been aligned to reflect current state and remaining work.
+
+### Remaining to close Phase 8
+
+- Image signing and verification (`8.2`, `8.3`).
+- Registry self-signed bootstrap path (`8.5` remainder).
+- Final Docker CLI interoperability validation (`8.10` remainder).
 
 ## Session Update (2026-05-11, CLI registry e2e)
 
