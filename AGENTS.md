@@ -354,3 +354,16 @@ Both the CLI and the kernel are independently versioned with semver.
 ### Validation
 
 - `go test ./internal/registry ./cmd/unid`
+
+## Session Update (2026-05-11, follow-up)
+
+### Completed
+
+- Added OCI `HEAD` endpoints for blobs and manifests in `internal/registry/server.go`.
+- `HEAD /v2/<name>/blobs/<digest>` now returns existence + `Docker-Content-Digest` without streaming the blob body.
+- `HEAD /v2/<name>/manifests/<ref>` now returns existence + digest headers for both in-memory and persistent OCI manifest stores.
+- Extended OCI integration coverage in `internal/registry/oci_test.go` for both new `HEAD` flows.
+
+### Validation
+
+- `go test ./internal/registry ./cmd/unid`

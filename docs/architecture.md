@@ -272,9 +272,11 @@ GET    /v2/_catalog                        list OCI repositories
 POST   /v2/{name}/blobs/uploads/           start OCI blob upload
 PUT    /v2/{name}/blobs/uploads/{uuid}     complete OCI blob upload
 GET    /v2/{name}/blobs/{digest}           download OCI blob
+HEAD   /v2/{name}/blobs/{digest}           check OCI blob existence + digest
 DELETE /v2/{name}/blobs/{digest}           delete OCI blob
 PUT    /v2/{name}/manifests/{ref}          store OCI manifest ref
 GET    /v2/{name}/manifests/{ref}          read OCI manifest ref
+HEAD   /v2/{name}/manifests/{ref}          check OCI manifest existence + digest
 DELETE /v2/{name}/manifests/{ref}          delete OCI manifest ref
 ```
 

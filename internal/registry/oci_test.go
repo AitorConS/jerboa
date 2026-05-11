@@ -3,6 +3,7 @@ package registry_test
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
+	"github.com/AitorConS/unikernel-engine/internal/ociregistry"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/stretchr/testify/require"
 )
@@ -103,12 +105,34 @@ func TestOCIUploadBlobRoundTrip(t *testing.T) {
 	t.Cleanup(func() { _ = resp.Body.Close() })
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "application/vnd.oci.image.manifest.v1+json", resp.Header.Get("Content-Type"))
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	ociManifest, err := ociregistry.ParseManifest(body)
+	require.NoError(t, err)
+	require.NotEmpty(t, ociManifest.Layers)
 
 	localStore := makeStore(t)
 	pulled, err := client.PullOCI(context.Background(), "ociapp:latest", localStore)
 	require.NoError(t, err)
 	require.Equal(t, "ociapp", pulled.Name)
 	require.Equal(t, "latest", pulled.Tag)
+
+	headManifestReq, err := http.NewRequest(http.MethodHead, srv.URL+"/v2/ociapp/manifests/latest", nil)
+	require.NoError(t, err)
+	headManifestResp, err := http.DefaultClient.Do(headManifestReq)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = headManifestResp.Body.Close() })
+	require.Equal(t, http.StatusOK, headManifestResp.StatusCode)
+	require.Equal(t, "application/vnd.oci.image.manifest.v1+json", headManifestResp.Header.Get("Content-Type"))
+	require.NotEmpty(t, headManifestResp.Header.Get("Docker-Content-Digest"))
+
+	headBlobReq, err := http.NewRequest(http.MethodHead, srv.URL+"/v2/ociapp/blobs/"+ociManifest.Layers[0].Digest, nil)
+	require.NoError(t, err)
+	headBlobResp, err := http.DefaultClient.Do(headBlobReq)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = headBlobResp.Body.Close() })
+	require.Equal(t, http.StatusOK, headBlobResp.StatusCode)
+	require.Equal(t, ociManifest.Layers[0].Digest, headBlobResp.Header.Get("Docker-Content-Digest"))
 }
 
 func TestOCICompleteUploadDigestMismatch(t *testing.T) {

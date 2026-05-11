@@ -136,6 +136,10 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 		if len(parts) == 3 {
 			r.SetPathValue("name", name)
 			r.SetPathValue("digest", parts[2])
+			if r.Method == http.MethodHead {
+				s.handleOCIHeadBlob(w, r)
+				return
+			}
 			if r.Method == http.MethodGet {
 				s.handleOCIGetBlob(w, r)
 				return
@@ -152,6 +156,9 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case http.MethodPut:
 				s.handleOCIPutManifest(w, r)
+				return
+			case http.MethodHead:
+				s.handleOCIHeadManifest(w, r)
 				return
 			case http.MethodGet:
 				s.handleOCIGetManifest(w, r)
@@ -272,6 +279,24 @@ func (s *Server) handleOCIGetBlob(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleOCIHeadBlob(w http.ResponseWriter, r *http.Request) {
+	if s.blobStore == nil {
+		httpErr(w, http.StatusNotImplemented, "OCI blobs not configured")
+		return
+	}
+	digest := r.PathValue("digest")
+	if !strings.HasPrefix(digest, "sha256:") {
+		digest = "sha256:" + digest
+	}
+	if !s.blobStore.Exists(digest) {
+		httpErr(w, http.StatusNotFound, "blob not found")
+		return
+	}
+	w.Header().Set("Docker-Content-Digest", digest)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.WriteHeader(http.StatusOK)
+}
+
 func (s *Server) handleOCIDeleteBlob(w http.ResponseWriter, r *http.Request) {
 	if s.blobStore == nil {
 		httpErr(w, http.StatusNotImplemented, "OCI blobs not configured")
@@ -382,6 +407,43 @@ func (s *Server) handleOCIGetManifest(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(data); err != nil {
 		slog.Warn("registry: write OCI manifest", "err", err)
 	}
+}
+
+func (s *Server) handleOCIHeadManifest(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	ref := r.PathValue("ref")
+	if s.ociStore != nil {
+		_, manifestDigest, err := s.ociStore.Get(name, ref)
+		if err != nil {
+			httpErr(w, http.StatusNotFound, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", ociregistry.MediaTypeImageManifest)
+		w.Header().Set("Docker-Content-Digest", manifestDigest)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	s.manifestMu.RLock()
+	repo, ok := s.manifests[name]
+	if !ok {
+		s.manifestMu.RUnlock()
+		httpErr(w, http.StatusNotFound, "repository not found")
+		return
+	}
+	m, ok := repo[ref]
+	s.manifestMu.RUnlock()
+	if !ok {
+		httpErr(w, http.StatusNotFound, "manifest not found")
+		return
+	}
+	data, err := ociregistry.MarshalManifest(m)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "marshal OCI manifest: "+err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", ociregistry.MediaTypeImageManifest)
+	w.Header().Set("Docker-Content-Digest", image.DigestSHA256(data))
+	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleOCIDeleteManifest(w http.ResponseWriter, r *http.Request) {
