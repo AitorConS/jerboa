@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +37,39 @@ func NewClient(baseURL string) *Client {
 // SetToken configures a bearer token for registry requests.
 func (c *Client) SetToken(token string) {
 	c.token = token
+}
+
+// SetInsecureSkipVerify configures TLS certificate verification behavior.
+func (c *Client) SetInsecureSkipVerify(insecure bool) {
+	transport := c.ensureTransport()
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	}
+	transport.TLSClientConfig.InsecureSkipVerify = insecure
+}
+
+// SetCACertFile configures a custom CA certificate for registry TLS.
+func (c *Client) SetCACertFile(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	pemData, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read CA cert: %w", err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pemData) {
+		return fmt.Errorf("parse CA cert PEM")
+	}
+	transport := c.ensureTransport()
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	}
+	transport.TLSClientConfig.RootCAs = pool
+	return nil
 }
 
 // PushOCI uploads an image using OCI blob and manifest endpoints.
@@ -488,4 +523,13 @@ func (c *Client) addAuth(req *http.Request) {
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
+}
+
+func (c *Client) ensureTransport() *http.Transport {
+	if t, ok := c.http.Transport.(*http.Transport); ok && t != nil {
+		return t
+	}
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	c.http.Transport = t
+	return t
 }

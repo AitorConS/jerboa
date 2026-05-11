@@ -460,6 +460,12 @@ Push a local image to a registry.
 If the target registry does not support OCI endpoints yet, it automatically falls back to the legacy
 `/v2/images` API.
 
+Registry auth/TLS options are available as global flags:
+
+- `--registry-token` (or `UNI_REGISTRY_TOKEN`) to send bearer/JWT auth
+- `--registry-ca-cert` (or `UNI_REGISTRY_CA_CERT`) to trust a custom CA
+- `--registry-insecure` (or `UNI_REGISTRY_INSECURE=true`) to skip TLS verification in development
+
 ```
 uni push <ref> <registry-url>
 ```
@@ -479,6 +485,8 @@ Pull an image from a registry into the local store.
 
 `uni pull` now prefers the OCI Distribution flow and automatically falls back to the legacy
 `/v2/images` API when needed.
+
+The same global registry auth/TLS flags used by `uni push` apply to `uni pull`.
 
 ```
 uni pull <ref> <registry-url>

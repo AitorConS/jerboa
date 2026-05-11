@@ -381,6 +381,19 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./cmd/unid ./internal/registry`
 
+## Session Update (2026-05-11, CLI registry auth/tls)
+
+### Completed
+
+- Added global CLI registry auth flag/env: `--registry-token` / `UNI_REGISTRY_TOKEN`.
+- Added global CLI TLS options: `--registry-ca-cert` / `UNI_REGISTRY_CA_CERT` and `--registry-insecure` / `UNI_REGISTRY_INSECURE`.
+- Extended registry client TLS support with custom CA trust and optional insecure TLS mode.
+- Wired `uni push` and `uni pull` to consistently apply registry auth/TLS options for both OCI and legacy fallback flows.
+
+### Validation
+
+- `go test ./cmd/uni ./internal/registry`
+
 ## Session Update (2026-05-11, JWT auth)
 
 ### Completed

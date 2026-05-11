@@ -279,6 +279,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 - [ ] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)
 - [ ] 8.7 — Garbage collection: `unid gc` removes blobs not referenced by any manifest
 - [ ] 8.8 — `uni push / pull` work with auth headers and TLS
+  - [x] 8.8.0 — Added global CLI registry auth/TLS options (`--registry-token`, `--registry-ca-cert`, `--registry-insecure`) with env var support
 - [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry
 - [ ] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry
 - [ ] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
