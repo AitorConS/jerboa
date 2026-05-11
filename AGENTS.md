@@ -356,6 +356,18 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./internal/registry ./cmd/unid`
 
+## Session Update (2026-05-11, OCI upload chunks)
+
+### Completed
+
+- Added OCI chunk upload endpoint support in `internal/registry/server.go` via `PATCH /v2/<name>/blobs/uploads/<uuid>`.
+- Updated blob upload completion to consume chunked upload state + final PUT body when present.
+- Added integration coverage in `internal/registry/oci_test.go` for `POST` -> `PATCH` -> `PUT` upload flow.
+
+### Validation
+
+- `go test ./internal/registry ./cmd/unid`
+
 ## Session Update (2026-05-11, CLI registry e2e)
 
 ### Completed

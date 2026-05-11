@@ -287,6 +287,32 @@ func TestOCICompleteUploadDigestMismatch(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestOCIPatchThenCompleteUpload(t *testing.T) {
+	srv, _ := startOCIServer(t)
+
+	startResp, err := http.Post(srv.URL+"/v2/app/blobs/uploads/", "application/octet-stream", nil)
+	require.NoError(t, err)
+	loc := startResp.Header.Get("Location")
+	require.NoError(t, startResp.Body.Close())
+	require.Equal(t, http.StatusAccepted, startResp.StatusCode)
+
+	patchReq, err := http.NewRequest(http.MethodPatch, srv.URL+loc, bytes.NewReader([]byte("abc")))
+	require.NoError(t, err)
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = patchResp.Body.Close() })
+	require.Equal(t, http.StatusAccepted, patchResp.StatusCode)
+	require.NotEmpty(t, patchResp.Header.Get("Docker-Upload-UUID"))
+
+	putReq, err := http.NewRequest(http.MethodPut, srv.URL+loc+"?digest=sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", nil)
+	require.NoError(t, err)
+	putResp, err := http.DefaultClient.Do(putReq)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = putResp.Body.Close() })
+	require.Equal(t, http.StatusCreated, putResp.StatusCode)
+	require.Equal(t, "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", putResp.Header.Get("Docker-Content-Digest"))
+}
+
 func TestOCIPersistedManifestAcrossServerRestart(t *testing.T) {
 	root := t.TempDir()
 	store := makeStore(t)

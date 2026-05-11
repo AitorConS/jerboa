@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -40,7 +41,7 @@ type Server struct {
 	manifestMu  sync.RWMutex
 	manifests   map[string]map[string]ociregistry.Manifest
 	uploadMu    sync.Mutex
-	uploads     map[string]struct{}
+	uploads     map[string]string
 }
 
 // Option configures a registry Server.
@@ -102,7 +103,7 @@ func NewServer(store *image.Store, opts ...Option) *Server {
 		authRealm:   "uni-registry",
 		authService: "uni-registry",
 		manifests:   make(map[string]map[string]ociregistry.Manifest),
-		uploads:     make(map[string]struct{}),
+		uploads:     make(map[string]string),
 	}
 	for _, opt := range opts {
 		if err := opt(srv); err != nil {
@@ -151,7 +152,7 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 			s.handleOCIStartUpload(w, r)
 			return
 		}
-		if strings.HasPrefix(tail, "uploads/") && r.Method == http.MethodPut {
+		if strings.HasPrefix(tail, "uploads/") && (r.Method == http.MethodPut || r.Method == http.MethodPatch) {
 			uuid := strings.TrimPrefix(tail, "uploads/")
 			if uuid == "" {
 				http.NotFound(w, r)
@@ -159,6 +160,10 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 			}
 			r.SetPathValue("name", name)
 			r.SetPathValue("uuid", uuid)
+			if r.Method == http.MethodPatch {
+				s.handleOCIPatchUpload(w, r)
+				return
+			}
 			s.handleOCICompleteUpload(w, r)
 			return
 		}
@@ -237,8 +242,19 @@ func (s *Server) handleOCIStartUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tmp, err := os.CreateTemp(filepath.Dir(os.TempDir()), "uni-oci-upload-*")
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "create upload file: "+err.Error())
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		httpErr(w, http.StatusInternalServerError, "close upload file: "+err.Error())
+		return
+	}
+
 	s.uploadMu.Lock()
-	s.uploads[uuid] = struct{}{}
+	s.uploads[uuid] = tmp.Name()
 	s.uploadMu.Unlock()
 
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", name, uuid))
@@ -258,7 +274,7 @@ func (s *Server) handleOCICompleteUpload(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.uploadMu.Lock()
-	_, ok := s.uploads[uuid]
+	uploadPath, ok := s.uploads[uuid]
 	if ok {
 		delete(s.uploads, uuid)
 	}
@@ -267,8 +283,16 @@ func (s *Server) handleOCICompleteUpload(w http.ResponseWriter, r *http.Request)
 		httpErr(w, http.StatusNotFound, "upload not found")
 		return
 	}
+	defer func() { _ = os.Remove(uploadPath) }()
 
-	gotDigest, _, err := s.blobStore.Put(r.Body)
+	uploadFile, err := os.Open(uploadPath)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "open upload file: "+err.Error())
+		return
+	}
+	defer func() { _ = uploadFile.Close() }()
+
+	gotDigest, _, err := s.blobStore.Put(io.MultiReader(uploadFile, r.Body))
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, "store blob: "+err.Error())
 		return
@@ -282,6 +306,54 @@ func (s *Server) handleOCICompleteUpload(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Docker-Content-Digest", gotDigest)
 	w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/%s", name, gotDigest))
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (s *Server) handleOCIPatchUpload(w http.ResponseWriter, r *http.Request) {
+	if s.blobStore == nil {
+		httpErr(w, http.StatusNotImplemented, "OCI blobs not configured")
+		return
+	}
+	uuid := r.PathValue("uuid")
+	name := r.PathValue("name")
+
+	s.uploadMu.Lock()
+	uploadPath, ok := s.uploads[uuid]
+	s.uploadMu.Unlock()
+	if !ok {
+		httpErr(w, http.StatusNotFound, "upload not found")
+		return
+	}
+
+	f, err := os.OpenFile(uploadPath, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "open upload file: "+err.Error())
+		return
+	}
+	n, err := io.Copy(f, r.Body)
+	closeErr := f.Close()
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "write upload chunk: "+err.Error())
+		return
+	}
+	if closeErr != nil {
+		httpErr(w, http.StatusInternalServerError, "close upload file: "+closeErr.Error())
+		return
+	}
+
+	st, err := os.Stat(uploadPath)
+	if err != nil {
+		httpErr(w, http.StatusInternalServerError, "stat upload file: "+err.Error())
+		return
+	}
+	end := st.Size() - 1
+	if st.Size() == 0 {
+		end = 0
+	}
+	w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", name, uuid))
+	w.Header().Set("Range", fmt.Sprintf("0-%d", end))
+	w.Header().Set("Docker-Upload-UUID", uuid)
+	_ = n
+	w.WriteHeader(http.StatusAccepted)
 }
 
 func (s *Server) handleOCIGetBlob(w http.ResponseWriter, r *http.Request) {

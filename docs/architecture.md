@@ -270,6 +270,7 @@ DELETE /v2/images/{ref}                    remove image (legacy)
 GET    /v2/                                OCI API base (200 when available)
 GET    /v2/_catalog                        list OCI repositories
 POST   /v2/{name}/blobs/uploads/           start OCI blob upload
+PATCH  /v2/{name}/blobs/uploads/{uuid}     append OCI blob upload chunk
 PUT    /v2/{name}/blobs/uploads/{uuid}     complete OCI blob upload
 GET    /v2/{name}/blobs/{digest}           download OCI blob
 HEAD   /v2/{name}/blobs/{digest}           check OCI blob existence + digest
