@@ -296,6 +296,12 @@ Scoped JWT auth is also available for registry endpoints:
 - Supported scope format is Docker-style: `repository:<name>:pull,push` (supports `*` repo wildcard)
 - Missing/invalid tokens return `401`; valid tokens without required action scope return `403`
 
+Registry HTTPS can be enabled with custom certificate files:
+
+- Start daemon with `--registry-tls-cert <path>` and `--registry-tls-key <path>`
+- Environment alternatives: `UNI_REGISTRY_TLS_CERT` and `UNI_REGISTRY_TLS_KEY`
+- Both cert and key are required together; partial TLS config is rejected at startup
+
 ---
 
 ## File Copy (`uni cp`)

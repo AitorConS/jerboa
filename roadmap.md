@@ -254,6 +254,8 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 
 **Goal:** production-grade, OCI-compatible registry with auth.
 
+**Architecture target:** the registry must end as an independently deployable service (separate process/deployment from `unid`), with the CLI interacting over network APIs.
+
 ### Steps
 
 - [x] 8.0 — Pre-flight hardening: cross-platform TAP stubs + registry/tools failure-path test expansion
@@ -272,11 +274,13 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.4.0 — Optional static bearer auth gate in registry server (`--registry-token` / `UNI_REGISTRY_TOKEN`) with `WWW-Authenticate` challenge
   - [x] 8.4.1 — Optional JWT auth gate in registry server (`--registry-jwt-secret` / `UNI_REGISTRY_JWT_SECRET`) with repo/action scope enforcement
 - [ ] 8.5 — TLS: registry server generates self-signed cert on first boot; supports custom cert via config
+  - [x] 8.5.0 — Support custom TLS cert/key config for registry HTTPS (`--registry-tls-cert`, `--registry-tls-key`)
 - [ ] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)
 - [ ] 8.7 — Garbage collection: `unid gc` removes blobs not referenced by any manifest
 - [ ] 8.8 — `uni push / pull` work with auth headers and TLS
 - [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry
 - [ ] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry
+- [ ] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
 
 **Done when:** OCI-compatible push/pull with auth + signing works. Docker CLI can push to the registry.
 

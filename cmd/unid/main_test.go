@@ -21,7 +21,7 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		err := serve(ctx, socketPath, "fake-qemu", "", "", "", t.TempDir())
+		err := serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", t.TempDir())
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Logf("serve returned: %v", err)
 		}
@@ -48,7 +48,7 @@ func TestServe_WithRegistry(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", "", "", storePath)
+		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", "", "", "", "", storePath)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -84,6 +84,8 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	require.NotNil(t, cmd.Flag("registry-addr"))
 	require.NotNil(t, cmd.Flag("registry-token"))
 	require.NotNil(t, cmd.Flag("registry-jwt-secret"))
+	require.NotNil(t, cmd.Flag("registry-tls-cert"))
+	require.NotNil(t, cmd.Flag("registry-tls-key"))
 	require.NotNil(t, cmd.Flag("store"))
 }
 
@@ -95,7 +97,7 @@ func TestServe_VersionQuery(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "", "", "", t.TempDir())
+		_ = serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", t.TempDir())
 	}()
 
 	require.Eventually(t, func() bool {
@@ -109,6 +111,12 @@ func TestServe_VersionQuery(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "daemon did not start")
 
 	cancel()
+}
+
+func TestServe_WithRegistryTLSMissingKeyFails(t *testing.T) {
+	err := serve(context.Background(), filepath.Join(t.TempDir(), "unid.sock"), "fake-qemu", "127.0.0.1:0", "", "", "cert.pem", "", t.TempDir())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "registry TLS config")
 }
 
 func TestNewRootCmd_Execute_Help(t *testing.T) {
