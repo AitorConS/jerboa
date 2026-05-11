@@ -501,6 +501,26 @@ uni pull hello:latest http://registry.example.com:5000
 
 ---
 
+### `uni search`
+
+Search remote registry repositories using OCI catalog data.
+
+```
+uni search <registry>/<query>
+```
+
+**Example:**
+
+```bash
+uni search registry.example.com:5000/hello
+# hello
+# hello-api
+```
+
+`uni search` supports the same global registry auth/TLS flags as `uni push`/`uni pull`.
+
+---
+
 ## Package Commands
 
 Manage pre-packaged files that can be included in images at build time. Packages are cached locally in `~/.uni/packages/`.

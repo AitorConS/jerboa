@@ -281,6 +281,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 - [ ] 8.8 — `uni push / pull` work with auth headers and TLS
   - [x] 8.8.0 — Added global CLI registry auth/TLS options (`--registry-token`, `--registry-ca-cert`, `--registry-insecure`) with env var support
 - [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry
+  - [x] 8.9.0 — Added `uni search <registry>/<query>` using OCI catalog with substring filtering
 - [ ] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry
 - [ ] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
 

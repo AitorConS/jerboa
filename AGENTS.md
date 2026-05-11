@@ -157,6 +157,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni rmi` | — | Remove a local image |
 | `uni push` | — | Push image to registry |
 | `uni pull` | — | Pull image from registry |
+| `uni search <registry>/<query>` | — | Search remote registry repositories |
 | `uni ps` | — | List running VMs |
 | `uni status` | — | Show VM summary with health/restart info |
 | `uni logs <id>` | — | Show captured serial console output |
@@ -389,6 +390,19 @@ Both the CLI and the kernel are independently versioned with semver.
 - Added global CLI TLS options: `--registry-ca-cert` / `UNI_REGISTRY_CA_CERT` and `--registry-insecure` / `UNI_REGISTRY_INSECURE`.
 - Extended registry client TLS support with custom CA trust and optional insecure TLS mode.
 - Wired `uni push` and `uni pull` to consistently apply registry auth/TLS options for both OCI and legacy fallback flows.
+
+### Validation
+
+- `go test ./cmd/uni ./internal/registry`
+
+## Session Update (2026-05-11, registry search)
+
+### Completed
+
+- Added `uni search <registry>/<query>` in `cmd/uni/search.go` using OCI catalog (`/v2/_catalog`) with case-insensitive substring filtering.
+- Added registry client catalog support via `ListRepositories()` in `internal/registry/client.go`.
+- Wired `uni search` to the same global registry auth/TLS options used by `uni push`/`uni pull`.
+- Added parser coverage for `<registry>/<query>` input in `cmd/uni/search_test.go`.
 
 ### Validation
 

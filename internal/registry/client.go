@@ -22,6 +22,10 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/ociregistry"
 )
 
+type catalogResponse struct {
+	Repositories []string `json:"repositories"`
+}
+
 // Client pushes and pulls images to/from a registry Server.
 type Client struct {
 	baseURL string
@@ -270,6 +274,29 @@ func (c *Client) List(ctx context.Context) ([]image.Manifest, error) {
 		return nil, fmt.Errorf("registry list: decode: %w", err)
 	}
 	return out, nil
+}
+
+// ListRepositories returns registry repository names from OCI catalog endpoint.
+func (c *Client) ListRepositories(ctx context.Context) ([]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v2/_catalog", nil)
+	if err != nil {
+		return nil, fmt.Errorf("registry catalog: build request: %w", err)
+	}
+	c.addAuth(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("registry catalog: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		msg, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("registry catalog: server returned %d: %s", resp.StatusCode, msg)
+	}
+	var out catalogResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("registry catalog: decode: %w", err)
+	}
+	return out.Repositories, nil
 }
 
 func (c *Client) getManifest(ctx context.Context, ref string) (image.Manifest, error) {

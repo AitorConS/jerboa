@@ -56,6 +56,7 @@ func newRootCmd() *cobra.Command {
 		newRmiCmd(&storePath),
 		newPushCmd(&storePath, regCfg),
 		newPullCmd(&storePath, regCfg),
+		newSearchCmd(regCfg),
 		newPsCmd(&socketPath, &outputFmt),
 		newStatusCmd(&socketPath, &outputFmt),
 		newLogsCmd(&socketPath),
