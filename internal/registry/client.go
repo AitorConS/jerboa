@@ -175,6 +175,7 @@ func (c *Client) Push(ctx context.Context, m image.Manifest, diskPath string) er
 		return fmt.Errorf("registry push: build request: %w", err)
 	}
 	req.Header.Set("Content-Type", ct)
+	c.addAuth(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -216,6 +217,7 @@ func (c *Client) List(ctx context.Context) ([]image.Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("registry list: build request: %w", err)
 	}
+	c.addAuth(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("registry list: %w", err)
@@ -241,6 +243,7 @@ func (c *Client) getManifest(ctx context.Context, ref string) (image.Manifest, e
 	if err != nil {
 		return image.Manifest{}, fmt.Errorf("get manifest: build request: %w", err)
 	}
+	c.addAuth(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return image.Manifest{}, fmt.Errorf("get manifest: %w", err)
@@ -266,6 +269,7 @@ func (c *Client) getDisk(ctx context.Context, ref string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get disk: build request: %w", err)
 	}
+	c.addAuth(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("get disk: %w", err)

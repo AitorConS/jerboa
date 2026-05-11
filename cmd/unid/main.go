@@ -31,17 +31,18 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath   string
-		qemuBin      string
-		registryAddr string
-		storePath    string
+		socketPath    string
+		qemuBin       string
+		registryAddr  string
+		registryToken string
+		storePath     string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, storePath)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, storePath)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -50,12 +51,14 @@ func newRootCmd() *cobra.Command {
 		"QEMU binary to use")
 	root.Flags().StringVar(&registryAddr, "registry-addr", "",
 		"HTTP address for image registry (e.g. :5000); empty disables it")
+	root.Flags().StringVar(&registryToken, "registry-token", os.Getenv("UNI_REGISTRY_TOKEN"),
+		"Optional bearer token for registry auth (or set UNI_REGISTRY_TOKEN)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
 	return root
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, storePath string) error {
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
 	netStore, err := network.NewStore(networksDir())
@@ -91,9 +94,13 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, storePath str
 		if err != nil {
 			return fmt.Errorf("unid: OCI store: %w", err)
 		}
+		opts := []registry.Option{registry.WithBlobStore(blobStore), registry.WithOCIStore(ociStore)}
+		if registryToken != "" {
+			opts = append(opts, registry.WithBearerToken(registryToken, "uni-registry"))
+		}
 		regSrv := &http.Server{
 			Addr:    registryAddr,
-			Handler: registry.NewServer(imgStore, registry.WithBlobStore(blobStore), registry.WithOCIStore(ociStore)).Handler(),
+			Handler: registry.NewServer(imgStore, opts...).Handler(),
 		}
 		go func() {
 			slog.Info("registry listening", "addr", registryAddr)

@@ -35,12 +35,50 @@ func TestOCIBaseAndCatalog(t *testing.T) {
 	baseResp, err := http.Get(srv.URL + "/v2/")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = baseResp.Body.Close() })
-	require.Equal(t, http.StatusUnauthorized, baseResp.StatusCode)
+	require.Equal(t, http.StatusOK, baseResp.StatusCode)
 
 	catResp, err := http.Get(srv.URL + "/v2/_catalog")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = catResp.Body.Close() })
 	require.Equal(t, http.StatusOK, catResp.StatusCode)
+}
+
+func TestOCIAuthRequiresBearerToken(t *testing.T) {
+	store := makeStore(t)
+	blobs, err := ociblob.NewStore(filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	ociStore, err := registry.NewOCIStore(filepath.Join(t.TempDir(), "oci"))
+	require.NoError(t, err)
+
+	h := registry.NewServer(
+		store,
+		registry.WithBlobStore(blobs),
+		registry.WithOCIStore(ociStore),
+		registry.WithBearerToken("secret-token", "uni-test"),
+	).Handler()
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	baseResp, err := http.Get(srv.URL + "/v2/")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = baseResp.Body.Close() })
+	require.Equal(t, http.StatusUnauthorized, baseResp.StatusCode)
+	require.Equal(t, `Bearer realm="uni-test"`, baseResp.Header.Get("WWW-Authenticate"))
+
+	client := registry.NewClient(srv.URL)
+	client.SetToken("secret-token")
+
+	disk := makeDiskFile(t)
+	m := image.Manifest{
+		SchemaVersion: image.SchemaVersion,
+		Name:          "secureapp",
+		Tag:           "latest",
+		Created:       time.Now().UTC(),
+		Config:        image.Config{Memory: "256M", CPUs: 1},
+		DiskDigest:    "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1",
+		DiskSize:      1024,
+	}
+	require.NoError(t, client.PushOCI(context.Background(), m, disk))
 }
 
 func TestOCIUploadBlobRoundTrip(t *testing.T) {

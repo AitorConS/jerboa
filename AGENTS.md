@@ -42,7 +42,7 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 **Package System (`internal/package/`)** — manages pre-packaged runtime files for `uni build --pkg`. Pipeline: `FetchIndex()` → `Download()` (SHA-256 verified) → `Extract()` (tar.gz) → `ExtractedFiles()` (file list for manifest). Local store at `~/.uni/packages/<name>/<version>/` with `files.tar.gz`, `files/`, `meta.json`. `IndexURL` is a `var` (overridable in tests). `RemoveAll()` deletes all versions; `Remove()` deletes one.
 
-**Registry (`internal/registry/`)** — HTTP image registry (simple, non-OCI). Endpoints: `GET /v2/images`, `GET /v2/images/{ref}`, `GET /v2/images/{ref}/disk`, `POST /v2/images` (multipart), `DELETE /v2/images/{ref}`.
+**Registry (`internal/registry/`)** — hybrid HTTP registry with legacy and OCI flows. Legacy endpoints: `GET /v2/images`, `GET /v2/images/{ref}`, `GET /v2/images/{ref}/disk`, `POST /v2/images`, `DELETE /v2/images/{ref}`. OCI endpoints: `/v2/`, `/v2/_catalog`, blob upload/download/delete, manifest put/get/delete. Optional bearer auth via `--registry-token` / `UNI_REGISTRY_TOKEN`.
 
 **Volume System (`internal/volume/`)** — named persistent virtio-blk disks at `~/.uni/volumes/<name>/disk.img`. Sparse files via seek+write. Created with `uni volume create`, mounted with `uni run -v name:/guest/path[:ro]`. Survive VM restarts.
 
@@ -98,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 7** (Orchestrator) — phases 7.0–7.7 complete.
+Currently in **Phase 8** (Registry & Distribution) — OCI foundation implemented, auth/signing/TLS pending.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -273,7 +273,7 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/image/` | Image build pipeline (ELF validation, mkfs, SHA256, `BuildManifest` with package files) + content-addressable store. |
 | `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding (Linux-only), **Network Store + IPAM** (`store.go`) with persistent `~/.uni/networks/<name>/` directories. Network type with subnet allocator (10.100.0.0/16 → /24 blocks), AllocateIP/ReleaseIP, bridge-per-network convention (`uni-br-<name>`). |
 | `internal/package/` | Package index fetch, local store, download (SHA-256 verified), extract (tar.gz), search, remove. |
-| `internal/registry/` | HTTP image registry server (simple, non-OCI) + push/pull client. |
+| `internal/registry/` | Hybrid registry server/client with legacy `/v2/images` and OCI `/v2/...` flows, persistent OCI blobs/manifests, optional bearer auth. |
 | `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |
@@ -340,3 +340,17 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./internal/tools ./internal/registry ./internal/network`
 - `go test -cover ./internal/tools/... ./internal/registry/...`
+
+## Session Update (2026-05-11)
+
+### Completed
+
+- Added optional bearer auth to registry server via `registry.WithBearerToken`.
+- Wired daemon registry auth flags/env: `unid --registry-token` and `UNI_REGISTRY_TOKEN`.
+- Updated OCI base endpoint behavior: `GET /v2/` returns `200` when available; when auth is enabled, unauthenticated requests receive `401` with `WWW-Authenticate` challenge.
+- Extended registry client auth propagation so legacy and OCI requests both send bearer tokens when configured.
+- Added auth coverage in `internal/registry/oci_test.go` and updated base endpoint expectations.
+
+### Validation
+
+- `go test ./internal/registry ./cmd/unid`

@@ -21,7 +21,7 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		err := serve(ctx, socketPath, "fake-qemu", "", t.TempDir())
+		err := serve(ctx, socketPath, "fake-qemu", "", "", t.TempDir())
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Logf("serve returned: %v", err)
 		}
@@ -48,7 +48,7 @@ func TestServe_WithRegistry(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", storePath)
+		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", "", storePath)
 	}()
 
 	require.Eventually(t, func() bool {
@@ -82,6 +82,7 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	require.NotNil(t, cmd.Flag("socket"))
 	require.NotNil(t, cmd.Flag("qemu"))
 	require.NotNil(t, cmd.Flag("registry-addr"))
+	require.NotNil(t, cmd.Flag("registry-token"))
 	require.NotNil(t, cmd.Flag("store"))
 }
 
@@ -93,7 +94,7 @@ func TestServe_VersionQuery(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "", t.TempDir())
+		_ = serve(ctx, socketPath, "fake-qemu", "", "", t.TempDir())
 	}()
 
 	require.Eventually(t, func() bool {

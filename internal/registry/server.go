@@ -2,6 +2,7 @@ package registry
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ type Server struct {
 	store      *image.Store
 	blobStore  *ociblob.Store
 	ociStore   *OCIStore
+	authToken  string
+	authRealm  string
 	manifestMu sync.RWMutex
 	manifests  map[string]map[string]ociregistry.Manifest
 	uploadMu   sync.Mutex
@@ -54,10 +57,23 @@ func WithOCIStore(store *OCIStore) Option {
 	}
 }
 
+// WithBearerToken enables registry auth with a static bearer token.
+func WithBearerToken(token, realm string) Option {
+	return func(s *Server) error {
+		s.authToken = strings.TrimSpace(token)
+		s.authRealm = strings.TrimSpace(realm)
+		if s.authRealm == "" {
+			s.authRealm = "uni-registry"
+		}
+		return nil
+	}
+}
+
 // NewServer returns a Server backed by store.
 func NewServer(store *image.Store, opts ...Option) *Server {
 	srv := &Server{
 		store:     store,
+		authRealm: "uni-registry",
 		manifests: make(map[string]map[string]ociregistry.Manifest),
 		uploads:   make(map[string]struct{}),
 	}
@@ -82,6 +98,10 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
+
 	if r.URL.Path == "/v2/" && r.Method == http.MethodGet {
 		s.handleOCIBase(w, r)
 		return
@@ -147,7 +167,7 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOCIBase(w http.ResponseWriter, _ *http.Request) {
-	httpErr(w, http.StatusUnauthorized, "unauthorized")
+	writeJSON(w, http.StatusOK, map[string]string{})
 }
 
 func (s *Server) handleOCICatalog(w http.ResponseWriter, _ *http.Request) {
@@ -393,7 +413,10 @@ func (s *Server) handleOCIDeleteManifest(w http.ResponseWriter, r *http.Request)
 	w.WriteHeader(http.StatusAccepted)
 }
 
-func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
 	list, err := s.store.List()
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, err.Error())
@@ -403,6 +426,9 @@ func (s *Server) handleList(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleGetManifest(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
 	ref := r.PathValue("ref")
 	m, _, err := s.store.Get(ref)
 	if err != nil {
@@ -413,6 +439,9 @@ func (s *Server) handleGetManifest(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetDisk(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
 	ref := r.PathValue("ref")
 	_, diskPath, err := s.store.Get(ref)
 	if err != nil {
@@ -437,6 +466,9 @@ func (s *Server) handleGetDisk(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
 	if err := r.ParseMultipartForm(512 << 20); err != nil {
 		httpErr(w, http.StatusBadRequest, "parse multipart: "+err.Error())
 		return
@@ -477,12 +509,34 @@ func (s *Server) handlePush(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRemove(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(w, r) {
+		return
+	}
 	ref := r.PathValue("ref")
 	if err := s.store.Remove(ref); err != nil {
 		httpErr(w, http.StatusNotFound, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) authorized(w http.ResponseWriter, r *http.Request) bool {
+	if strings.TrimSpace(s.authToken) == "" {
+		return true
+	}
+	if r == nil {
+		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", s.authRealm))
+		httpErr(w, http.StatusUnauthorized, "unauthorized")
+		return false
+	}
+	auth := r.Header.Get("Authorization")
+	token := strings.TrimPrefix(auth, "Bearer ")
+	if subtle.ConstantTimeCompare([]byte(token), []byte(s.authToken)) == 1 {
+		return true
+	}
+	w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", s.authRealm))
+	httpErr(w, http.StatusUnauthorized, "unauthorized")
+	return false
 }
 
 func httpErr(w http.ResponseWriter, code int, msg string) {

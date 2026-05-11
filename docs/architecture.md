@@ -267,7 +267,7 @@ GET    /v2/images/{ref}/disk               download raw disk image (legacy)
 POST   /v2/images                          push image multipart (legacy)
 DELETE /v2/images/{ref}                    remove image (legacy)
 
-GET    /v2/                                base (auth challenge placeholder)
+GET    /v2/                                OCI API base (200 when available)
 GET    /v2/_catalog                        list OCI repositories
 POST   /v2/{name}/blobs/uploads/           start OCI blob upload
 PUT    /v2/{name}/blobs/uploads/{uuid}     complete OCI blob upload
@@ -280,6 +280,12 @@ DELETE /v2/{name}/manifests/{ref}          delete OCI manifest ref
 
 Full OCI compliance/auth/signing is tracked in Phase 8, but the migration path is active:
 `uni push/pull` use OCI first and fall back to legacy endpoints if needed.
+
+Registry auth is now available as an optional static bearer token gate:
+
+- Start daemon with `--registry-token <token>` (or `UNI_REGISTRY_TOKEN=<token>`)
+- When enabled, registry endpoints require `Authorization: Bearer <token>`
+- Unauthorized requests return `401` with `WWW-Authenticate: Bearer realm="uni-registry"`
 
 ---
 

@@ -268,6 +268,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 - [ ] 8.2 — Image signing with `cosign` or built-in Ed25519 keypair; signature stored as OCI referrer
 - [ ] 8.3 — Signature verification on `uni pull` and `uni run` (configurable: warn / enforce / off)
 - [ ] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials
+  - [x] 8.4.0 — Optional static bearer auth gate in registry server (`--registry-token` / `UNI_REGISTRY_TOKEN`) with `WWW-Authenticate` challenge
 - [ ] 8.5 — TLS: registry server generates self-signed cert on first boot; supports custom cert via config
 - [ ] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)
 - [ ] 8.7 — Garbage collection: `unid gc` removes blobs not referenced by any manifest
