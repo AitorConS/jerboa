@@ -289,7 +289,7 @@ Registry auth is now available as an optional static bearer token gate:
 
 - Start daemon with `--registry-token <token>` (or `UNI_REGISTRY_TOKEN=<token>`)
 - When enabled, registry endpoints require `Authorization: Bearer <token>`
-- Unauthorized requests return `401` with `WWW-Authenticate: Bearer realm="uni-registry"`
+- Unauthorized requests return `401` with Docker-style challenge headers including `realm`, `service`, and scoped `repository:<name>:pull|push` when applicable
 
 Scoped JWT auth is also available for registry endpoints:
 

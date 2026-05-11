@@ -33,6 +33,7 @@ type Server struct {
 	ociStore    *OCIStore
 	authToken   string
 	authRealm   string
+	authService string
 	jwtSecret   string
 	jwtIssuer   string
 	jwtAudience string
@@ -97,10 +98,11 @@ func WithJWTValidation(issuer, audience string) Option {
 // NewServer returns a Server backed by store.
 func NewServer(store *image.Store, opts ...Option) *Server {
 	srv := &Server{
-		store:     store,
-		authRealm: "uni-registry",
-		manifests: make(map[string]map[string]ociregistry.Manifest),
-		uploads:   make(map[string]struct{}),
+		store:       store,
+		authRealm:   "uni-registry",
+		authService: "uni-registry",
+		manifests:   make(map[string]map[string]ociregistry.Manifest),
+		uploads:     make(map[string]struct{}),
 	}
 	for _, opt := range opts {
 		if err := opt(srv); err != nil {
@@ -614,7 +616,7 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if r == nil {
-		w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", s.authRealm))
+		w.Header().Set("WWW-Authenticate", s.authChallenge(nil))
 		httpErr(w, http.StatusUnauthorized, "unauthorized")
 		return false
 	}
@@ -633,9 +635,22 @@ func (s *Server) authorized(w http.ResponseWriter, r *http.Request) bool {
 			return false
 		}
 	}
-	w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", s.authRealm))
+	w.Header().Set("WWW-Authenticate", s.authChallenge(r))
 	httpErr(w, http.StatusUnauthorized, "unauthorized")
 	return false
+}
+
+func (s *Server) authChallenge(r *http.Request) string {
+	challenge := fmt.Sprintf("Bearer realm=%q,service=%q", s.authRealm, s.authService)
+	if r == nil {
+		return challenge
+	}
+	repo := requiredRepo(r)
+	action := requiredAction(r)
+	if repo == "*" {
+		return challenge
+	}
+	return challenge + fmt.Sprintf(",scope=%q", fmt.Sprintf("repository:%s:%s", repo, action))
 }
 
 func (s *Server) jwtAuthorized(r *http.Request, raw string) (bool, error) {

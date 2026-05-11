@@ -66,7 +66,7 @@ func TestOCIAuthRequiresBearerToken(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = baseResp.Body.Close() })
 	require.Equal(t, http.StatusUnauthorized, baseResp.StatusCode)
-	require.Equal(t, `Bearer realm="uni-test"`, baseResp.Header.Get("WWW-Authenticate"))
+	require.Equal(t, `Bearer realm="uni-test",service="uni-registry"`, baseResp.Header.Get("WWW-Authenticate"))
 
 	client := registry.NewClient(srv.URL)
 	client.SetToken("secret-token")
@@ -82,6 +82,37 @@ func TestOCIAuthRequiresBearerToken(t *testing.T) {
 		DiskSize:      1024,
 	}
 	require.NoError(t, client.PushOCI(context.Background(), m, disk))
+}
+
+func TestOCIAuthChallengeIncludesServiceAndScope(t *testing.T) {
+	store := makeStore(t)
+	blobs, err := ociblob.NewStore(filepath.Join(t.TempDir(), "blobs"))
+	require.NoError(t, err)
+	ociStore, err := registry.NewOCIStore(filepath.Join(t.TempDir(), "oci"))
+	require.NoError(t, err)
+
+	h := registry.NewServer(
+		store,
+		registry.WithBlobStore(blobs),
+		registry.WithOCIStore(ociStore),
+		registry.WithBearerToken("secret-token", "uni-test"),
+	).Handler()
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	baseResp, err := http.Get(srv.URL + "/v2/")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = baseResp.Body.Close() })
+	require.Equal(t, http.StatusUnauthorized, baseResp.StatusCode)
+	require.Contains(t, baseResp.Header.Get("WWW-Authenticate"), `Bearer realm="uni-test",service="uni-registry"`)
+
+	manifestReq, err := http.NewRequest(http.MethodGet, srv.URL+"/v2/team/app/manifests/latest", nil)
+	require.NoError(t, err)
+	manifestResp, err := http.DefaultClient.Do(manifestReq)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = manifestResp.Body.Close() })
+	require.Equal(t, http.StatusUnauthorized, manifestResp.StatusCode)
+	require.Contains(t, manifestResp.Header.Get("WWW-Authenticate"), `scope="repository:team/app:pull"`)
 }
 
 func TestOCIAuthJWTScopes(t *testing.T) {

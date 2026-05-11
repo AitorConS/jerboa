@@ -368,6 +368,18 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./internal/registry`
 
+## Session Update (2026-05-11, Docker auth challenge)
+
+### Completed
+
+- Added Docker-style `WWW-Authenticate` challenge format in registry auth responses (`realm`, `service`, and repo/action `scope` when applicable).
+- Kept `GET /v2/` challenge unscoped while manifest/blob unauthorized requests include repository-scoped pull/push actions.
+- Added integration coverage in `internal/registry/oci_test.go` for challenge header behavior.
+
+### Validation
+
+- `go test ./internal/registry ./cmd/unid`
+
 ## Session Update (2026-05-11, JWT claims)
 
 ### Completed
