@@ -512,7 +512,7 @@ uni search <registry>/<query>
 **Example:**
 
 ```bash
-uni search registry.example.com:5000/hello
+uni search https://registry.example.com:5000/hello
 # hello
 # hello-api
 ```

@@ -281,6 +281,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.7.0 — Added `unid gc` command backed by manifest reference analysis and safe unreferenced blob deletion
 - [ ] 8.8 — `uni push / pull` work with auth headers and TLS
   - [x] 8.8.0 — Added global CLI registry auth/TLS options (`--registry-token`, `--registry-ca-cert`, `--registry-insecure`) with env var support
+  - [x] 8.8.1 — Added CLI integration coverage for auth+TLS `uni push`/`uni pull`/`uni search` flows
 - [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry
   - [x] 8.9.0 — Added `uni search <registry>/<query>` using OCI catalog with substring filtering
 - [ ] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry

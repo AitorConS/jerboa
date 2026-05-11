@@ -15,6 +15,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
+	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
@@ -108,6 +109,27 @@ func startRegistry(t *testing.T) (url, storePath string) {
 	require.NoError(t, err)
 	srv := registry.NewServer(store)
 	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts.URL, storePath
+}
+
+func startSecureRegistry(t *testing.T, token string, withOCI bool) (url, storePath string) {
+	t.Helper()
+	storePath = t.TempDir()
+	store, err := image.NewStore(storePath)
+	require.NoError(t, err)
+
+	opts := []registry.Option{registry.WithBearerToken(token, "uni-test")}
+	if withOCI {
+		blobs, err := ociblob.NewStore(filepath.Join(t.TempDir(), "blobs"))
+		require.NoError(t, err)
+		ociStore, err := registry.NewOCIStore(filepath.Join(t.TempDir(), "oci"))
+		require.NoError(t, err)
+		opts = append(opts, registry.WithBlobStore(blobs), registry.WithOCIStore(ociStore))
+	}
+
+	srv := registry.NewServer(store, opts...)
+	ts := httptest.NewTLSServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts.URL, storePath
 }
@@ -241,6 +263,46 @@ func TestRm_StoppedVM(t *testing.T) {
 	}, testTimeout, dialPoll)
 
 	execRoot(t, socketPath, storePath, "rm", info.ID)
+}
+
+func TestRegistryPushPull_WithTLSAndAuth(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath, _ := makeStore(t)
+	registryURL, _ := startSecureRegistry(t, "secret-token", false)
+
+	out := execRoot(t, socketPath, storePath,
+		"--registry-token", "secret-token",
+		"--registry-insecure",
+		"push", "hello:latest", registryURL,
+	)
+	require.Contains(t, out, "pushed hello:latest")
+
+	pullStore := t.TempDir()
+	out = execRoot(t, socketPath, pullStore,
+		"--registry-token", "secret-token",
+		"--registry-insecure",
+		"pull", "hello:latest", registryURL,
+	)
+	require.Contains(t, out, "hello:latest")
+}
+
+func TestRegistrySearch_WithTLSAndAuth(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath, _ := makeStore(t)
+	registryURL, _ := startSecureRegistry(t, "secret-token", true)
+
+	execRoot(t, socketPath, storePath,
+		"--registry-token", "secret-token",
+		"--registry-insecure",
+		"push", "hello:latest", registryURL,
+	)
+
+	out := execRoot(t, socketPath, storePath,
+		"--registry-token", "secret-token",
+		"--registry-insecure",
+		"search", registryURL+"/hello",
+	)
+	require.Contains(t, out, "hello")
 }
 
 // --- exec ---

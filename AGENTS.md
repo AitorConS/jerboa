@@ -356,6 +356,18 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./internal/registry ./cmd/unid`
 
+## Session Update (2026-05-11, CLI registry e2e)
+
+### Completed
+
+- Added CLI integration tests in `cmd/uni/uni_test.go` for registry auth+TLS flows covering `uni push`, `uni pull`, and `uni search`.
+- Added secure test registry helper using `httptest.NewTLSServer` with optional OCI stores and bearer auth.
+- Validated that global CLI registry auth/TLS flags are effective in end-to-end command execution paths.
+
+### Validation
+
+- `go test ./cmd/uni`
+
 ## Session Update (2026-05-11, OCI nested repos)
 
 ### Completed
