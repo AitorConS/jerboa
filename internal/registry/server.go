@@ -28,16 +28,18 @@ import (
 //	POST   /v2/images           — push image (multipart: manifest + disk)
 //	DELETE /v2/images/{ref}     — remove image
 type Server struct {
-	store      *image.Store
-	blobStore  *ociblob.Store
-	ociStore   *OCIStore
-	authToken  string
-	authRealm  string
-	jwtSecret  string
-	manifestMu sync.RWMutex
-	manifests  map[string]map[string]ociregistry.Manifest
-	uploadMu   sync.Mutex
-	uploads    map[string]struct{}
+	store       *image.Store
+	blobStore   *ociblob.Store
+	ociStore    *OCIStore
+	authToken   string
+	authRealm   string
+	jwtSecret   string
+	jwtIssuer   string
+	jwtAudience string
+	manifestMu  sync.RWMutex
+	manifests   map[string]map[string]ociregistry.Manifest
+	uploadMu    sync.Mutex
+	uploads     map[string]struct{}
 }
 
 // Option configures a registry Server.
@@ -79,6 +81,15 @@ func WithJWTAuth(secret, realm string) Option {
 		if s.authRealm == "" {
 			s.authRealm = "uni-registry"
 		}
+		return nil
+	}
+}
+
+// WithJWTValidation configures JWT issuer/audience validation.
+func WithJWTValidation(issuer, audience string) Option {
+	return func(s *Server) error {
+		s.jwtIssuer = strings.TrimSpace(issuer)
+		s.jwtAudience = strings.TrimSpace(audience)
 		return nil
 	}
 }
@@ -644,6 +655,28 @@ func (s *Server) jwtAuthorized(r *http.Request, raw string) (bool, error) {
 	claims, ok := parsed.Claims.(jwt.MapClaims)
 	if !ok {
 		return false, fmt.Errorf("invalid claims")
+	}
+	if s.jwtIssuer != "" {
+		iss, err := claims.GetIssuer()
+		if err != nil || iss != s.jwtIssuer {
+			return false, fmt.Errorf("invalid issuer")
+		}
+	}
+	if s.jwtAudience != "" {
+		aud, err := claims.GetAudience()
+		if err != nil {
+			return false, fmt.Errorf("invalid audience")
+		}
+		match := false
+		for _, v := range aud {
+			if v == s.jwtAudience {
+				match = true
+				break
+			}
+		}
+		if !match {
+			return false, fmt.Errorf("invalid audience")
+		}
 	}
 	if !hasRequiredScope(claims, requiredRepo(r), requiredAction(r)) {
 		return false, nil

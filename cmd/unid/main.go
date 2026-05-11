@@ -37,6 +37,8 @@ func newRootCmd() *cobra.Command {
 		registryAddr    string
 		registryToken   string
 		registryJWT     string
+		registryJWTIss  string
+		registryJWTAud  string
 		registryTLSCert string
 		registryTLSKey  string
 		storePath       string
@@ -46,7 +48,7 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryTLSCert, registryTLSKey, storePath)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -59,6 +61,10 @@ func newRootCmd() *cobra.Command {
 		"Optional bearer token for registry auth (or set UNI_REGISTRY_TOKEN)")
 	root.Flags().StringVar(&registryJWT, "registry-jwt-secret", os.Getenv("UNI_REGISTRY_JWT_SECRET"),
 		"Optional JWT HMAC secret for scoped registry auth (or set UNI_REGISTRY_JWT_SECRET)")
+	root.Flags().StringVar(&registryJWTIss, "registry-jwt-issuer", os.Getenv("UNI_REGISTRY_JWT_ISSUER"),
+		"Optional expected JWT issuer for registry auth (or set UNI_REGISTRY_JWT_ISSUER)")
+	root.Flags().StringVar(&registryJWTAud, "registry-jwt-audience", os.Getenv("UNI_REGISTRY_JWT_AUDIENCE"),
+		"Optional expected JWT audience for registry auth (or set UNI_REGISTRY_JWT_AUDIENCE)")
 	root.Flags().StringVar(&registryTLSCert, "registry-tls-cert", os.Getenv("UNI_REGISTRY_TLS_CERT"),
 		"Optional TLS cert file for registry HTTPS (or set UNI_REGISTRY_TLS_CERT)")
 	root.Flags().StringVar(&registryTLSKey, "registry-tls-key", os.Getenv("UNI_REGISTRY_TLS_KEY"),
@@ -68,7 +74,7 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryTLSCert, registryTLSKey, storePath string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath string) error {
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
 	netStore, err := network.NewStore(networksDir())
@@ -113,6 +119,7 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		}
 		if registryJWT != "" {
 			opts = append(opts, registry.WithJWTAuth(registryJWT, "uni-registry"))
+			opts = append(opts, registry.WithJWTValidation(registryJWTIss, registryJWTAud))
 		}
 		regSrv := &http.Server{
 			Addr:    registryAddr,

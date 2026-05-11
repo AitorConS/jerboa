@@ -96,12 +96,14 @@ func TestOCIAuthJWTScopes(t *testing.T) {
 		registry.WithBlobStore(blobs),
 		registry.WithOCIStore(ociStore),
 		registry.WithJWTAuth("jwt-secret", "uni-test"),
+		registry.WithJWTValidation("uni-issuer", "uni-audience"),
 	).Handler()
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	pullOnly := mustSignJWT(t, "jwt-secret", "repository:secureapp:pull")
-	pushOnly := mustSignJWT(t, "jwt-secret", "repository:secureapp:push")
+	pullOnly := mustSignJWT(t, "jwt-secret", "repository:secureapp:pull", "uni-issuer", "uni-audience")
+	pushOnly := mustSignJWT(t, "jwt-secret", "repository:secureapp:push", "uni-issuer", "uni-audience")
+	wrongAud := mustSignJWT(t, "jwt-secret", "repository:secureapp:pull", "uni-issuer", "other-audience")
 
 	client := registry.NewClient(srv.URL)
 	client.SetToken(pushOnly)
@@ -132,13 +134,23 @@ func TestOCIAuthJWTScopes(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = headResp2.Body.Close() })
 	require.Equal(t, http.StatusOK, headResp2.StatusCode)
+
+	headReq3, err := http.NewRequest(http.MethodHead, srv.URL+"/v2/secureapp/manifests/latest", nil)
+	require.NoError(t, err)
+	headReq3.Header.Set("Authorization", "Bearer "+wrongAud)
+	headResp3, err := http.DefaultClient.Do(headReq3)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = headResp3.Body.Close() })
+	require.Equal(t, http.StatusUnauthorized, headResp3.StatusCode)
 }
 
-func mustSignJWT(t *testing.T, secret, scope string) string {
+func mustSignJWT(t *testing.T, secret, scope, issuer, audience string) string {
 	t.Helper()
 	claims := jwt.MapClaims{
 		"scope": scope,
 		"exp":   time.Now().Add(1 * time.Hour).Unix(),
+		"iss":   issuer,
+		"aud":   audience,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	signed, err := tok.SignedString([]byte(secret))

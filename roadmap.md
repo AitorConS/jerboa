@@ -273,6 +273,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 - [ ] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials
   - [x] 8.4.0 — Optional static bearer auth gate in registry server (`--registry-token` / `UNI_REGISTRY_TOKEN`) with `WWW-Authenticate` challenge
   - [x] 8.4.1 — Optional JWT auth gate in registry server (`--registry-jwt-secret` / `UNI_REGISTRY_JWT_SECRET`) with repo/action scope enforcement
+  - [x] 8.4.2 — Optional JWT issuer/audience validation (`--registry-jwt-issuer`, `--registry-jwt-audience`) with integration coverage
 - [ ] 8.5 — TLS: registry server generates self-signed cert on first boot; supports custom cert via config
   - [x] 8.5.0 — Support custom TLS cert/key config for registry HTTPS (`--registry-tls-cert`, `--registry-tls-key`)
 - [ ] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)

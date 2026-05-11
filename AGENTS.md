@@ -42,7 +42,7 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 
 **Package System (`internal/package/`)** — manages pre-packaged runtime files for `uni build --pkg`. Pipeline: `FetchIndex()` → `Download()` (SHA-256 verified) → `Extract()` (tar.gz) → `ExtractedFiles()` (file list for manifest). Local store at `~/.uni/packages/<name>/<version>/` with `files.tar.gz`, `files/`, `meta.json`. `IndexURL` is a `var` (overridable in tests). `RemoveAll()` deletes all versions; `Remove()` deletes one.
 
-**Registry (`internal/registry/`)** — hybrid HTTP registry with legacy and OCI flows. Legacy endpoints: `GET /v2/images`, `GET /v2/images/{ref}`, `GET /v2/images/{ref}/disk`, `POST /v2/images`, `DELETE /v2/images/{ref}`. OCI endpoints: `/v2/`, `/v2/_catalog`, blob upload/download/delete, manifest put/get/delete. Optional auth via static bearer token (`--registry-token` / `UNI_REGISTRY_TOKEN`) or scoped JWT (`--registry-jwt-secret` / `UNI_REGISTRY_JWT_SECRET`), plus optional HTTPS with custom cert/key (`--registry-tls-cert` / `--registry-tls-key`).
+**Registry (`internal/registry/`)** — hybrid HTTP registry with legacy and OCI flows. Legacy endpoints: `GET /v2/images`, `GET /v2/images/{ref}`, `GET /v2/images/{ref}/disk`, `POST /v2/images`, `DELETE /v2/images/{ref}`. OCI endpoints: `/v2/`, `/v2/_catalog`, blob upload/download/delete, manifest put/get/delete. Optional auth via static bearer token (`--registry-token` / `UNI_REGISTRY_TOKEN`) or scoped JWT (`--registry-jwt-secret` / `UNI_REGISTRY_JWT_SECRET`) with optional issuer/audience validation (`--registry-jwt-issuer`, `--registry-jwt-audience`), plus optional HTTPS with custom cert/key (`--registry-tls-cert` / `--registry-tls-key`).
 
 **Volume System (`internal/volume/`)** — named persistent virtio-blk disks at `~/.uni/volumes/<name>/disk.img`. Sparse files via seek+write. Created with `uni volume create`, mounted with `uni run -v name:/guest/path[:ro]`. Survive VM restarts.
 
@@ -350,6 +350,19 @@ Both the CLI and the kernel are independently versioned with semver.
 - Updated OCI base endpoint behavior: `GET /v2/` returns `200` when available; when auth is enabled, unauthenticated requests receive `401` with `WWW-Authenticate` challenge.
 - Extended registry client auth propagation so legacy and OCI requests both send bearer tokens when configured.
 - Added auth coverage in `internal/registry/oci_test.go` and updated base endpoint expectations.
+
+### Validation
+
+- `go test ./internal/registry ./cmd/unid`
+
+## Session Update (2026-05-11, JWT claims)
+
+### Completed
+
+- Added optional JWT issuer/audience validation in registry auth via `registry.WithJWTValidation`.
+- Wired daemon flags/env: `--registry-jwt-issuer` / `UNI_REGISTRY_JWT_ISSUER` and `--registry-jwt-audience` / `UNI_REGISTRY_JWT_AUDIENCE`.
+- Extended JWT integration coverage with issuer/audience allow/deny checks in `internal/registry/oci_test.go`.
+- Extended `cmd/unid/main_test.go` flag coverage for JWT claim validation flags.
 
 ### Validation
 
