@@ -395,6 +395,19 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./cmd/uni ./internal/registry`
 
+## Session Update (2026-05-11, registry GC)
+
+### Completed
+
+- Added registry GC engine in `internal/registry/gc.go` that removes unreferenced blobs while preserving manifest-referenced config/layers.
+- Added digest reference enumeration in `internal/registry/ocistore.go` via `ReferencedDigests()`.
+- Added `unid gc` command to run registry blob GC from the daemon binary.
+- Added GC coverage in `internal/registry/gc_test.go` and command presence coverage in `cmd/unid/main_test.go`.
+
+### Validation
+
+- `go test ./internal/registry ./cmd/unid`
+
 ## Session Update (2026-05-11, registry search)
 
 ### Completed

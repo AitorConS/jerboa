@@ -278,6 +278,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.5.0 — Support custom TLS cert/key config for registry HTTPS (`--registry-tls-cert`, `--registry-tls-key`)
 - [ ] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)
 - [ ] 8.7 — Garbage collection: `unid gc` removes blobs not referenced by any manifest
+  - [x] 8.7.0 — Added `unid gc` command backed by manifest reference analysis and safe unreferenced blob deletion
 - [ ] 8.8 — `uni push / pull` work with auth headers and TLS
   - [x] 8.8.0 — Added global CLI registry auth/TLS options (`--registry-token`, `--registry-ca-cert`, `--registry-insecure`) with env var support
 - [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry

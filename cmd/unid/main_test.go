@@ -89,6 +89,7 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	require.NotNil(t, cmd.Flag("registry-tls-cert"))
 	require.NotNil(t, cmd.Flag("registry-tls-key"))
 	require.NotNil(t, cmd.Flag("store"))
+	require.NotNil(t, cmd.Commands())
 }
 
 func TestServe_VersionQuery(t *testing.T) {
@@ -128,4 +129,11 @@ func TestNewRootCmd_Execute_Help(t *testing.T) {
 	cmd.SetErr(os.Stderr)
 	err := cmd.Execute()
 	require.NoError(t, err)
+}
+
+func TestNewRootCmd_HasGCCmd(t *testing.T) {
+	cmd := newRootCmd()
+	gccmd, _, err := cmd.Find([]string{"gc"})
+	require.NoError(t, err)
+	require.Equal(t, "gc", gccmd.Name())
 }

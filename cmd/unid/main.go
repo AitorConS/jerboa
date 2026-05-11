@@ -71,7 +71,32 @@ func newRootCmd() *cobra.Command {
 		"Optional TLS key file for registry HTTPS (or set UNI_REGISTRY_TLS_KEY)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
+	root.AddCommand(newRegistryGCCmd())
 	return root
+}
+
+func newRegistryGCCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "gc",
+		Short: "Garbage collect unreferenced registry blobs",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			blobStore, err := ociblob.NewStore(blobsDir())
+			if err != nil {
+				return fmt.Errorf("unid gc: blob store: %w", err)
+			}
+			ociStore, err := registry.NewOCIStore(ociDir())
+			if err != nil {
+				return fmt.Errorf("unid gc: OCI store: %w", err)
+			}
+			result, err := registry.GarbageCollect(blobStore, ociStore)
+			if err != nil {
+				return fmt.Errorf("unid gc: %w", err)
+			}
+			slog.Info("registry gc complete", "removed", result.Removed, "kept", result.Kept)
+			return nil
+		},
+	}
+	return cmd
 }
 
 func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath string) error {

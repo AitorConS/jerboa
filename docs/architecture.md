@@ -303,6 +303,11 @@ Registry HTTPS can be enabled with custom certificate files:
 - Environment alternatives: `UNI_REGISTRY_TLS_CERT` and `UNI_REGISTRY_TLS_KEY`
 - Both cert and key are required together; partial TLS config is rejected at startup
 
+Registry blob garbage collection is available via daemon command:
+
+- Run `unid gc` to remove OCI blobs in `~/.uni/blobs` that are not referenced by any manifest in `~/.uni/oci`
+- Referenced blobs (manifest config + layer digests) are preserved
+
 ---
 
 ## File Copy (`uni cp`)

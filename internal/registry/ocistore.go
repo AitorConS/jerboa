@@ -110,6 +110,35 @@ func (s *OCIStore) Repositories() ([]string, error) {
 	return out, nil
 }
 
+// ReferencedDigests returns blob digests referenced by stored manifests.
+func (s *OCIStore) ReferencedDigests() ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	refs, err := s.readRefs()
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]struct{})
+	for _, repo := range refs {
+		for _, manifestDigest := range repo {
+			m, err := s.readManifest(manifestDigest)
+			if err != nil {
+				continue
+			}
+			set[m.Config.Digest] = struct{}{}
+			for _, layer := range m.Layers {
+				set[layer.Digest] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for digest := range set {
+		out = append(out, digest)
+	}
+	return out, nil
+}
+
 func (s *OCIStore) refsPath() string {
 	return filepath.Join(s.root, "refs.json")
 }
