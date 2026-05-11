@@ -280,6 +280,8 @@ HEAD   /v2/{name}/manifests/{ref}          check OCI manifest existence + digest
 DELETE /v2/{name}/manifests/{ref}          delete OCI manifest ref
 ```
 
+`{name}` supports nested repository names (e.g. `team/api`, `org/project/service`) for OCI blob and manifest routes.
+
 Full OCI compliance/auth/signing is tracked in Phase 8, but the migration path is active:
 `uni push/pull` use OCI first and fall back to legacy endpoints if needed.
 

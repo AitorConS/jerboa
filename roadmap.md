@@ -284,6 +284,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 - [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry
   - [x] 8.9.0 — Added `uni search <registry>/<query>` using OCI catalog with substring filtering
 - [ ] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry
+  - [x] 8.10.0 — Added OCI route parsing support for nested repository names (`namespace/repo`) in blobs/manifests endpoints
 - [ ] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
 
 **Done when:** OCI-compatible push/pull with auth + signing works. Docker CLI can push to the registry.

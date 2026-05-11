@@ -356,6 +356,18 @@ Both the CLI and the kernel are independently versioned with semver.
 
 - `go test ./internal/registry ./cmd/unid`
 
+## Session Update (2026-05-11, OCI nested repos)
+
+### Completed
+
+- Improved OCI request routing in `internal/registry/server.go` to support nested repository names (e.g. `team/app`) across blobs and manifests endpoints.
+- Updated repo extraction logic used by scoped JWT authorization to work with nested OCI repository paths.
+- Added nested repository roundtrip coverage in `internal/registry/oci_test.go` (`PushOCI` + manifest GET + `PullOCI`).
+
+### Validation
+
+- `go test ./internal/registry`
+
 ## Session Update (2026-05-11, JWT claims)
 
 ### Completed

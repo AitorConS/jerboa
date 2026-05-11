@@ -136,31 +136,33 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 3 {
+	name, kind, tail, ok := parseOCIPath(r.URL.Path)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
-	name := parts[0]
-	kind := parts[1]
 
 	switch kind {
 	case "blobs":
-		if len(parts) == 3 && parts[2] == "uploads" && r.Method == http.MethodPost {
+		if tail == "uploads" && r.Method == http.MethodPost {
 			r.SetPathValue("name", name)
 			s.handleOCIStartUpload(w, r)
 			return
 		}
-		if len(parts) == 4 && parts[2] == "uploads" && r.Method == http.MethodPut {
+		if strings.HasPrefix(tail, "uploads/") && r.Method == http.MethodPut {
+			uuid := strings.TrimPrefix(tail, "uploads/")
+			if uuid == "" {
+				http.NotFound(w, r)
+				return
+			}
 			r.SetPathValue("name", name)
-			r.SetPathValue("uuid", parts[3])
+			r.SetPathValue("uuid", uuid)
 			s.handleOCICompleteUpload(w, r)
 			return
 		}
-		if len(parts) == 3 {
+		if tail != "" && !strings.Contains(tail, "/") {
 			r.SetPathValue("name", name)
-			r.SetPathValue("digest", parts[2])
+			r.SetPathValue("digest", tail)
 			if r.Method == http.MethodHead {
 				s.handleOCIHeadBlob(w, r)
 				return
@@ -175,9 +177,9 @@ func (s *Server) handleOCIV2(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	case "manifests":
-		if len(parts) == 3 {
+		if tail != "" && !strings.Contains(tail, "/") {
 			r.SetPathValue("name", name)
-			r.SetPathValue("ref", parts[2])
+			r.SetPathValue("ref", tail)
 			switch r.Method {
 			case http.MethodPut:
 				s.handleOCIPutManifest(w, r)
@@ -685,30 +687,45 @@ func (s *Server) jwtAuthorized(r *http.Request, raw string) (bool, error) {
 }
 
 func requiredRepo(r *http.Request) string {
-	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
-	if path == "" || path == "_catalog" {
-		return "*"
+	name, kind, tail, ok := parseOCIPath(r.URL.Path)
+	if ok {
+		if kind == "blobs" || kind == "manifests" {
+			if tail != "" {
+				return name
+			}
+		}
 	}
-	if strings.HasPrefix(path, "images") {
-		parts := strings.Split(path, "/")
-		if len(parts) < 2 {
-			return "*"
-		}
-		ref := parts[1]
-		if strings.HasPrefix(ref, "sha256:") {
-			return "*"
-		}
-		idx := strings.LastIndex(ref, ":")
-		if idx <= 0 {
-			return "*"
-		}
-		return ref[:idx]
+	path := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v2/"), "/")
+	if path == "" || path == "_catalog" || strings.HasPrefix(path, "images") {
+		return "*"
 	}
 	parts := strings.Split(path, "/")
 	if len(parts) > 0 && parts[0] != "" {
 		return parts[0]
 	}
 	return "*"
+}
+
+func parseOCIPath(path string) (name, kind, tail string, ok bool) {
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(path, "/v2/"), "/")
+	if trimmed == "" || trimmed == "_catalog" || trimmed == "images" {
+		return "", "", "", false
+	}
+	for _, marker := range []string{"/blobs/", "/manifests/"} {
+		idx := strings.Index(trimmed, marker)
+		if idx <= 0 {
+			continue
+		}
+		name = trimmed[:idx]
+		kind = strings.Trim(marker, "/")
+		kind = strings.Split(kind, "/")[0]
+		tail = trimmed[idx+len(marker):]
+		if name == "" || tail == "" {
+			return "", "", "", false
+		}
+		return name, kind, tail, true
+	}
+	return "", "", "", false
 }
 
 func requiredAction(r *http.Request) string {

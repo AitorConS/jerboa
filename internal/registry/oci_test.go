@@ -210,6 +210,35 @@ func TestOCIUploadBlobRoundTrip(t *testing.T) {
 	require.Equal(t, ociManifest.Layers[0].Digest, headBlobResp.Header.Get("Docker-Content-Digest"))
 }
 
+func TestOCIUploadBlobRoundTrip_NestedRepository(t *testing.T) {
+	srv, _ := startOCIServer(t)
+	client := registry.NewClient(srv.URL)
+
+	disk := makeDiskFile(t)
+	m := image.Manifest{
+		SchemaVersion: image.SchemaVersion,
+		Name:          "team/ociapp",
+		Tag:           "latest",
+		Created:       time.Now().UTC(),
+		Config:        image.Config{Memory: "256M", CPUs: 1},
+		DiskDigest:    "sha256:abc123def456abc123def456abc123def456abc123def456abc123def456abc1",
+		DiskSize:      1024,
+	}
+
+	require.NoError(t, client.PushOCI(context.Background(), m, disk))
+
+	resp, err := http.Get(srv.URL + "/v2/team/ociapp/manifests/latest")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	localStore := makeStore(t)
+	pulled, err := client.PullOCI(context.Background(), "team/ociapp:latest", localStore)
+	require.NoError(t, err)
+	require.Equal(t, "team/ociapp", pulled.Name)
+	require.Equal(t, "latest", pulled.Tag)
+}
+
 func TestOCICompleteUploadDigestMismatch(t *testing.T) {
 	srv, _ := startOCIServer(t)
 
