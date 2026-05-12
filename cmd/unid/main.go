@@ -20,6 +20,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
+	"github.com/AitorConS/unikernel-engine/internal/slogformat"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/spf13/cobra"
 )
@@ -46,13 +47,14 @@ func newRootCmd() *cobra.Command {
 		registryTLSKey  string
 		storePath       string
 		metricsAddr     string
+		logFormat       string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -77,6 +79,8 @@ func newRootCmd() *cobra.Command {
 		"image store root directory")
 	root.Flags().StringVar(&metricsAddr, "metrics-addr", "",
 		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
+	root.Flags().StringVar(&logFormat, "log-format", "text",
+		"log format: text (default) or json")
 	root.AddCommand(newRegistryGCCmd())
 	return root
 }
@@ -105,7 +109,9 @@ func newRegistryGCCmd() *cobra.Command {
 	return cmd
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat string) error {
+	setupLogger(logFormat)
+
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
 	netStore, err := network.NewStore(networksDir())
@@ -260,6 +266,17 @@ func blobsDir() string {
 		return ".uni/blobs"
 	}
 	return home + "/.uni/blobs"
+}
+
+func setupLogger(format string) {
+	switch format {
+	case "json":
+		slog.SetDefault(slog.New(slogformat.NewJSONHandler(os.Stderr)))
+	default:
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})))
+	}
 }
 
 func ociDir() string {
