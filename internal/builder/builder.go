@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 // Lang represents a programming language supported by the build system.
@@ -252,7 +254,7 @@ func nodeVersionFromPackageJSON(dir string) (string, error) {
 	return v, nil
 }
 
-// PythonDriver detects Python projects (not yet fully implemented).
+// PythonDriver builds Python projects into unikernel images.
 type PythonDriver struct{}
 
 // Lang returns LangPython.
@@ -269,12 +271,107 @@ func (p *PythonDriver) Detect(dir string) bool {
 	return false
 }
 
-// Build is not yet implemented for Python.
-func (p *PythonDriver) Build(_ context.Context, _ string, _ Options) (BuildResult, error) {
-	return BuildResult{}, fmt.Errorf("python driver: not yet implemented; use --pkg python:<version> with a pre-built binary instead")
+// Build installs Python dependencies and returns the source directory with
+// the python runtime package. The result includes Packages=["python:3.12"]
+// so the caller can resolve the Python runtime.
+func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
+	entrypoint, err := pythonEntrypoint(dir, opts.Entrypoint)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	pythonVersion, err := pythonVersionFromConfig(dir)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+		pipCmd := exec.CommandContext(ctx, "pip", "install", "-r", "requirements.txt", "--target", "packages")
+		pipCmd.Dir = dir
+		pipCmd.Stdout = os.Stderr
+		pipCmd.Stderr = os.Stderr
+		if err := pipCmd.Run(); err != nil {
+			return BuildResult{}, fmt.Errorf("python driver: pip install: %w", err)
+		}
+	}
+
+	pkgRef := "python:" + pythonVersion
+	return BuildResult{
+		SourceDir:  dir,
+		Entrypoint: entrypoint,
+		Packages:   []string{pkgRef},
+	}, nil
 }
 
-// RustDriver detects Rust projects (not yet fully implemented).
+// pythonEntrypoint determines the entrypoint script for the Python project.
+// Priority: opts override > pyproject.toml [project] scripts > "main.py" default.
+func pythonEntrypoint(dir string, override string) (string, error) {
+	if override != "" {
+		if _, err := os.Stat(filepath.Join(dir, override)); err != nil {
+			return "", fmt.Errorf("python driver: entrypoint %s not found: %w", override, err)
+		}
+		return override, nil
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
+	if err != nil {
+		return "main.py", nil
+	}
+
+	var cfg struct {
+		Project struct {
+			Scripts map[string]string `toml:"scripts"`
+		} `toml:"project"`
+	}
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return "main.py", nil
+	}
+	if len(cfg.Project.Scripts) > 0 {
+		for _, script := range cfg.Project.Scripts {
+			return script, nil
+		}
+	}
+	return "main.py", nil
+}
+
+// pythonVersionFromConfig reads requires-python from pyproject.toml
+// and returns the major.minor version. Defaults to "3.12" if not specified.
+func pythonVersionFromConfig(dir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
+	if err != nil {
+		return "3.12", nil
+	}
+
+	var cfg struct {
+		Project struct {
+			RequiresPython string `toml:"requires-python"`
+		} `toml:"project"`
+	}
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return "3.12", nil
+	}
+	if cfg.Project.RequiresPython == "" {
+		return "3.12", nil
+	}
+
+	v := strings.TrimPrefix(cfg.Project.RequiresPython, ">=")
+	v = strings.TrimPrefix(v, "^")
+	v = strings.TrimPrefix(v, "~")
+	v = strings.TrimPrefix(v, ">")
+	v = strings.TrimPrefix(v, "=")
+
+	parts := strings.SplitN(v, ".", 3)
+	switch len(parts) {
+	case 1:
+		return parts[0], nil
+	case 2, 3:
+		return parts[0] + "." + parts[1], nil
+	default:
+		return "3.12", nil
+	}
+}
+
+// RustDriver builds Rust projects into static ELF binaries via cross-compilation.
 type RustDriver struct{}
 
 // Lang returns LangRust.
@@ -286,9 +383,99 @@ func (r *RustDriver) Detect(dir string) bool {
 	return err == nil
 }
 
-// Build is not yet implemented for Rust.
-func (r *RustDriver) Build(_ context.Context, _ string, _ Options) (BuildResult, error) {
-	return BuildResult{}, fmt.Errorf("rust driver: not yet implemented; use a pre-built binary instead")
+// Build compiles a Rust project into a static ELF binary using
+// `cargo build --release --target x86_64-unknown-linux-musl`.
+// Requires the musl target to be installed: `rustup target add x86_64-unknown-linux-musl`.
+func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
+	target := "x86_64-unknown-linux-musl"
+
+	args := []string{"build", "--release", "--target", target}
+	if len(opts.BuildArgs) > 0 {
+		args = append(args, opts.BuildArgs...)
+	}
+
+	cmd := exec.CommandContext(ctx, "cargo", args...)
+	cmd.Dir = dir
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	cmd.Env = append(os.Environ(), "CARGO_BUILD_TARGET="+target)
+
+	if err := cmd.Run(); err != nil {
+		return BuildResult{}, fmt.Errorf("rust driver: cargo build: %w", err)
+	}
+
+	binaryName, err := rustBinaryName(dir)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	binPath := filepath.Join(dir, "target", target, "release", binaryName)
+	if _, err := os.Stat(binPath); err != nil {
+		return BuildResult{}, fmt.Errorf("rust driver: binary not found at %s: %w", binPath, err)
+	}
+
+	tmpBin, err := os.CreateTemp("", "uni-rust-build-*")
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("rust driver: create temp: %w", err)
+	}
+	tmpPath := tmpBin.Name()
+	tmpBin.Close()
+
+	if err := copyFile(binPath, tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return BuildResult{}, fmt.Errorf("rust driver: copy binary: %w", err)
+	}
+
+	return BuildResult{BinaryPath: tmpPath}, nil
+}
+
+// rustBinaryName reads the package name from Cargo.toml.
+func rustBinaryName(dir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "Cargo.toml"))
+	if err != nil {
+		return "", fmt.Errorf("rust driver: read Cargo.toml: %w", err)
+	}
+
+	var cargo struct {
+		Package struct {
+			Name string `toml:"name"`
+		} `toml:"package"`
+	}
+	if err := toml.Unmarshal(data, &cargo); err != nil {
+		return "", fmt.Errorf("rust driver: parse Cargo.toml: %w", err)
+	}
+	if cargo.Package.Name == "" {
+		return "", fmt.Errorf("rust driver: Cargo.toml missing package.name")
+	}
+	return cargo.Package.Name, nil
+}
+
+// copyFile copies src to dst, preserving permissions.
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("copy open src: %w", err)
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return fmt.Errorf("copy create dst: %w", err)
+	}
+	defer out.Close()
+
+	if _, err := out.ReadFrom(in); err != nil {
+		return fmt.Errorf("copy data: %w", err)
+	}
+
+	info, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("copy stat src: %w", err)
+	}
+	if err := os.Chmod(dst, info.Mode()); err != nil {
+		return fmt.Errorf("copy chmod: %w", err)
+	}
+	return nil
 }
 
 // GoDriver builds Go projects into static ELF binaries.

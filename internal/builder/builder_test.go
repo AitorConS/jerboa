@@ -236,11 +236,83 @@ func TestPythonDriverDetect(t *testing.T) {
 	require.True(t, d.Detect(dir2))
 }
 
-func TestPythonDriverBuildNotImplemented(t *testing.T) {
-	d := &PythonDriver{}
-	_, err := d.Build(context.Background(), "", Options{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not yet implemented")
+func TestPythonEntrypoint(t *testing.T) {
+	tests := []struct {
+		name      string
+		override  string
+		pyproject string
+		want      string
+	}{
+		{
+			name:      "default",
+			pyproject: "",
+			override:  "",
+			want:      "main.py",
+		},
+		{
+			name:      "override takes priority",
+			override:  "app.py",
+			pyproject: "[project]\nscripts = {start = \"server.py\"}\n",
+			want:      "app.py",
+		},
+		{
+			name:      "from pyproject scripts",
+			pyproject: "[project]\nscripts = {start = \"server.py\"}\n",
+			override:  "",
+			want:      "server.py",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.pyproject != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(tt.pyproject), 0o644))
+			}
+			if tt.override != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, tt.override), []byte(""), 0o644))
+			}
+
+			got, err := pythonEntrypoint(dir, tt.override)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPythonVersionFromConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		pyproject string
+		want      string
+	}{
+		{"no file", "", "3.12"},
+		{"no requires-python", "[project]\nname = \"app\"\n", "3.12"},
+		{"exact version", "[project]\nrequires-python = \">=3.11.0\"\n", "3.11"},
+		{"caret version", "[project]\nrequires-python = \"^3.10\"\n", "3.10"},
+		{"tilde version", "[project]\nrequires-python = \"~3.9\"\n", "3.9"},
+		{"gte", "[project]\nrequires-python = \">=3.12\"\n", "3.12"},
+		{"major only", "[project]\nrequires-python = \">=3\"\n", "3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.pyproject != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(tt.pyproject), 0o644))
+			}
+			got, err := pythonVersionFromConfig(dir)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPythonVersionFromConfigNoFile(t *testing.T) {
+	dir := t.TempDir()
+	got, err := pythonVersionFromConfig(dir)
+	require.NoError(t, err)
+	require.Equal(t, "3.12", got)
 }
 
 func TestRustDriverDetect(t *testing.T) {
@@ -251,11 +323,24 @@ func TestRustDriverDetect(t *testing.T) {
 	require.True(t, d.Detect(dir))
 }
 
-func TestRustDriverBuildNotImplemented(t *testing.T) {
-	d := &RustDriver{}
-	_, err := d.Build(context.Background(), "", Options{})
+func TestRustBinaryName(t *testing.T) {
+	dir := t.TempDir()
+	content := `[package]
+name = "myserver"
+version = "0.1.0"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte(content), 0o644))
+	name, err := rustBinaryName(dir)
+	require.NoError(t, err)
+	require.Equal(t, "myserver", name)
+}
+
+func TestRustBinaryNameMissing(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\n"), 0o644))
+	_, err := rustBinaryName(dir)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "not yet implemented")
+	require.Contains(t, err.Error(), "missing package.name")
 }
 
 func TestGetDriverGo(t *testing.T) {

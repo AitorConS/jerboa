@@ -355,17 +355,15 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]string, erro
 
 // runtimeBinaryNames maps a language to the expected binary name within its package.
 var runtimeBinaryNames = map[builder.Lang]string{
-	builder.LangGo:     "",
 	builder.LangNode:   "node",
 	builder.LangPython: "python3",
-	builder.LangRust:   "",
 }
 
 // findRuntimeBinary searches the resolved package files for the runtime binary
 // of the given language.
 func findRuntimeBinary(pkgFiles []string, lang builder.Lang) (string, error) {
 	binaryName, ok := runtimeBinaryNames[lang]
-	if !ok || binaryName == "" {
+	if !ok {
 		return "", fmt.Errorf("language %s does not have a runtime binary", lang)
 	}
 
