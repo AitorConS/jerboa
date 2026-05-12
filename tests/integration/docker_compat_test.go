@@ -453,11 +453,12 @@ func TestDockerCompat_ChunkedUpload(t *testing.T) {
 	require.NotEmpty(t, patchResp.Header.Get("Docker-Upload-UUID"))
 	require.NotEmpty(t, patchResp.Header.Get("Range"))
 
-	allData := append(chunk1, []byte("chunk2_data")...)
+	chunk2 := []byte("chunk2_data")
+	allData := append(chunk1, chunk2...)
 	fullDigestHash := sha256.Sum256(allData)
 	fullDigest := "sha256:" + hex.EncodeToString(fullDigestHash[:])
 
-	putReq, err := http.NewRequest(http.MethodPut, srv.URL+loc+"?digest="+fullDigest, nil)
+	putReq, err := http.NewRequest(http.MethodPut, srv.URL+loc+"?digest="+fullDigest, bytes.NewReader(chunk2))
 	require.NoError(t, err)
 	putResp, err := http.DefaultClient.Do(putReq)
 	require.NoError(t, err)
@@ -666,7 +667,7 @@ func TestDockerCompat_BlobUploadDigestMismatch(t *testing.T) {
 func TestDockerCompat_AuthenticatedPullWithBearerToken(t *testing.T) {
 	srv := newDockerCompatServerWithAuth(t, "pull-token")
 
-	pushTestImageWithToken(t, srv, "pull-secure-app", "latest", "pull-token")
+	pushTestImageWithToken(t, srv, "pull-token", "pull-secure-app", "latest")
 
 	resp, err := http.Get(srv.URL + "/v2/pull-secure-app/manifests/latest")
 	require.NoError(t, err)
@@ -686,14 +687,18 @@ func TestDockerCompat_AuthenticatedPullWithBearerToken(t *testing.T) {
 func TestDockerCompat_AuthenticatedBlobHead(t *testing.T) {
 	srv := newDockerCompatServerWithAuth(t, "head-token")
 
-	pushTestImageWithToken(t, srv, "auth-head-app", "v1", "head-token")
+	pushTestImageWithToken(t, srv, "head-token", "auth-head-app", "v1")
 
 	data := []byte("authenticated head test")
 	digestHash := sha256.Sum256(data)
 	digest := "sha256:" + hex.EncodeToString(digestHash[:])
 
-	startResp, err := http.Post(srv.URL+"/v2/auth-head-app/blobs/uploads/", "application/octet-stream", nil)
+	startReq, err := http.NewRequest(http.MethodPost, srv.URL+"/v2/auth-head-app/blobs/uploads/", nil)
 	require.NoError(t, err)
+	startReq.Header.Set("Authorization", "Bearer head-token")
+	startResp, err := http.DefaultClient.Do(startReq)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusAccepted, startResp.StatusCode)
 	loc := startResp.Header.Get("Location")
 	require.NoError(t, startResp.Body.Close())
 
