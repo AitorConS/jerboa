@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/autotls"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
@@ -126,6 +127,23 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		if err := validateRegistryTLSConfig(registryTLSCert, registryTLSKey); err != nil {
 			return fmt.Errorf("unid: registry TLS config: %w", err)
 		}
+
+		useTLS := false
+		if strings.TrimSpace(registryTLSCert) != "" {
+			useTLS = true
+		} else {
+			selfSignedCert := filepath.Join(autotls.DefaultCertDir(), "cert.pem")
+			selfSignedKey := filepath.Join(autotls.DefaultCertDir(), "key.pem")
+			_, err := autotls.EnsureCert(selfSignedCert, selfSignedKey)
+			if err != nil {
+				return fmt.Errorf("unid: generate self-signed cert: %w", err)
+			}
+			slog.Info("registry using auto-generated self-signed TLS certificate", "cert", selfSignedCert)
+			registryTLSCert = selfSignedCert
+			registryTLSKey = selfSignedKey
+			useTLS = true
+		}
+
 		imgStore, err := image.NewStore(storePath)
 		if err != nil {
 			return fmt.Errorf("unid: image store: %w", err)
@@ -151,9 +169,9 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 			Handler: registry.NewServer(imgStore, opts...).Handler(),
 		}
 		go func() {
-			slog.Info("registry listening", "addr", registryAddr)
+			slog.Info("registry listening", "addr", registryAddr, "tls", useTLS)
 			var err error
-			if strings.TrimSpace(registryTLSCert) != "" {
+			if useTLS {
 				err = regSrv.ListenAndServeTLS(registryTLSCert, registryTLSKey)
 			} else {
 				err = regSrv.ListenAndServe()
