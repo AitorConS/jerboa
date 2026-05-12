@@ -287,6 +287,9 @@ unireg gc
 | CLI version (injected at build) | `cmd/uni/main.go::version` — set via `-X main.version` in `main.yml` |
 | Image signing and verification | `internal/signing/signing.go` — Ed25519 key generation, signing, verification, key store (`~/.uni/keys/`) |
 | `uni sign` / `uni verify` | `cmd/uni/sign.go` — sign local images, verify signatures; `--verify` flag on `uni run` and `uni pull` |
+| Auto-generated self-signed TLS | `internal/autotls/autotls.go` — RSA 2048-bit key + X.509 cert, 365 days validity, stored at `~/.uni/registry/tls/`, reused on subsequent starts |
+| Standalone registry | `cmd/unireg/main.go` — independently deployable registry server with same API/auth/TLS/GC as embedded daemon registry |
+| Docker compatibility tests | `tests/integration/docker_compat_test.go` — validates Docker CLI patterns against registry server |
 | Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
 | Restart policy logic | `internal/vm/qemu.go::monitor` — evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
 | Restart policy CLI flag | `cmd/uni/run.go::parseRestartPolicy` — `--restart never/on-failure/always[:N]` |

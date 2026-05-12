@@ -296,7 +296,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.10.2 — Added OCI chunked blob upload support (`PATCH /blobs/uploads/<uuid>` then `PUT ...?digest=`) for Docker push compatibility
 - [x] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
 
-**Done when:** OCI-compatible push/pull with auth + signing works. Docker CLI can push to the registry.
+**Done when:** OCI-compatible push/pull with auth + signing + TLS bootstrap works. Docker CLI can push to the registry. `unireg` is independently deployable. Docker compatibility validated with integration tests.
 
 ---
 
