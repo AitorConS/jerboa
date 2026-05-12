@@ -28,11 +28,15 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
                                            → Registry client
                                            → Scheduler/orchestrator
                  Nanos kernel (C+ASM fork) ← image loader
+
+unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 ```
 
 **CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `dns`, `kernel`, `pkg`, `cp`, `upgrade`.
 
-**Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling. Creates `~/.uni/networks/` Network Store on startup.
+**Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling. Creates `~/.uni/networks/` Network Store on startup. Registry server can be embedded via `--registry-addr`.
+
+**Registry (`cmd/unireg/`)** — standalone registry server with same OCI/legacy API, auth, TLS, and GC as the embedded daemon registry. Independently deployable. Uses `--addr`, `--token`, `--jwt-secret`, `--tls-cert`/`--tls-key`, `--no-auto-tls` flags.
 
 **API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Attach`, `VM.Inspect`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`, `DNS.Resolve`, `DNS.List`.
 
@@ -98,7 +102,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search/signing implemented; self-signed TLS bootstrap, Docker CLI validation, and unireg split pending.
+Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search/signing/autotls implemented; Docker CLI validation and unireg split complete.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -117,7 +121,7 @@ Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search/si
 | 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
 | 7.6 — DNS | ✅ done | Internal DNS resolver in `unid` (`DNS.Resolve`/`DNS.List`), scoped names (`name.network`), ambiguity detection, and `uni dns` CLI |
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
-| 8 — Registry & Distribution | ⬜ | OCI-compatible registry with auth/TLS/GC/search/signing done; self-signed TLS bootstrap, Docker CLI validation, unireg split pending |
+| 8 — Registry & Distribution | ✅ done | OCI-compatible registry with auth/TLS/GC/search/signing/autotls; standalone `unireg` service; `uni sign`/`uni verify` |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
 
@@ -217,6 +221,33 @@ Both the CLI and the kernel are independently versioned with semver.
 - `uni upgrade` replaces the running `uni` binary (and `unid` if found alongside it).
 - `uni upgrade check` / `uni upgrade list` for inspection without installing.
 - Windows: renames the running binary to `.bak` before placing the new one (cannot overwrite a running `.exe` directly).
+
+## Registry Service (`unireg`)
+
+`unireg` is a standalone registry server extracted from `unid`. It provides the same OCI and legacy HTTP API with auth, TLS, and GC capabilities.
+
+**Usage:**
+
+```bash
+# Start registry with auto-generated self-signed TLS on :5000
+unireg
+
+# Start registry without TLS
+unireg --no-auto-tls
+
+# Start with custom TLS cert and JWT auth
+unireg --tls-cert /path/to/cert.pem --tls-key /path/to/key.pem --jwt-secret mysecret
+
+# Start on custom address
+unireg --addr :8080
+
+# Garbage collect unreferenced blobs
+unireg gc
+```
+
+**Flags:** `--addr`, `--store`, `--token`, `--jwt-secret`, `--jwt-issuer`, `--jwt-audience`, `--tls-cert`, `--tls-key`, `--no-auto-tls`
+
+**Environment variables:** `UNI_REGISTRY_TOKEN`, `UNI_REGISTRY_JWT_SECRET`, `UNI_REGISTRY_JWT_ISSUER`, `UNI_REGISTRY_JWT_AUDIENCE`, `UNI_REGISTRY_TLS_CERT`, `UNI_REGISTRY_TLS_KEY`
 
 ## Repository Notes
 

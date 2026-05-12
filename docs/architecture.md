@@ -72,6 +72,15 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │  Nanos Kernel (C + ASM fork)                            │
 │  Loads and runs the static ELF application              │
 └─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│  unireg  (standalone registry server)                    │
+│                                                          │
+│  Same OCI/legacy HTTP API as embedded registry.          │
+│  Independently deployable for multi-node or CI use.      │
+│  Flags: --addr, --token, --jwt-secret, --tls-cert,      │
+│         --tls-key, --no-auto-tls                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---

@@ -4,12 +4,12 @@
 
 ---
 
-## Current status: Phase 8 — in progress (signing implemented; self-signed TLS bootstrap, Docker CLI validation, and unireg split pending)
+## Current status: Phase 8 — complete ✅
 
 ### Phase 8 snapshot (2026-05-12)
 
-- Done: OCI manifests/blobs persistence, HEAD support, nested repo paths, Docker-style auth challenges, JWT scope + issuer/audience validation, registry TLS (custom cert/key), CLI registry auth/TLS flags, `uni search`, `unid gc`, and **image signing with Ed25519 (`uni sign`/`uni verify`)**.
-- Remaining to close Phase 8: self-signed TLS bootstrap, final Docker CLI compatibility validation, and registry service split (`unireg`).
+- Done: OCI manifests/blobs persistence, HEAD support, nested repo paths, Docker-style auth challenges, JWT scope + issuer/audience validation, registry TLS (custom cert/key + auto-generated self-signed), CLI registry auth/TLS flags, `uni search`, `unid gc`, image signing with Ed25519 (`uni sign`/`uni verify`), `--verify` flag on `uni run`/`uni pull`, standalone `unireg` service.
+- Phase 8 is complete. All deliverables are implemented and tested.
 
 ---
 
@@ -275,26 +275,26 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.1.6 — Add OCI `HEAD` support for blobs/manifests with `Docker-Content-Digest` headers
 - [x] 8.2 — Image signing with Ed25519 keypair; `uni sign <image>` and `uni verify <image>`; key store at `~/.uni/keys/`; signatures stored alongside manifests (`manifest.json.sig`)
 - [x] 8.3 — Signature verification on `uni pull` and `uni run` (`--verify off|warn|enforce`); warn logs missing/invalid signatures, enforce fails
-- [ ] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials
+- [x] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials
   - [x] 8.4.0 — Optional static bearer auth gate in registry server (`--registry-token` / `UNI_REGISTRY_TOKEN`) with `WWW-Authenticate` challenge
   - [x] 8.4.1 — Optional JWT auth gate in registry server (`--registry-jwt-secret` / `UNI_REGISTRY_JWT_SECRET`) with repo/action scope enforcement
   - [x] 8.4.2 — Optional JWT issuer/audience validation (`--registry-jwt-issuer`, `--registry-jwt-audience`) with integration coverage
 - [x] 8.5 — TLS: registry server generates self-signed cert on first boot; supports custom cert via config
   - [x] 8.5.0 — Support custom TLS cert/key config for registry HTTPS (`--registry-tls-cert`, `--registry-tls-key`)
   - [x] 8.5.1 — Auto-generate self-signed cert at `~/.uni/registry/tls/` when registry is enabled without custom TLS
-- [ ] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)
-- [ ] 8.7 — Garbage collection: `unid gc` removes blobs not referenced by any manifest
+- [x] 8.6 — Layer deduplication: blob-level dedup using content-addressable SHA256 (no duplicate blobs)
+- [x] 8.7 — Garbage collection: `unid gc` removes blobs not referenced by any manifest
   - [x] 8.7.0 — Added `unid gc` command backed by manifest reference analysis and safe unreferenced blob deletion
-- [ ] 8.8 — `uni push / pull` work with auth headers and TLS
+- [x] 8.8 — `uni push / pull` work with auth headers and TLS
   - [x] 8.8.0 — Added global CLI registry auth/TLS options (`--registry-token`, `--registry-ca-cert`, `--registry-insecure`) with env var support
   - [x] 8.8.1 — Added CLI integration coverage for auth+TLS `uni push`/`uni pull`/`uni search` flows
-- [ ] 8.9 — `uni search <registry>/<query>` — search images on remote registry
+- [x] 8.9 — `uni search <registry>/<query>` — search images on remote registry
   - [x] 8.9.0 — Added `uni search <registry>/<query>` using OCI catalog with substring filtering
-- [ ] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry
+- [x] 8.10 — Docker CLI compatibility: `docker push <registry>/<img>` works against a uni registry
   - [x] 8.10.0 — Added OCI route parsing support for nested repository names (`namespace/repo`) in blobs/manifests endpoints
   - [x] 8.10.1 — Added Docker-style `WWW-Authenticate` challenge format with `service` and repo/action `scope`
   - [x] 8.10.2 — Added OCI chunked blob upload support (`PATCH /blobs/uploads/<uuid>` then `PUT ...?digest=`) for Docker push compatibility
-- [ ] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
+- [x] 8.11 — Registry service split: extract registry runtime from `unid` into an independently deployable service (`unireg`) with backward-compatible API behavior for `uni push/pull`
 
 **Done when:** OCI-compatible push/pull with auth + signing works. Docker CLI can push to the registry.
 
@@ -400,9 +400,11 @@ so developers can point at a project directory and get a runnable image.
 | Health checks + restart policies | 7 | ✅ done |
 | Auto-scaling (`uni scale`) | 7 | ⬜ deferred |
 | Internal DNS | 7 | ✅ done |
-| OCI-compatible registry | 8 | ⬜ (basic server/client exists) |
-| Image signing | 8 | ⬜ |
-| Registry auth (JWT) | 8 | ⬜ |
+| OCI-compatible registry | 8 | ✅ done |
+| Image signing | 8 | ✅ done |
+| Registry auth (JWT) | 8 | ✅ done |
+| Self-signed TLS bootstrap | 8 | ✅ done |
+| Standalone registry (`unireg`) | 8 | ✅ done |
 | Multi-language `uni build` | 9 | ⬜ |
 | `unikernel.toml` project config | 9 | ⬜ |
 | Prometheus metrics | 10 | ⬜ |
