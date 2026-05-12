@@ -98,7 +98,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search mostly implemented; signing and final Docker CLI validation pending.
+Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search/signing implemented; self-signed TLS bootstrap, Docker CLI validation, and unireg split pending.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -117,7 +117,7 @@ Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search mo
 | 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
 | 7.6 — DNS | ✅ done | Internal DNS resolver in `unid` (`DNS.Resolve`/`DNS.List`), scoped names (`name.network`), ambiguity detection, and `uni dns` CLI |
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
-| 8 — Registry & Distribution | ⬜ | OCI-compatible registry with auth/TLS/GC/search largely done; signing + Docker CLI validation pending |
+| 8 — Registry & Distribution | ⬜ | OCI-compatible registry with auth/TLS/GC/search/signing done; self-signed TLS bootstrap, Docker CLI validation, unireg split pending |
 | 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
 
@@ -151,13 +151,15 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 
 | Command | Flags | Description |
 |---|---|---|
-| `uni run <image>` | `--memory`, `-p/--port`, `-e/--env`, `--env-file`, `--name`, `--rm`, `-v/--volume`, `--attach`, `-d/--detach`, `--ip`, `--network`, `--health-check`, `--restart` | Create and start a unikernel VM |
+| `uni run <image>` | `--memory`, `-p/--port`, `-e/--env`, `--env-file`, `--name`, `--rm`, `-v/--volume`, `--attach`, `-d/--detach`, `--ip`, `--network`, `--health-check`, `--restart`, `--verify` | Create and start a unikernel VM |
 | `uni build` | `--name`, `--tag`, `--pkg` | Build a unikernel image |
 | `uni images` | — | List local images |
 | `uni rmi` | — | Remove a local image |
 | `uni push` | — | Push image to registry |
-| `uni pull` | — | Pull image from registry |
+| `uni pull` | `--verify` | Pull image from registry |
 | `uni search <registry>/<query>` | — | Search remote registry repositories |
+| `uni sign <image>` | `--key` | Sign a local image with Ed25519 key |
+| `uni verify <image>` | — | Verify image signature |
 | `uni ps` | — | List running VMs |
 | `uni status` | — | Show VM summary with health/restart info |
 | `uni logs <id>` | — | Show captured serial console output |
@@ -252,6 +254,8 @@ Both the CLI and the kernel are independently versioned with semver.
 | Compose shared volumes | `internal/compose/types.go::VolumeConfig` + `cmd/uni/compose.go::newComposeUpCmd` |
 | CLI self-update | `cmd/uni/upgrade.go::replaceBinary` |
 | CLI version (injected at build) | `cmd/uni/main.go::version` — set via `-X main.version` in `main.yml` |
+| Image signing and verification | `internal/signing/signing.go` — Ed25519 key generation, signing, verification, key store (`~/.uni/keys/`) |
+| `uni sign` / `uni verify` | `cmd/uni/sign.go` — sign local images, verify signatures; `--verify` flag on `uni run` and `uni pull` |
 | Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
 | Restart policy logic | `internal/vm/qemu.go::monitor` — evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
 | Restart policy CLI flag | `cmd/uni/run.go::parseRestartPolicy` — `--restart never/on-failure/always[:N]` |
@@ -275,6 +279,7 @@ Both the CLI and the kernel are independently versioned with semver.
 | `internal/network/` | TAP device + Linux bridge setup, iptables port forwarding (Linux-only), **Network Store + IPAM** (`store.go`) with persistent `~/.uni/networks/<name>/` directories. Network type with subnet allocator (10.100.0.0/16 → /24 blocks), AllocateIP/ReleaseIP, bridge-per-network convention (`uni-br-<name>`). |
 | `internal/package/` | Package index fetch, local store, download (SHA-256 verified), extract (tar.gz), search, remove. |
 | `internal/registry/` | Hybrid registry server/client with legacy `/v2/images` and OCI `/v2/...` flows, persistent OCI blobs/manifests, optional bearer/JWT auth, and optional registry TLS. |
+| `internal/signing/` | Ed25519 image signing and verification. Key pair generation and storage at `~/.uni/keys/`. Signature files stored alongside manifests (`manifest.json.sig`). Verification policy: `off` (default), `warn` (log warnings), `enforce` (fail on missing/invalid). |
 | `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |

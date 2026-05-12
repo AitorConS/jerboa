@@ -63,6 +63,7 @@ uni run <image> [flags]
 | `--network` | — | Managed network name created by `uni network create` |
 | `--health-check` | — | Health check probe: `tcp:PORT` or `http:PORT:/path` |
 | `--restart` | — | Restart policy: `never`, `on-failure`, or `always[:max-retries]` |
+| `--verify` | `off` | Image signature verification: `off`, `warn`, `enforce` |
 
 **Examples:**
 
@@ -497,7 +498,16 @@ uni pull <ref> <registry-url>
 ```bash
 uni pull hello:latest http://registry.example.com:5000
 # sha256:abc123...  hello:latest
+
+# Pull with signature verification
+uni pull hello:latest http://registry.example.com:5000 --verify enforce
 ```
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--verify` | `off` | Image signature verification: `off`, `warn`, `enforce` |
 
 ---
 
@@ -518,6 +528,40 @@ uni search https://registry.example.com:5000/hello
 ```
 
 `uni search` supports the same global registry auth/TLS flags as `uni push`/`uni pull`.
+
+---
+
+### `uni sign`
+
+Sign a local image with the default Ed25519 key pair. If no key pair exists, one is generated automatically and stored in `~/.uni/keys/`.
+
+```
+uni sign <image>
+```
+
+**Example:**
+
+```bash
+uni sign hello:latest
+# signed hello:latest (key a1b2c3d4e5f67890, digest sha256:...)
+```
+
+---
+
+### `uni verify`
+
+Verify the Ed25519 signature of a local image. Fails if the image has no signature or the signature is invalid.
+
+```
+uni verify <image>
+```
+
+**Example:**
+
+```bash
+uni verify hello:latest
+# verified hello:latest (key a1b2c3d4e5f67890, digest sha256:...)
+```
 
 ---
 

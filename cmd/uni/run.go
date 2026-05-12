@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/signing"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/spf13/cobra"
@@ -31,6 +33,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		network     string
 		healthCheck string
 		restart     string
+		verify      string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -41,6 +44,10 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			diskPath, err := resolveImage(imgArg, *storePath, memory, cpus)
 			if err != nil {
 				return fmt.Errorf("run: resolve image: %w", err)
+			}
+
+			if err := verifyImageSignature(cmd, imgArg, *storePath, diskPath, verify); err != nil {
+				return err
 			}
 
 			portMaps, err := vm.ParsePortMaps(ports)
@@ -181,6 +188,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'uni network'; Linux only)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
+	cmd.Flags().StringVar(&verify, "verify", "off", "image signature verification: off, warn, enforce")
 	return cmd
 }
 
@@ -399,4 +407,65 @@ func parseRestartPolicy(spec string) (api.RestartSpec, error) {
 		rs.MaxRetries = maxRetries
 	}
 	return rs, nil
+}
+
+func verifyImageSignature(cmd *cobra.Command, imgArg, storePath, diskPath, verifyFlag string) error {
+	policy, err := signing.ParseVerifyPolicy(verifyFlag)
+	if err != nil {
+		return fmt.Errorf("run: %w", err)
+	}
+	if policy == signing.VerifyOff {
+		return nil
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = ".uni"
+	} else {
+		home = home + "/.uni"
+	}
+	sigStore, err := signing.NewStore(home)
+	if err != nil {
+		if policy == signing.VerifyEnforce {
+			return fmt.Errorf("run: verify: open signing store: %w", err)
+		}
+		log.Printf("warning: verify: open signing store: %v", err)
+		return nil
+	}
+
+	imgStore, err := image.NewStore(storePath)
+	if err != nil {
+		if policy == signing.VerifyEnforce {
+			return fmt.Errorf("run: verify: open image store: %w", err)
+		}
+		log.Printf("warning: verify: open image store: %v", err)
+		return nil
+	}
+
+	m, _, resolveErr := imgStore.Get(imgArg)
+	if resolveErr != nil {
+		if policy == signing.VerifyEnforce {
+			return fmt.Errorf("run: verify: resolve image: %w", resolveErr)
+		}
+		log.Printf("warning: verify: resolve image: %v", resolveErr)
+		return nil
+	}
+
+	imageDir := home + "/images/" + strings.TrimPrefix(m.DiskDigest, "sha256:")
+	sig, verifyErr := sigStore.VerifyManifest(imageDir)
+	if policy == signing.VerifyWarn {
+		if verifyErr != nil {
+			log.Printf("warning: verify: %v", verifyErr)
+		} else if sig == nil {
+			log.Printf("warning: no signature found for %s", imgArg)
+		}
+		return nil
+	}
+	if verifyErr != nil {
+		return fmt.Errorf("run: verify: %w", verifyErr)
+	}
+	if sig == nil {
+		return fmt.Errorf("run: verify: no signature found for %s", imgArg)
+	}
+	return nil
 }

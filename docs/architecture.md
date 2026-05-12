@@ -28,6 +28,7 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │  volume create · volume ls · volume rm · volume inspect │
 │  network create · network ls · network inspect · network rm │
 │  dns resolve · dns list                                  │
+│  sign · verify                                            │
 │  pkg list · pkg search · pkg get · pkg remove           │
 │  kernel check · kernel update · kernel list · kernel use│
 │  upgrade · upgrade check · upgrade list                 │

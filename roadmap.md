@@ -4,12 +4,12 @@
 
 ---
 
-## Current status: Phase 8 — in progress (security + compatibility nearly complete)
+## Current status: Phase 8 — in progress (signing implemented; self-signed TLS bootstrap, Docker CLI validation, and unireg split pending)
 
-### Phase 8 snapshot (2026-05-11)
+### Phase 8 snapshot (2026-05-12)
 
-- Done: OCI manifests/blobs persistence, HEAD support, nested repo paths, Docker-style auth challenges, JWT scope + issuer/audience validation, registry TLS (custom cert/key), CLI registry auth/TLS flags, `uni search`, and `unid gc` safe blob cleanup.
-- Remaining to close Phase 8: image signing + signature verification, registry self-signed bootstrapping option, and final Docker CLI `login/push/pull` compatibility validation.
+- Done: OCI manifests/blobs persistence, HEAD support, nested repo paths, Docker-style auth challenges, JWT scope + issuer/audience validation, registry TLS (custom cert/key), CLI registry auth/TLS flags, `uni search`, `unid gc`, and **image signing with Ed25519 (`uni sign`/`uni verify`)**.
+- Remaining to close Phase 8: self-signed TLS bootstrap, final Docker CLI compatibility validation, and registry service split (`unireg`).
 
 ---
 
@@ -273,8 +273,8 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - [x] 8.1.4 — Persistent OCI manifest refs/store on disk (`internal/registry/ocistore.go`)
   - [x] 8.1.5 — `uni push/pull` prefer OCI flow with legacy fallback (`cmd/uni/push.go`)
   - [x] 8.1.6 — Add OCI `HEAD` support for blobs/manifests with `Docker-Content-Digest` headers
-- [ ] 8.2 — Image signing with `cosign` or built-in Ed25519 keypair; signature stored as OCI referrer
-- [ ] 8.3 — Signature verification on `uni pull` and `uni run` (configurable: warn / enforce / off)
+- [x] 8.2 — Image signing with Ed25519 keypair; `uni sign <image>` and `uni verify <image>`; key store at `~/.uni/keys/`; signatures stored alongside manifests (`manifest.json.sig`)
+- [x] 8.3 — Signature verification on `uni pull` and `uni run` (`--verify off|warn|enforce`); warn logs missing/invalid signatures, enforce fails
 - [ ] 8.4 — Auth: token-based (JWT, scoped to repo + action); `uni login <registry>` stores credentials
   - [x] 8.4.0 — Optional static bearer auth gate in registry server (`--registry-token` / `UNI_REGISTRY_TOKEN`) with `WWW-Authenticate` challenge
   - [x] 8.4.1 — Optional JWT auth gate in registry server (`--registry-jwt-secret` / `UNI_REGISTRY_JWT_SECRET`) with repo/action scope enforcement
