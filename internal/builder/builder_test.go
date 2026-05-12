@@ -147,11 +147,79 @@ func TestNodeDriverDetect(t *testing.T) {
 	require.True(t, d.Detect(dir))
 }
 
-func TestNodeDriverBuildNotImplemented(t *testing.T) {
-	d := &NodeDriver{}
-	_, err := d.Build(context.Background(), "", Options{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not yet implemented")
+func TestNodeEntrypoint(t *testing.T) {
+	tests := []struct {
+		name     string
+		override string
+		pkgJSON  string
+		want     string
+	}{
+		{
+			name:     "default when no main",
+			pkgJSON:  `{"name": "app"}`,
+			override: "",
+			want:     "index.js",
+		},
+		{
+			name:     "main field from package.json",
+			pkgJSON:  `{"name": "app", "main": "server.js"}`,
+			override: "",
+			want:     "server.js",
+		},
+		{
+			name:     "override takes priority",
+			pkgJSON:  `{"name": "app", "main": "server.js"}`,
+			override: "app.js",
+			want:     "app.js",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte(tt.pkgJSON), 0o644))
+			if tt.override != "" {
+				require.NoError(t, os.WriteFile(filepath.Join(dir, tt.override), []byte(""), 0o644))
+			}
+
+			got, err := nodeEntrypoint(dir, tt.override)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNodeVersionFromPackageJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		pkgJSON string
+		want    string
+	}{
+		{"no engines", `{"name": "app"}`, "20"},
+		{"exact version", `{"engines": {"node": "18.0.0"}}`, "18"},
+		{"caret version", `{"engines": {"node": "^20.10.0"}}`, "20"},
+		{"tilde version", `{"engines": {"node": "~16.14.0"}}`, "16"},
+		{"gte version", `{"engines": {"node": ">=18.0.0"}}`, "18"},
+		{"star version", `{"engines": {"node": "*"}}`, "20"},
+		{"empty version", `{"engines": {"node": ""}}`, "20"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte(tt.pkgJSON), 0o644))
+			got, err := nodeVersionFromPackageJSON(dir)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNodeVersionFromPackageJSONNoFile(t *testing.T) {
+	dir := t.TempDir()
+	got, err := nodeVersionFromPackageJSON(dir)
+	require.NoError(t, err)
+	require.Equal(t, "20", got)
 }
 
 func TestPythonDriverDetect(t *testing.T) {

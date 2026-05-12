@@ -127,8 +127,32 @@ project markers (go.mod, package.json, etc.).`,
 				if err != nil {
 					return fmt.Errorf("build %s: %w", detected, err)
 				}
-				binaryPath = result.BinaryPath
-				defer func() { _ = os.Remove(binaryPath) }()
+
+				switch {
+				case result.BinaryPath != "":
+					binaryPath = result.BinaryPath
+					defer func() { _ = os.Remove(binaryPath) }()
+				case result.SourceDir != "":
+					resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
+					if err != nil {
+						return fmt.Errorf("build: resolve packages: %w", err)
+					}
+					pkgFiles = append(pkgFiles, resolvedPkgs...)
+
+					runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
+					if err != nil {
+						return fmt.Errorf("build: %w", err)
+					}
+					binaryPath = runtimeBinary
+
+					srcFiles, err := sourceFiles(result.SourceDir)
+					if err != nil {
+						return fmt.Errorf("build: collect source files: %w", err)
+					}
+					pkgFiles = append(pkgFiles, srcFiles...)
+				default:
+					return fmt.Errorf("build %s: driver returned empty result", detected)
+				}
 			} else {
 				binaryPath = srcPath
 			}
@@ -265,4 +289,136 @@ func defaultToolsPath() string {
 		return filepath.Join(".uni", "tools")
 	}
 	return filepath.Join(home, ".uni", "tools")
+}
+
+// resolveAutoPackages resolves language runtime packages (e.g. "node:20")
+// and returns the list of extracted file paths.
+func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]string, error) {
+	if len(autoPkgs) == 0 {
+		return nil, nil
+	}
+
+	pkgStore, err := pkg.NewStore(pkgStorePath())
+	if err != nil {
+		return nil, fmt.Errorf("open package store: %w", err)
+	}
+
+	idx, err := pkg.FetchIndex()
+	if err != nil {
+		return nil, fmt.Errorf("fetch package index: %w", err)
+	}
+
+	var files []string
+	for _, ref := range autoPkgs {
+		pkgName, pkgVer := parsePkgRef(ref)
+		target := idx.Latest(pkgName)
+		if target == nil {
+			return nil, fmt.Errorf("package %q not found in index", pkgName)
+		}
+		if pkgVer != "" {
+			found := false
+			versions, ok := idx.Packages[pkgName]
+			if ok {
+				for i := range versions {
+					if versions[i].Version == pkgVer {
+						target = &versions[i]
+						found = true
+						break
+					}
+				}
+			}
+			if !found {
+				return nil, fmt.Errorf("version %q of package %q not found", pkgVer, pkgName)
+			}
+		}
+		if !pkgStore.IsDownloaded(target.Name, target.Version) {
+			if err := pkgStore.Download(*target); err != nil {
+				return nil, fmt.Errorf("download package %s: %w", target.Name, err)
+			}
+			if err := pkgStore.SaveMeta(*target); err != nil {
+				return nil, fmt.Errorf("save package meta: %w", err)
+			}
+		}
+		if !pkgStore.IsExtracted(target.Name, target.Version) {
+			if err := pkgStore.Extract(*target); err != nil {
+				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
+			}
+		}
+		pkgFiles, err := pkgStore.ExtractedFiles(target.Name, target.Version)
+		if err != nil {
+			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
+		}
+		files = append(files, pkgFiles...)
+	}
+	return files, nil
+}
+
+// runtimeBinaryNames maps a language to the expected binary name within its package.
+var runtimeBinaryNames = map[builder.Lang]string{
+	builder.LangGo:     "",
+	builder.LangNode:   "node",
+	builder.LangPython: "python3",
+	builder.LangRust:   "",
+}
+
+// findRuntimeBinary searches the resolved package files for the runtime binary
+// of the given language.
+func findRuntimeBinary(pkgFiles []string, lang builder.Lang) (string, error) {
+	binaryName, ok := runtimeBinaryNames[lang]
+	if !ok || binaryName == "" {
+		return "", fmt.Errorf("language %s does not have a runtime binary", lang)
+	}
+
+	for _, f := range pkgFiles {
+		if filepath.Base(f) == binaryName {
+			return f, nil
+		}
+	}
+
+	for _, f := range pkgFiles {
+		matches, _ := filepath.Glob(filepath.Join(filepath.Dir(f), binaryName))
+		if len(matches) > 0 {
+			return matches[0], nil
+		}
+	}
+
+	return "", fmt.Errorf("runtime binary %q not found in package files", binaryName)
+}
+
+// sourceFiles collects application source files from dir for inclusion in the image.
+// It walks the directory, excluding node_modules, .git, and other build artifacts.
+func sourceFiles(dir string) ([]string, error) {
+	var files []string
+	skipDirs := map[string]bool{
+		"node_modules": true,
+		".git":         true,
+		".uni-build":   true,
+		"__pycache__":  true,
+		".tox":         true,
+		"venv":         true,
+		".venv":        true,
+		"dist":         true,
+		".next":        true,
+	}
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && skipDirs[info.Name()] {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() {
+			rel, rerr := filepath.Rel(dir, path)
+			if rerr != nil {
+				return fmt.Errorf("source file rel path: %w", rerr)
+			}
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk source dir: %w", err)
+	}
+	return files, nil
 }

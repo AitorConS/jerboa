@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -61,9 +62,17 @@ func ParseLang(s string) (Lang, error) {
 // BuildResult holds the output of a successful language build.
 type BuildResult struct {
 	// BinaryPath is the path to the compiled ELF binary.
+	// For interpreted languages (Node, Python), this may be empty and
+	// SourceDir should be used instead.
 	BinaryPath string
+	// SourceDir is the directory containing the application source files
+	// to include in the image (used for interpreted languages).
+	SourceDir string
 	// Entrypoint is the command or script that should be used as the program entrypoint.
 	Entrypoint string
+	// Packages lists language runtime packages that should be included in the image
+	// (e.g. "node:20" for Node.js projects).
+	Packages []string
 }
 
 // Driver is the interface that each language builder must implement.
@@ -141,7 +150,7 @@ func AvailableDrivers() []Driver {
 	}
 }
 
-// NodeDriver detects Node.js projects (not yet fully implemented).
+// NodeDriver builds Node.js projects into unikernel images.
 type NodeDriver struct{}
 
 // Lang returns LangNode.
@@ -153,9 +162,94 @@ func (n *NodeDriver) Detect(dir string) bool {
 	return err == nil
 }
 
-// Build is not yet implemented for Node.js.
-func (n *NodeDriver) Build(_ context.Context, _ string, _ Options) (BuildResult, error) {
-	return BuildResult{}, fmt.Errorf("node driver: not yet implemented; use --pkg node:<version> with a pre-built binary instead")
+// Build runs npm install and returns the source directory with node entrypoint.
+// The result includes Packages=["node:20"] so the caller can resolve the Node runtime.
+func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
+	entrypoint, err := nodeEntrypoint(dir, opts.Entrypoint)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	nodeVersion, err := nodeVersionFromPackageJSON(dir)
+	if err != nil {
+		return BuildResult{}, err
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "node_modules")); os.IsNotExist(err) {
+		installCmd := exec.CommandContext(ctx, "npm", "install", "--production")
+		installCmd.Dir = dir
+		installCmd.Stdout = os.Stderr
+		installCmd.Stderr = os.Stderr
+		if err := installCmd.Run(); err != nil {
+			return BuildResult{}, fmt.Errorf("node driver: npm install: %w", err)
+		}
+	}
+
+	pkgRef := "node:" + nodeVersion
+	return BuildResult{
+		SourceDir:  dir,
+		Entrypoint: entrypoint,
+		Packages:   []string{pkgRef},
+	}, nil
+}
+
+// nodeEntrypoint determines the entrypoint script for the Node.js project.
+// Priority: opts override > package.json "main" field > "index.js" default.
+func nodeEntrypoint(dir string, override string) (string, error) {
+	if override != "" {
+		if _, err := os.Stat(filepath.Join(dir, override)); err != nil {
+			return "", fmt.Errorf("node driver: entrypoint %s not found: %w", override, err)
+		}
+		return override, nil
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return "index.js", nil
+	}
+
+	var pkg struct {
+		Main string `json:"main"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "index.js", nil
+	}
+	if pkg.Main != "" {
+		return pkg.Main, nil
+	}
+	return "index.js", nil
+}
+
+// nodeVersionFromPackageJSON reads the "engines.node" field from package.json
+// and returns the major version. Defaults to "20" if not specified.
+func nodeVersionFromPackageJSON(dir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
+	if err != nil {
+		return "20", nil
+	}
+
+	var pkg struct {
+		Engines struct {
+			Node string `json:"node"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		return "20", nil
+	}
+	if pkg.Engines.Node == "" {
+		return "20", nil
+	}
+
+	v := strings.TrimPrefix(pkg.Engines.Node, ">=")
+	v = strings.TrimPrefix(v, "^")
+	v = strings.TrimPrefix(v, "~")
+	if idx := strings.Index(v, "."); idx > 0 {
+		v = v[:idx]
+	}
+	if v == "" || v == "*" {
+		return "20", nil
+	}
+	return v, nil
 }
 
 // PythonDriver detects Python projects (not yet fully implemented).
