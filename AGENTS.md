@@ -102,7 +102,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search/signing/autotls implemented; Docker CLI validation and unireg split complete.
+Currently in **Phase 9** (Build System) — build driver framework and Go driver implemented; language auto-detection wired to CLI.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -122,7 +122,7 @@ Currently in **Phase 8** (Registry & Distribution) — OCI/auth/TLS/GC/search/si
 | 7.6 — DNS | ✅ done | Internal DNS resolver in `unid` (`DNS.Resolve`/`DNS.List`), scoped names (`name.network`), ambiguity detection, and `uni dns` CLI |
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
 | 8 — Registry & Distribution | ✅ done | OCI-compatible registry with auth/TLS/GC/search/signing/autotls; standalone `unireg` service; `uni sign`/`uni verify` |
-| 9 — Build System | ⬜ | Multi-language `uni build` (Go/Node/Python/Rust), `unikernel.toml`, multi-arch |
+| 9 — Build System | ⬜ | Build Driver framework + `--lang go` implemented; Node/Python/Rust drivers, `unikernel.toml`, multi-arch pending |
 | 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
@@ -156,7 +156,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | Command | Flags | Description |
 |---|---|---|
 | `uni run <image>` | `--memory`, `-p/--port`, `-e/--env`, `--env-file`, `--name`, `--rm`, `-v/--volume`, `--attach`, `-d/--detach`, `--ip`, `--network`, `--health-check`, `--restart`, `--verify` | Create and start a unikernel VM |
-| `uni build` | `--name`, `--tag`, `--pkg` | Build a unikernel image |
+| `uni build` | `--name`, `--tag`, `--pkg`, `--lang` | Build a unikernel image from binary or source directory |
 | `uni images` | — | List local images |
 | `uni rmi` | — | Remove a local image |
 | `uni push` | — | Push image to registry |
@@ -290,6 +290,8 @@ unireg gc
 | Auto-generated self-signed TLS | `internal/autotls/autotls.go` — RSA 2048-bit key + X.509 cert, 365 days validity, stored at `~/.uni/registry/tls/`, reused on subsequent starts |
 | Standalone registry | `cmd/unireg/main.go` — independently deployable registry server with same API/auth/TLS/GC as embedded daemon registry |
 | Docker compatibility tests | `tests/integration/docker_compat_test.go` — validates Docker CLI patterns against registry server |
+| Build driver framework | `internal/builder/builder.go` — `Driver` interface, `Lang` type, `DetectLanguage()`, `GoDriver` |
+| Build CLI (`--lang`) | `cmd/uni/build.go` — `--lang go` flag, auto-detection for directory args |
 | Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
 | Restart policy logic | `internal/vm/qemu.go::monitor` — evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
 | Restart policy CLI flag | `cmd/uni/run.go::parseRestartPolicy` — `--restart never/on-failure/always[:N]` |
@@ -315,6 +317,7 @@ unireg gc
 | `internal/registry/` | Hybrid registry server/client with legacy `/v2/images` and OCI `/v2/...` flows, persistent OCI blobs/manifests, optional bearer/JWT auth, and optional registry TLS. |
 | `internal/signing/` | Ed25519 image signing and verification. Key pair generation and storage at `~/.uni/keys/`. Signature files stored alongside manifests (`manifest.json.sig`). Verification policy: `off` (default), `warn` (log warnings), `enforce` (fail on missing/invalid). |
 | `internal/autotls/` | Auto-generation of self-signed TLS certificates for the registry. Generates RSA 2048-bit key + X.509 cert valid 365 days, stored at `~/.uni/registry/tls/`. Reuses existing certs on subsequent starts. |
+| `internal/builder/` | Build driver framework for multi-language `uni build`. `Driver` interface with `Detect`/`Build`/`Lang`, `GoDriver` implementation, `DetectLanguage()` auto-detection from project markers. |
 | `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |

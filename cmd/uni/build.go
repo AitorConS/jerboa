@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/builder"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 	"github.com/AitorConS/unikernel-engine/internal/tools"
@@ -31,11 +32,19 @@ func newBuildCmd(storePath *string) *cobra.Command {
 		mkfs      string
 		updateYes bool
 		pkgs      []string
+		lang      string
 	)
 	cmd := &cobra.Command{
-		Use:   "build <binary>",
-		Short: "Build a unikernel image from a static ELF binary",
-		Args:  cobra.ExactArgs(1),
+		Use:   "build <path>",
+		Short: "Build a unikernel image from a binary or source directory",
+		Long: `Build a unikernel image from a static ELF binary or a source directory.
+
+If <path> is a file, it is used directly as the binary (legacy mode).
+If <path> is a directory and --lang is specified, the appropriate language
+driver compiles the project first, then packages the result.
+If --lang is omitted for a directory, the language is auto-detected from
+project markers (go.mod, package.json, etc.).`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := image.NewStore(*storePath)
 			if err != nil {
@@ -58,7 +67,6 @@ func newBuildCmd(storePath *string) *cobra.Command {
 				return fmt.Errorf("build: %w", err)
 			}
 
-			// Resolve package dependencies if --pkg is specified.
 			var pkgFiles []string
 			if len(pkgs) > 0 {
 				resolved, err := resolvePackages(cmd.Context(), pkgs)
@@ -68,7 +76,43 @@ func newBuildCmd(storePath *string) *cobra.Command {
 				pkgFiles = resolved
 			}
 
-			binaryPath := absPath(args[0])
+			srcPath := absPath(args[0])
+
+			var binaryPath string
+			info, err := os.Stat(srcPath)
+			if err != nil {
+				return fmt.Errorf("build: stat %s: %w", srcPath, err)
+			}
+
+			if info.IsDir() {
+				var langHint builder.Lang
+				if lang != "" {
+					langHint, err = builder.ParseLang(lang)
+					if err != nil {
+						return fmt.Errorf("build: %w", err)
+					}
+				}
+				detected, err := builder.DetectLanguage(srcPath, langHint)
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+				driver, err := builder.GetDriver(detected)
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
+				result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
+					PkgFiles: pkgFiles,
+				})
+				if err != nil {
+					return fmt.Errorf("build %s: %w", detected, err)
+				}
+				binaryPath = result.BinaryPath
+				defer func() { _ = os.Remove(binaryPath) }()
+			} else {
+				binaryPath = srcPath
+			}
+
 			if name == "" {
 				name = args[0]
 			}
@@ -95,6 +139,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&mkfs, "mkfs", "", "path to mkfs binary — skip auto-download (env: UNI_MKFS)")
 	cmd.Flags().BoolVarP(&updateYes, "update-kernel", "U", false, "auto-approve kernel update if one is available")
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
+	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust)")
 	return cmd
 }
 

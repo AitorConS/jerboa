@@ -364,23 +364,28 @@ uni exec a3f8c2d1 --signal 1
 
 ### `uni build`
 
-Build a unikernel image from a static ELF binary.
+Build a unikernel image from a static ELF binary or a source directory.
 
 ```
-uni build <binary> [flags]
+uni build <path> [flags]
 ```
 
-The binary must be a **static Linux ELF** (`GOOS=linux`, no dynamic library dependencies). Go binaries built with `CGO_ENABLED=0 GOOS=linux` are ideal.
+`<path>` can be:
+- A **file path**: `./hello` — path to a pre-compiled static ELF binary (legacy mode)
+- A **directory**: `.` — build from source using a language driver (requires `--lang` or auto-detection)
+
+When `<path>` is a directory, `uni build` detects the language from project markers (`go.mod`, `package.json`, etc.) or uses `--lang` explicitly, compiles the project, and packages the result into a unikernel image.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--name` | Binary filename | Image name |
+| `--name` | Binary/directory filename | Image name |
 | `--tag` | `latest` | Image tag |
 | `--memory` | `256M` | Default VM memory baked into the image |
 | `--cpus` | `1` | Default CPU count baked into the image |
 | `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
 | `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
 | `--pkg` | — | Include package in the image (repeatable). Downloads, extracts, and includes the package files |
+| `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`) |
 
 If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
 
@@ -406,6 +411,12 @@ uni build ./myapp --name myapp --pkg node:20
 
 # Include multiple packages
 uni build ./myapp --name myapp --pkg node:20 --pkg redis:7
+
+# Build from source directory (Go project)
+uni build --lang go .
+
+# Build from source directory (auto-detect language)
+uni build .
 ```
 
 **Output:**

@@ -309,6 +309,9 @@ so developers can point at a project directory and get a runnable image.
 
 ### Steps
 
+- [x] 9.0 — Build Driver framework: `internal/builder/` package with `Driver` interface, `Lang` type,
+  `DetectLanguage()`, `GetDriver()`, and `AvailableDrivers()`. GoDriver as first implementation.
+- [x] 9.0.1 — `uni build --lang go .` CLI flag wired to builder pipeline with auto-detection
 - [ ] 9.1 — `uni build --lang go .` — detect Go project (`go.mod`), build static binary (`CGO_ENABLED=0`), produce image
 - [ ] 9.2 — `uni build --lang node .` — detect Node.js project (`package.json`), bundle with `node` package, produce image
 - [ ] 9.3 — `uni build --lang python .` — detect Python project (`requirements.txt` / `pyproject.toml`), bundle with `python` package
