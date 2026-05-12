@@ -386,6 +386,7 @@ When `<path>` is a directory, `uni build` detects the language from project mark
 | `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
 | `--pkg` | — | Include package in the image (repeatable). Downloads, extracts, and includes the package files |
 | `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`) |
+| `--platform` | *(native)* | Target platform for cross-compilation (e.g. `linux/amd64`, `linux/arm64`) |
 
 If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
 
@@ -417,6 +418,53 @@ uni build --lang go .
 
 # Build from source directory (auto-detect language)
 uni build .
+
+# Cross-compile for ARM64
+uni build --lang go --platform linux/arm64 .
+
+# Build with unikernel.toml config
+uni build .
+```
+
+**Language Drivers:**
+
+| Language | Detect | Build | Notes |
+|---|---|---|---|
+| `go` | `go.mod` | `go build` with `CGO_ENABLED=0` | Static ELF binary |
+| `node` | `package.json` | `npm install --production` | Uses `node` runtime package |
+| `python` | `pyproject.toml` / `requirements.txt` | `pip install -r requirements.txt` | Uses `python` runtime package |
+| `rust` | `Cargo.toml` | `cargo build --release --target <triple>` | Static ELF binary via musl |
+
+**`unikernel.toml` Configuration:**
+
+When `uni build` is run on a directory, it automatically reads `unikernel.toml` if present:
+
+```toml
+[build]
+lang = "go"
+entrypoint = "cmd/server"
+args = ["-v"]
+
+[run]
+memory = "512M"
+cpus = 2
+ports = ["8080:80", "9090:9090"]
+
+[env]
+NODE_ENV = "production"
+```
+
+**`.unignore` File:**
+
+Exclude files from the build context with `.unignore` (similar to `.dockerignore`):
+
+```
+# Comment
+*.log
+build/
+.git
+node_modules
+!important.log
 ```
 
 **Output:**
