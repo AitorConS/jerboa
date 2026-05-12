@@ -21,6 +21,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/slogformat"
+	"github.com/AitorConS/unikernel-engine/internal/tracing"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/spf13/cobra"
 )
@@ -48,13 +49,14 @@ func newRootCmd() *cobra.Command {
 		storePath       string
 		metricsAddr     string
 		logFormat       string
+		traceAddr       string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat, traceAddr)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -81,6 +83,8 @@ func newRootCmd() *cobra.Command {
 		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
 	root.Flags().StringVar(&logFormat, "log-format", "text",
 		"log format: text (default) or json")
+	root.Flags().StringVar(&traceAddr, "trace-addr", "",
+		"OTLP gRPC address for trace export (e.g. localhost:4317); empty disables tracing")
 	root.AddCommand(newRegistryGCCmd())
 	return root
 }
@@ -109,7 +113,7 @@ func newRegistryGCCmd() *cobra.Command {
 	return cmd
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat, traceAddr string) error {
 	setupLogger(logFormat)
 
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
@@ -121,6 +125,16 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	traceProvider, err := tracing.NewProvider(ctx, traceAddr, version)
+	if err != nil {
+		return fmt.Errorf("unid: tracing: %w", err)
+	}
+	defer func() {
+		if err := traceProvider.Shutdown(context.Background()); err != nil {
+			slog.Warn("trace provider shutdown", "err", err)
+		}
+	}()
 
 	collectors := metrics.NewCollectors(version)
 
