@@ -291,7 +291,8 @@ unireg gc
 | Standalone registry | `cmd/unireg/main.go` — independently deployable registry server with same API/auth/TLS/GC as embedded daemon registry |
 | Docker compatibility tests | `tests/integration/docker_compat_test.go` — validates Docker CLI patterns against registry server |
 | Build driver framework | `internal/builder/builder.go` — `Driver` interface, `Lang` type, `DetectLanguage()`, `GoDriver` (full), `NodeDriver`/`PythonDriver`/`RustDriver` (Detect-only, Build returns "not yet implemented") |
-| Build CLI (`--lang`) | `cmd/uni/build.go` — `--lang go` flag, auto-detection for directory args |
+| `unikernel.toml` parser | `internal/builder/config.go` — `Config`, `LoadConfig`, `validateConfig`, `LangHint()`; validates build.lang, run.memory, run.cpus, run.ports, env |
+| Build CLI (`--lang`) | `cmd/uni/build.go` — `--lang go` flag, auto-detection for directory args, `unikernel.toml` loaded for lang/entrypoint/args |
 | Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
 | Restart policy logic | `internal/vm/qemu.go::monitor` — evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
 | Restart policy CLI flag | `cmd/uni/run.go::parseRestartPolicy` — `--restart never/on-failure/always[:N]` |

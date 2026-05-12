@@ -319,21 +319,8 @@ so developers can point at a project directory and get a runnable image.
 - [ ] 9.3 — `uni build --lang python .` — detect Python project (`requirements.txt` / `pyproject.toml`), bundle with `python` package
 - [ ] 9.4 — `uni build --lang rust .` — detect Rust project (`Cargo.toml`), `cargo build --release --target x86_64-unknown-linux-musl`
 - [x] 9.5 — Auto-detect language if `--lang` omitted (inspect project files, fail loudly if ambiguous)
-- [ ] 9.6 — `Unikernel` config file (`unikernel.toml`) in project root:
-  ```toml
-  [build]
-  lang = "node"
-  entrypoint = "src/server.js"
-  args = ["--harmony"]
-
-  [run]
-  memory = "512M"
-  ports = ["3000:3000"]
-
-  [env]
-  NODE_ENV = "production"
-  ```
-- [ ] 9.7 — `uni build` with no flags reads `unikernel.toml` automatically
+- [x] 9.6 — `unikernel.toml` config file parser and validator: `[build]` lang/entrypoint/args, `[run]` memory/cpus/ports, `[env]`
+- [x] 9.7 — `uni build` reads `unikernel.toml` for build.lang, build.entrypoint, build.args
 - [ ] 9.8 — Multi-stage builds: separate build environment from runtime image (reduce image size)
 - [ ] 9.9 — `.unignore` file: exclude files from the disk image (like `.dockerignore`)
 - [ ] 9.10 — Build cache: skip rebuild if source hash unchanged

@@ -85,13 +85,23 @@ project markers (go.mod, package.json, etc.).`,
 			}
 
 			if info.IsDir() {
+				cfg, err := builder.LoadConfig(srcPath)
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+
 				var langHint builder.Lang
-				if lang != "" {
+				switch {
+				case lang != "":
 					langHint, err = builder.ParseLang(lang)
 					if err != nil {
 						return fmt.Errorf("build: %w", err)
 					}
+				case cfg != nil && cfg.LangHint() != builder.LangUnknown:
+					langHint = cfg.LangHint()
+					fmt.Fprintf(cmd.ErrOrStderr(), "using language from %s: %s\n", builder.ConfigFileName, langHint)
 				}
+
 				detected, err := builder.DetectLanguage(srcPath, langHint)
 				if err != nil {
 					return fmt.Errorf("build: %w", err)
@@ -101,8 +111,18 @@ project markers (go.mod, package.json, etc.).`,
 					return fmt.Errorf("build: %w", err)
 				}
 				fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
+
+				var entrypoint string
+				var buildArgs []string
+				if cfg != nil {
+					entrypoint = cfg.Build.Entrypoint
+					buildArgs = cfg.Build.Args
+				}
+
 				result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
-					PkgFiles: pkgFiles,
+					Entrypoint: entrypoint,
+					BuildArgs:  buildArgs,
+					PkgFiles:   pkgFiles,
 				})
 				if err != nil {
 					return fmt.Errorf("build %s: %w", detected, err)
