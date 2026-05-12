@@ -312,11 +312,13 @@ so developers can point at a project directory and get a runnable image.
 - [x] 9.0 — Build Driver framework: `internal/builder/` package with `Driver` interface, `Lang` type,
   `DetectLanguage()`, `GetDriver()`, and `AvailableDrivers()`. GoDriver as first implementation.
 - [x] 9.0.1 — `uni build --lang go .` CLI flag wired to builder pipeline with auto-detection
+- [x] 9.0.2 — Node/Python/Rust driver stubs with Detect() and "not yet implemented" Build()
+- [x] 9.0.3 — Auto-detection for all four languages (go.mod, package.json, pyproject.toml/requirements.txt, Cargo.toml) + ambiguity detection
 - [ ] 9.1 — `uni build --lang go .` — detect Go project (`go.mod`), build static binary (`CGO_ENABLED=0`), produce image
 - [ ] 9.2 — `uni build --lang node .` — detect Node.js project (`package.json`), bundle with `node` package, produce image
 - [ ] 9.3 — `uni build --lang python .` — detect Python project (`requirements.txt` / `pyproject.toml`), bundle with `python` package
 - [ ] 9.4 — `uni build --lang rust .` — detect Rust project (`Cargo.toml`), `cargo build --release --target x86_64-unknown-linux-musl`
-- [ ] 9.5 — Auto-detect language if `--lang` omitted (inspect project files, fail loudly if ambiguous)
+- [x] 9.5 — Auto-detect language if `--lang` omitted (inspect project files, fail loudly if ambiguous)
 - [ ] 9.6 — `Unikernel` config file (`unikernel.toml`) in project root:
   ```toml
   [build]

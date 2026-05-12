@@ -290,7 +290,7 @@ unireg gc
 | Auto-generated self-signed TLS | `internal/autotls/autotls.go` — RSA 2048-bit key + X.509 cert, 365 days validity, stored at `~/.uni/registry/tls/`, reused on subsequent starts |
 | Standalone registry | `cmd/unireg/main.go` — independently deployable registry server with same API/auth/TLS/GC as embedded daemon registry |
 | Docker compatibility tests | `tests/integration/docker_compat_test.go` — validates Docker CLI patterns against registry server |
-| Build driver framework | `internal/builder/builder.go` — `Driver` interface, `Lang` type, `DetectLanguage()`, `GoDriver` |
+| Build driver framework | `internal/builder/builder.go` — `Driver` interface, `Lang` type, `DetectLanguage()`, `GoDriver` (full), `NodeDriver`/`PythonDriver`/`RustDriver` (Detect-only, Build returns "not yet implemented") |
 | Build CLI (`--lang`) | `cmd/uni/build.go` — `--lang go` flag, auto-detection for directory args |
 | Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
 | Restart policy logic | `internal/vm/qemu.go::monitor` — evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
@@ -317,7 +317,7 @@ unireg gc
 | `internal/registry/` | Hybrid registry server/client with legacy `/v2/images` and OCI `/v2/...` flows, persistent OCI blobs/manifests, optional bearer/JWT auth, and optional registry TLS. |
 | `internal/signing/` | Ed25519 image signing and verification. Key pair generation and storage at `~/.uni/keys/`. Signature files stored alongside manifests (`manifest.json.sig`). Verification policy: `off` (default), `warn` (log warnings), `enforce` (fail on missing/invalid). |
 | `internal/autotls/` | Auto-generation of self-signed TLS certificates for the registry. Generates RSA 2048-bit key + X.509 cert valid 365 days, stored at `~/.uni/registry/tls/`. Reuses existing certs on subsequent starts. |
-| `internal/builder/` | Build driver framework for multi-language `uni build`. `Driver` interface with `Detect`/`Build`/`Lang`, `GoDriver` implementation, `DetectLanguage()` auto-detection from project markers. |
+| `internal/builder/` | Build driver framework for multi-language `uni build`. `Driver` interface with `Detect`/`Build`/`Lang`, `GoDriver` (full build), `NodeDriver`/`PythonDriver`/`RustDriver` (Detect-only stubs), `DetectLanguage()` auto-detection from project markers with ambiguity detection. |
 | `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |

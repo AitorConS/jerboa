@@ -135,7 +135,66 @@ func GetDriver(lang Lang) (Driver, error) {
 func AvailableDrivers() []Driver {
 	return []Driver{
 		&GoDriver{},
+		&NodeDriver{},
+		&PythonDriver{},
+		&RustDriver{},
 	}
+}
+
+// NodeDriver detects Node.js projects (not yet fully implemented).
+type NodeDriver struct{}
+
+// Lang returns LangNode.
+func (n *NodeDriver) Lang() Lang { return LangNode }
+
+// Detect checks for package.json in dir.
+func (n *NodeDriver) Detect(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "package.json"))
+	return err == nil
+}
+
+// Build is not yet implemented for Node.js.
+func (n *NodeDriver) Build(_ context.Context, _ string, _ Options) (BuildResult, error) {
+	return BuildResult{}, fmt.Errorf("node driver: not yet implemented; use --pkg node:<version> with a pre-built binary instead")
+}
+
+// PythonDriver detects Python projects (not yet fully implemented).
+type PythonDriver struct{}
+
+// Lang returns LangPython.
+func (p *PythonDriver) Lang() Lang { return LangPython }
+
+// Detect checks for pyproject.toml or requirements.txt in dir.
+func (p *PythonDriver) Detect(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "pyproject.toml")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+		return true
+	}
+	return false
+}
+
+// Build is not yet implemented for Python.
+func (p *PythonDriver) Build(_ context.Context, _ string, _ Options) (BuildResult, error) {
+	return BuildResult{}, fmt.Errorf("python driver: not yet implemented; use --pkg python:<version> with a pre-built binary instead")
+}
+
+// RustDriver detects Rust projects (not yet fully implemented).
+type RustDriver struct{}
+
+// Lang returns LangRust.
+func (r *RustDriver) Lang() Lang { return LangRust }
+
+// Detect checks for Cargo.toml in dir.
+func (r *RustDriver) Detect(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "Cargo.toml"))
+	return err == nil
+}
+
+// Build is not yet implemented for Rust.
+func (r *RustDriver) Build(_ context.Context, _ string, _ Options) (BuildResult, error) {
+	return BuildResult{}, fmt.Errorf("rust driver: not yet implemented; use a pre-built binary instead")
 }
 
 // GoDriver builds Go projects into static ELF binaries.

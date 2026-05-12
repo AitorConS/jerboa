@@ -65,6 +65,38 @@ func TestDetectLanguageNoMarkers(t *testing.T) {
 	require.Equal(t, LangUnknown, lang)
 }
 
+func TestDetectLanguagePackageJSON(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0o644))
+	lang, err := DetectLanguage(dir, LangUnknown)
+	require.NoError(t, err)
+	require.Equal(t, LangNode, lang)
+}
+
+func TestDetectLanguagePyprojectToml(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\n"), 0o644))
+	lang, err := DetectLanguage(dir, LangUnknown)
+	require.NoError(t, err)
+	require.Equal(t, LangPython, lang)
+}
+
+func TestDetectLanguageRequirementsTxt(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "requirements.txt"), []byte("flask\n"), 0o644))
+	lang, err := DetectLanguage(dir, LangUnknown)
+	require.NoError(t, err)
+	require.Equal(t, LangPython, lang)
+}
+
+func TestDetectLanguageCargoToml(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"app\"\n"), 0o644))
+	lang, err := DetectLanguage(dir, LangUnknown)
+	require.NoError(t, err)
+	require.Equal(t, LangRust, lang)
+}
+
 func TestDetectLanguageWithHint(t *testing.T) {
 	dir := t.TempDir()
 	lang, err := DetectLanguage(dir, LangGo)
@@ -82,26 +114,80 @@ func TestDetectLanguageGoMod(t *testing.T) {
 
 func TestDetectLanguageAmbiguous(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/myapp\n"), 0o644))
-	// Ambiguity only occurs when multiple drivers detect markers.
-	// With only GoDriver registered, a go.mod alone is unambiguous.
-	// Add a fake marker that another driver would detect.
-	// For now, verify that a single detected language returns cleanly.
-	lang, err := DetectLanguage(dir, LangUnknown)
-	require.NoError(t, err)
-	require.Equal(t, LangGo, lang)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0o644))
 
-	// Test ambiguity by adding package.json and verifying that
-	// DetectLanguage returns an error when no hint is given AND
-	// multiple markers exist. Since only GoDriver is registered,
-	// we test the hint-override path instead.
-	ndir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(ndir, "go.mod"), []byte("module x\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(ndir, "package.json"), []byte("{}"), 0o644))
-	// Only Go driver registered, so only Go detected (not ambiguous yet).
-	lang2, err2 := DetectLanguage(ndir, LangGo)
+	lang, err := DetectLanguage(dir, LangUnknown)
+	require.Error(t, err)
+	require.Equal(t, LangUnknown, lang)
+	require.Contains(t, err.Error(), "ambiguous")
+
+	lang2, err2 := DetectLanguage(dir, LangGo)
 	require.NoError(t, err2)
 	require.Equal(t, LangGo, lang2)
+}
+
+func TestAvailableDriversIncludesAll(t *testing.T) {
+	drivers := AvailableDrivers()
+	langs := make(map[Lang]bool)
+	for _, d := range drivers {
+		langs[d.Lang()] = true
+	}
+	require.True(t, langs[LangGo])
+	require.True(t, langs[LangNode])
+	require.True(t, langs[LangPython])
+	require.True(t, langs[LangRust])
+}
+
+func TestNodeDriverDetect(t *testing.T) {
+	dir := t.TempDir()
+	d := &NodeDriver{}
+	require.False(t, d.Detect(dir))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0o644))
+	require.True(t, d.Detect(dir))
+}
+
+func TestNodeDriverBuildNotImplemented(t *testing.T) {
+	d := &NodeDriver{}
+	_, err := d.Build(context.Background(), "", Options{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not yet implemented")
+}
+
+func TestPythonDriverDetect(t *testing.T) {
+	dir := t.TempDir()
+	d := &PythonDriver{}
+	require.False(t, d.Detect(dir))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\n"), 0o644))
+	require.True(t, d.Detect(dir))
+
+	dir2 := t.TempDir()
+	require.False(t, d.Detect(dir2))
+	require.NoError(t, os.WriteFile(filepath.Join(dir2, "requirements.txt"), []byte("flask\n"), 0o644))
+	require.True(t, d.Detect(dir2))
+}
+
+func TestPythonDriverBuildNotImplemented(t *testing.T) {
+	d := &PythonDriver{}
+	_, err := d.Build(context.Background(), "", Options{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not yet implemented")
+}
+
+func TestRustDriverDetect(t *testing.T) {
+	dir := t.TempDir()
+	d := &RustDriver{}
+	require.False(t, d.Detect(dir))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"app\"\n"), 0o644))
+	require.True(t, d.Detect(dir))
+}
+
+func TestRustDriverBuildNotImplemented(t *testing.T) {
+	d := &RustDriver{}
+	_, err := d.Build(context.Background(), "", Options{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not yet implemented")
 }
 
 func TestGetDriverGo(t *testing.T) {
