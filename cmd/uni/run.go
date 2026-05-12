@@ -422,7 +422,7 @@ func verifyImageSignature(cmd *cobra.Command, imgArg, storePath, diskPath, verif
 	if err != nil {
 		home = ".uni"
 	} else {
-		home = home + "/.uni"
+		home += "/.uni"
 	}
 	sigStore, err := signing.NewStore(home)
 	if err != nil {

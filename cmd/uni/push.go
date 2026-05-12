@@ -116,7 +116,7 @@ func verifyPulledImage(cmd *cobra.Command, m image.Manifest, storePath, verifyFl
 	if err != nil {
 		home = ".uni"
 	} else {
-		home = home + "/.uni"
+		home += "/.uni"
 	}
 	sigStore, err := signing.NewStore(home)
 	if err != nil {

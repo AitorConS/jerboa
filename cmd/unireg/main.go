@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -30,15 +29,15 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		addr          string
-		storePath     string
-		token         string
-		jwtSecret     string
-		jwtIssuer     string
-		jwtAudience   string
-		tlsCert       string
-		tlsKey        string
-		noAutoTLS     bool
+		addr        string
+		storePath   string
+		token       string
+		jwtSecret   string
+		jwtIssuer   string
+		jwtAudience string
+		tlsCert     string
+		tlsKey      string
+		noAutoTLS   bool
 	)
 	root := &cobra.Command{
 		Use:     "unireg",
@@ -200,11 +199,4 @@ func ociDir() string {
 		return ".uni/oci"
 	}
 	return home + "/.uni/oci"
-}
-
-func defaultSocketPath() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.TempDir(), "unid.sock")
-	}
-	return "/var/run/unid.sock"
 }

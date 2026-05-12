@@ -45,9 +45,9 @@ func TestNewRootCmd_Flags(t *testing.T) {
 
 func TestValidateTLSConfig(t *testing.T) {
 	tests := []struct {
-		name     string
-		cert     string
-		key      string
+		name    string
+		cert    string
+		key     string
 		wantErr bool
 	}{
 		{"both empty", "", "", false},

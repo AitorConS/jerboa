@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -242,7 +241,7 @@ func (s *Server) handleOCIStartUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(os.TempDir()), "uni-oci-upload-*")
+	tmp, err := os.CreateTemp(os.TempDir(), "uni-oci-upload-*")
 	if err != nil {
 		httpErr(w, http.StatusInternalServerError, "create upload file: "+err.Error())
 		return
