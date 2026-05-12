@@ -100,6 +100,8 @@ type Options struct {
 	Env []string
 	// PkgFiles are pre-resolved package file paths to include in the image.
 	PkgFiles []string
+	// Platform is the target platform for cross-compilation. Defaults to the current platform.
+	Platform Platform
 }
 
 // DetectLanguage inspects dir and returns the language detected.
@@ -387,7 +389,11 @@ func (r *RustDriver) Detect(dir string) bool {
 // `cargo build --release --target x86_64-unknown-linux-musl`.
 // Requires the musl target to be installed: `rustup target add x86_64-unknown-linux-musl`.
 func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
-	target := "x86_64-unknown-linux-musl"
+	platform := opts.Platform
+	if platform.OS == "" {
+		platform = Platform{OS: "linux", Arch: "amd64"}
+	}
+	target := platform.RustTarget()
 
 	args := []string{"build", "--release", "--target", target}
 	if len(opts.BuildArgs) > 0 {
@@ -492,8 +498,13 @@ func (g *GoDriver) Detect(dir string) bool {
 
 // Build compiles a Go project with CGO_ENABLED=0 and returns the binary path.
 func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
+	platform := opts.Platform
+	if platform.OS == "" {
+		platform = DefaultPlatform()
+	}
+
 	output := filepath.Join(dir, ".uni-build-binary")
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || platform.OS == "windows" {
 		output += ".exe"
 	}
 
@@ -507,7 +518,7 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(), platform.GoCrossCompileEnv()...)
 	cmd.Env = append(cmd.Env, opts.Env...)
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

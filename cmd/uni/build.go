@@ -33,6 +33,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 		updateYes bool
 		pkgs      []string
 		lang      string
+		platform  string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -102,6 +103,14 @@ project markers (go.mod, package.json, etc.).`,
 					fmt.Fprintf(cmd.ErrOrStderr(), "using language from %s: %s\n", builder.ConfigFileName, langHint)
 				}
 
+				var buildPlatform builder.Platform
+				if platform != "" {
+					buildPlatform, err = builder.ParsePlatform(platform)
+					if err != nil {
+						return fmt.Errorf("build: %w", err)
+					}
+				}
+
 				detected, err := builder.DetectLanguage(srcPath, langHint)
 				if err != nil {
 					return fmt.Errorf("build: %w", err)
@@ -123,6 +132,7 @@ project markers (go.mod, package.json, etc.).`,
 					Entrypoint: entrypoint,
 					BuildArgs:  buildArgs,
 					PkgFiles:   pkgFiles,
+					Platform:   buildPlatform,
 				})
 				if err != nil {
 					return fmt.Errorf("build %s: %w", detected, err)
@@ -184,6 +194,7 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().BoolVarP(&updateYes, "update-kernel", "U", false, "auto-approve kernel update if one is available")
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust)")
+	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	return cmd
 }
 

@@ -324,7 +324,7 @@ so developers can point at a project directory and get a runnable image.
 - [ ] 9.8 — Multi-stage builds: separate build environment from runtime image (reduce image size)
 - [x] 9.9 — `.unignore` file: exclude files from the disk image (like `.dockerignore`)
 - [x] 9.10 — Build cache: skip rebuild if source hash unchanged
-- [ ] 9.11 — `uni build --platform linux/amd64,linux/arm64` — multi-arch image output (amd64 + ARM)
+- [x] 9.11 — `uni build --platform linux/amd64,linux/arm64` — multi-arch image output (amd64 + ARM)
 
 **Done when:** Go, Node.js, Python, Rust projects each build and run end-to-end from source with a single `uni build` command.
 
