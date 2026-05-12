@@ -102,7 +102,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 9** (Build System) — complete. All 4 language drivers, `unikernel.toml`, `.unignore`, build cache, and `--platform` flag implemented.
+Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics endpoint implemented.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -123,7 +123,7 @@ Currently in **Phase 9** (Build System) — complete. All 4 language drivers, `u
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
 | 8 — Registry & Distribution | ✅ done | OCI-compatible registry with auth/TLS/GC/search/signing/autotls; standalone `unireg` service; `uni sign`/`uni verify` |
 | 9 — Build System | ✅ done | Build Driver framework, all 4 language drivers (Go/Node/Python/Rust), `unikernel.toml` parser, `.unignore`, build cache, `--platform` flag |
-| 10 — Observability | ⬜ | Prometheus metrics, web dashboard, multi-node cluster, daemon persistence |
+| 10 — Observability | ⬜ | Prometheus metrics endpoint (`/metrics`, `/health`), VM state gauges, lifecycle counters, registry push/pull counters, `--metrics-addr` flag |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -326,6 +326,7 @@ unireg gc
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
+| `internal/metrics/` | Prometheus metrics collection for `unid`. `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info. `VMStateUpdater` polls VM Manager and updates gauges. `Serve()` starts HTTP `/metrics` and `/health`. |
 
 ## Stub Packages (placeholders for future phases)
 

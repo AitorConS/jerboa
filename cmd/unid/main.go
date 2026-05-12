@@ -11,10 +11,12 @@ import (
 	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/autotls"
 	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/metrics"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
@@ -43,13 +45,14 @@ func newRootCmd() *cobra.Command {
 		registryTLSCert string
 		registryTLSKey  string
 		storePath       string
+		metricsAddr     string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -72,6 +75,8 @@ func newRootCmd() *cobra.Command {
 		"Optional TLS key file for registry HTTPS (or set UNI_REGISTRY_TLS_KEY)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
+	root.Flags().StringVar(&metricsAddr, "metrics-addr", "",
+		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
 	root.AddCommand(newRegistryGCCmd())
 	return root
 }
@@ -100,7 +105,7 @@ func newRegistryGCCmd() *cobra.Command {
 	return cmd
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr string) error {
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
 
 	netStore, err := network.NewStore(networksDir())
@@ -110,6 +115,17 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	collectors := metrics.NewCollectors(version)
+
+	if metricsAddr != "" {
+		go func() {
+			if err := metrics.Serve(ctx, metricsAddr, collectors); err != nil {
+				slog.Error("metrics server", "err", err)
+			}
+		}()
+		go metrics.NewVMStateUpdater(collectors, mgr, 5*time.Second).Run(ctx)
+	}
 
 	store := mgr.Store()
 	if err := store.Restore(); err != nil {
