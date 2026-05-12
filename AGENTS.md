@@ -291,6 +291,7 @@ unireg gc
 | Standalone registry | `cmd/unireg/main.go` — independently deployable registry server with same API/auth/TLS/GC as embedded daemon registry |
 | Docker compatibility tests | `tests/integration/docker_compat_test.go` — validates Docker CLI patterns against registry server |
 | Build driver framework | `internal/builder/builder.go` — `Driver` interface, `Lang` type, `DetectLanguage()`, `GoDriver` + `RustDriver` (full ELF builds), `NodeDriver` + `PythonDriver` (interpreted: SourceDir+Packages flow), `unikernel.toml` parser |
+| Build ignore file | `internal/builder/unignore.go` — `.unignore` parser with `.gitignore`-style patterns, `DefaultIgnorePatterns`, `IgnoreMatcher.Match()`, used by `sourceFiles()` in build CLI |
 | `unikernel.toml` parser | `internal/builder/config.go` — `Config`, `LoadConfig`, `validateConfig`, `LangHint()`; validates build.lang, run.memory, run.cpus, run.ports, env |
 | Build CLI (`--lang`) | `cmd/uni/build.go` — `--lang go` flag, auto-detection for directory args, `unikernel.toml` loaded for lang/entrypoint/args, SourceDir+Packages flow for interpreted languages |
 | Health check probes | `internal/vm/health.go` — `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |

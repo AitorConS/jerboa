@@ -322,7 +322,7 @@ so developers can point at a project directory and get a runnable image.
 - [x] 9.6 — `unikernel.toml` config file parser and validator: `[build]` lang/entrypoint/args, `[run]` memory/cpus/ports, `[env]`
 - [x] 9.7 — `uni build` reads `unikernel.toml` for build.lang, build.entrypoint, build.args
 - [ ] 9.8 — Multi-stage builds: separate build environment from runtime image (reduce image size)
-- [ ] 9.9 — `.unignore` file: exclude files from the disk image (like `.dockerignore`)
+- [x] 9.9 — `.unignore` file: exclude files from the disk image (like `.dockerignore`)
 - [ ] 9.10 — Build cache: skip rebuild if source hash unchanged
 - [ ] 9.11 — `uni build --platform linux/amd64,linux/arm64` — multi-arch image output (amd64 + ARM)
 

@@ -384,33 +384,31 @@ func findRuntimeBinary(pkgFiles []string, lang builder.Lang) (string, error) {
 }
 
 // sourceFiles collects application source files from dir for inclusion in the image.
-// It walks the directory, excluding node_modules, .git, and other build artifacts.
+// It reads .unignore patterns and excludes matching files and directories.
 func sourceFiles(dir string) ([]string, error) {
-	var files []string
-	skipDirs := map[string]bool{
-		"node_modules": true,
-		".git":         true,
-		".uni-build":   true,
-		"__pycache__":  true,
-		".tox":         true,
-		"venv":         true,
-		".venv":        true,
-		"dist":         true,
-		".next":        true,
+	ignore, err := builder.LoadIgnoreFile(dir)
+	if err != nil {
+		return nil, fmt.Errorf("load ignore file: %w", err)
 	}
 
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	var files []string
+	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		if info.IsDir() && skipDirs[info.Name()] {
-			return filepath.SkipDir
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			return fmt.Errorf("source file rel path: %w", rerr)
+		}
+		rel = filepath.ToSlash(rel)
+
+		if ignore.Match(rel, info.IsDir()) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if !info.IsDir() {
-			rel, rerr := filepath.Rel(dir, path)
-			if rerr != nil {
-				return fmt.Errorf("source file rel path: %w", rerr)
-			}
 			files = append(files, rel)
 		}
 		return nil
