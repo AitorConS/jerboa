@@ -1055,3 +1055,38 @@ created → starting → running → stopping → stopped
 A VM in `stopped` state can be removed with `uni rm`. It cannot be restarted — create a new VM with `uni run`.
 
 When using `uni run --attach`, the command blocks until the VM reaches the `stopped` state, streaming all serial console output to stdout during the `running` state.
+
+---
+
+## Daemon Flags
+
+`unid` is the background daemon that manages VMs. It accepts the following flags:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--socket` | `/var/run/unid.sock` (Linux) / `%TEMP%\unid.sock` (Windows) | Unix socket path for VM management API |
+| `--qemu` | `qemu-system-x86_64` | QEMU binary to use |
+| `--registry-addr` | (empty, disabled) | HTTP address for image registry (e.g. `:5000`) |
+| `--registry-token` | `$UNI_REGISTRY_TOKEN` | Bearer token for registry auth |
+| `--registry-jwt-secret` | `$UNI_REGISTRY_JWT_SECRET` | JWT HMAC secret for scoped registry auth |
+| `--registry-jwt-issuer` | `$UNI_REGISTRY_JWT_ISSUER` | Expected JWT issuer for registry auth |
+| `--registry-jwt-audience` | `$UNI_REGISTRY_JWT_AUDIENCE` | Expected JWT audience for registry auth |
+| `--registry-tls-cert` | `$UNI_REGISTRY_TLS_CERT` | TLS cert file for registry HTTPS |
+| `--registry-tls-key` | `$UNI_REGISTRY_TLS_KEY` | TLS key file for registry HTTPS |
+| `--store` | `~/.uni/images` | Image store root directory |
+| `--metrics-addr` | (empty, disabled) | HTTP address for Prometheus metrics (e.g. `:9090`) |
+| `--log-format` | `text` | Log format: `text` (default) or `json` |
+| `--trace-addr` | (empty, disabled) | OTLP gRPC address for trace export (e.g. `localhost:4317`) |
+
+### Observability Endpoints
+
+When `--metrics-addr` is set, `unid` exposes:
+
+| Path | Description |
+|---|---|
+| `/metrics` | Prometheus metrics endpoint |
+| `/health` | Health check endpoint (returns `200 ok`) |
+
+When `--log-format json` is set, all daemon logs are structured JSON lines with `ts`, `level`, `msg`, and custom attributes.
+
+When `--trace-addr` is set, `unid` exports OpenTelemetry traces via OTLP gRPC for VM lifecycle events (create, start, stop, kill, remove).

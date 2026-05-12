@@ -337,8 +337,8 @@ so developers can point at a project directory and get a runnable image.
 ### Steps
 
 - [x] 10.1 — Prometheus metrics endpoint in `unid` (`/metrics`): VM count, state transitions, CPU/memory per VM, port forwarding stats
-- [ ] 10.2 — OpenTelemetry trace export from `unid`: span per VM lifecycle event, exportable to Jaeger/Tempo
-- [ ] 10.3 — Structured log export: daemon aggregates all VM serial console output, exports as JSON lines (ship to Loki/Splunk/stdout)
+- [x] 10.2 — OpenTelemetry trace export from `unid`: span per VM lifecycle event, exportable to Jaeger/Tempo
+- [x] 10.3 — Structured log export: daemon aggregates all VM serial console output, exports as JSON lines (ship to Loki/Splunk/stdout)
 - [ ] 10.4 — `uni stats <id>` — live CPU%, memory usage, network I/O per VM (polls QEMU QMP monitor)
 - [ ] 10.5 — Web dashboard (Go-served, no JS framework): `/ui` on daemon port
   - Running instances with health status

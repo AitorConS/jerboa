@@ -62,7 +62,8 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 |---|---|
 | KVM interface | QEMU process wrapper initially; migrate to `/dev/kvm` ioctls in Phase 3+ |
 | IPC | Unix domain socket, JSON-RPC 2.0 |
-| Logging | `slog` (stdlib) in Go; kernel serial console captured by daemon |
+| Logging | `slog` (stdlib) in Go; kernel serial console captured by daemon; `--log-format text|json` switches between `slog.TextHandler` and custom `slogformat.JSONHandler` |
+| Tracing | OpenTelemetry OTLP gRPC export; `--trace-addr` enables; no-op when empty |
 | Config | TOML (daemon), JSON (manifests), YAML (compose) |
 | DI | Manual constructor injection — no framework |
 | Image format | JSON manifest + raw disk, SHA256 content-addressable |
@@ -102,7 +103,7 @@ Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux
 
 ## Phase Status
 
-Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics endpoint implemented.
+Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics + structured JSON logging + OpenTelemetry tracing implemented.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -123,7 +124,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — Prometheus 
 | 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
 | 8 — Registry & Distribution | ✅ done | OCI-compatible registry with auth/TLS/GC/search/signing/autotls; standalone `unireg` service; `uni sign`/`uni verify` |
 | 9 — Build System | ✅ done | Build Driver framework, all 4 language drivers (Go/Node/Python/Rust), `unikernel.toml` parser, `.unignore`, build cache, `--platform` flag |
-| 10 — Observability | ⬜ | Prometheus metrics endpoint (`/metrics`, `/health`), VM state gauges, lifecycle counters, registry push/pull counters, `--metrics-addr` flag |
+| 10 — Observability | ⬜ | Prometheus metrics endpoint (`/metrics`, `/health`), structured JSON logging (`--log-format`), OpenTelemetry trace export (`--trace-addr`), VM lifecycle spans |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -308,6 +309,8 @@ unireg gc
 | Compose health checks | `cmd/uni/compose.go` — `health_check:` field in compose services, mapped to `api.HealthCheckSpec`, wait-for-healthy in `compose up` |
 | Compose restart policies | `cmd/uni/compose.go` — `restart:` field in compose services, mapped to `api.RestartSpec` |
 | Compose YAML validation | `internal/compose/parser.go` — `validateHealthCheckSpec`, `validateRestartSpec` |
+| Structured JSON logging | `internal/slogformat/handler.go` — `JSONHandler` implementing `slog.Handler`, outputs JSON lines with `ts`/`level`/`msg`/attributes |
+| OpenTelemetry tracing | `internal/tracing/tracing.go` — `Provider` with OTLP gRPC export, no-op when `--trace-addr` empty; `internal/tracing/spans.go` — VM lifecycle span helpers, `RecordError`, `SpanWithRetryAttrs` |
 
 ## Internal Packages
 
@@ -327,6 +330,8 @@ unireg gc
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
 | `internal/metrics/` | Prometheus metrics collection for `unid`. `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info. `VMStateUpdater` polls VM Manager and updates gauges. `Serve()` starts HTTP `/metrics` and `/health`. |
+| `internal/slogformat/` | Custom `slog.Handler` for structured JSON logging. `JSONHandler` outputs JSON lines with `ts`, `level`, `msg`, and arbitrary attributes. Wired via `--log-format text|json` flag on `unid`. |
+| `internal/tracing/` | OpenTelemetry tracing for `unid`. `Provider` creates OTLP gRPC TracerProvider (no-op when `--trace-addr` is empty). Spans for VM lifecycle events (`vm.create`, `vm.start`, `vm.stop`, `vm.kill`, `vm.remove`, `vm.lifecycle`). `RecordError` and `SpanWithRetryAttrs` helpers. |
 
 ## Stub Packages (placeholders for future phases)
 
@@ -555,3 +560,29 @@ unireg gc
 ### Validation
 
 - `go test ./internal/registry ./cmd/unid`
+
+## Session Update (2026-05-12, Phase 10 observability)
+
+### Completed
+
+- Added `internal/metrics/` package: Prometheus `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info, network gauges. `VMStateUpdater` polls VM Manager every 5s. `Serve()` starts HTTP server with `/metrics` and `/health`.
+- Added `--metrics-addr` flag on `unid` daemon (empty = disabled).
+- Added `github.com/prometheus/client_golang` dependency.
+- Added `internal/slogformat/` package: `JSONHandler` implementing `slog.Handler`, outputs JSON lines with `ts`, `level`, `msg`, and custom attributes.
+- Added `--log-format text|json` flag on `unid` daemon.
+- Added `internal/tracing/` package: OpenTelemetry tracing with OTLP gRPC export. `Provider` creates `TracerProvider` (no-op when `--trace-addr` empty). VM lifecycle span helpers: `StartVMLifecycleSpan`, `StartVMCreateSpan`, `StartVMStartSpan`, `StartVMStopSpan`, `StartVMKillSpan`, `StartVMRemoveSpan`. `RecordError` and `SpanWithRetryAttrs` helper functions.
+- Added `--trace-addr` flag on `unid` daemon.
+- Added `go.opentelemetry.io/otel` and `otlp/otlptrace/otlptracegrpc` dependencies.
+- Updated `serve()` function in `cmd/unid/main.go` to initialize tracing provider with graceful shutdown.
+- All tests passing, lint clean.
+
+### Validation
+
+- `go test ./cmd/unid/... ./internal/slogformat/... ./internal/metrics/... ./internal/tracing/...`
+- `golangci-lint run --timeout 5m ./internal/slogformat/... ./internal/metrics/... ./internal/tracing/...`
+
+### Next Steps
+
+1. PR-10.4: `uni stats <id>` — live CPU%, memory usage, network I/O per VM via QMP monitor.
+2. PR-10.5: Web dashboard (Go-served, no JS framework) on `/ui`.
+3. Continue through remaining Phase 10 items (resource quotas, I/O throttling, multi-node, etc.).
