@@ -4,12 +4,24 @@
 
 ---
 
-## Current status: Phase 8 — complete ✅
+## Current status: Phase 10 — Observability & Production Hardening (in progress)
 
-### Phase 8 snapshot (2026-05-12)
+### Phase 10 progress (2026-05-13)
 
-- Done: OCI manifests/blobs persistence, HEAD support, nested repo paths, Docker-style auth challenges, JWT scope + issuer/audience validation, registry TLS (custom cert/key + auto-generated self-signed), CLI registry auth/TLS flags, `uni search`, `unid gc`, image signing with Ed25519 (`uni sign`/`uni verify`), `--verify` flag on `uni run`/`uni pull`, standalone `unireg` service.
-- Phase 8 is complete. All deliverables are implemented and tested.
+- ✅ 10.1 — Prometheus metrics endpoint (`/metrics`, `/health`), `--metrics-addr` flag on `unid`
+- ✅ 10.2 — OpenTelemetry trace export (`--trace-addr`), VM lifecycle spans
+- ✅ 10.3 — Structured JSON logging (`--log-format text|json`)
+- ⬜ 10.4 — `uni stats <id>` — live CPU%, memory, network I/O per VM
+- ⬜ 10.5 — Web dashboard on `/ui`
+- ⬜ 10.6 — Resource quotas (cgroup v2)
+- ⬜ 10.7 — I/O throttling
+- ⬜ 10.8 — Multi-node cluster
+- ⬜ 10.9 — `uni node ls`
+- ⬜ 10.10 — Daemon state persistence (SQLite-backed)
+- ⬜ 10.11 — `govulncheck` + `trivy` in nightly CI
+- ⬜ 10.12 — Documentation site guides
+
+Phases 0–9 are complete. All core features (VM lifecycle, image system, CLI, compose, runtime, packages, orchestrator, registry, build system) are shipped.
 
 ---
 
@@ -397,9 +409,14 @@ so developers can point at a project directory and get a runnable image.
 | Registry auth (JWT) | 8 | ✅ done |
 | Self-signed TLS bootstrap | 8 | ✅ done |
 | Standalone registry (`unireg`) | 8 | ✅ done |
-| Multi-language `uni build` | 9 | ⬜ |
-| `unikernel.toml` project config | 9 | ⬜ |
-| Prometheus metrics | 10 | ⬜ |
+| Multi-language `uni build` | 9 | ✅ done |
+| `unikernel.toml` project config | 9 | ✅ done |
+| Build cache + `.unignore` | 9 | ✅ done |
+| `--platform` cross-compilation | 9 | ✅ done |
+| Prometheus metrics | 10 | ✅ done |
+| Structured JSON logging | 10 | ✅ done |
+| OpenTelemetry tracing | 10 | ✅ done |
+| `uni stats` live metrics | 10 | ⬜ |
 | Web dashboard | 10 | ⬜ |
 | Multi-node cluster | 10 | ⬜ |
 | Daemon state persistence | 10 | ⬜ |

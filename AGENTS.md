@@ -1,7 +1,7 @@
 # AGENTS.md — Unikernel Engine
 
 > Docker-like unikernel engine. Forks Nanos (C+ASM kernel), adds Go orchestration layer.
-> Stack: Go 1.22+, C, ASM on KVM/QEMU.
+> Stack: Go 1.24+, C, ASM on KVM/QEMU.
 
 ## Build Commands
 
@@ -101,9 +101,11 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 
 Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux, kvm]`). When `/dev/kvm not found`, fix with `sudo usermod -aG kvm $USER` then restart runner.
 
+CI uses Go 1.24 via `GOTOOLCHAIN=go1.24.0` in workflows; golangci-lint pinned to v1.64.8. The `go.mod` directive is `go 1.25.0` but CI forces Go 1.24 toolchain to ensure golangci-lint compatibility.
+
 ## Phase Status
 
-Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics + structured JSON logging + OpenTelemetry tracing implemented.
+Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics + structured JSON logging + OpenTelemetry tracing implemented. CI Go version upgraded to 1.24; golangci-lint pinned to v1.64.8.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -112,19 +114,12 @@ Currently in **Phase 10** (Observability & Production Hardening) — Prometheus 
 | 2 — Image System | ✅ done | Manifest, content-addressable store, registry, `uni build/images/rmi/push/pull` |
 | 3 — Full CLI | ✅ done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
 | 4 — Compose | ✅ done | YAML parser, topological sort, shared volumes, `uni compose up/down/ps/logs` |
-| 5 — Complete Runtime | ✅ done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip` (host+guest fw_cfg), `uni cp` (to+from VM), `uni volume`, TAP/bridge networking |
-| 6 — Package System | ✅ done | `uni pkg list/search/get/remove`, `--pkg` flag on `uni build`, package index/store, archive extraction, `internal/package/` |
-| 7.0 — Stabilization | ✅ done | Test coverage (tools, cp, kernel, upgrade, unid tests), `httpclient` 30s timeout, `CommandFunc` context, `MockManager`, lint fixes |
-| 7.1 — Persistence | ✅ done | `Store` interface, `FileStore` with `state.json`, `Restore()` on daemon startup, `DaemonRecovered` flag |
-| 7.2 — Health Checks | ✅ done | `HealthChecker` (TCP/HTTP probes), `--health-check` flag, `HealthStatus` on VM/VMDetail, configurable interval/timeout/retries |
-| 7.3 — Auto-Restart | ✅ done | `RestartPolicy` (never/on-failure/always), `--restart` flag, exponential backoff, `RestartCount`, `explicitStop` tracking |
-| 7.4 — Service/Status | ✅ done | `uni status` command, health/restart columns in `uni ps`, `RestartSpec` in API |
-| 7.5 — IPAM + Networks | ✅ done | Network Store + IPAM (`internal/network/store.go`), `uni network create/ls/inspect/rm`, dynamic bridges (`uni-br-<name>`), `uni run --network <name>` auto-allocates IP, compose network integration, JSON-RPC `Network.*` endpoints |
-| 7.6 — DNS | ✅ done | Internal DNS resolver in `unid` (`DNS.Resolve`/`DNS.List`), scoped names (`name.network`), ambiguity detection, and `uni dns` CLI |
-| 7.7 — Integration | ✅ done | Compose health checks (`health_check:`) and restart policies (`restart:`), wait-for-healthy in `compose up`, parser validation, AGENTS.md update |
-| 8 — Registry & Distribution | ✅ done | OCI-compatible registry with auth/TLS/GC/search/signing/autotls; standalone `unireg` service; `uni sign`/`uni verify` |
-| 9 — Build System | ✅ done | Build Driver framework, all 4 language drivers (Go/Node/Python/Rust), `unikernel.toml` parser, `.unignore`, build cache, `--platform` flag |
-| 10 — Observability | ⬜ | Prometheus metrics endpoint (`/metrics`, `/health`), structured JSON logging (`--log-format`), OpenTelemetry trace export (`--trace-addr`), VM lifecycle spans |
+| 5 — Complete Runtime | ✅ done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip`, `uni cp`, TAP/bridge networking |
+| 6 — Package System | ✅ done | `uni pkg list/search/get/remove`, `--pkg` flag, package index/store, archive extraction |
+| 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
+| 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
+| 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
+| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅; stats/dashboard/cluster/persistence ⬜ |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -586,3 +581,20 @@ unireg gc
 1. PR-10.4: `uni stats <id>` — live CPU%, memory usage, network I/O per VM via QMP monitor.
 2. PR-10.5: Web dashboard (Go-served, no JS framework) on `/ui`.
 3. Continue through remaining Phase 10 items (resource quotas, I/O throttling, multi-node, etc.).
+
+## Session Update (2026-05-13, CI fix + version alignment)
+
+### Completed
+
+- Fixed CI lint failure: `go.mod` had `go 1.25.0` but golangci-lint v1.64.8 (built with Go 1.24) cannot process Go 1.25 modules.
+- Downgraded `go.mod` from `go 1.25.0` to `go 1.24.0` (aligns with golangci-lint v1.64.8 capabilities).
+- Updated all CI workflows (`pr.yml`, `main.yml`, `nightly.yml`) from `go-version: '1.22'` to `go-version: '1.24'`.
+- Pinned `golangci-lint-action` to `version: v1.64.8` (was `version: latest`) in both `pr.yml` and `main.yml`.
+- Verified: all unit tests pass, all lint checks clean with Go 1.24.
+- Updated `roadmap.md`: fixed header (was "Phase 8 — complete", now "Phase 10 — in progress"), added Phase 10 progress snapshot, updated feature matrix.
+- Updated `AGENTS.md`: aligned phase status table, Go version references, and CI documentation.
+
+### Validation
+
+- `go test ./cmd/... ./internal/... -count=1` — all pass
+- `golangci-lint run ./...` — clean
