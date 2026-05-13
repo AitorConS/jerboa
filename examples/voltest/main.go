@@ -64,7 +64,9 @@ func handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
-	w.Write(data)
+	if _, err := w.Write(data); err != nil {
+		http.Error(w, fmt.Sprintf("write error: %v", err), http.StatusInternalServerError)
+	}
 }
 
 func handleWrite(w http.ResponseWriter, r *http.Request) {

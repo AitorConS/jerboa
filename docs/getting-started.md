@@ -23,6 +23,7 @@ nav_order: 2
 |---|---|---|
 | QEMU | 7.0+ | `qemu-system-x86_64` must be in PATH |
 | Linux kernel | 5.4+ | KVM acceleration (`/dev/kvm`) |
+| Go | 1.25+ | Required only when building `uni`/`unid` from source |
 
 ### Optional
 

@@ -91,7 +91,7 @@ func validateDescriptor(d Descriptor, field string) error {
 		return fmt.Errorf("%s.mediaType is required", field)
 	}
 	if !strings.HasPrefix(d.Digest, "sha256:") {
-		return fmt.Errorf("%s.digest must start with sha256:", field)
+		return fmt.Errorf("%s.digest must start with sha256", field)
 	}
 	if d.Size <= 0 {
 		return fmt.Errorf("%s.size must be positive", field)

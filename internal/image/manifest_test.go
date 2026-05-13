@@ -62,7 +62,7 @@ func TestParse_table(t *testing.T) {
 		{
 			name:    "invalid disk digest prefix",
 			mutate:  func(m *Manifest) { m.DiskDigest = "md5:abc123" },
-			wantErr: "diskDigest must start with sha256:",
+			wantErr: "diskDigest must start with sha256",
 		},
 		{
 			name:    "zero disk size",

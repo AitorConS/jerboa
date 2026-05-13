@@ -20,6 +20,7 @@
 - ⬜ 10.10 — Daemon state persistence (SQLite-backed)
 - ⬜ 10.11 — `govulncheck` + `trivy` in nightly CI
 - ⬜ 10.12 — Documentation site guides
+- CI baseline: Go `1.25` + `golangci-lint` `v2.12.2` (config `version: "2"`)
 
 Phases 0–9 are complete. All core features (VM lifecycle, image system, CLI, compose, runtime, packages, orchestrator, registry, build system) are shipped.
 

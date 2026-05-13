@@ -31,6 +31,7 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // NewStore returns an empty in-memory Store.
+//
 // Deprecated: use NewMemoryStore for clarity.
 func NewStore() *MemoryStore {
 	return NewMemoryStore()

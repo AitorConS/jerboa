@@ -121,9 +121,7 @@ func (s *FileStore) Restore() error {
 			// StateCreated or unknown: keep as-is.
 		}
 
-		s.MemoryStore.mu.Lock()
-		s.MemoryStore.vms[v.ID] = v
-		s.MemoryStore.mu.Unlock()
+		s.vms[v.ID] = v
 	}
 	return nil
 }

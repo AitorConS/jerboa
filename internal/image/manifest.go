@@ -84,7 +84,7 @@ func validate(m Manifest) error {
 		return fmt.Errorf("diskDigest is required")
 	}
 	if len(m.DiskDigest) < 8 || m.DiskDigest[:7] != "sha256:" {
-		return fmt.Errorf("diskDigest must start with sha256:")
+		return fmt.Errorf("diskDigest must start with sha256")
 	}
 	if m.DiskSize <= 0 {
 		return fmt.Errorf("diskSize must be positive")

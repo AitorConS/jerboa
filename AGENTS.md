@@ -1,7 +1,7 @@
 # AGENTS.md — Unikernel Engine
 
 > Docker-like unikernel engine. Forks Nanos (C+ASM kernel), adds Go orchestration layer.
-> Stack: Go 1.24+, C, ASM on KVM/QEMU.
+> Stack: Go 1.25+, C, ASM on KVM/QEMU.
 
 ## Build Commands
 
@@ -101,11 +101,11 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 
 Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux, kvm]`). When `/dev/kvm not found`, fix with `sudo usermod -aG kvm $USER` then restart runner.
 
-CI uses Go 1.24 via `GOTOOLCHAIN=go1.24.0` in workflows; golangci-lint pinned to v1.64.8. The `go.mod` directive is `go 1.25.0` but CI forces Go 1.24 toolchain to ensure golangci-lint compatibility.
+CI uses Go 1.25 in workflows; golangci-lint pinned to v2.12.2 with v2 config format.
 
 ## Phase Status
 
-Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics + structured JSON logging + OpenTelemetry tracing implemented. CI Go version upgraded to 1.24; golangci-lint pinned to v1.64.8.
+Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics + structured JSON logging + OpenTelemetry tracing implemented. CI uses Go 1.25; golangci-lint pinned to v2.12.2.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -582,19 +582,22 @@ unireg gc
 2. PR-10.5: Web dashboard (Go-served, no JS framework) on `/ui`.
 3. Continue through remaining Phase 10 items (resource quotas, I/O throttling, multi-node, etc.).
 
-## Session Update (2026-05-13, CI fix + version alignment)
+## Session Update (2026-05-13, CI fix + lint migration)
 
 ### Completed
 
-- Fixed CI lint failure: `go.mod` had `go 1.25.0` but golangci-lint v1.64.8 (built with Go 1.24) cannot process Go 1.25 modules.
-- Downgraded `go.mod` from `go 1.25.0` to `go 1.24.0` (aligns with golangci-lint v1.64.8 capabilities).
-- Updated all CI workflows (`pr.yml`, `main.yml`, `nightly.yml`) from `go-version: '1.22'` to `go-version: '1.24'`.
-- Pinned `golangci-lint-action` to `version: v1.64.8` (was `version: latest`) in both `pr.yml` and `main.yml`.
-- Verified: all unit tests pass, all lint checks clean with Go 1.24.
+- Fixed CI failures caused by mismatch between `go.mod` (`go 1.25.0`) and old lint toolchain.
+- Kept `go.mod` at `go 1.25.0` (required by current dependencies, including OpenTelemetry).
+- Updated CI workflows (`pr.yml`, `main.yml`, `nightly.yml`) to `go-version: '1.25'`.
+- Migrated `.golangci.yml` from v1 format to v2 format (`version: "2"`) and pinned `golangci-lint-action` to `version: v2.12.2`.
+- Fixed v2 lint findings in code (`internal/vm`, `internal/tools`, `internal/image`, `internal/ociregistry`, and `examples/voltest`).
+- Verified: VM restore deadlock fixed, unit tests pass, lint clean.
 - Updated `roadmap.md`: fixed header (was "Phase 8 — complete", now "Phase 10 — in progress"), added Phase 10 progress snapshot, updated feature matrix.
 - Updated `AGENTS.md`: aligned phase status table, Go version references, and CI documentation.
 
 ### Validation
 
-- `go test ./cmd/... ./internal/... -count=1` — all pass
+- `go test ./cmd/... ./internal/... ./pkg/... -count=1` — all pass (Windows local run without `-race`)
+- `go test ./internal/vm/... -count=1 -timeout 5m -v` — pass
+- `go test ./internal/volume/... -count=1 -v` — pass
 - `golangci-lint run ./...` — clean

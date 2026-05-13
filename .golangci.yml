@@ -1,31 +1,48 @@
+version: "2"
 linters:
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - gosimple
-    - ineffassign
-    - gofmt
-    - goimports
-    - revive
     - bodyclose
+    - errcheck
     - gocritic
+    - govet
+    - ineffassign
+    - revive
+    - staticcheck
     - wrapcheck
-
-linters-settings:
-  wrapcheck:
-    ignorePackageGlobs:
-      - "github.com/AitorConS/unikernel-engine/*"
-  revive:
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+    wrapcheck:
+      ignore-package-globs:
+        - github.com/AitorConS/unikernel-engine/*
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
     rules:
-      - name: exported
-        arguments:
-          - checkPrivateReceivers
-
+      - linters:
+          - errcheck
+          - wrapcheck
+        path: _test.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-same-issues: 0
-  exclude-rules:
-    - path: "_test.go"
-      linters:
-        - wrapcheck
-        - errcheck
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
