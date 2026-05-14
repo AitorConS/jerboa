@@ -13,6 +13,9 @@
 - ✅ 10.3 — Structured JSON logging (`--log-format text|json`)
 - ✅ 10.4 — `uni stats <id>` — live CPU%, memory, network I/O per VM (with `--watch` mode)
 - ⬜ 10.5 — Web dashboard on `/ui`
+  - ✅ 10.5.1 — Base dashboard: VM list with state and health, served on `--ui-addr`, JSON API at `/ui/api/vms`
+  - ⬜ 10.5.2 — VM detail page with log tail
+  - ⬜ 10.5.3 — Metrics polling (CPU/memory sparklines)
 - ⬜ 10.6 — Resource quotas (cgroup v2)
 - ⬜ 10.7 — I/O throttling
 - ⬜ 10.8 — Multi-node cluster

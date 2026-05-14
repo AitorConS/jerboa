@@ -639,12 +639,36 @@ unireg gc
 
 ### Validation
 
-- `go test ./internal/... ./cmd/... -count=1` — all pass
+- `go test ./internal/... ./cmd/... -count=1` — all pass (22 packages)
 - `golangci-lint run ./internal/ui/... ./cmd/unid/...` — 0 issues
 
-### Validation
+## Session Handoff (2026-05-14)
 
-- `go test ./cmd/... ./internal/... ./pkg/... -count=1` — all pass (Windows local run without `-race`)
-- `go test ./internal/vm/... -count=1 -timeout 5m -v` — pass
-- `go test ./internal/volume/... -count=1 -v` — pass
-- `golangci-lint run ./...` — clean
+### Completed This Session
+
+- **PR-10.4 (uni stats):** `VM.Stats` JSON-RPC method, `RuntimeStats` domain type, `ProcStatsCollector` (Linux) / `NoopStatsCollector` (fallback), `uni stats <id>` CLI with table/JSON output + `--watch`/`--interval` mode. VERSION bumped to 0.25.0.
+- **PR-10.5.1 (dashboard base):** `internal/ui/` package with Go-templated HTML dashboard served on `--ui-addr`, JSON API at `/ui/api/vms`, dark theme, version badge. VERSION bumped to 0.26.0.
+
+### Coverage Snapshot
+
+- `internal/api`: ~74%
+- `internal/vm`: ~75% (new stats package)
+- `internal/ui`: new (5 tests)
+- `cmd/uni`: ~66%
+- `cmd/unid`: flags + serve coverage
+
+### Next Steps
+
+1. **PR-10.5.2 — VM detail page + log tail:** Add `/ui/vm/{id}` route showing VM details, config, health, and last N lines of serial console output. Requires server-side `VM.Logs` call and `VM.Inspect` in the dashboard handler.
+2. **PR-10.5.3 — Metrics polling in UI:** Add `/ui/api/vm/{id}/stats` JSON endpoint and client-side polling (2-5s interval) to show live CPU%/memory/network sparklines in the VM detail page.
+3. **PR-10.10.1 — SQLite store implementation:** Add `SQLiteStore` in `internal/vm/sqlitestore.go` implementing the `Store` interface. Flag on `unid` to select `file` (default) vs `sqlite`. Target 80%+ coverage with CRUD + restore tests.
+4. **PR-10.10.2 — Migration from state.json:** Idempotent migrator `state.json → sqlite`. Log migration. Test one-shot + re-run without duplicates.
+5. **PR-10.10.3 — Daemon restart hardening:** Restore health/restart metadata on daemon restart. Handle orphan VMs (QEMU process gone). Test full restart cycle.
+6. **PR-10.11.1 — Nightly security gates:** Add `govulncheck` + `trivy` jobs to `.github/workflows/nightly.yml`. Fail on critical CVEs in release paths.
+7. **PR-10.12.1 — Observability docs:** New `docs/observability.md` guide covering Prometheus, OTel, JSON logging, `uni stats`, dashboard `/ui`. Fix repo URL inconsistency (`docs/index.md` vs `docs/_config.yml`). Add nav entry in `_config.yml`.
+
+### Validation Commands
+
+- `go test ./internal/... ./cmd/... -count=1`
+- `go test -cover ./internal/api/... ./internal/vm/... ./internal/ui/... ./cmd/uni/...`
+- `golangci-lint run --timeout 5m ./...`
