@@ -352,8 +352,11 @@ so developers can point at a project directory and get a runnable image.
 - [x] 10.1 — Prometheus metrics endpoint in `unid` (`/metrics`): VM count, state transitions, CPU/memory per VM, port forwarding stats
 - [x] 10.2 — OpenTelemetry trace export from `unid`: span per VM lifecycle event, exportable to Jaeger/Tempo
 - [x] 10.3 — Structured log export: daemon aggregates all VM serial console output, exports as JSON lines (ship to Loki/Splunk/stdout)
-- [ ] 10.4 — `uni stats <id>` — live CPU%, memory usage, network I/O per VM (polls QEMU QMP monitor)
+- [x] 10.4 — `uni stats <id>` — live CPU%, memory usage, network I/O per VM (with `--watch` mode, `--interval` flag)
 - [ ] 10.5 — Web dashboard (Go-served, no JS framework): `/ui` on daemon port
+  - [x] 10.5.1 — Base dashboard: VM list with state and health, served on `--ui-addr`
+  - [ ] 10.5.2 — VM detail page with log tail
+  - [ ] 10.5.3 — Metrics polling (CPU/memory/network sparklines)
   - Running instances with health status
   - Live log tail per VM
   - CPU / memory sparklines
@@ -418,6 +421,6 @@ so developers can point at a project directory and get a runnable image.
 | Structured JSON logging | 10 | ✅ done |
 | OpenTelemetry tracing | 10 | ✅ done |
 | `uni stats` live metrics | 10 | ✅ done |
-| Web dashboard | 10 | ⬜ |
+| Web dashboard | 10 | ⬜ (base done, details pending) |
 | Multi-node cluster | 10 | ⬜ |
 | Daemon state persistence | 10 | ⬜ |

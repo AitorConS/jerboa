@@ -64,6 +64,7 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 | IPC | Unix domain socket, JSON-RPC 2.0 |
 | Logging | `slog` (stdlib) in Go; kernel serial console captured by daemon; `--log-format text|json` switches between `slog.TextHandler` and custom `slogformat.JSONHandler` |
 | Tracing | OpenTelemetry OTLP gRPC export; `--trace-addr` enables; no-op when empty |
+| Dashboard | Go-served HTML templates on `--ui-addr`; no JS framework; `/ui/api/vms` JSON endpoint |
 | Config | TOML (daemon), JSON (manifests), YAML (compose) |
 | DI | Manual constructor injection — no framework |
 | Image format | JSON manifest + raw disk, SHA256 content-addressable |
@@ -165,8 +166,8 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni logs <id>` | — | Show captured serial console output |
 | `uni stop <id>` | `--force` | Stop (or kill) a VM |
 | `uni rm <id>` | — | Remove a stopped VM |
-| `uni inspect <id>` | — | Full VM detail as JSON |
 | `uni stats <id>` | `--watch`, `--interval` | Live resource usage (CPU, memory, network I/O) |
+| `uni inspect <id>` | — | Full VM detail as JSON |
 | `uni exec <id> <cmd>` | — | Execute command in VM |
 | `uni compose up/down/ps/logs` | `--volumes` | Multi-service orchestration |
 | `uni volume create/ls/rm/inspect` | — | Manage persistent volumes |
@@ -330,6 +331,7 @@ unireg gc
 | `internal/metrics/` | Prometheus metrics collection for `unid`. `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info. `VMStateUpdater` polls VM Manager and updates gauges. `Serve()` starts HTTP `/metrics` and `/health`. |
 | `internal/slogformat/` | Custom `slog.Handler` for structured JSON logging. `JSONHandler` outputs JSON lines with `ts`, `level`, `msg`, and arbitrary attributes. Wired via `--log-format text|json` flag on `unid`. |
 | `internal/tracing/` | OpenTelemetry tracing for `unid`. `Provider` creates OTLP gRPC TracerProvider (no-op when `--trace-addr` is empty). Spans for VM lifecycle events (`vm.create`, `vm.start`, `vm.stop`, `vm.kill`, `vm.remove`, `vm.lifecycle`). `RecordError` and `SpanWithRetryAttrs` helpers. |
+| `internal/ui/` | Web dashboard served on `--ui-addr`. Go-templated HTML listing VMs with state and health. API endpoint at `/ui/api/vms` for JSON. Dark theme, responsive layout, no JS framework. |
 
 ## Stub Packages (placeholders for future phases)
 
@@ -619,6 +621,26 @@ unireg gc
 
 - `go test ./internal/... ./cmd/... -count=1` — all pass
 - `golangci-lint run ./internal/vm/... ./internal/api/... ./cmd/uni/...` — 0 issues
+
+## Session Update (2026-05-14, dashboard `/ui`)
+
+### Completed
+
+- Added `internal/ui/` package: `Handler` serving Go-templated HTML dashboard on `/ui` and JSON API on `/ui/api/vms`.
+- Dark theme, responsive layout, no JS framework. VM list with ID, name, state, health, image.
+- Added `--ui-addr` flag on `unid` daemon (empty = disabled).
+- Dashboard version badge reads daemon version.
+- Added `ui.Serve()` for standalone HTTP server (like `metrics.Serve()`).
+- Wired dashboard startup in `cmd/unid/main.go` `serve()` function.
+- Added `internal/ui/dashboard_test.go` with tests: `TestNewHandler`, `TestHandler_Dashboard`, `TestHandler_DashboardRoot`, `TestHandler_API_VMs`, `TestHandler_NotFound`.
+- Updated `cmd/unid/main_test.go`: added `--ui-addr` flag to flag presence test, updated `serve()` call signatures.
+- Updated docs: `AGENTS.md`, `roadmap.md`, `docs/cli-reference.md`, `docs/architecture.md`.
+- Bumped `VERSION` to `0.26.0`.
+
+### Validation
+
+- `go test ./internal/... ./cmd/... -count=1` — all pass
+- `golangci-lint run ./internal/ui/... ./cmd/unid/...` — 0 issues
 
 ### Validation
 

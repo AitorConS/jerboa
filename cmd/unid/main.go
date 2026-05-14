@@ -22,6 +22,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/slogformat"
 	"github.com/AitorConS/unikernel-engine/internal/tracing"
+	"github.com/AitorConS/unikernel-engine/internal/ui"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/spf13/cobra"
 )
@@ -48,6 +49,7 @@ func newRootCmd() *cobra.Command {
 		registryTLSKey  string
 		storePath       string
 		metricsAddr     string
+		uiAddr          string
 		logFormat       string
 		traceAddr       string
 	)
@@ -56,7 +58,7 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat, traceAddr)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, uiAddr, logFormat, traceAddr)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -81,6 +83,8 @@ func newRootCmd() *cobra.Command {
 		"image store root directory")
 	root.Flags().StringVar(&metricsAddr, "metrics-addr", "",
 		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
+	root.Flags().StringVar(&uiAddr, "ui-addr", "",
+		"HTTP address for web dashboard (e.g. :8080); empty disables dashboard")
 	root.Flags().StringVar(&logFormat, "log-format", "text",
 		"log format: text (default) or json")
 	root.Flags().StringVar(&traceAddr, "trace-addr", "",
@@ -113,7 +117,7 @@ func newRegistryGCCmd() *cobra.Command {
 	return cmd
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, logFormat, traceAddr string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, uiAddr, logFormat, traceAddr string) error {
 	setupLogger(logFormat)
 
 	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
@@ -145,6 +149,14 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 			}
 		}()
 		go metrics.NewVMStateUpdater(collectors, mgr, 5*time.Second).Run(ctx)
+	}
+
+	if uiAddr != "" {
+		go func() {
+			if err := ui.Serve(ctx, uiAddr, mgr, version); err != nil {
+				slog.Error("dashboard server", "err", err)
+			}
+		}()
 	}
 
 	store := mgr.Store()

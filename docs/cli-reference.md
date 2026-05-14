@@ -1118,6 +1118,7 @@ When using `uni run --attach`, the command blocks until the VM reaches the `stop
 | `--registry-tls-key` | `$UNI_REGISTRY_TLS_KEY` | TLS key file for registry HTTPS |
 | `--store` | `~/.uni/images` | Image store root directory |
 | `--metrics-addr` | (empty, disabled) | HTTP address for Prometheus metrics (e.g. `:9090`) |
+| `--ui-addr` | (empty, disabled) | HTTP address for web dashboard (e.g. `:8080`) |
 | `--log-format` | `text` | Log format: `text` (default) or `json` |
 | `--trace-addr` | (empty, disabled) | OTLP gRPC address for trace export (e.g. `localhost:4317`) |
 
@@ -1133,6 +1134,17 @@ When `--metrics-addr` is set, `unid` exposes:
 When `--log-format json` is set, all daemon logs are structured JSON lines with `ts`, `level`, `msg`, and custom attributes.
 
 When `--trace-addr` is set, `unid` exports OpenTelemetry traces via OTLP gRPC for VM lifecycle events (create, start, stop, kill, remove).
+
+### Dashboard
+
+When `--ui-addr` is set, `unid` serves a web dashboard:
+
+| Path | Description |
+|---|---|
+| `/ui` | VM list with state and health |
+| `/ui/api/vms` | JSON endpoint for VM list |
+
+The dashboard shows all registered VMs with their ID, name, state, health status, and image. It auto-refreshes via the `/ui/api/vms` endpoint.
 
 ### VM Runtime Stats
 
