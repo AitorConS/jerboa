@@ -105,6 +105,11 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	v.proc = &osProcess{cmd.Process}
 	v.StartedAt = &now
 	v.mu.Unlock()
+	if newStatsCollector != nil {
+		v.SetStatsProvider(func() RuntimeStats {
+			return newStatsCollector(cmd.Process.Pid, v).Collect()
+		})
+	}
 	if err := v.transition(StateRunning); err != nil {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("qemu start %s: %w", id, err)

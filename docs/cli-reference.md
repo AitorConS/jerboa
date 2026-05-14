@@ -198,6 +198,49 @@ uni --output json status
 
 ---
 
+### `uni stats`
+
+Show resource usage for a single VM: CPU percentage, memory, and network I/O.
+
+```
+uni stats <id> [flags]
+```
+
+**Flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `-w`, `--watch` | `false` | Continuously watch stats (refresh every interval) |
+| `-i`, `--interval` | `2s` | Watch interval (e.g. `1s`, `5s`) |
+
+**Examples:**
+
+```bash
+# Single snapshot
+uni stats a3f8c2d1
+# ID        a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f
+# State     running
+# CPU       12.5%
+# Memory    256.0 MiB
+# Net RX    1.5 KiB
+# Net TX    3.2 KiB
+# Source    procfs
+
+# Continuous watch (refresh every 2 seconds)
+uni stats a3f8c2d1 --watch
+
+# Custom watch interval
+uni stats a3f8c2d1 --watch --interval 5s
+
+# JSON output
+uni stats a3f8c2d1 --output json
+```
+
+{: .note }
+On non-Linux platforms, CPU and memory stats fall back to a `fallback` source with zero values. Full `procfs`-based stats are available only on Linux where the QEMU process `/proc` entries are accessible.
+
+---
+
 ### `uni logs`
 
 Print captured serial console output (stdout + stderr) for a VM.
@@ -1090,3 +1133,19 @@ When `--metrics-addr` is set, `unid` exposes:
 When `--log-format json` is set, all daemon logs are structured JSON lines with `ts`, `level`, `msg`, and custom attributes.
 
 When `--trace-addr` is set, `unid` exports OpenTelemetry traces via OTLP gRPC for VM lifecycle events (create, start, stop, kill, remove).
+
+### VM Runtime Stats
+
+`uni stats <id>` queries the daemon for runtime resource usage of a VM. Stats are collected from the QEMU process:
+
+- **CPU%** — percentage of CPU(s) used by the VM process (Linux only, via `/proc/[pid]/stat`)
+- **Memory** — resident set size in bytes (Linux only, via `/proc/[pid]/statm`)
+- **Network I/O** — bytes received/transmitted on the primary interface (`eth0` or `en*`) (Linux only, via `/proc/[pid]/net/dev`)
+- **Source** — `procfs` on Linux, `fallback` on other platforms
+
+Use `--watch` for continuous monitoring:
+
+```bash
+uni stats <id> --watch
+uni stats <id> --watch --interval 5s
+```

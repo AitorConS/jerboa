@@ -6,12 +6,12 @@
 
 ## Current status: Phase 10 — Observability & Production Hardening (in progress)
 
-### Phase 10 progress (2026-05-13)
+### Phase 10 progress (2026-05-14)
 
 - ✅ 10.1 — Prometheus metrics endpoint (`/metrics`, `/health`), `--metrics-addr` flag on `unid`
 - ✅ 10.2 — OpenTelemetry trace export (`--trace-addr`), VM lifecycle spans
 - ✅ 10.3 — Structured JSON logging (`--log-format text|json`)
-- ⬜ 10.4 — `uni stats <id>` — live CPU%, memory, network I/O per VM
+- ✅ 10.4 — `uni stats <id>` — live CPU%, memory, network I/O per VM (with `--watch` mode)
 - ⬜ 10.5 — Web dashboard on `/ui`
 - ⬜ 10.6 — Resource quotas (cgroup v2)
 - ⬜ 10.7 — I/O throttling
@@ -417,7 +417,7 @@ so developers can point at a project directory and get a runnable image.
 | Prometheus metrics | 10 | ✅ done |
 | Structured JSON logging | 10 | ✅ done |
 | OpenTelemetry tracing | 10 | ✅ done |
-| `uni stats` live metrics | 10 | ⬜ |
+| `uni stats` live metrics | 10 | ✅ done |
 | Web dashboard | 10 | ⬜ |
 | Multi-node cluster | 10 | ⬜ |
 | Daemon state persistence | 10 | ⬜ |

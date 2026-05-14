@@ -32,13 +32,13 @@ uni CLI (cobra) → Unix socket → unid daemon → KVM/QEMU wrapper
 unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 ```
 
-**CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `dns`, `kernel`, `pkg`, `cp`, `upgrade`.
+**CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `dns`, `kernel`, `pkg`, `cp`, `upgrade`, `stats`.
 
 **Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling. Creates `~/.uni/networks/` Network Store on startup. Registry server can be embedded via `--registry-addr`.
 
 **Registry (`cmd/unireg/`)** — standalone registry server with same OCI/legacy API, auth, TLS, and GC as the embedded daemon registry. Independently deployable. Uses `--addr`, `--token`, `--jwt-secret`, `--tls-cert`/`--tls-key`, `--no-auto-tls` flags.
 
-**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Attach`, `VM.Inspect`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`, `DNS.Resolve`, `DNS.List`.
+**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Attach`, `VM.Inspect`, `VM.Stats`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`, `DNS.Resolve`, `DNS.List`.
 
 **VM Manager (`internal/vm/`)** — KVM/QEMU wrapper. `VM` struct is concurrent-safe (`sync.RWMutex`). State machine: `created → starting → running → stopping → stopped`. KVM ioctls wrapped in testable interfaces — never call ioctls directly in business logic.
 
@@ -119,7 +119,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — Prometheus 
 | 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
 | 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
-| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅; stats/dashboard/cluster/persistence ⬜ |
+| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅; dashboard/cluster/persistence ⬜ |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -166,6 +166,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni stop <id>` | `--force` | Stop (or kill) a VM |
 | `uni rm <id>` | — | Remove a stopped VM |
 | `uni inspect <id>` | — | Full VM detail as JSON |
+| `uni stats <id>` | `--watch`, `--interval` | Live resource usage (CPU, memory, network I/O) |
 | `uni exec <id> <cmd>` | — | Execute command in VM |
 | `uni compose up/down/ps/logs` | `--volumes` | Multi-service orchestration |
 | `uni volume create/ls/rm/inspect` | — | Manage persistent volumes |
@@ -298,6 +299,8 @@ unireg gc
 | Health check CLI flag | `cmd/uni/run.go::parseHealthCheck` — `--health-check tcp:PORT/http:PORT:/path` |
 | VM persistence | `internal/vm/filestore.go` — `FileStore` with `state.json`, `Restore()` on daemon startup |
 | VM status command | `cmd/uni/status.go` — `uni status` shows VM summary with health/restart info |
+| VM stats command | `cmd/uni/stats.go` — `uni stats` shows live CPU/memory/network with `--watch` mode |
+| Runtime stats collector | `internal/vm/stats.go` — `RuntimeStats`, `StatsCollector`, `ProcStatsCollector` (Linux), `NoopStatsCollector` (fallback); per-VM stats via `VM.SetStatsProvider` |
 | Network CLI | `cmd/uni/network.go` — `uni network create/ls/inspect/rm`, `--subnet` and `--driver` flags |
 | Network config auto-IP | `cmd/uni/run.go` — `--network <name>` resolves network from store, auto-allocates IP via IPAM |
 | Compose network integration | `cmd/uni/compose.go` — creates networks in `compose up`, assigns IPs to services, removes in `compose down` |
@@ -322,7 +325,7 @@ unireg gc
 | `internal/builder/` | Build driver framework for multi-language `uni build`. `Driver` interface with `Detect`/`Build`/`Lang`, `GoDriver` + `RustDriver` (full ELF builds), `NodeDriver` + `PythonDriver` (interpreted: SourceDir+Packages flow), `DetectLanguage()` auto-detection from project markers, `unikernel.toml` config, `.unignore`, build cache, `--platform` cross-compilation. |
 | `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
-| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence. |
+| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence, runtime stats. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
 | `internal/metrics/` | Prometheus metrics collection for `unid`. `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info. `VMStateUpdater` polls VM Manager and updates gauges. `Serve()` starts HTTP `/metrics` and `/health`. |
 | `internal/slogformat/` | Custom `slog.Handler` for structured JSON logging. `JSONHandler` outputs JSON lines with `ts`, `level`, `msg`, and arbitrary attributes. Wired via `--log-format text|json` flag on `unid`. |
@@ -594,6 +597,28 @@ unireg gc
 - Verified: VM restore deadlock fixed, unit tests pass, lint clean.
 - Updated `roadmap.md`: fixed header (was "Phase 8 — complete", now "Phase 10 — in progress"), added Phase 10 progress snapshot, updated feature matrix.
 - Updated `AGENTS.md`: aligned phase status table, Go version references, and CI documentation.
+
+## Session Update (2026-05-14, uni stats)
+
+### Completed
+
+- Added `VM.Stats` JSON-RPC method: `internal/api/types.go` (`VMStatsResponse`), `internal/api/server.go` (`handleStats` dispatch), `internal/api/client.go` (`Stats()` method).
+- Added `internal/vm/stats.go`: `RuntimeStats` struct, `StatsCollector` interface, `ProcStatsCollector` (Linux: reads `/proc/[pid]/stat`, `statm`, `net/dev`), `NoopStatsCollector` (fallback for non-Linux).
+- Added platform-specific init: `internal/vm/stats_linux.go` and `internal/vm/stats_stub.go` (build-tagged).
+- Added `VM.Stats()` and `VM.SetStatsProvider()` methods on `VM` struct in `internal/vm/types.go`.
+- QEMU manager wires stats provider into VM on start (`internal/vm/qemu.go`).
+- Added `cmd/uni/stats.go`: CLI command `uni stats <id>` with table/JSON output, `--watch` mode with `--interval` flag.
+- Added `formatBytes` helper for human-readable byte sizes.
+- Added API tests (`TestServer_Stats`, `TestServer_StatsNotFound`) in `internal/api/server_test.go`.
+- Added VM domain tests (`TestVM_Stats_Fallback`, `TestVM_Stats_WithProvider`, `TestProcStatsCollector_FallbackOnNonLinux`) in `internal/vm/stats_test.go`.
+- Added CLI tests (`TestStatsCmd_Draft`, `TestStatsCmd_WatchFlag`, `TestFormatBytes`, `TestVMStatsResponse_Fields`) in `cmd/uni/stats_test.go`.
+- Updated docs: `AGENTS.md`, `roadmap.md`, `docs/cli-reference.md`, `docs/architecture.md`.
+- Bumped `VERSION` to `0.25.0`.
+
+### Validation
+
+- `go test ./internal/... ./cmd/... -count=1` — all pass
+- `golangci-lint run ./internal/vm/... ./internal/api/... ./cmd/uni/...` — 0 issues
 
 ### Validation
 

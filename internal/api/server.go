@@ -140,6 +140,8 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any
 		return s.handleNetworkAllocateIP(req.Params)
 	case "Network.ReleaseIP":
 		return s.handleNetworkReleaseIP(req.Params)
+	case "VM.Stats":
+		return s.handleStats(req.Params)
 	case "DNS.Resolve":
 		return s.handleDNSResolve(req.Params)
 	case "DNS.List":
@@ -313,6 +315,29 @@ func (s *Server) handleInspect(params json.RawMessage) (any, *RPCError) {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}
 	return toDetail(v), nil
+}
+
+func (s *Server) handleStats(params json.RawMessage) (any, *RPCError) {
+	var p IDParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	v, err := s.mgr.Get(p.ID)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	stats := v.Stats()
+	return VMStatsResponse{
+		ID:         stats.ID,
+		State:      stats.State,
+		CPUPct:     stats.CPUPct,
+		MemBytes:   stats.MemBytes,
+		DiskBytes:  stats.DiskBytes,
+		NetRxBytes: stats.NetRxBytes,
+		NetTxBytes: stats.NetTxBytes,
+		Timestamp:  stats.Timestamp.Format(time.RFC3339),
+		Source:     stats.Source,
+	}, nil
 }
 
 func toInfo(v *vm.VM) VMInfo {

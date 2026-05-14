@@ -171,6 +171,42 @@ func (b *safeBuffer) Bytes() []byte {
 	return cp
 }
 
+// RuntimeStats holds runtime resource usage for a VM.
+type RuntimeStats struct {
+	ID         string
+	State      string
+	CPUPct     float64
+	MemBytes   int64
+	DiskBytes  int64
+	NetRxBytes int64
+	NetTxBytes int64
+	Timestamp  time.Time
+	Source     string
+}
+
+// Stats returns the current runtime stats for the VM.
+// If no stats provider is available, it returns a minimal snapshot.
+func (v *VM) Stats() RuntimeStats {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if v.statsProvider != nil {
+		return v.statsProvider()
+	}
+	return RuntimeStats{
+		ID:        v.ID,
+		State:     string(v.State),
+		Timestamp: time.Now(),
+		Source:    "fallback",
+	}
+}
+
+// SetStatsProvider sets the function that returns live VM stats.
+func (v *VM) SetStatsProvider(fn func() RuntimeStats) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.statsProvider = fn
+}
+
 // VM is a managed unikernel instance. All exported fields are read-only after
 // Start; internal mutation is guarded by mu.
 type VM struct {
@@ -201,6 +237,7 @@ type VM struct {
 	logPipeReader io.Reader
 	logPipeWriter *io.PipeWriter
 	explicitStop  bool
+	statsProvider func() RuntimeStats
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.

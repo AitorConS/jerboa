@@ -121,6 +121,7 @@ Every transition is atomic (protected by `sync.RWMutex`) and logged with `slog`.
 - `Store` — thread-safe registry interface for all known VMs; `MemoryStore` for in-memory, `FileStore` for JSON persistence
 - `HealthChecker` — manages TCP/HTTP probe goroutines per VM
 - `RestartConfig` / `RestartPolicy` — controls automatic restart behaviour
+- `RuntimeStats` / `StatsCollector` — runtime resource usage (CPU%, memory, network I/O) per VM; `ProcStatsCollector` on Linux reads `/proc/[pid]/stat`, `/proc/[pid]/statm`, `/proc/[pid]/net/dev`; `NoopStatsCollector` fallback on other platforms
 
 **QEMU command built per VM:**
 ```bash
@@ -199,6 +200,7 @@ JSON-RPC 2.0 over a Unix domain socket.
 | `VM.Logs` | Get captured serial output (snapshot) |
 | `VM.Attach` | Stream serial console output in real-time |
 | `VM.Inspect` | Full VM details |
+| `VM.Stats` | Runtime resource usage (CPU, memory, network) |
 | `Network.Create/List/Get/Remove` | Manage named networks |
 | `Network.AllocateIP/ReleaseIP` | IPAM allocation lifecycle |
 | `DNS.Resolve` | Resolve service/VM names to IP |

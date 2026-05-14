@@ -596,3 +596,27 @@ func TestServer_NetworkReleaseIP(t *testing.T) {
 
 	require.NoError(t, client.NetworkReleaseIP(context.Background(), "relnet", ip))
 }
+
+func TestServer_Stats(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		ImagePath: "test.img",
+		Memory:    "256M",
+		CPUs:      1,
+	})
+	require.NoError(t, err)
+
+	stats, err := client.Stats(context.Background(), info.ID)
+	require.NoError(t, err)
+	require.Equal(t, info.ID, stats.ID)
+	require.NotEmpty(t, stats.State)
+	require.NotEmpty(t, stats.Timestamp)
+}
+
+func TestServer_StatsNotFound(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.Stats(context.Background(), "nonexistent")
+	require.Error(t, err)
+}

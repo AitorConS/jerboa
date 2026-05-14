@@ -218,6 +218,15 @@ func (c *Client) Inspect(_ context.Context, id string) (VMDetail, error) {
 	return detail, nil
 }
 
+// Stats returns runtime resource usage for the VM.
+func (c *Client) Stats(_ context.Context, id string) (VMStatsResponse, error) {
+	var stats VMStatsResponse
+	if err := c.call("VM.Stats", IDParams{ID: id}, &stats); err != nil {
+		return VMStatsResponse{}, fmt.Errorf("client stats: %w", err)
+	}
+	return stats, nil
+}
+
 // Attach connects to a VM's serial console and streams output to stdout.
 // It blocks until the VM stops or the connection is closed.
 // This method takes over the connection for raw reading; do not use the

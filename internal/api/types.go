@@ -169,3 +169,16 @@ type DNSRecord struct {
 	IP      string `json:"ip"`
 	VMID    string `json:"vm_id"`
 }
+
+// VMStatsResponse carries runtime resource usage for a VM.
+type VMStatsResponse struct {
+	ID         string  `json:"id"`
+	State      string  `json:"state"`
+	CPUPct     float64 `json:"cpu_pct"`
+	MemBytes   int64   `json:"mem_bytes"`
+	DiskBytes  int64   `json:"disk_bytes,omitempty"`
+	NetRxBytes int64   `json:"net_rx_bytes"`
+	NetTxBytes int64   `json:"net_tx_bytes"`
+	Timestamp  string  `json:"timestamp"`
+	Source     string  `json:"source"`
+}
