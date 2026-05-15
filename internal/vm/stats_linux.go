@@ -3,7 +3,5 @@
 package vm
 
 func init() {
-	newStatsCollector = func(pid int, v *VM) StatsCollector {
-		return newProcStatsCollector(pid, v)
-	}
+	newStatsCollector = newProcStatsCollector
 }
