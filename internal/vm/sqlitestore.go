@@ -54,6 +54,7 @@ func (s *SQLiteStore) createSchema() error {
 			started_at      TEXT,
 			stopped_at      TEXT,
 			daemon_recovered INTEGER DEFAULT 0,
+			health_status   TEXT DEFAULT '',
 			restart_count   INTEGER DEFAULT 0
 		)
 	`)
@@ -94,7 +95,7 @@ func (s *SQLiteStore) Restore() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.Query("SELECT id, config, state, created_at, started_at, stopped_at, daemon_recovered, restart_count FROM vms")
+	rows, err := s.db.Query("SELECT id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count FROM vms")
 	if err != nil {
 		return fmt.Errorf("restore: query: %w", err)
 	}
@@ -104,9 +105,10 @@ func (s *SQLiteStore) Restore() error {
 		var id, configJSON, stateStr, createdAtStr string
 		var startedAtStr, stoppedAtStr sql.NullString
 		var daemonRecovered int
+		var healthStatus string
 		var restartCount int
 
-		if err := rows.Scan(&id, &configJSON, &stateStr, &createdAtStr, &startedAtStr, &stoppedAtStr, &daemonRecovered, &restartCount); err != nil {
+		if err := rows.Scan(&id, &configJSON, &stateStr, &createdAtStr, &startedAtStr, &stoppedAtStr, &daemonRecovered, &healthStatus, &restartCount); err != nil {
 			slog.Warn("restore: scan row", "err", err)
 			continue
 		}
@@ -143,6 +145,10 @@ func (s *SQLiteStore) Restore() error {
 			if err == nil {
 				v.StoppedAt = &t
 			}
+		}
+
+		if healthStatus != "" {
+			v.HealthStatus = HealthStatus(healthStatus)
 		}
 
 		switch v.State {
@@ -188,17 +194,18 @@ func (s *SQLiteStore) writeVM(v *VM) error {
 	v.mu.RUnlock()
 
 	_, dbErr := s.db.Exec(`
-		INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, restart_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			config = excluded.config,
 			state = excluded.state,
 			started_at = excluded.started_at,
 			stopped_at = excluded.stopped_at,
 			daemon_recovered = excluded.daemon_recovered,
+			health_status = excluded.health_status,
 			restart_count = excluded.restart_count
 	`, st.ID, string(cfg), string(st.State), st.CreatedAt.Format(time.RFC3339Nano),
-		nullTime(st.StartedAt), nullTime(st.StoppedAt), boolToInt(st.DaemonRecovered), st.RestartCount)
+		nullTime(st.StartedAt), nullTime(st.StoppedAt), boolToInt(st.DaemonRecovered), string(v.GetHealthStatus()), st.RestartCount)
 
 	if dbErr != nil {
 		return fmt.Errorf("upsert vm %s: %w", v.ID, dbErr)

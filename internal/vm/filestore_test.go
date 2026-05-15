@@ -212,3 +212,21 @@ func TestFileStore_StartAtTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.StartedAt)
 }
+
+func TestFileStore_Restore_HealthStatus(t *testing.T) {
+	dir := t.TempDir()
+	s1 := NewFileStore(dir)
+	require.NoError(t, s1.Restore())
+
+	v, err := s1.Create(Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	v.SetHealthStatus(HealthHealthy)
+	require.NoError(t, s1.Save(v))
+
+	s2 := NewFileStore(dir)
+	require.NoError(t, s2.Restore())
+
+	got, err := s2.Get(v.ID)
+	require.NoError(t, err)
+	require.Equal(t, HealthHealthy, got.GetHealthStatus())
+}

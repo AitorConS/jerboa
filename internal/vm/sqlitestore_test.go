@@ -232,6 +232,29 @@ func TestSQLiteStore_RestoreIdempotent(t *testing.T) {
 	require.Len(t, list, 1)
 }
 
+func TestSQLiteStore_Restore_HealthStatus(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	s1, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s1.Restore())
+	v, err := s1.Create(Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	v.SetHealthStatus(HealthUnhealthy)
+	require.NoError(t, s1.Save(v))
+	require.NoError(t, s1.Close())
+
+	s2, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s2.Restore())
+	t.Cleanup(func() { _ = s2.Close() })
+
+	got, err := s2.Get(v.ID)
+	require.NoError(t, err)
+	require.Equal(t, HealthUnhealthy, got.GetHealthStatus())
+}
+
 func TestSQLiteStore_CreateFailsOnWriteError(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

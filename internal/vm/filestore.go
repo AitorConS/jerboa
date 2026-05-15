@@ -19,6 +19,7 @@ type vmState struct {
 	StartedAt       *time.Time `json:"started_at,omitempty"`
 	StoppedAt       *time.Time `json:"stopped_at,omitempty"`
 	DaemonRecovered bool       `json:"daemon_recovered,omitempty"`
+	HealthStatus    string     `json:"health_status,omitempty"`
 	RestartCount    int        `json:"restart_count,omitempty"`
 }
 
@@ -106,6 +107,9 @@ func (s *FileStore) Restore() error {
 			RestartCount: st.RestartCount,
 			done:         make(chan struct{}),
 		}
+		if st.HealthStatus != "" {
+			v.HealthStatus = HealthStatus(st.HealthStatus)
+		}
 
 		switch st.State {
 		case StateRunning, StateStarting:
@@ -139,6 +143,7 @@ func (s *FileStore) writeState(v *VM) error {
 		StartedAt:       v.StartedAt,
 		StoppedAt:       v.StoppedAt,
 		DaemonRecovered: v.DaemonRecovered,
+		HealthStatus:    string(v.HealthStatus),
 		RestartCount:    v.RestartCount,
 	}
 	v.mu.RUnlock()
