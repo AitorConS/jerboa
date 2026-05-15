@@ -21,7 +21,7 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		err := serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", "", "", t.TempDir(), "", "", "text", "")
+		err := serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", "", "", t.TempDir(), "file", "", "", "text", "")
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Logf("serve returned: %v", err)
 		}
@@ -48,7 +48,7 @@ func TestServe_WithRegistry(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", "", "", "", "", "", "", storePath, "", "", "text", "")
+		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", "", "", "", "", "", "", storePath, "file", "", "", "text", "")
 	}()
 
 	require.Eventually(t, func() bool {
@@ -89,6 +89,7 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	require.NotNil(t, cmd.Flag("registry-tls-cert"))
 	require.NotNil(t, cmd.Flag("registry-tls-key"))
 	require.NotNil(t, cmd.Flag("store"))
+	require.NotNil(t, cmd.Flag("vm-store"))
 	require.NotNil(t, cmd.Flag("metrics-addr"))
 	require.NotNil(t, cmd.Flag("ui-addr"))
 	require.NotNil(t, cmd.Flag("log-format"))
@@ -104,7 +105,7 @@ func TestServe_VersionQuery(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", "", "", t.TempDir(), "", "", "text", "")
+		_ = serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", "", "", t.TempDir(), "file", "", "", "text", "")
 	}()
 
 	require.Eventually(t, func() bool {
@@ -121,7 +122,7 @@ func TestServe_VersionQuery(t *testing.T) {
 }
 
 func TestServe_WithRegistryTLSMissingKeyFails(t *testing.T) {
-	err := serve(context.Background(), filepath.Join(t.TempDir(), "unid.sock"), "fake-qemu", "127.0.0.1:0", "", "", "", "", "cert.pem", "", t.TempDir(), "", "", "text", "")
+	err := serve(context.Background(), filepath.Join(t.TempDir(), "unid.sock"), "fake-qemu", "127.0.0.1:0", "", "", "", "", "cert.pem", "", t.TempDir(), "file", "", "", "text", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "registry TLS config")
 }

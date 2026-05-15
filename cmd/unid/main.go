@@ -48,6 +48,7 @@ func newRootCmd() *cobra.Command {
 		registryTLSCert string
 		registryTLSKey  string
 		storePath       string
+		vmStoreType     string
 		metricsAddr     string
 		uiAddr          string
 		logFormat       string
@@ -58,7 +59,7 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, uiAddr, logFormat, traceAddr)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -81,6 +82,8 @@ func newRootCmd() *cobra.Command {
 		"Optional TLS key file for registry HTTPS (or set UNI_REGISTRY_TLS_KEY)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
+	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
+		"VM state store backend: file (default) or sqlite")
 	root.Flags().StringVar(&metricsAddr, "metrics-addr", "",
 		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
 	root.Flags().StringVar(&uiAddr, "ui-addr", "",
@@ -117,10 +120,14 @@ func newRegistryGCCmd() *cobra.Command {
 	return cmd
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, metricsAddr, uiAddr, logFormat, traceAddr string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr string) error {
 	setupLogger(logFormat)
 
-	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vm.NewFileStore(vmsDir(storePath))))
+	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
+	if err != nil {
+		return fmt.Errorf("unid: vm store: %w", err)
+	}
+	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore))
 
 	netStore, err := network.NewStore(networksDir())
 	if err != nil {
@@ -268,6 +275,21 @@ func defaultStorePath() string {
 		return ".uni/images"
 	}
 	return home + "/.uni/images"
+}
+
+func newVMStore(storeType, dir string) (vm.Store, error) {
+	switch storeType {
+	case "sqlite":
+		sqliteStore, err := vm.NewSQLiteStore(filepath.Join(dir, "vms.db"))
+		if err != nil {
+			return nil, fmt.Errorf("sqlite store: %w", err)
+		}
+		return sqliteStore, nil
+	case "file", "":
+		return vm.NewFileStore(dir), nil
+	default:
+		return nil, fmt.Errorf("unknown vm-store backend %q (use file or sqlite)", storeType)
+	}
 }
 
 func vmsDir(storePath string) string {
