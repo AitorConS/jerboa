@@ -415,6 +415,29 @@ Explicit stop operations (`uni stop` or `uni kill`) set an `explicitStop` flag t
 
 ---
 
+## Web Dashboard
+
+The daemon serves a read-only web dashboard when `--ui-addr` is configured (e.g. `--ui-addr :8080`).
+
+### Pages
+
+| Route | Description |
+|---|---|
+| `/ui` | VM list with state, health, image |
+| `/ui/vm/{id}` | VM detail: config, health, restart info, port mappings, env vars, serial console log tail |
+
+### JSON API Endpoints
+
+| Endpoint | Description |
+|---|---|
+| `/ui/api/vms` | List all VMs (id, name, state, image, health) |
+| `/ui/api/vm/{id}` | Full VM detail as JSON |
+| `/ui/api/vm/{id}/logs` | Serial console output for a VM |
+
+The dashboard uses Go HTML templates with a dark theme. No JavaScript framework is required. VM IDs in the list are clickable links to the detail page.
+
+---
+
 ## Security Model
 
 - `unid` runs as root (or a privileged user) to spawn QEMU and manage TAP interfaces

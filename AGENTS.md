@@ -64,7 +64,7 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 | IPC | Unix domain socket, JSON-RPC 2.0 |
 | Logging | `slog` (stdlib) in Go; kernel serial console captured by daemon; `--log-format text|json` switches between `slog.TextHandler` and custom `slogformat.JSONHandler` |
 | Tracing | OpenTelemetry OTLP gRPC export; `--trace-addr` enables; no-op when empty |
-| Dashboard | Go-served HTML templates on `--ui-addr`; no JS framework; `/ui/api/vms` JSON endpoint |
+| Dashboard | Go-served HTML templates on `--ui-addr`; no JS framework; `/ui/api/vms` JSON endpoint; VM detail page at `/ui/vm/{id}` with log tail; `/ui/api/vm/{id}` and `/ui/api/vm/{id}/logs` JSON endpoints |
 | Config | TOML (daemon), JSON (manifests), YAML (compose) |
 | DI | Manual constructor injection — no framework |
 | Image format | JSON manifest + raw disk, SHA256 content-addressable |
@@ -120,7 +120,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — Prometheus 
 | 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
 | 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
-| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅; dashboard/cluster/persistence ⬜ |
+| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard VM detail+logs ✅; metrics polling/cluster/persistence ⬜ |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -659,13 +659,29 @@ unireg gc
 
 ### Next Steps
 
-1. **PR-10.5.2 — VM detail page + log tail:** Add `/ui/vm/{id}` route showing VM details, config, health, and last N lines of serial console output. Requires server-side `VM.Logs` call and `VM.Inspect` in the dashboard handler.
-2. **PR-10.5.3 — Metrics polling in UI:** Add `/ui/api/vm/{id}/stats` JSON endpoint and client-side polling (2-5s interval) to show live CPU%/memory/network sparklines in the VM detail page.
-3. **PR-10.10.1 — SQLite store implementation:** Add `SQLiteStore` in `internal/vm/sqlitestore.go` implementing the `Store` interface. Flag on `unid` to select `file` (default) vs `sqlite`. Target 80%+ coverage with CRUD + restore tests.
-4. **PR-10.10.2 — Migration from state.json:** Idempotent migrator `state.json → sqlite`. Log migration. Test one-shot + re-run without duplicates.
-5. **PR-10.10.3 — Daemon restart hardening:** Restore health/restart metadata on daemon restart. Handle orphan VMs (QEMU process gone). Test full restart cycle.
-6. **PR-10.11.1 — Nightly security gates:** Add `govulncheck` + `trivy` jobs to `.github/workflows/nightly.yml`. Fail on critical CVEs in release paths.
-7. **PR-10.12.1 — Observability docs:** New `docs/observability.md` guide covering Prometheus, OTel, JSON logging, `uni stats`, dashboard `/ui`. Fix repo URL inconsistency (`docs/index.md` vs `docs/_config.yml`). Add nav entry in `_config.yml`.
+1. **PR-10.5.3 — Metrics polling in UI:** Add `/ui/api/vm/{id}/stats` JSON endpoint and client-side polling (2-5s interval) to show live CPU%/memory/network sparklines in the VM detail page.
+2. **PR-10.10.1 — SQLite store implementation:** Add `SQLiteStore` in `internal/vm/sqlitestore.go` implementing the `Store` interface. Flag on `unid` to select `file` (default) vs `sqlite`. Target 80%+ coverage with CRUD + restore tests.
+3. **PR-10.10.2 — Migration from state.json:** Idempotent migrator `state.json → sqlite`. Log migration. Test one-shot + re-run without duplicates.
+4. **PR-10.10.3 — Daemon restart hardening:** Restore health/restart metadata on daemon restart. Handle orphan VMs (QEMU process gone). Test full restart cycle.
+5. **PR-10.11.1 — Nightly security gates:** Add `govulncheck` + `trivy` jobs to `.github/workflows/nightly.yml`. Fail on critical CVEs in release paths.
+6. **PR-10.12.1 — Observability docs:** New `docs/observability.md` guide covering Prometheus, OTel, JSON logging, `uni stats`, dashboard `/ui`. Fix repo URL inconsistency (`docs/index.md` vs `docs/_config.yml`). Add nav entry in `_config.yml`.
+
+## Session Update (2026-05-15, PR-10.5.2 — VM detail + logs)
+
+### Completed
+
+- Fixed `gocritic` unlambda + `gofmt` issue in `internal/vm/stats_linux.go`. VERSION bumped to 0.27.1.
+- Added VM detail page at `/ui/vm/{id}` with full VM config, state, health, restart info, port mappings, environment variables, and serial console log tail.
+- Added JSON API endpoints: `/ui/api/vm/{id}` (VM detail) and `/ui/api/vm/{id}/logs` (log output).
+- Dashboard VM rows now link to detail pages via clickable ID.
+- Added `VMDetailRow` type with JSON tags, `vmToDetailRow` conversion, and `PortRow` for port mappings.
+- Added 5 new tests: VM detail page (found/not found), VM detail JSON (found/not found), VM logs JSON (found/not found).
+- VERSION bumped to 0.28.0.
+
+### Validation
+
+- `go test ./internal/... ./cmd/... -count=1` — all pass
+- `go test ./internal/ui/... -v -count=1` — 11 tests, all pass
 
 ### Validation Commands
 
