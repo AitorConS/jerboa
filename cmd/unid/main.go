@@ -284,6 +284,10 @@ func newVMStore(storeType, dir string) (vm.Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("sqlite store: %w", err)
 		}
+		m := vm.NewMigrator(dir, sqliteStore)
+		if _, err := m.Migrate(); err != nil {
+			slog.Warn("unid: file-to-sqlite migration errors", "err", err)
+		}
 		return sqliteStore, nil
 	case "file", "":
 		return vm.NewFileStore(dir), nil

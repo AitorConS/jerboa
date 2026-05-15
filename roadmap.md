@@ -22,6 +22,7 @@
 - ⬜ 10.9 — `uni node ls`
 - ⬜ 10.10 — Daemon state persistence (SQLite-backed)
   - ✅ 10.10.1 — SQLiteStore implementation with `--vm-store sqlite` flag
+  - ✅ 10.10.2 — Idempotent migration from state.json to SQLite
 - ⬜ 10.11 — `govulncheck` + `trivy` in nightly CI
 - ⬜ 10.12 — Documentation site guides
 - CI baseline: Go `1.25` + `golangci-lint` `v2.12.2` (config `version: "2"`)
