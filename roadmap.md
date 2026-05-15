@@ -24,7 +24,7 @@
   - ✅ 10.10.1 — SQLiteStore implementation with `--vm-store sqlite` flag
   - ✅ 10.10.2 — Idempotent migration from state.json to SQLite
   - ✅ 10.10.3 — Daemon restart hardening: health status persisted and restored on daemon restart
-- ⬜ 10.11 — `govulncheck` + `trivy` in nightly CI
+- ✅ 10.11 — `govulncheck` + `trivy` in nightly CI; fail on HIGH/CRITICAL
 - ⬜ 10.12 — Documentation site guides
 - CI baseline: Go `1.25` + `golangci-lint` `v2.12.2` (config `version: "2"`)
 
@@ -371,8 +371,8 @@ so developers can point at a project directory and get a runnable image.
 - [ ] 10.7 — I/O throttling: `--disk-iops` and `--network-bps` limits via virtio QoS
 - [ ] 10.8 — Multi-node basic cluster: `unid --join <peer>` — gossip membership, workload distribution via consistent hashing
 - [ ] 10.9 — `uni node ls` — list cluster members with status + resource capacity
-- [ ] 10.10 — Daemon state persistence: SQLite-backed VM store; all VMs survive `unid` restart
-- [ ] 10.11 — `govulncheck` + `trivy` scan in nightly CI; block release on critical CVEs
+- [x] 10.10 — Daemon state persistence: SQLite-backed VM store; all VMs survive `unid` restart
+- [x] 10.11 — `govulncheck` + `trivy` scan in nightly CI; block release on HIGH/CRITICAL CVEs
 - [ ] 10.12 — Documentation site (`docs/`) with guides: getting started, package authoring, compose, API reference
 
 **Done when:** Prometheus scrapes metrics. Dashboard shows live instances. Multi-node distributes workloads. Daemon survives restart.

@@ -97,7 +97,7 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 | `pr.yml` | PRs to `main` | lint + unit tests + kernel build + integration tests (self-hosted KVM runner) |
 | `main.yml` | Push to `main` | lint + unit tests + E2E (TODO: enable) + multi-arch release builds + GitHub Release |
 | `kernel-release.yml` | Changes to `kernel/**` | builds kernel + mkfs, publishes versioned tag + rolling `latest` release |
-| `nightly.yml` | Daily 02:00 UTC | kernel tests + benchmarks + govulncheck + trivy + failure notification (TODO: webhook) |
+| `nightly.yml` | Daily 02:00 UTC | kernel tests + benchmarks + govulncheck + trivy (fail on HIGH/CRITICAL) + failure notification (TODO: webhook) |
 | `docs.yml` | Changes to `docs/` | Jekyll build + GitHub Pages deploy |
 
 Self-hosted runner needed for `integration-tests` (`runs-on: [self-hosted, linux, kvm]`). When `/dev/kvm not found`, fix with `sudo usermod -aG kvm $USER` then restart runner.
