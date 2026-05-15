@@ -12,15 +12,15 @@
 - ✅ 10.2 — OpenTelemetry trace export (`--trace-addr`), VM lifecycle spans
 - ✅ 10.3 — Structured JSON logging (`--log-format text|json`)
 - ✅ 10.4 — `uni stats <id>` — live CPU%, memory, network I/O per VM (with `--watch` mode)
-- ⬜ 10.5 — Web dashboard on `/ui`
+- ✅ 10.5 — Web dashboard on `/ui`
   - ✅ 10.5.1 — Base dashboard: VM list with state and health, served on `--ui-addr`, JSON API at `/ui/api/vms`
   - ✅ 10.5.2 — VM detail page at `/ui/vm/{id}` with config, health, ports, env, log tail; JSON endpoints `/ui/api/vm/{id}` and `/ui/api/vm/{id}/logs`
   - ✅ 10.5.3 — Metrics polling: `/ui/api/vm/{id}/stats` JSON endpoint, live stats section with 3s polling on VM detail page
-- ⬜ 10.6 — Resource quotas (cgroup v2)
-- ⬜ 10.7 — I/O throttling
+- ✅ 10.6 — Resource quotas (cgroup v2)
+- ✅ 10.7 — I/O throttling
 - ⬜ 10.8 — Multi-node cluster
 - ⬜ 10.9 — `uni node ls`
-- ⬜ 10.10 — Daemon state persistence (SQLite-backed)
+- ✅ 10.10 — Daemon state persistence (SQLite-backed)
   - ✅ 10.10.1 — SQLiteStore implementation with `--vm-store sqlite` flag
   - ✅ 10.10.2 — Idempotent migration from state.json to SQLite
   - ✅ 10.10.3 — Daemon restart hardening: health status persisted and restored on daemon restart
@@ -359,16 +359,12 @@ so developers can point at a project directory and get a runnable image.
 - [x] 10.2 — OpenTelemetry trace export from `unid`: span per VM lifecycle event, exportable to Jaeger/Tempo
 - [x] 10.3 — Structured log export: daemon aggregates all VM serial console output, exports as JSON lines (ship to Loki/Splunk/stdout)
 - [x] 10.4 — `uni stats <id>` — live CPU%, memory usage, network I/O per VM (with `--watch` mode, `--interval` flag)
-- [ ] 10.5 — Web dashboard (Go-served, no JS framework): `/ui` on daemon port
+- [x] 10.5 — Web dashboard (Go-served, no JS framework): `/ui` on daemon port
   - [x] 10.5.1 — Base dashboard: VM list with state and health, served on `--ui-addr`
-  - [ ] 10.5.2 — VM detail page with log tail
-  - [ ] 10.5.3 — Metrics polling (CPU/memory/network sparklines)
-  - Running instances with health status
-  - Live log tail per VM
-  - CPU / memory sparklines
-  - Package index browser
-- [ ] 10.6 — Resource quotas per VM: cgroup v2 integration for CPU shares + memory hard limit (enforced at kernel level, not just QEMU hint)
-- [ ] 10.7 — I/O throttling: `--disk-iops` and `--network-bps` limits via virtio QoS
+  - [x] 10.5.2 — VM detail page at `/ui/vm/{id}` with config, health, ports, env, log tail; JSON endpoints `/ui/api/vm/{id}` and `/ui/api/vm/{id}/logs`
+  - [x] 10.5.3 — Metrics polling: `/ui/api/vm/{id}/stats` JSON endpoint, live stats section with 3s polling on VM detail page
+- [x] 10.6 — Resource quotas per VM: cgroup v2 integration for CPU shares + memory hard limit (enforced at kernel level, not just QEMU hint)
+- [x] 10.7 — I/O throttling: `--disk-iops` and `--disk-bps` limits via QEMU drive throttle
 - [ ] 10.8 — Multi-node basic cluster: `unid --join <peer>` — gossip membership, workload distribution via consistent hashing
 - [ ] 10.9 — `uni node ls` — list cluster members with status + resource capacity
 - [x] 10.10 — Daemon state persistence: SQLite-backed VM store; all VMs survive `unid` restart
@@ -429,4 +425,4 @@ so developers can point at a project directory and get a runnable image.
 | `uni stats` live metrics | 10 | ✅ done |
 | Web dashboard | 10 | ✅ done |
 | Multi-node cluster | 10 | ⬜ |
-| Daemon state persistence | 10 | ⬳ (SQLiteStore done, migration pending) |
+| Daemon state persistence | 10 | ✅ done (FileStore + SQLiteStore + migration + restart hardening) |

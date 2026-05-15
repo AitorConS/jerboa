@@ -41,3 +41,26 @@ func TestExtractMask(t *testing.T) {
 	require.Equal(t, "26", extractMask("10.100.0.0/26"))
 	require.Equal(t, "24", extractMask("10.100.0.0"))
 }
+
+func TestParseMemoryMax(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int64
+	}{
+		{"512M", 512 * 1024 * 1024},
+		{"1G", 1024 * 1024 * 1024},
+		{"256K", 256 * 1024},
+		{"1024", 1024},
+		{"2g", 2 * 1024 * 1024 * 1024},
+		{"", 0},
+	}
+	for _, tc := range tests {
+		got, err := parseMemoryMax(tc.input)
+		require.NoError(t, err)
+		require.Equal(t, tc.want, got)
+	}
+	_, err := parseMemoryMax("-1M")
+	require.Error(t, err)
+	_, err = parseMemoryMax("abc")
+	require.Error(t, err)
+}

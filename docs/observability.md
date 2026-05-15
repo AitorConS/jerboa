@@ -212,3 +212,31 @@ The nightly CI pipeline runs automated security checks:
 | `trivy` | Filesystem CVE scan | HIGH or CRITICAL severity findings |
 
 These run in `.github/workflows/nightly.yml` at 02:00 UTC daily.
+
+---
+
+## Resource Quotas
+
+When running on Linux with cgroup v2, you can enforce CPU and memory limits per VM:
+
+```bash
+# Limit CPU shares (1-10000, cgroup v2 weight)
+uni run myapp:latest --cpu-shares 512
+
+# Set memory hard limit
+uni run myapp:latest --memory-max 1G
+```
+
+If cgroup v2 is not available, the flags are accepted but no limits are enforced (a warning is logged).
+
+## I/O Throttling
+
+Disk I/O for the boot disk can be limited using QEMU's native throttle:
+
+```bash
+# Limit to 1000 IOPS
+uni run myapp:latest --disk-iops 1000
+
+# Limit throughput to 10MB/s
+uni run myapp:latest --disk-bps 10M
+```

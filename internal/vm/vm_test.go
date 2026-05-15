@@ -347,6 +347,55 @@ func TestBuildCmd_no_network_cfg_without_ip(t *testing.T) {
 	}
 }
 
+func TestBuildCmd_disk_throttle_iops(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+		DiskIOPS:  1000,
+	})
+	idx := indexOf(args, "-drive")
+	require.GreaterOrEqual(t, idx, 0)
+	require.Contains(t, args[idx+1], "throttling.iops-total=1000")
+}
+
+func TestBuildCmd_disk_throttle_bps(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+		DiskBPS:   10 * 1024 * 1024,
+	})
+	idx := indexOf(args, "-drive")
+	require.GreaterOrEqual(t, idx, 0)
+	require.Contains(t, args[idx+1], "throttling.bps-total=10485760")
+}
+
+func TestBuildCmd_disk_throttle_both(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+		DiskIOPS:  500,
+		DiskBPS:   5 * 1024 * 1024,
+	})
+	idx := indexOf(args, "-drive")
+	require.GreaterOrEqual(t, idx, 0)
+	require.Contains(t, args[idx+1], "throttling.iops-total=500")
+	require.Contains(t, args[idx+1], "throttling.bps-total=5242880")
+}
+
+func TestBuildCmd_no_throttle_when_zero(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{
+		ImagePath: "disk.img",
+		Memory:    "256M",
+	})
+	idx := indexOf(args, "-drive")
+	require.GreaterOrEqual(t, idx, 0)
+	require.NotContains(t, args[idx+1], "throttling")
+}
+
 func indexOf(slice []string, s string) int {
 	for i, v := range slice {
 		if v == s {

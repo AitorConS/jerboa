@@ -439,6 +439,62 @@ The dashboard uses Go HTML templates with a dark theme. No JavaScript framework 
 
 ---
 
+## Resource Quotas
+
+VMs can have CPU and memory limits enforced via Linux cgroup v2 when available.
+
+### CPU Shares
+
+The `--cpu-shares` flag sets the cgroup v2 CPU weight for the QEMU process:
+
+```bash
+uni run myapp:latest --cpu-shares 512
+```
+
+CPU weight ranges from 1 to 10000 (default 100). This controls relative CPU allocation among competing VMs, not an absolute limit.
+
+### Memory Hard Limit
+
+The `--memory-max` flag sets a cgroup v2 memory hard limit:
+
+```bash
+uni run myapp:latest --memory-max 512M
+```
+
+When the QEMU process exceeds this limit, the kernel OOM killer will terminate it. Supported suffixes: `K`, `M`, `G`.
+
+### Platform Requirements
+
+Both features require Linux with cgroup v2 (`/sys/fs/cgroup/cgroup.controllers` must exist). On non-Linux platforms, the flags are accepted but no limits are enforced and a warning is logged.
+
+The daemon creates a cgroup at `/sys/fs/cgroup/uni/<vm-id>/` for each VM with resource limits, moves the QEMU PID into it on start, and removes the cgroup on VM exit.
+
+---
+
+## I/O Throttling
+
+Disk I/O for the boot disk can be limited using QEMU's native drive throttle:
+
+```bash
+# Limit to 1000 IOPS
+uni run myapp:latest --disk-iops 1000
+
+# Limit to 10MB/s throughput
+uni run myapp:latest --disk-bps 10M
+
+# Both limits
+uni run myapp:latest --disk-iops 500 --disk-bps 5M
+```
+
+| Flag | Unit | Description |
+|---|---|---|
+| `--disk-iops` | IOPS | Maximum I/O operations per second (0 = no limit) |
+| `--disk-bps` | bytes/sec | Maximum throughput (e.g. `10M`, `1G`; 0 = no limit) |
+
+These limits apply to the boot disk only. Volume disks are not throttled.
+
+---
+
 ## Security Model
 
 - `unid` runs as root (or a privileged user) to spawn QEMU and manage TAP interfaces

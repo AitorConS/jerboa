@@ -106,7 +106,7 @@ CI uses Go 1.25 in workflows; golangci-lint pinned to v2.12.2 with v2 config for
 
 ## Phase Status
 
-Currently in **Phase 10** (Observability & Production Hardening) — Prometheus metrics + structured JSON logging + OpenTelemetry tracing implemented. CI uses Go 1.25; golangci-lint pinned to v2.12.2.
+Currently in **Phase 10** (Observability & Production Hardening) — core observability complete (Prometheus, JSON logging, OTel tracing, `uni stats`, dashboard, SQLite persistence). Remaining: resource quotas (10.6), I/O throttling (10.7), multi-node cluster (10.8/10.9). CI uses Go 1.25; golangci-lint pinned to v2.12.2.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -120,7 +120,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — Prometheus 
 | 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
 | 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
-| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard ✅, SQLite store ✅; cluster/persistence migration ⬜ |
+| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard ✅, SQLite persistence ✅; resource quotas ✅, I/O throttling ✅, cluster ⬜ |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -152,7 +152,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 
 | Command | Flags | Description |
 |---|---|---|
-| `uni run <image>` | `--memory`, `-p/--port`, `-e/--env`, `--env-file`, `--name`, `--rm`, `-v/--volume`, `--attach`, `-d/--detach`, `--ip`, `--network`, `--health-check`, `--restart`, `--verify` | Create and start a unikernel VM |
+| `uni run <image>` | `--memory`, `-p/--port`, `-e/--env`, `--env-file`, `--name`, `--rm`, `-v/--volume`, `--attach`, `-d/--detach`, `--ip`, `--network`, `--health-check`, `--restart`, `--verify`, `--cpu-shares`, `--memory-max`, `--disk-iops`, `--disk-bps` | Create and start a unikernel VM |
 | `uni build` | `--name`, `--tag`, `--pkg`, `--lang`, `--platform` | Build a unikernel image from binary or source directory |
 | `uni images` | — | List local images |
 | `uni rmi` | — | Remove a local image |
@@ -310,6 +310,11 @@ unireg gc
 | Compose YAML validation | `internal/compose/parser.go` — `validateHealthCheckSpec`, `validateRestartSpec` |
 | Structured JSON logging | `internal/slogformat/handler.go` — `JSONHandler` implementing `slog.Handler`, outputs JSON lines with `ts`/`level`/`msg`/attributes |
 | OpenTelemetry tracing | `internal/tracing/tracing.go` — `Provider` with OTLP gRPC export, no-op when `--trace-addr` empty; `internal/tracing/spans.go` — VM lifecycle span helpers, `RecordError`, `SpanWithRetryAttrs` |
+| SQLite VM store | `internal/vm/sqlitestore.go` — `SQLiteStore` implementing `Store` interface, `--vm-store sqlite` flag on `unid` |
+| File-to-SQLite migration | `internal/vm/migrate.go` — `Migrator` with idempotent `state.json → sqlite` migration |
+| Dashboard stats polling | `internal/ui/handler.go` — `/ui/api/vm/{id}/stats` JSON endpoint, 3s polling on VM detail page |
+| Resource quotas (cgroup v2) | `internal/vm/cgroup.go` (Linux) / `internal/vm/cgroup_stub.go` (non-Linux) — `CgroupManager.Apply(pid, CgroupLimit)`, `Remove()`, `IsCgroupV2Available()` |
+| Resource quotas CLI | `cmd/uni/run.go` — `--cpu-shares` (1–10000), `--memory-max` (e.g. 512M, 1G), `parseMemoryMax()` |
 
 ## Internal Packages
 
@@ -326,12 +331,12 @@ unireg gc
 | `internal/builder/` | Build driver framework for multi-language `uni build`. `Driver` interface with `Detect`/`Build`/`Lang`, `GoDriver` + `RustDriver` (full ELF builds), `NodeDriver` + `PythonDriver` (interpreted: SourceDir+Packages flow), `DetectLanguage()` auto-detection from project markers, `unikernel.toml` config, `.unignore`, build cache, `--platform` cross-compilation. |
 | `internal/scheduler/` | DNS resolver for name-to-IP lookups over running VMs (Phase 7.6). |
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
-| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store, network cfg via fw_cfg, health checks, restart policies, persistence, runtime stats. |
+| `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store (`FileStore` default, `SQLiteStore` via `--vm-store sqlite`), `Migrator` for idempotent `state.json → sqlite`, network cfg via fw_cfg, health checks, restart policies, persistence, runtime stats. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
 | `internal/metrics/` | Prometheus metrics collection for `unid`. `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info. `VMStateUpdater` polls VM Manager and updates gauges. `Serve()` starts HTTP `/metrics` and `/health`. |
 | `internal/slogformat/` | Custom `slog.Handler` for structured JSON logging. `JSONHandler` outputs JSON lines with `ts`, `level`, `msg`, and arbitrary attributes. Wired via `--log-format text|json` flag on `unid`. |
 | `internal/tracing/` | OpenTelemetry tracing for `unid`. `Provider` creates OTLP gRPC TracerProvider (no-op when `--trace-addr` is empty). Spans for VM lifecycle events (`vm.create`, `vm.start`, `vm.stop`, `vm.kill`, `vm.remove`, `vm.lifecycle`). `RecordError` and `SpanWithRetryAttrs` helpers. |
-| `internal/ui/` | Web dashboard served on `--ui-addr`. Go-templated HTML listing VMs with state and health. API endpoint at `/ui/api/vms` for JSON. Dark theme, responsive layout, no JS framework. |
+| `internal/ui/` | Web dashboard served on `--ui-addr`. Go-templated HTML listing VMs with state and health. VM detail page at `/ui/vm/{id}` with config, health, ports, env, log tail, live stats. JSON API at `/ui/api/vms`, `/ui/api/vm/{id}`, `/ui/api/vm/{id}/logs`, `/ui/api/vm/{id}/stats`. Dark theme, responsive layout, no JS framework. |
 
 ## Stub Packages (placeholders for future phases)
 
@@ -687,4 +692,105 @@ unireg gc
 
 - `go test ./internal/... ./cmd/... -count=1`
 - `go test -cover ./internal/api/... ./internal/vm/... ./internal/ui/... ./cmd/uni/...`
+- `golangci-lint run --timeout 5m ./...`
+
+## Session Update (2026-05-15, Paso 0 — gofmt global)
+
+### Completed
+
+- Ran `gofmt -w ./cmd ./internal` — formatted 137 Go files that had formatting inconsistencies.
+- Verified: `gofmt -l ./cmd ./internal` reports 0 unformatted files.
+- Bumped `VERSION` to `0.33.2` (patch: formatting fix).
+
+### Validation
+
+- `gofmt -l ./cmd ./internal` — 0 files
+- `go build ./cmd/...`
+
+## Session Update (2026-05-15, Paso 1 — Cierre documental Phase 10)
+
+### Completed
+
+- `roadmap.md`: marked 10.5 (dashboard) and 10.10 (persistence) as `✅ done` with all sub-items.
+- `roadmap.md`: feature matrix updated — "Daemon state persistence" now shows `✅ done`.
+- `roadmap.md`: detailed Phase 10 steps corrected (10.5.2, 10.5.3, 10.10 all `[x]`).
+- `AGENTS.md`: updated Phase Status table — SQLite persistence ✅, clarified remaining items (10.6–10.9).
+- `AGENTS.md`: added entries to Critical Function/File Index for `SQLiteStore`, `Migrator`, dashboard stats polling.
+- `AGENTS.md`: updated `internal/vm/` and `internal/ui/` descriptions in Internal Packages table.
+- `docs/_config.yml`: corrected `baseurl` to `/UniCli`, GitHub link to `AitorConS/UniCli`.
+- `docs/index.md`: corrected GitHub link to `AitorConS/UniCli`.
+- Bumped `VERSION` to `0.34.0` (minor: milestone documentation closure).
+
+### Validation
+
+- `go build ./cmd/...`
+- `gofmt -l ./cmd ./internal` — 0 files
+
+## Session Update (2026-05-15, Paso 2 — Phase 10.6 Resource quotas)
+
+### Completed
+
+- Added `internal/vm/cgroup.go` (Linux): `CgroupManager` with `Apply(pid, CgroupLimit)` and `Remove()`.
+  - Creates cgroup at `/sys/fs/cgroup/uni/<vm-id>/`.
+  - Sets `cpu.weight` (cgroup v2 CPU shares, 1–10000) and `memory.max` (bytes hard limit).
+  - Moves QEMU PID into the cgroup via `cgroup.procs`.
+  - `Remove()` migrates PIDs back to root and rmdirs the cgroup.
+- Added `internal/vm/cgroup_stub.go` (non-Linux): returns error on Apply, no-op Remove.
+- Added `IsCgroupV2Available()` platform check.
+- Added `CPUShares` and `MemoryMax` fields to `vm.Config` and `api.RunParams`.
+- Wired cgroup application in `QEMUManager.Start()` after `cmd.Start()`.
+- Wired cgroup cleanup in `QEMUManager.monitor()` on process exit.
+- Added CLI flags `--cpu-shares` and `--memory-max` to `uni run`.
+- Added `parseMemoryMax()` (string like "512M", "1G" → int64 bytes).
+- Added tests: `cgroup_test.go` (cross-platform), `cgroup_linux_test.go` (Linux-specific), `run_helpers_test.go` (parseMemoryMax).
+- Updated `internal/api/server.go` handleRun to pass CPUShares/MemoryMax to config.
+- Bumped `VERSION` to `0.35.0`.
+
+### Validation
+
+- `go test ./internal/vm/... ./cmd/uni/... -count=1`
+- `gofmt -l ./cmd ./internal` — 0 files
+
+## Session Update (2026-05-15, Paso 3 — Phase 10.7 I/O throttling)
+
+### Completed
+
+- Added I/O throttling for boot disk via QEMU native drive throttle flags.
+- `DiskIOPS` and `DiskBPS` fields added to `vm.Config` and `api.RunParams`.
+- `buildCmd` in `qemu.go` appends `throttling.iops-total` and `throttling.bps-total` to the `-drive` argument when limits are set.
+- CLI flags: `--disk-iops` (uint64, max IOPS) and `--disk-bps` (string like "10M", max bytes/sec).
+- Added 4 tests in `vm_test.go`: throttle IOPS, BPS, both, and no-throttle-when-zero.
+- Bumped `VERSION` to `0.36.0`.
+
+### Validation
+
+- `go test ./internal/vm/... -count=1`
+- `gofmt -l ./cmd ./internal` — 0 files
+
+## Session Handoff (2026-05-15)
+
+### Completed This Session
+
+- **Paso 0 (gofmt global):** Formatted 137 Go files. VERSION 0.33.1 → 0.33.2.
+- **Paso 1 (Cierre documental Phase 10):** Fixed roadmap.md inconsistencies (10.5, 10.10 marked done), fixed `_config.yml` and `index.md` repo URLs (AitorConS/UniCli), updated AGENTS.md function index and internal packages. VERSION → 0.34.0.
+- **Paso 2 (Phase 10.6 — Resource quotas):** `CgroupManager` (Linux) with `Apply(pid, CgroupLimit)` and `Remove()`, stub for non-Linux, `CPUShares` and `MemoryMax` fields in Config/RunParams, `--cpu-shares` and `--memory-max` CLI flags, `parseMemoryMax()` helper. VERSION → 0.35.0.
+- **Paso 3 (Phase 10.7 — I/O throttling):** Disk I/O throttle via QEMU native `throttling.iops-total` and `throttling.bps-total`, `DiskIOPS` and `DiskBPS` fields, `--disk-iops` and `--disk-bps` CLI flags, 4 tests in vm_test.go. VERSION → 0.36.0.
+
+### Remaining for Phase 10
+
+- ⬜ 10.8 — Multi-node basic cluster: `unid --join <peer>` — gossip membership
+- ⬜ 10.9 — `uni node ls` — list cluster members with status + resource capacity
+
+### Next Steps (Tomorrow)
+
+1. Define cluster protocol scope: gossip basic (SWIM-style) vs registry centralizado
+2. Implement `internal/cluster/` package with membership and heartbeat
+3. Add `--join <peer-addr>` flag on `unid` daemon
+4. Add `uni node ls` CLI command
+5. Add JSON-RPC `Node.List` method
+6. Close Phase 10 formally and plan Phase 11
+
+### Validation Commands
+
+- `go test ./internal/... ./cmd/... -count=1`
 - `golangci-lint run --timeout 5m ./...`

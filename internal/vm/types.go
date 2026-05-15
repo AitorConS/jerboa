@@ -139,6 +139,14 @@ type Config struct {
 	HealthCheck *HealthCheckConfig
 	// Restart controls automatic restart behaviour when the VM exits.
 	Restart RestartConfig
+	// CPUShares is the cgroup v2 CPU weight (1–10000). 0 means no limit.
+	CPUShares uint64
+	// MemoryMax is the cgroup v2 memory hard limit in bytes. 0 means no limit.
+	MemoryMax int64
+	// DiskIOPS is the maximum I/O operations per second for the boot disk (QEMU throttle). 0 means no limit.
+	DiskIOPS uint64
+	// DiskBPS is the maximum bytes per second for the boot disk (QEMU throttle). 0 means no limit.
+	DiskBPS int64
 }
 
 // process abstracts an OS process for testability.
@@ -238,6 +246,7 @@ type VM struct {
 	logPipeWriter *io.PipeWriter
 	explicitStop  bool
 	statsProvider func() RuntimeStats
+	cgroupMgr     *CgroupManager
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.

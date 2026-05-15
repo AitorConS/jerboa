@@ -170,6 +170,10 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 		GatewayIP:   p.GatewayIP,
 		BridgeName:  p.BridgeName,
 		SubnetMask:  p.SubnetMask,
+		CPUShares:   p.CPUShares,
+		MemoryMax:   p.MemoryMax,
+		DiskIOPS:    p.DiskIOPS,
+		DiskBPS:     p.DiskBPS,
 	}
 	if p.HealthCheck != nil {
 		cfg.HealthCheck = &vm.HealthCheckConfig{

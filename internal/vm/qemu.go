@@ -110,6 +110,22 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 			return newStatsCollector(cmd.Process.Pid, v).Collect()
 		})
 	}
+	if v.Cfg.CPUShares > 0 || v.Cfg.MemoryMax > 0 {
+		if IsCgroupV2Available() {
+			cg := NewCgroupManager(v.ID)
+			if err := cg.Apply(cmd.Process.Pid, CgroupLimit{
+				CPUShares: v.Cfg.CPUShares,
+				MemoryMax: v.Cfg.MemoryMax,
+			}); err != nil {
+				slog.Warn("qemu start: cgroup apply failed", "vm_id", id, "err", err)
+			}
+			v.mu.Lock()
+			v.cgroupMgr = cg
+			v.mu.Unlock()
+		} else {
+			slog.Warn("qemu start: cgroup v2 not available, skipping resource limits", "vm_id", id)
+		}
+	}
 	if err := v.transition(StateRunning); err != nil {
 		_ = cmd.Process.Kill()
 		return fmt.Errorf("qemu start %s: %w", id, err)
@@ -253,9 +269,16 @@ func (m *QEMUManager) List() []*VM {
 }
 
 func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config) *exec.Cmd {
+	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio"
+	if cfg.DiskIOPS > 0 {
+		driveArg += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
+	}
+	if cfg.DiskBPS > 0 {
+		driveArg += fmt.Sprintf(",throttling.bps-total=%d", cfg.DiskBPS)
+	}
 	args := []string{
 		"-m", cfg.Memory,
-		"-drive", "file=" + cfg.ImagePath + ",format=raw,if=virtio",
+		"-drive", driveArg,
 		"-nographic",
 		"-no-reboot",
 	}
@@ -353,6 +376,14 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
 		if err := network.TeardownTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
 			slog.Warn("qemu monitor: failed to tear down TAP port forwarding", "vm_id", v.ID, "err", err)
+		}
+	}
+	v.mu.RLock()
+	cg := v.cgroupMgr
+	v.mu.RUnlock()
+	if cg != nil {
+		if err := cg.Remove(); err != nil {
+			slog.Warn("qemu monitor: cgroup remove failed", "vm_id", v.ID, "err", err)
 		}
 	}
 	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {

@@ -56,6 +56,10 @@ type RunParams struct {
 	SubnetMask  string            `json:"subnet_mask,omitempty"`
 	HealthCheck *HealthCheckSpec  `json:"health_check,omitempty"`
 	Restart     *RestartSpec      `json:"restart,omitempty"`
+	CPUShares   uint64            `json:"cpu_shares,omitempty"`
+	MemoryMax   int64             `json:"memory_max,omitempty"`
+	DiskIOPS    uint64            `json:"disk_iops,omitempty"`
+	DiskBPS     int64             `json:"disk_bps,omitempty"`
 }
 
 // HealthCheckSpec is the wire representation of a health check configuration.

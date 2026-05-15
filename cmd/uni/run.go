@@ -34,6 +34,10 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		healthCheck string
 		restart     string
 		verify      string
+		cpuShares   uint64
+		memoryMax   string
+		diskIOPS    uint64
+		diskBPS     string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -136,6 +140,26 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				BridgeName:  bridgeNm,
 				SubnetMask:  subnetMsk,
 			}
+			if cpuShares > 0 {
+				params.CPUShares = cpuShares
+			}
+			if memoryMax != "" {
+				memBytes, err := parseMemoryMax(memoryMax)
+				if err != nil {
+					return fmt.Errorf("run: %w", err)
+				}
+				params.MemoryMax = memBytes
+			}
+			if diskIOPS > 0 {
+				params.DiskIOPS = diskIOPS
+			}
+			if diskBPS != "" {
+				bps, err := parseMemoryMax(diskBPS)
+				if err != nil {
+					return fmt.Errorf("run: disk-bps: %w", err)
+				}
+				params.DiskBPS = bps
+			}
 			if healthCheck != "" {
 				hc, err := parseHealthCheck(healthCheck)
 				if err != nil {
@@ -189,6 +213,10 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
 	cmd.Flags().StringVar(&verify, "verify", "off", "image signature verification: off, warn, enforce")
+	cmd.Flags().Uint64Var(&cpuShares, "cpu-shares", 0, "cgroup v2 CPU weight (1-10000, 0=no limit, Linux only)")
+	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "cgroup v2 memory hard limit (e.g. 512M, 1G, Linux only)")
+	cmd.Flags().Uint64Var(&diskIOPS, "disk-iops", 0, "disk I/O throttle: max IOPS for boot disk (0=no limit)")
+	cmd.Flags().StringVar(&diskBPS, "disk-bps", "", "disk I/O throttle: max bytes/sec for boot disk (e.g. 10M, 0=no limit)")
 	return cmd
 }
 
@@ -468,4 +496,31 @@ func verifyImageSignature(cmd *cobra.Command, imgArg, storePath, diskPath, verif
 		return fmt.Errorf("run: verify: no signature found for %s", imgArg)
 	}
 	return nil
+}
+
+func parseMemoryMax(s string) (int64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	s = strings.TrimSpace(strings.ToUpper(s))
+	multiplier := int64(1)
+	switch {
+	case strings.HasSuffix(s, "G"):
+		multiplier = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "G")
+	case strings.HasSuffix(s, "M"):
+		multiplier = 1024 * 1024
+		s = strings.TrimSuffix(s, "M")
+	case strings.HasSuffix(s, "K"):
+		multiplier = 1024
+		s = strings.TrimSuffix(s, "K")
+	}
+	val, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("memory-max: invalid value %q (use e.g. 512M, 1G)", s)
+	}
+	if val <= 0 {
+		return 0, fmt.Errorf("memory-max: must be positive, got %d", val)
+	}
+	return val * multiplier, nil
 }

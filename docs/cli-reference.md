@@ -64,6 +64,10 @@ uni run <image> [flags]
 | `--health-check` | — | Health check probe: `tcp:PORT` or `http:PORT:/path` |
 | `--restart` | — | Restart policy: `never`, `on-failure`, or `always[:max-retries]` |
 | `--verify` | `off` | Image signature verification: `off`, `warn`, `enforce` |
+| `--cpu-shares` | `0` | cgroup v2 CPU weight (1–10000, 0=no limit, Linux only) |
+| `--memory-max` | — | cgroup v2 memory hard limit (e.g. `512M`, `1G`; Linux only) |
+| `--disk-iops` | `0` | Disk I/O throttle: max IOPS for boot disk (0=no limit) |
+| `--disk-bps` | — | Disk I/O throttle: max bytes/sec for boot disk (e.g. `10M`; 0=no limit) |
 
 **Examples:**
 
