@@ -29,11 +29,11 @@ type VMRow struct {
 }
 
 type VMDetailData struct {
-	VM            VMDetailRow
-	Logs          string
-	UIAddr        string
-	Version       string
-	BackLink      string
+	VM       VMDetailRow
+	Logs     string
+	UIAddr   string
+	Version  string
+	BackLink string
 }
 
 type VMDetailRow struct {
@@ -62,11 +62,11 @@ type PortRow struct {
 }
 
 type Handler struct {
-	mgr          vm.Manager
-	uiAddr       string
-	dashTmpl     *template.Template
-	detailTmpl   *template.Template
-	version      string
+	mgr        vm.Manager
+	uiAddr     string
+	dashTmpl   *template.Template
+	detailTmpl *template.Template
+	version    string
 }
 
 func NewHandler(mgr vm.Manager, uiAddr, version string) *Handler {

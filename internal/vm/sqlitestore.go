@@ -31,7 +31,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	db.SetMaxOpenConns(1)
 	s := &SQLiteStore{
 		MemoryStore: *NewMemoryStore(),
-		db:         db,
+		db:          db,
 	}
 	if err := s.createSchema(); err != nil {
 		_ = db.Close()
@@ -41,7 +41,10 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 }
 
 func (s *SQLiteStore) Close() error {
-	return s.db.Close()
+	if err := s.db.Close(); err != nil {
+		return fmt.Errorf("close sqlite: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) createSchema() error {
@@ -166,7 +169,10 @@ func (s *SQLiteStore) Restore() error {
 
 		s.vms[v.ID] = v
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("restore: rows: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) writeVM(v *VM) error {

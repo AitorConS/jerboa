@@ -11,7 +11,7 @@ import (
 
 type Migrator struct {
 	fileRoot string
-	sqliteDB  *SQLiteStore
+	sqliteDB *SQLiteStore
 }
 
 func NewMigrator(fileRoot string, sqliteDB *SQLiteStore) *Migrator {
@@ -46,21 +46,21 @@ func (m *Migrator) Migrate() (int, error) {
 			continue
 		}
 
-		existing, err := m.sqliteDB.MemoryStore.Get(st.ID)
+		existing, err := m.sqliteDB.Get(st.ID)
 		if err == nil && existing != nil {
 			slog.Debug("migration: vm already exists in sqlite, skipping", "vm_id", st.ID)
 			continue
 		}
 
 		v := &VM{
-			ID:        st.ID,
-			Cfg:       st.Config,
-			State:     st.State,
-			CreatedAt: st.CreatedAt,
-			StartedAt: st.StartedAt,
-			StoppedAt: st.StoppedAt,
+			ID:           st.ID,
+			Cfg:          st.Config,
+			State:        st.State,
+			CreatedAt:    st.CreatedAt,
+			StartedAt:    st.StartedAt,
+			StoppedAt:    st.StoppedAt,
 			RestartCount: st.RestartCount,
-			done:      make(chan struct{}),
+			done:         make(chan struct{}),
 		}
 
 		switch v.State {
@@ -85,7 +85,7 @@ func (m *Migrator) Migrate() (int, error) {
 			continue
 		}
 
-		m.sqliteDB.MemoryStore.vms[v.ID] = v
+		m.sqliteDB.vms[v.ID] = v
 		slog.Info("migration: migrated vm", "vm_id", v.ID)
 		migrated++
 	}
