@@ -162,6 +162,62 @@ func TestHandler_API_VMLogs_WithVM(t *testing.T) {
 	require.Equal(t, v.ID, body["id"])
 }
 
+func TestHandler_API_VMStats_WithVM(t *testing.T) {
+	mgr := newTestManager(t)
+	cfg := vm.Config{ImagePath: "statstest.img", Memory: "512M", CPUs: 1}
+	v, err := mgr.Create(context.Background(), cfg)
+	require.NoError(t, err)
+
+	h := NewHandler(mgr, ":8080", "test")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/vm/"+v.ID+"/stats", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, v.ID, body["id"])
+	require.Equal(t, "created", body["state"])
+	require.Contains(t, body, "cpu_pct")
+	require.Contains(t, body, "mem_bytes")
+	require.Contains(t, body, "net_rx_bytes")
+	require.Contains(t, body, "net_tx_bytes")
+}
+
+func TestHandler_API_VMStats_NotFound(t *testing.T) {
+	mgr := newTestManager(t)
+	h := NewHandler(mgr, ":8080", "test")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/vm/nonexistent/stats", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Equal(t, "vm not found", body["error"])
+}
+
+func TestHandler_VMDetailPage_ContainsStatsSection(t *testing.T) {
+	mgr := newTestManager(t)
+	cfg := vm.Config{ImagePath: "test.img", Memory: "256M", CPUs: 1, Name: "statsvm"}
+	v, err := mgr.Create(context.Background(), cfg)
+	require.NoError(t, err)
+
+	h := NewHandler(mgr, ":8080", "test")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/vm/"+v.ID, nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(t, body, "Live Stats")
+	require.Contains(t, body, "stat-cpu")
+	require.Contains(t, body, "stat-mem")
+}
+
 func TestHandler_NotFound(t *testing.T) {
 	mgr := newTestManager(t)
 	h := NewHandler(mgr, ":8080", "test")

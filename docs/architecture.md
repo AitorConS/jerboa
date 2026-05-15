@@ -433,8 +433,9 @@ The daemon serves a read-only web dashboard when `--ui-addr` is configured (e.g.
 | `/ui/api/vms` | List all VMs (id, name, state, image, health) |
 | `/ui/api/vm/{id}` | Full VM detail as JSON |
 | `/ui/api/vm/{id}/logs` | Serial console output for a VM |
+| `/ui/api/vm/{id}/stats` | Live runtime stats (CPU%, memory, network I/O) |
 
-The dashboard uses Go HTML templates with a dark theme. No JavaScript framework is required. VM IDs in the list are clickable links to the detail page.
+The dashboard uses Go HTML templates with a dark theme. No JavaScript framework is required. VM IDs in the list are clickable links to the detail page. The detail page polls stats every 3 seconds via the `/ui/api/vm/{id}/stats` endpoint.
 
 ---
 

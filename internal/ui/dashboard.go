@@ -92,6 +92,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveVMLogsJSON(w, r, id)
 		return
 	}
+	if strings.HasPrefix(path, "/ui/api/vm/") && strings.HasSuffix(path, "/stats") {
+		id := strings.TrimPrefix(path, "/ui/api/vm/")
+		id = strings.TrimSuffix(id, "/stats")
+		h.serveVMStatsJSON(w, r, id)
+		return
+	}
 	if strings.HasPrefix(path, "/ui/api/vm/") {
 		id := strings.TrimPrefix(path, "/ui/api/vm/")
 		h.serveVMDetailJSON(w, r, id)
@@ -211,6 +217,38 @@ func (h *Handler) serveVMLogsJSON(w http.ResponseWriter, _ *http.Request, id str
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"id":   v.ID,
 		"logs": string(v.Logs()),
+	})
+}
+
+func (h *Handler) serveVMStatsJSON(w http.ResponseWriter, _ *http.Request, id string) {
+	v, err := h.mgr.Get(id)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "vm not found"})
+		return
+	}
+	stats := v.Stats()
+	type statsJSON struct {
+		ID         string  `json:"id"`
+		State      string  `json:"state"`
+		CPUPct     float64 `json:"cpu_pct"`
+		MemBytes   int64   `json:"mem_bytes"`
+		NetRxBytes int64   `json:"net_rx_bytes"`
+		NetTxBytes int64   `json:"net_tx_bytes"`
+		Timestamp  string  `json:"timestamp"`
+		Source     string  `json:"source"`
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(statsJSON{
+		ID:         stats.ID,
+		State:      stats.State,
+		CPUPct:     stats.CPUPct,
+		MemBytes:   stats.MemBytes,
+		NetRxBytes: stats.NetRxBytes,
+		NetTxBytes: stats.NetTxBytes,
+		Timestamp:  stats.Timestamp.Format(time.RFC3339),
+		Source:     stats.Source,
 	})
 }
 
@@ -382,6 +420,11 @@ a:hover { text-decoration: underline; }
 .health-unknown { color: #888; }
 .log-box { background: #0d0d1a; border-radius: 4px; padding: 1rem; max-height: 400px; overflow-y: auto; font-family: "Courier New", monospace; font-size: 0.8rem; line-height: 1.4; white-space: pre-wrap; word-break: break-all; }
 .log-empty { color: #555; font-style: italic; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.stat-item { text-align: center; }
+.stat-item .stat-val { font-size: 1.8rem; font-weight: bold; color: #4ecca3; }
+.stat-item .stat-lbl { font-size: 0.75rem; color: #aaa; text-transform: uppercase; margin-top: 0.25rem; }
+.stats-source { font-size: 0.7rem; color: #555; margin-top: 0.5rem; }
 footer { margin-top: 2rem; text-align: center; color: #555; font-size: 0.8rem; }
 </style>
 </head>
@@ -431,6 +474,17 @@ footer { margin-top: 2rem; text-align: center; color: #555; font-size: 0.8rem; }
 {{end}}
 
 <div class="card">
+<h2>Live Stats</h2>
+<div class="stats-grid">
+<div class="stat-item"><div class="stat-val" id="stat-cpu">--</div><div class="stat-lbl">CPU %</div></div>
+<div class="stat-item"><div class="stat-val" id="stat-mem">--</div><div class="stat-lbl">Memory</div></div>
+<div class="stat-item"><div class="stat-val" id="stat-rx">--</div><div class="stat-lbl">Net RX</div></div>
+<div class="stat-item"><div class="stat-val" id="stat-tx">--</div><div class="stat-lbl">Net TX</div></div>
+</div>
+<div class="stats-source" id="stat-source"></div>
+</div>
+
+<div class="card">
 <h2>Serial Console Output</h2>
 {{if .Logs}}
 <div class="log-box">{{.Logs}}</div>
@@ -441,5 +495,30 @@ footer { margin-top: 2rem; text-align: center; color: #555; font-size: 0.8rem; }
 
 <footer>Uni — Unikernel Engine &middot; Dashboard</footer>
 </div>
+<script>
+(function() {
+  var vmID = "{{.VM.ID}}";
+  function fmtBytes(b) {
+    if (b < 1024) return b + " B";
+    if (b < 1048576) return (b/1024).toFixed(1) + " KiB";
+    if (b < 1073741824) return (b/1048576).toFixed(1) + " MiB";
+    return (b/1073741824).toFixed(2) + " GiB";
+  }
+  function poll() {
+    fetch("/ui/api/vm/" + vmID + "/stats")
+      .then(function(r) { return r.json(); })
+      .then(function(s) {
+        document.getElementById("stat-cpu").textContent = s.cpu_pct.toFixed(1) + "%";
+        document.getElementById("stat-mem").textContent = fmtBytes(s.mem_bytes);
+        document.getElementById("stat-rx").textContent = fmtBytes(s.net_rx_bytes);
+        document.getElementById("stat-tx").textContent = fmtBytes(s.net_tx_bytes);
+        document.getElementById("stat-source").textContent = "Source: " + s.source + " · " + s.timestamp;
+      })
+      .catch(function() {});
+  }
+  poll();
+  setInterval(poll, 3000);
+})();
+</script>
 </body>
 </html>`

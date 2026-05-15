@@ -15,7 +15,7 @@
 - ⬜ 10.5 — Web dashboard on `/ui`
   - ✅ 10.5.1 — Base dashboard: VM list with state and health, served on `--ui-addr`, JSON API at `/ui/api/vms`
   - ✅ 10.5.2 — VM detail page at `/ui/vm/{id}` with config, health, ports, env, log tail; JSON endpoints `/ui/api/vm/{id}` and `/ui/api/vm/{id}/logs`
-  - ⬜ 10.5.3 — Metrics polling (CPU/memory sparklines)
+  - ✅ 10.5.3 — Metrics polling: `/ui/api/vm/{id}/stats` JSON endpoint, live stats section with 3s polling on VM detail page
 - ⬜ 10.6 — Resource quotas (cgroup v2)
 - ⬜ 10.7 — I/O throttling
 - ⬜ 10.8 — Multi-node cluster
@@ -424,6 +424,6 @@ so developers can point at a project directory and get a runnable image.
 | Structured JSON logging | 10 | ✅ done |
 | OpenTelemetry tracing | 10 | ✅ done |
 | `uni stats` live metrics | 10 | ✅ done |
-| Web dashboard | 10 | ⬳ (base + VM detail + logs done, stats polling pending) |
+| Web dashboard | 10 | ✅ done |
 | Multi-node cluster | 10 | ⬜ |
 | Daemon state persistence | 10 | ⬜ |

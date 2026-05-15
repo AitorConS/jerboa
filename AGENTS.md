@@ -64,7 +64,7 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 | IPC | Unix domain socket, JSON-RPC 2.0 |
 | Logging | `slog` (stdlib) in Go; kernel serial console captured by daemon; `--log-format text|json` switches between `slog.TextHandler` and custom `slogformat.JSONHandler` |
 | Tracing | OpenTelemetry OTLP gRPC export; `--trace-addr` enables; no-op when empty |
-| Dashboard | Go-served HTML templates on `--ui-addr`; no JS framework; `/ui/api/vms` JSON endpoint; VM detail page at `/ui/vm/{id}` with log tail; `/ui/api/vm/{id}` and `/ui/api/vm/{id}/logs` JSON endpoints |
+| Dashboard | Go-served HTML templates on `--ui-addr`; no JS framework; `/ui/api/vms` JSON endpoint; VM detail page at `/ui/vm/{id}` with log tail + live stats polling; `/ui/api/vm/{id}`, `/ui/api/vm/{id}/logs`, `/ui/api/vm/{id}/stats` JSON endpoints |
 | Config | TOML (daemon), JSON (manifests), YAML (compose) |
 | DI | Manual constructor injection — no framework |
 | Image format | JSON manifest + raw disk, SHA256 content-addressable |
@@ -120,7 +120,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — Prometheus 
 | 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
 | 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
-| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard VM detail+logs ✅; metrics polling/cluster/persistence ⬜ |
+| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard VM detail+logs+stats polling ✅; cluster/persistence ⬜ |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
