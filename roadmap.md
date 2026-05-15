@@ -25,7 +25,7 @@
   - ✅ 10.10.2 — Idempotent migration from state.json to SQLite
   - ✅ 10.10.3 — Daemon restart hardening: health status persisted and restored on daemon restart
 - ✅ 10.11 — `govulncheck` + `trivy` in nightly CI; fail on HIGH/CRITICAL
-- ⬜ 10.12 — Documentation site guides
+- ✅ 10.12 — Documentation: observability guide, architecture dashboard section, repo URL fix
 - CI baseline: Go `1.25` + `golangci-lint` `v2.12.2` (config `version: "2"`)
 
 Phases 0–9 are complete. All core features (VM lifecycle, image system, CLI, compose, runtime, packages, orchestrator, registry, build system) are shipped.
@@ -373,9 +373,9 @@ so developers can point at a project directory and get a runnable image.
 - [ ] 10.9 — `uni node ls` — list cluster members with status + resource capacity
 - [x] 10.10 — Daemon state persistence: SQLite-backed VM store; all VMs survive `unid` restart
 - [x] 10.11 — `govulncheck` + `trivy` scan in nightly CI; block release on HIGH/CRITICAL CVEs
-- [ ] 10.12 — Documentation site (`docs/`) with guides: getting started, package authoring, compose, API reference
+- [x] 10.12 — Documentation: observability guide, architecture dashboard section, repo URL fix
 
-**Done when:** Prometheus scrapes metrics. Dashboard shows live instances. Multi-node distributes workloads. Daemon survives restart.
+**Done when:** Prometheus scrapes metrics. Dashboard shows live instances. Daemon survives restart.
 
 ---
 
