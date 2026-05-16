@@ -69,7 +69,7 @@ func TestVolumePersistence(t *testing.T) {
 	mgr := vm.NewQEMUManager(defaultQEMU)
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, defaultSocket, nil, "")
+	srv, err := api.NewServer(mgr, netStore, defaultSocket, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
