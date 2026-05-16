@@ -68,7 +68,7 @@ func (m *CgroupManager) Remove() error {
 			slog.Warn("cgroup: failed to move pid to root", "vm_id", m.vmID, "pid", line, "err", err)
 		}
 	}
-	if err := os.Remove(m.path); err != nil && !os.IsNotExist(err) {
+	if err := os.RemoveAll(m.path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("cgroup rmdir %s: %w", m.path, err)
 	}
 	slog.Info("cgroup: removed", "vm_id", m.vmID)

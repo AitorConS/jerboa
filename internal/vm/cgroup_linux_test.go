@@ -42,7 +42,7 @@ func TestCgroupManager_Remove_CleansUp(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), []byte(""), 0o644))
 	require.NoError(t, m.Remove())
 	_, err := os.Stat(dir)
-	require.True(t, os.IsNotExist(err))
+	require.True(t, os.IsNotExist(err), "expected cgroup directory to be removed, but it still exists: %s", dir)
 }
 
 func TestLinux_CgroupManager_Apply_CPUSharesOnly(t *testing.T) {
