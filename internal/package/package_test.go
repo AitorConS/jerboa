@@ -330,3 +330,73 @@ func TestStore_Download_SkipsSHA256WhenEmpty(t *testing.T) {
 	require.NoError(t, store.Download(pkg))
 	require.True(t, store.IsDownloaded("nohash", "1.0.0"))
 }
+
+func TestStore_Create(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("fake binary content"), 0o755))
+
+	err = store.Create("myapp", "1.0.0", binaryPath, nil, "My test app", "custom")
+	require.NoError(t, err)
+
+	require.True(t, store.IsDownloaded("myapp", "1.0.0"))
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 1)
+	require.Equal(t, "myapp", pkgs[0].Name)
+	require.Equal(t, "1.0.0", pkgs[0].Version)
+	require.NotEmpty(t, pkgs[0].SHA256)
+	require.Greater(t, pkgs[0].Size, int64(0))
+	require.Equal(t, "My test app", pkgs[0].Description)
+	require.Equal(t, "custom", pkgs[0].Runtime)
+}
+
+func TestStore_Create_WithLibs(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+
+	libPath := filepath.Join(t.TempDir(), "libmyapp.so")
+	require.NoError(t, os.WriteFile(libPath, []byte("libcontent"), 0o644))
+
+	err = store.Create("myapp", "2.0.0", binaryPath, []string{libPath}, "", "")
+	require.NoError(t, err)
+
+	testPkg := Package{Name: "myapp", Version: "2.0.0"}
+	require.NoError(t, store.Extract(testPkg))
+
+	files, err := store.ExtractedFiles("myapp", "2.0.0")
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+}
+
+func TestStore_Create_AlreadyExists(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+
+	require.NoError(t, store.Create("myapp", "1.0.0", binaryPath, nil, "", ""))
+
+	err = store.Create("myapp", "1.0.0", binaryPath, nil, "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "already exists")
+}
+
+func TestStore_Create_BinaryNotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	err = store.Create("myapp", "1.0.0", "/nonexistent/binary", nil, "", "")
+	require.Error(t, err)
+}

@@ -20,6 +20,7 @@ func newPkgCmd() *cobra.Command {
 		newPkgSearchCmd(),
 		newPkgGetCmd(),
 		newPkgRemoveCmd(),
+		newPkgCreateCmd(),
 	)
 	return cmd
 }
@@ -189,6 +190,47 @@ func newPkgRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
+	return cmd
+}
+
+func newPkgCreateCmd() *cobra.Command {
+	var (
+		libs        []string
+		description string
+		runtimeName string
+	)
+	cmd := &cobra.Command{
+		Use:   "create <name>[:<version>] <binary>",
+		Short: "Create a local package from a binary and optional files",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, version := parsePkgRef(args[0])
+			if version == "" {
+				version = "1.0.0"
+			}
+			binaryPath, err := filepath.Abs(args[1])
+			if err != nil {
+				return fmt.Errorf("pkg create: resolving path: %w", err)
+			}
+			if _, err := os.Stat(binaryPath); err != nil {
+				return fmt.Errorf("pkg create: binary not found: %s", binaryPath)
+			}
+
+			store, err := pkg.NewStore(pkgStorePath())
+			if err != nil {
+				return fmt.Errorf("pkg create: %w", err)
+			}
+
+			if err := store.Create(name, version, binaryPath, libs, description, runtimeName); err != nil {
+				return fmt.Errorf("pkg create: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Package %s:%s created from %s.\n", name, version, filepath.Base(binaryPath))
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVar(&libs, "libs", nil, "Additional files to include (repeatable)")
+	cmd.Flags().StringVar(&description, "description", "", "Package description")
+	cmd.Flags().StringVar(&runtimeName, "runtime", "", "Runtime family (e.g. node, python)")
 	return cmd
 }
 

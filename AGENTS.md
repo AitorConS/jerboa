@@ -116,7 +116,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — all items c
 | 3 — Full CLI | ✅ done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
 | 4 — Compose | ✅ done | YAML parser, topological sort, shared volumes, `uni compose up/down/ps/logs` |
 | 5 — Complete Runtime | ✅ done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip`, `uni cp`, TAP/bridge networking |
-| 6 — Package System | ✅ done | `uni pkg list/search/get/remove`, `--pkg` flag, package index/store, archive extraction |
+| 6 — Package System | ✅ done | `uni pkg list/search/get/remove/create`, `--pkg` flag, package index/store, archive extraction |
 | 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
 | 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
@@ -176,7 +176,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni node ls` | — | List cluster members with status + resource capacity |
 | `uni run --network <name>` | `--network`, `--ip` | Auto-allocate IP from network |
 | `uni kernel check/update/list/use` | — | Manage kernel tools |
-| `uni pkg list/search/get/remove` | — | Manage packages |
+| `uni pkg list/search/get/remove/create` | — | Manage packages |
 | `uni cp <src> <dst>` | — | Copy files to/from VM |
 | `uni upgrade` | — | Self-update CLI binary |
 
@@ -272,12 +272,13 @@ unireg gc
 | Host-side bridge/TAP | `internal/network/bridge_linux.go` — `CreateBridge`, `AttachTAP`, `DestroyBridge`; bridge name from `Config.BridgeName` (not hardcoded) |
 | Network Store + IPAM | `internal/network/store.go` — `Store` with `Create/Get/List/Remove/AllocateIP/ReleaseIP`; persistent `~/.uni/networks/<name>/` with `meta.json` + `state.json`; subnet allocator from 10.100.0.0/16 |
 | iptables port forwarding | `internal/network/portfwd_linux.go` — DNAT + MASQUERADE with `-i tapName` |
-| Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll` |
+| Package index/store | `internal/package/package.go` — `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll`, `Create` |
 | Package download with SHA-256 | `internal/package/package.go::Download` — verifies `Package.SHA256` after download, removes archive on mismatch; skips when empty |
-| `uni pkg` commands | `cmd/uni/pkg.go` — list, search, get, remove (all versions) |
+| Package creation | `internal/package/package.go::Create` — creates local package archive from binary + optional libs, computes SHA256, writes meta.json |
+| `uni pkg` commands | `cmd/uni/pkg.go` — list, search, get, remove (all versions), create (from binary + libs) |
 | Package resolution (build) | `cmd/uni/build.go::resolvePackages` — download, extract, list files for manifest |
 | Manifest with package files | `internal/image/builder.go::BuildManifest` — includes extracted package files as manifest children |
-| `uni pkg` CLI tests | `cmd/uni/pkg_test.go` — search, get, list, remove, remove-all-versions, not-found, parsePkgRef |
+| `uni pkg` CLI tests | `cmd/uni/pkg_test.go` — search, get, list, remove, remove-all-versions, create, not-found, parsePkgRef |
 | `resolvePackages` tests | `cmd/uni/resolve_test.go` — download→extract→list pipeline, specific version, not-found, multiple packages |
 | Package pipeline integration test | `tests/integration/package_pipeline_test.go` — full Download→Extract→ExtractedFiles→BuildManifest end-to-end |
 | `uni cp` (to VM) | `cmd/uni/cp.go::cpToVM` — dump → copy file → mkfs rebuild |

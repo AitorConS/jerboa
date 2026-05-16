@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
@@ -246,6 +248,10 @@ func TestPkg_Get_NotFound(t *testing.T) {
 }
 
 func TestPkg_List_Empty(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
@@ -269,4 +275,50 @@ func TestParsePkgRef(t *testing.T) {
 		require.Equal(t, tc.name, name, "parsePkgRef(%q) name", tc.ref)
 		require.Equal(t, tc.version, version, "parsePkgRef(%q) version", tc.ref)
 	}
+}
+
+func TestPkgCreateCmd(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("fake binary"), 0o755))
+
+	out := execRoot(t, socketPath, storePath, "pkg", "create", "myapp:1.0.0", binaryPath, "--description", "My test app")
+	require.Contains(t, out, "myapp:1.0.0")
+	require.Contains(t, out, "created")
+
+	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	require.Contains(t, out, "myapp")
+}
+
+func TestPkgCreateCmd_DefaultVersion(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp2")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+
+	out := execRoot(t, socketPath, storePath, "pkg", "create", "myapp2", binaryPath)
+	require.Contains(t, out, "myapp2:1.0.0")
+}
+
+func TestPkgCreateCmd_NotFound(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "create", "bad:1.0.0", "/nonexistent/binary")
+	require.Contains(t, msg, "binary not found")
 }

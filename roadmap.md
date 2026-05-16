@@ -243,7 +243,7 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 
 ### 6.6 — Package Creation Toolchain
 
-- [ ] 6.6.1 — `uni pkg create <name> <binary> [--libs <lib>...]` — scaffold a new package from a local binary
+- [x] 6.6.1 — `uni pkg create <name> <binary> [--libs <lib>...]` — scaffold a new package from a local binary
 - [ ] 6.6.2 — `uni pkg from-docker <image> --file <binary>` — convert a Docker image into a uni package (extract binary + libs)
 - [ ] 6.6.3 — `--missing-files` flag on `uni pkg load`: detect and report missing dynamic libs at build time (uses `ldd` output analysis)
 - [ ] 6.6.4 — `uni pkg push <name:version>` — push a locally created package to the index (requires `uni login`)
@@ -404,6 +404,7 @@ so developers can point at a project directory and get a runnable image.
 | TAP/bridge iptables DNAT | 5 | ✅ done (Linux) |
 | Volume integration test | 5 | ✅ done |
 | Package system (`uni pkg list/search/get/remove`) | 6 | ✅ done |
+| `uni pkg create` | 6 | ✅ done |
 | Node.js runtime package | 6 | ⬜ |
 | Python runtime package | 6 | ⬜ |
 | Redis / Nginx packages | 6 | ⬜ |

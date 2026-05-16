@@ -28,7 +28,7 @@ import (
 
 // IndexURL is the base URL for the package index.
 // Can be overridden in tests to point to a local server.
-var IndexURL = "https://github.com/AitorConS/UniCLi/releases/download/pkg-index/packages.json"
+var IndexURL = "https://github.com/AitorConS/UniCli/releases/download/pkg-index/packages.json"
 
 // Package describes a downloadable runtime package.
 type Package struct {
@@ -372,4 +372,122 @@ func (idx *Index) Latest(name string) *Package {
 		return nil
 	}
 	return &versions[0]
+}
+
+// Create builds a local package archive from the given binary and optional
+// extra files. It produces files.tar.gz and meta.json in the package store.
+func (s *Store) Create(name, version, binaryPath string, extraFiles []string, description, runtimeName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dir := s.PackageDir(name, version)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("pkg create mkdir %s: %w", dir, err)
+	}
+
+	archivePath := filepath.Join(dir, "files.tar.gz")
+	if _, err := os.Stat(archivePath); err == nil {
+		return fmt.Errorf("pkg create: package %s:%s already exists (remove it first)", name, version)
+	}
+
+	allFiles := append([]string{binaryPath}, extraFiles...)
+	sha, size, err := s.createArchive(archivePath, allFiles)
+	if err != nil {
+		return fmt.Errorf("pkg create archive: %w", err)
+	}
+
+	meta := Package{
+		Name:        name,
+		Version:     version,
+		Description: description,
+		Runtime:     runtimeName,
+		SHA256:      sha,
+		Size:        size,
+		Created:     time.Now().UTC(),
+	}
+
+	if err := s.writeMeta(dir, meta); err != nil {
+		return fmt.Errorf("pkg create meta: %w", err)
+	}
+
+	slog.Info("package created", "name", name, "version", version, "sha256", sha, "size", size)
+	return nil
+}
+
+func (s *Store) createArchive(outPath string, files []string) (string, int64, error) {
+	f, err := os.Create(outPath)
+	if err != nil {
+		return "", 0, fmt.Errorf("create archive file: %w", err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = f.Close()
+			_ = os.Remove(outPath)
+		}
+	}()
+
+	hash := sha256.New()
+	mw := io.MultiWriter(f, hash)
+	gw := gzip.NewWriter(mw)
+	tw := tar.NewWriter(gw)
+
+	for _, path := range files {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return "", 0, fmt.Errorf("stat %s: %w", path, statErr)
+		}
+
+		hdr, hdrErr := tar.FileInfoHeader(info, "")
+		if hdrErr != nil {
+			return "", 0, fmt.Errorf("tar header %s: %w", path, hdrErr)
+		}
+		hdr.Name = filepath.Base(path)
+
+		if writeErr := tw.WriteHeader(hdr); writeErr != nil {
+			return "", 0, fmt.Errorf("tar write header %s: %w", path, writeErr)
+		}
+
+		if !info.IsDir() {
+			src, openErr := os.Open(path)
+			if openErr != nil {
+				return "", 0, fmt.Errorf("open %s: %w", path, openErr)
+			}
+			if _, copyErr := io.Copy(tw, src); copyErr != nil {
+				_ = src.Close()
+				return "", 0, fmt.Errorf("tar copy %s: %w", path, copyErr)
+			}
+			_ = src.Close()
+		}
+	}
+
+	if closeErr := tw.Close(); closeErr != nil {
+		return "", 0, fmt.Errorf("tar close: %w", closeErr)
+	}
+	if gwErr := gw.Close(); gwErr != nil {
+		return "", 0, fmt.Errorf("gzip close: %w", gwErr)
+	}
+
+	size, seekErr := f.Seek(0, io.SeekEnd)
+	if seekErr != nil {
+		return "", 0, fmt.Errorf("archive seek: %w", seekErr)
+	}
+	if closeErr := f.Close(); closeErr != nil {
+		return "", 0, fmt.Errorf("archive close: %w", closeErr)
+	}
+	cleanup = false
+
+	return hex.EncodeToString(hash.Sum(nil)), size, nil
+}
+
+func (s *Store) writeMeta(dir string, meta Package) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("meta marshal: %w", err)
+	}
+	metaPath := filepath.Join(dir, "meta.json")
+	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
+		return fmt.Errorf("meta write %s: %w", metaPath, err)
+	}
+	return nil
 }
