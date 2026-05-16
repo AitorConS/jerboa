@@ -381,7 +381,9 @@ func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 		}
 		resp := cluster.HandleGossip(payload)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			slog.Warn("cluster gossip encode response", "err", err)
+		}
 	})
 }
 
@@ -400,11 +402,11 @@ type MemberListerAdapter struct {
 	Cluster *SwimCluster
 }
 
-func (a *MemberListerAdapter) Members() []ClusterMemberInfo {
+func (a *MemberListerAdapter) Members() []MemberInfo {
 	members := a.Cluster.Members()
-	out := make([]ClusterMemberInfo, len(members))
+	out := make([]MemberInfo, len(members))
 	for i, m := range members {
-		out[i] = ClusterMemberInfo{
+		out[i] = MemberInfo{
 			ID:       m.ID,
 			Addr:     m.Addr,
 			Status:   string(m.Status),
@@ -417,7 +419,7 @@ func (a *MemberListerAdapter) Members() []ClusterMemberInfo {
 	return out
 }
 
-type ClusterMemberInfo struct {
+type MemberInfo struct {
 	ID       string
 	Addr     string
 	Status   string

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -280,14 +279,10 @@ func TestRegisterGossipHandler_ValidGossip(t *testing.T) {
 	data, err := json.Marshal(payload)
 	require.NoError(t, err)
 
-	resp, err := http.Post(srv.URL+"/cluster/gossip", "application/json", nil)
-	require.NoError(t, err)
-
-	req, err := http.NewRequest(http.MethodPost, srv.URL+"/cluster/gossip", nil)
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/cluster/gossip", bytes.NewReader(data))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Body = io.NopCloser(bytes.NewReader(data))
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)

@@ -179,14 +179,6 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 	}
 
 	var clusterLister api.ClusterMemberLister
-
-	vmSrv, err := api.NewServer(mgr, netStore, socketPath, stop, version, clusterLister)
-	if err != nil {
-		return fmt.Errorf("unid: vm server: %w", err)
-	}
-
-	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
-
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {
 		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0)
@@ -217,6 +209,13 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		slog.Info("cluster started", "node_id", swimCluster.LocalID(), "addr", clusterAddr)
 		clusterLister = &clusterMemberAdapter{cluster: swimCluster}
 	}
+
+	vmSrv, err := api.NewServer(mgr, netStore, socketPath, stop, version, clusterLister)
+	if err != nil {
+		return fmt.Errorf("unid: vm server: %w", err)
+	}
+
+	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
 
 	if registryAddr != "" {
 		if err := validateRegistryTLSConfig(registryTLSCert, registryTLSKey); err != nil {
