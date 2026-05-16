@@ -15,6 +15,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/autotls"
+	"github.com/AitorConS/unikernel-engine/internal/cluster"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/metrics"
 	"github.com/AitorConS/unikernel-engine/internal/network"
@@ -53,13 +54,15 @@ func newRootCmd() *cobra.Command {
 		uiAddr          string
 		logFormat       string
 		traceAddr       string
+		clusterAddr     string
+		joinAddrs       string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr)
+			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
@@ -92,6 +95,10 @@ func newRootCmd() *cobra.Command {
 		"log format: text (default) or json")
 	root.Flags().StringVar(&traceAddr, "trace-addr", "",
 		"OTLP gRPC address for trace export (e.g. localhost:4317); empty disables tracing")
+	root.Flags().StringVar(&clusterAddr, "cluster-addr", "",
+		"HTTP address for cluster gossip endpoint (e.g. :7946); empty disables cluster")
+	root.Flags().StringVar(&joinAddrs, "join", "",
+		"Comma-separated list of seed node addresses to join (e.g. 10.0.0.2:7946,10.0.0.3:7946)")
 	root.AddCommand(newRegistryGCCmd())
 	return root
 }
@@ -120,7 +127,7 @@ func newRegistryGCCmd() *cobra.Command {
 	return cmd
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr string) error {
+func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs string) error {
 	setupLogger(logFormat)
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
@@ -171,12 +178,45 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		slog.Warn("unid: failed to restore VMs from disk", "err", err)
 	}
 
-	vmSrv, err := api.NewServer(mgr, netStore, socketPath, stop, version)
+	var clusterLister api.ClusterMemberLister
+
+	vmSrv, err := api.NewServer(mgr, netStore, socketPath, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
 
 	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
+
+	var swimCluster *cluster.SwimCluster
+	if clusterAddr != "" {
+		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0)
+		mux := http.NewServeMux()
+		cluster.RegisterGossipHandler(mux, swimCluster)
+		clusterSrv := &http.Server{Addr: clusterAddr, Handler: mux}
+		go func() {
+			slog.Info("cluster gossip listening", "addr", clusterAddr)
+			if err := clusterSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				slog.Error("cluster server", "err", err)
+			}
+		}()
+		go func() {
+			<-ctx.Done()
+			swimCluster.Leave()
+			if err := clusterSrv.Shutdown(context.Background()); err != nil {
+				slog.Warn("cluster shutdown", "err", err)
+			}
+		}()
+
+		if joinAddrs != "" {
+			seeds := splitCommaList(joinAddrs)
+			if err := swimCluster.Join(ctx, seeds...); err != nil {
+				slog.Warn("unid: cluster join errors", "err", err)
+			}
+		}
+		swimCluster.Start(ctx)
+		slog.Info("cluster started", "node_id", swimCluster.LocalID(), "addr", clusterAddr)
+		clusterLister = &clusterMemberAdapter{cluster: swimCluster}
+	}
 
 	if registryAddr != "" {
 		if err := validateRegistryTLSConfig(registryTLSCert, registryTLSKey); err != nil {
@@ -337,4 +377,36 @@ func ociDir() string {
 		return ".uni/oci"
 	}
 	return home + "/.uni/oci"
+}
+
+func splitCommaList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		p := strings.TrimSpace(part)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+type clusterMemberAdapter struct {
+	cluster *cluster.SwimCluster
+}
+
+func (a *clusterMemberAdapter) Members() []api.ClusterMember {
+	members := a.cluster.Members()
+	out := make([]api.ClusterMember, len(members))
+	for i, m := range members {
+		out[i] = api.ClusterMember{
+			ID:       m.ID,
+			Addr:     m.Addr,
+			Status:   string(m.Status),
+			VMCount:  m.VMCount,
+			CPUCap:   m.CPUCap,
+			MemCap:   m.MemCap,
+			LastSeen: m.LastSeen,
+		}
+	}
+	return out
 }
