@@ -45,7 +45,7 @@ func startDaemon(t *testing.T) (*api.Client, string) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
