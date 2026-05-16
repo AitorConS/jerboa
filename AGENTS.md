@@ -34,11 +34,11 @@ unireg (standalone registry server) → OCI/legacy HTTP API with auth/TLS
 
 **CLI (`cmd/uni/`)** — one file per subcommand, cobra, zero business logic, all work delegated to `unid` via Unix socket. Always has `--output json` flag. Subcommands: `run`, `build`, `images`, `rmi`, `push`, `pull`, `ps`, `status`, `logs`, `stop`, `rm`, `inspect`, `exec`, `compose`, `volume`, `network`, `dns`, `kernel`, `pkg`, `cp`, `upgrade`, `stats`.
 
-**Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling. Creates `~/.uni/networks/` Network Store on startup. Registry server can be embedded via `--registry-addr`.
+**Daemon (`cmd/unid/`)** — persistent process, Unix socket API (JSON-RPC 2.0), cluster-aware scheduling via SWIM gossip. Creates `~/.uni/networks/` Network Store on startup. Registry server can be embedded via `--registry-addr`. Cluster membership via `--cluster-addr` and `--join` flags.
 
 **Registry (`cmd/unireg/`)** — standalone registry server with same OCI/legacy API, auth, TLS, and GC as the embedded daemon registry. Independently deployable. Uses `--addr`, `--token`, `--jwt-secret`, `--tls-cert`/`--tls-key`, `--no-auto-tls` flags.
 
-**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Attach`, `VM.Inspect`, `VM.Stats`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`, `DNS.Resolve`, `DNS.List`.
+**API (`internal/api/`)** — JSON-RPC 2.0 over Unix domain socket. Methods: `VM.Run`, `VM.Stop`, `VM.Kill`, `VM.Signal`, `VM.Remove`, `VM.List`, `VM.Get`, `VM.Logs`, `VM.Attach`, `VM.Inspect`, `VM.Stats`, `Network.Create`, `Network.List`, `Network.Get`, `Network.Remove`, `Network.AllocateIP`, `Network.ReleaseIP`, `DNS.Resolve`, `DNS.List`, `Node.List`.
 
 **VM Manager (`internal/vm/`)** — KVM/QEMU wrapper. `VM` struct is concurrent-safe (`sync.RWMutex`). State machine: `created → starting → running → stopping → stopped`. KVM ioctls wrapped in testable interfaces — never call ioctls directly in business logic.
 
@@ -106,7 +106,7 @@ CI uses Go 1.25 in workflows; golangci-lint pinned to v2.12.2 with v2 config for
 
 ## Phase Status
 
-Currently in **Phase 10** (Observability & Production Hardening) — core observability complete (Prometheus, JSON logging, OTel tracing, `uni stats`, dashboard, SQLite persistence). Remaining: resource quotas (10.6), I/O throttling (10.7), multi-node cluster (10.8/10.9). CI uses Go 1.25; golangci-lint pinned to v2.12.2.
+Currently in **Phase 10** (Observability & Production Hardening) — all items complete. Phase 10 is done. CI uses Go 1.25; golangci-lint pinned to v2.12.2.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -120,7 +120,7 @@ Currently in **Phase 10** (Observability & Production Hardening) — core observ
 | 7 — Orchestrator | ✅ done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0–7.7) |
 | 8 — Registry & Distribution | ✅ done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 — Build System | ✅ done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
-| 10 — Observability | ⬳ in progress | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard ✅, SQLite persistence ✅; resource quotas ✅, I/O throttling ✅, cluster ⬜ |
+| 10 — Observability | ✅ done | Prometheus ✅, JSON logging ✅, OTel tracing ✅, `uni stats` ✅, dashboard ✅, SQLite persistence ✅, resource quotas ✅, I/O throttling ✅, cluster membership ✅, `uni node ls` ✅ |
 
 Phases must be fully tested and stable before advancing. A phase is not done if tests are skipped, lint fails, or only the happy path works.
 
@@ -173,6 +173,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni volume create/ls/rm/inspect` | — | Manage persistent volumes |
 | `uni network create/ls/inspect/rm` | `--subnet`, `--driver` | Manage networks |
 | `uni dns resolve/list` | `--network` | Resolve and inspect internal VM DNS records |
+| `uni node ls` | — | List cluster members with status + resource capacity |
 | `uni run --network <name>` | `--network`, `--ip` | Auto-allocate IP from network |
 | `uni kernel check/update/list/use` | — | Manage kernel tools |
 | `uni pkg list/search/get/remove` | — | Manage packages |
@@ -315,6 +316,10 @@ unireg gc
 | Dashboard stats polling | `internal/ui/handler.go` — `/ui/api/vm/{id}/stats` JSON endpoint, 3s polling on VM detail page |
 | Resource quotas (cgroup v2) | `internal/vm/cgroup.go` (Linux) / `internal/vm/cgroup_stub.go` (non-Linux) — `CgroupManager.Apply(pid, CgroupLimit)`, `Remove()`, `IsCgroupV2Available()` |
 | Resource quotas CLI | `cmd/uni/run.go` — `--cpu-shares` (1–10000), `--memory-max` (e.g. 512M, 1G), `parseMemoryMax()` |
+| Cluster membership (SWIM) | `internal/cluster/cluster.go` — `SwimCluster` with `Join`, `Start`, `Leave`, `HandleGossip`, `Members`, `MemberListerAdapter`; `RegisterGossipHandler` for `/cluster/gossip` HTTP endpoint |
+| Cluster daemon flags | `cmd/unid/main.go` — `--cluster-addr` and `--join` flags, `clusterMemberAdapter` for API integration |
+| `uni node ls` CLI | `cmd/uni/node.go` — `uni node ls` with table/JSON output |
+| `Node.List` JSON-RPC | `internal/api/server.go::handleNodeList` — `Node.List` dispatch, `ClusterMemberLister` interface |
 
 ## Internal Packages
 
@@ -333,6 +338,7 @@ unireg gc
 | `internal/tools/` | Kernel tools management: download, version check, platform-specific mkfs resolution. |
 | `internal/vm/` | Core package: VM lifecycle state machine, QEMU wrapper, port map parser, VM registry store (`FileStore` default, `SQLiteStore` via `--vm-store sqlite`), `Migrator` for idempotent `state.json → sqlite`, network cfg via fw_cfg, health checks, restart policies, persistence, runtime stats. |
 | `internal/volume/` | Named volume management: sparse disk creation, attach/detach as virtio-blk devices. |
+| `internal/cluster/` | SWIM-style gossip membership over HTTP. `SwimCluster` with ping/ack/suspicion/dead states, `--join` seed nodes, `RegisterGossipHandler` for `/cluster/gossip` endpoint, `MemberListerAdapter` for API integration. |
 | `internal/metrics/` | Prometheus metrics collection for `unid`. `Collectors` with VM state gauges, lifecycle counters, registry push/pull counters, build info. `VMStateUpdater` polls VM Manager and updates gauges. `Serve()` starts HTTP `/metrics` and `/health`. |
 | `internal/slogformat/` | Custom `slog.Handler` for structured JSON logging. `JSONHandler` outputs JSON lines with `ts`, `level`, `msg`, and arbitrary attributes. Wired via `--log-format text|json` flag on `unid`. |
 | `internal/tracing/` | OpenTelemetry tracing for `unid`. `Provider` creates OTLP gRPC TracerProvider (no-op when `--trace-addr` is empty). Spans for VM lifecycle events (`vm.create`, `vm.start`, `vm.stop`, `vm.kill`, `vm.remove`, `vm.lifecycle`). `RecordError` and `SpanWithRetryAttrs` helpers. |
@@ -778,19 +784,50 @@ unireg gc
 
 ### Remaining for Phase 10
 
-- ⬜ 10.8 — Multi-node basic cluster: `unid --join <peer>` — gossip membership
-- ⬜ 10.9 — `uni node ls` — list cluster members with status + resource capacity
-
-### Next Steps (Tomorrow)
-
-1. Define cluster protocol scope: gossip basic (SWIM-style) vs registry centralizado
-2. Implement `internal/cluster/` package with membership and heartbeat
-3. Add `--join <peer-addr>` flag on `unid` daemon
-4. Add `uni node ls` CLI command
-5. Add JSON-RPC `Node.List` method
-6. Close Phase 10 formally and plan Phase 11
+None — all items complete.
 
 ### Validation Commands
+
+- `go test ./internal/... ./cmd/... -count=1`
+- `golangci-lint run --timeout 5m ./...`
+
+## Session Update (2026-05-16, Phase 10.8 + 10.9 — Cluster membership)
+
+### Completed
+
+- Added `internal/cluster/` package: `SwimCluster` with SWIM-style gossip membership over HTTP.
+  - `Member` struct: `ID`, `Addr`, `Status` (alive/suspect/dead/left), `VMCount`, `CPUCap`, `MemCap`, `LastSeen`.
+  - `NewSwimCluster(addr, vmCount, cpuCap, memCap)` creates local member with random ID.
+  - `Join(ctx, seedAddrs...)` contacts seeds via `POST /cluster/gossip`, merges membership tables.
+  - `Start(ctx)` launches periodic gossip (5s) and suspicion detection loops.
+  - `Leave()` marks local as `left`, cancels gossip loops.
+  - `Members()` / `AliveMembers()` returns thread-safe membership snapshots.
+  - `UpdateLocal(vmCount, cpuCap, memCap)` refreshes local resource data.
+  - `HandleGossip(payload)` processes incoming gossip, merges entries, recovers suspects.
+  - `RegisterGossipHandler(mux, cluster)` registers `/cluster/gossip` HTTP POST handler.
+  - `MemberListerAdapter` converts `SwimCluster` to `ClusterMemberInfo` for API integration.
+  - `ParseAddr(hostPort)` normalizes `0.0.0.0` to `127.0.0.1`.
+  - Suspicion: members not seen for 15s → `suspect`, 30s → `dead`.
+  - Dead/Left status always propagated regardless of timestamp.
+- Added tests: 15 tests in `cluster_test.go` covering creation, discovery, suspect recovery, dead propagation, HTTP join, gossip loop integration, concurrent access, handler methods, parseAddr, merge with newer data.
+- Added `--cluster-addr` flag on `unid` daemon — HTTP address for gossip endpoint (empty = cluster disabled).
+- Added `--join` flag on `unid` daemon — comma-separated list of seed node addresses.
+- Wired cluster lifecycle into `serve()`: gossip HTTP server start, seed join, gossip start, graceful shutdown with `Leave()`.
+- Added `clusterMemberAdapter` in `cmd/unid/main.go` adapting `cluster.SwimCluster` to `api.ClusterMemberLister`.
+- Added `Node.List` JSON-RPC method in `internal/api/server.go` with `ClusterMemberLister` interface.
+- Added `NodeListResponse` and `NodeRow` types in `internal/api/types.go`.
+- Added `NodeList()` client method in `internal/api/client.go`.
+- Returns method-not-found error when cluster is disabled (nil listener).
+- Added `uni node ls` CLI command in `cmd/uni/node.go` with table/JSON output.
+- Updated daemon test flag presence for `--cluster-addr` and `--join`.
+- Added API tests: `TestServer_NodeList_Disabled`, `TestServer_NodeList_WithCluster`.
+- Added CLI tests: `TestNodeListCmd_Disabled`, `TestNodeListResponse_Fields`.
+- Bumped `VERSION` to `0.37.0`.
+
+### Validation
+
+- `go test ./internal/cluster/... ./internal/api/... ./cmd/unid/... ./cmd/uni/... -count=1` — all pass
+- `go build ./cmd/...` — compiles
 
 - `go test ./internal/... ./cmd/... -count=1`
 - `golangci-lint run --timeout 5m ./...`

@@ -4,7 +4,7 @@
 
 ---
 
-## Current status: Phase 10 — Observability & Production Hardening (in progress)
+## Current status: Phase 10 — Observability & Production Hardening (complete ✅)
 
 ### Phase 10 progress (2026-05-15)
 
@@ -18,8 +18,8 @@
   - ✅ 10.5.3 — Metrics polling: `/ui/api/vm/{id}/stats` JSON endpoint, live stats section with 3s polling on VM detail page
 - ✅ 10.6 — Resource quotas (cgroup v2)
 - ✅ 10.7 — I/O throttling
-- ⬜ 10.8 — Multi-node cluster
-- ⬜ 10.9 — `uni node ls`
+- ✅ 10.8 — Multi-node basic cluster
+- ✅ 10.9 — `uni node ls`
 - ✅ 10.10 — Daemon state persistence (SQLite-backed)
   - ✅ 10.10.1 — SQLiteStore implementation with `--vm-store sqlite` flag
   - ✅ 10.10.2 — Idempotent migration from state.json to SQLite
@@ -365,13 +365,13 @@ so developers can point at a project directory and get a runnable image.
   - [x] 10.5.3 — Metrics polling: `/ui/api/vm/{id}/stats` JSON endpoint, live stats section with 3s polling on VM detail page
 - [x] 10.6 — Resource quotas per VM: cgroup v2 integration for CPU shares + memory hard limit (enforced at kernel level, not just QEMU hint)
 - [x] 10.7 — I/O throttling: `--disk-iops` and `--disk-bps` limits via QEMU drive throttle
-- [ ] 10.8 — Multi-node basic cluster: `unid --join <peer>` — gossip membership, workload distribution via consistent hashing
-- [ ] 10.9 — `uni node ls` — list cluster members with status + resource capacity
+- [x] 10.8 — Multi-node basic cluster: `unid --join <peer>` — SWIM-style gossip membership over HTTP, `--cluster-addr` flag, `/cluster/gossip` HTTP endpoint
+- [x] 10.9 — `uni node ls` — list cluster members with status + resource capacity
 - [x] 10.10 — Daemon state persistence: SQLite-backed VM store; all VMs survive `unid` restart
 - [x] 10.11 — `govulncheck` + `trivy` scan in nightly CI; block release on HIGH/CRITICAL CVEs
 - [x] 10.12 — Documentation: observability guide, architecture dashboard section, repo URL fix
 
-**Done when:** Prometheus scrapes metrics. Dashboard shows live instances. Daemon survives restart.
+**Done when:** Prometheus scrapes metrics. Dashboard shows live instances. Daemon survives restart. Cluster membership works.
 
 ---
 
@@ -424,5 +424,5 @@ so developers can point at a project directory and get a runnable image.
 | OpenTelemetry tracing | 10 | ✅ done |
 | `uni stats` live metrics | 10 | ✅ done |
 | Web dashboard | 10 | ✅ done |
-| Multi-node cluster | 10 | ⬜ |
+| Multi-node cluster | 10 | ✅ done (SWIM gossip membership, uni node ls) |
 | Daemon state persistence | 10 | ✅ done (FileStore + SQLiteStore + migration + restart hardening) |

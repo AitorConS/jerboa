@@ -28,6 +28,7 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │  volume create · volume ls · volume rm · volume inspect │
 │  network create · network ls · network inspect · network rm │
 │  dns resolve · dns list                                  │
+│  node ls                                                  │
 │  sign · verify                                            │
 │  pkg list · pkg search · pkg get · pkg remove           │
 │  kernel check · kernel update · kernel list · kernel use│
@@ -205,6 +206,7 @@ JSON-RPC 2.0 over a Unix domain socket.
 | `Network.AllocateIP/ReleaseIP` | IPAM allocation lifecycle |
 | `DNS.Resolve` | Resolve service/VM names to IP |
 | `DNS.List` | List active DNS records |
+| `Node.List` | List cluster members (requires `--cluster-addr`) |
 
 ### Compose (`internal/compose/`)
 
@@ -492,6 +494,51 @@ uni run myapp:latest --disk-iops 500 --disk-bps 5M
 | `--disk-bps` | bytes/sec | Maximum throughput (e.g. `10M`, `1G`; 0 = no limit) |
 
 These limits apply to the boot disk only. Volume disks are not throttled.
+
+---
+
+## Cluster Membership
+
+When started with `--cluster-addr`, `unid` joins a SWIM-style gossip cluster for node discovery and health monitoring.
+
+**How it works:**
+
+Each daemon runs a lightweight gossip protocol over HTTP:
+
+1. **Join** — on startup, contacts seed nodes listed in `--join` and exchanges membership tables
+2. **Gossip** — every 5 seconds, picks a random peer and exchanges membership state via `POST /cluster/gossip`
+3. **Suspicion** — if a member is not heard from for 15 seconds, it is marked `suspect`
+4. **Dead** — if a suspect is not heard from for 30 seconds, it is marked `dead`
+5. **Leave** — on graceful shutdown, the local node broadcasts its `left` status
+
+**Member states:**
+
+| State | Meaning |
+|---|---|
+| `alive` | Active and responding to gossip |
+| `suspect` | Not heard from recently (may be network issue) |
+| `dead` | Not heard from for an extended period |
+| `left` | Gracefully shut down |
+
+Dead and Left statuses are always propagated regardless of timestamp, ensuring cluster-wide consistency.
+
+**Usage:**
+
+```bash
+# Start first node
+unid --cluster-addr :7946
+
+# Start second node, joining the first
+unid --cluster-addr :7946 --join 10.0.0.1:7946
+
+# Start with multiple seeds
+unid --cluster-addr :7946 --join 10.0.0.1:7946,10.0.0.2:7946
+
+# List cluster members
+uni node ls
+```
+
+`0.0.0.0` bind addresses are normalized to `127.0.0.1` for inter-node communication.
 
 ---
 

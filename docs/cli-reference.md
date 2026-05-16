@@ -869,6 +869,33 @@ uni dns list [--network <name>]
 
 ---
 
+## Cluster Commands
+
+### `uni node ls`
+
+List cluster members with status and resource capacity.
+
+```
+uni node ls
+```
+
+**Example:**
+
+```bash
+uni node ls
+# ID              ADDR             STATUS   VMS   CPU   MEM       SEEN
+# a1b2c3d4        10.0.0.1:7946    alive    3     8     16.0 GiB  2026-05-16T10:00:00Z
+# e5f6a7b8        10.0.0.2:7946    suspect  1     4     8.0 GiB   2026-05-16T09:55:00Z
+
+# JSON output
+uni --output json node ls
+```
+
+{: .note }
+Requires `--cluster-addr` on the `unid` daemon. When cluster is disabled, `uni node ls` returns an error.
+
+---
+
 ## Kernel Commands
 
 Manage the kernel tools (`kernel.img`, `boot.img`, `mkfs`) cached in `~/.uni/tools/`. The kernel is versioned independently from the CLI.
@@ -1125,6 +1152,8 @@ When using `uni run --attach`, the command blocks until the VM reaches the `stop
 | `--ui-addr` | (empty, disabled) | HTTP address for web dashboard (e.g. `:8080`) |
 | `--log-format` | `text` | Log format: `text` (default) or `json` |
 | `--trace-addr` | (empty, disabled) | OTLP gRPC address for trace export (e.g. `localhost:4317`) |
+| `--cluster-addr` | (empty, disabled) | HTTP address for cluster gossip endpoint (e.g. `:7946`) |
+| `--join` | (empty) | Comma-separated list of seed node addresses to join (e.g. `10.0.0.2:7946`) |
 
 ### Observability Endpoints
 
