@@ -230,6 +230,7 @@ Manages pre-packaged files that can be included in images at build time:
 - **Search** — queries the remote index by name, description, or runtime
 - **Get** — downloads a package (optionally a specific version) to the local store
 - **Remove** — deletes a specific version; **RemoveAll** — deletes all versions of a package
+- **Create** — builds a local package archive from a binary and optional additional files, computing SHA256 and writing `meta.json`
 
 Packages are included at build time via `uni build --pkg <name>[:<version>]`. The build pipeline:
 

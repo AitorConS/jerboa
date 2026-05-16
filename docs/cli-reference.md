@@ -744,6 +744,27 @@ uni pkg remove redis
 # Removed all versions of package redis.
 ```
 
+### `uni pkg create`
+
+Create a local package from a binary and optional additional files. The package archive is stored in the local package cache.
+
+```
+uni pkg create <name>[:<version>] <binary> [--libs <file>...] [--description <desc>] [--runtime <runtime>]
+```
+
+If no version is specified, `1.0.0` is used as the default.
+
+```bash
+# Create a package from a static binary
+uni pkg create myapp:1.2.0 ./myapp --description "My application" --runtime custom
+
+# Create a package with additional library files
+uni pkg create myapp:1.2.0 ./myapp --libs ./libmyapp.so --description "With shared lib"
+
+# Create with auto-default version (1.0.0)
+uni pkg create myapp ./myapp
+```
+
 ---
 
 ## Volume Commands
