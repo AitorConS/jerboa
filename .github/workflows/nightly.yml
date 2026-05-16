@@ -126,8 +126,8 @@ jobs:
     if: failure()
     steps:
       - name: Notify
-        # TODO: configure NOTIFY_WEBHOOK secret in repo settings
-        # Supports Discord or Slack — set NOTIFY_TYPE to "discord" or "slack"
+        # Requires NOTIFY_WEBHOOK secret configured in repo settings.
+        # Supports Discord or Slack — set NOTIFY_TYPE variable to "discord" or "slack".
         env:
           NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
           NOTIFY_TYPE: ${{ vars.NOTIFY_TYPE }}  # "discord" or "slack"

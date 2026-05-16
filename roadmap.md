@@ -333,7 +333,7 @@ so developers can point at a project directory and get a runnable image.
 - [x] 9.0.1 — `uni build --lang go .` CLI flag wired to builder pipeline with auto-detection
 - [x] 9.0.2 — Node/Python/Rust driver stubs with Detect() and "not yet implemented" Build()
 - [x] 9.0.3 — Auto-detection for all four languages (go.mod, package.json, pyproject.toml/requirements.txt, Cargo.toml) + ambiguity detection
-- [ ] 9.1 — `uni build --lang go .` — detect Go project (`go.mod`), build static binary (`CGO_ENABLED=0`), produce image
+- [x] 9.1 — `uni build --lang go .` — detect Go project (`go.mod`), build static binary (`CGO_ENABLED=0`), produce image
 - [x] 9.2 — `uni build --lang node .` — NodeDriver: detect package.json, npm install, read engines.node, entrypoint from package.json
 - [x] 9.3 — `uni build --lang python .` — PythonDriver: detect pyproject.toml/requirements.txt, pip install, read requires-python, entrypoint from scripts
 - [x] 9.4 — `uni build --lang rust .` — RustDriver: detect Cargo.toml, cargo build --release --target x86_64-unknown-linux-musl
