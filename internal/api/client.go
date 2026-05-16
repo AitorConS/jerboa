@@ -227,6 +227,15 @@ func (c *Client) Stats(_ context.Context, id string) (VMStatsResponse, error) {
 	return stats, nil
 }
 
+// NodeList returns cluster member information.
+func (c *Client) NodeList(_ context.Context) (NodeListResponse, error) {
+	var resp NodeListResponse
+	if err := c.call("Node.List", nil, &resp); err != nil {
+		return NodeListResponse{}, fmt.Errorf("client node list: %w", err)
+	}
+	return resp, nil
+}
+
 // Attach connects to a VM's serial console and streams output to stdout.
 // It blocks until the VM stops or the connection is closed.
 // This method takes over the connection for raw reading; do not use the

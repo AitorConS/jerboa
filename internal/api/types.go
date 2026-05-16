@@ -186,3 +186,19 @@ type VMStatsResponse struct {
 	Timestamp  string  `json:"timestamp"`
 	Source     string  `json:"source"`
 }
+
+// NodeListResponse carries cluster member information.
+type NodeListResponse struct {
+	Nodes []NodeRow `json:"nodes"`
+}
+
+// NodeRow is the wire representation of a cluster member.
+type NodeRow struct {
+	ID       string `json:"id"`
+	Addr     string `json:"addr"`
+	Status   string `json:"status"`
+	VMCount  int    `json:"vm_count"`
+	CPUCap   int    `json:"cpu_capacity"`
+	MemCap   int64  `json:"mem_capacity_bytes"`
+	LastSeen string `json:"last_seen"`
+}

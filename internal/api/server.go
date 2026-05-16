@@ -15,6 +15,20 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 )
 
+type ClusterMemberLister interface {
+	Members() []ClusterMember
+}
+
+type ClusterMember struct {
+	ID       string
+	Addr     string
+	Status   string
+	VMCount  int
+	CPUCap   int
+	MemCap   int64
+	LastSeen time.Time
+}
+
 // Server listens on a Unix socket and dispatches JSON-RPC requests to a
 // vm.Manager.
 type Server struct {
@@ -24,6 +38,7 @@ type Server struct {
 	shutdownFn func()
 	version    string
 	resolver   *scheduler.Resolver
+	cluster    ClusterMemberLister
 }
 
 // NewServer creates a Server that will listen on socketPath.
@@ -31,7 +46,7 @@ type Server struct {
 // pass nil to disable remote shutdown.
 // version is returned by Daemon.Version RPC; pass "" if unknown.
 // Any existing socket file at socketPath is removed before binding.
-func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutdownFn func(), version string) (*Server, error) {
+func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutdownFn func(), version string, clusterLister ClusterMemberLister) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("api server remove stale socket: %w", err)
 	}
@@ -39,7 +54,7 @@ func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutd
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
-	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr)}, nil
+	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
 }
 
 // Serve accepts connections and handles them until ctx is cancelled.
@@ -146,6 +161,8 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any
 		return s.handleDNSResolve(req.Params)
 	case "DNS.List":
 		return s.handleDNSList(req.Params)
+	case "Node.List":
+		return s.handleNodeList()
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -624,6 +641,26 @@ func (s *Server) handleDNSList(params json.RawMessage) (any, *RPCError) {
 		out[i] = DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
 	}
 	return out, nil
+}
+
+func (s *Server) handleNodeList() (any, *RPCError) {
+	if s.cluster == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Node.List (cluster disabled)"}
+	}
+	members := s.cluster.Members()
+	rows := make([]NodeRow, len(members))
+	for i, m := range members {
+		rows[i] = NodeRow{
+			ID:       m.ID,
+			Addr:     m.Addr,
+			Status:   m.Status,
+			VMCount:  m.VMCount,
+			CPUCap:   m.CPUCap,
+			MemCap:   m.MemCap,
+			LastSeen: m.LastSeen.Format(time.RFC3339),
+		}
+	}
+	return NodeListResponse{Nodes: rows}, nil
 }
 
 func (s *Server) writeError(conn net.Conn, id int64, rpcErr *RPCError) {

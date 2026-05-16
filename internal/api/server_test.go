@@ -37,7 +37,7 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -143,7 +143,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -183,7 +183,7 @@ func TestServer_UnknownMethod(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "")
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -414,7 +414,7 @@ func TestServer_DaemonVersion(t *testing.T) {
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
 
-	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "test-v1.2.3")
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "test-v1.2.3", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -443,7 +443,7 @@ func TestServer_DaemonShutdown(t *testing.T) {
 	var shutdownCalled atomic.Bool
 	shutdownFn := func() { shutdownCalled.Store(true) }
 
-	srv, err := api.NewServer(mgr, netStore, socketPath, shutdownFn, "")
+	srv, err := api.NewServer(mgr, netStore, socketPath, shutdownFn, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -619,4 +619,57 @@ func TestServer_StatsNotFound(t *testing.T) {
 
 	_, err := client.Stats(context.Background(), "nonexistent")
 	require.Error(t, err)
+}
+
+type fakeClusterLister struct {
+	members []api.ClusterMember
+}
+
+func (f *fakeClusterLister) Members() []api.ClusterMember {
+	return f.members
+}
+
+func TestServer_NodeList_Disabled(t *testing.T) {
+	client, _ := startTestServer(t)
+
+	_, err := client.NodeList(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Node.List")
+}
+
+func TestServer_NodeList_WithCluster(t *testing.T) {
+	dir := t.TempDir()
+	socketPath := filepath.Join(dir, "unid-node.sock")
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+
+	lister := &fakeClusterLister{
+		members: []api.ClusterMember{
+			{ID: "node-1", Addr: "10.0.0.1:7946", Status: "alive", VMCount: 3, CPUCap: 8, MemCap: 16 * 1024 * 1024 * 1024, LastSeen: time.Now()},
+			{ID: "node-2", Addr: "10.0.0.2:7946", Status: "suspect", VMCount: 1, CPUCap: 4, MemCap: 8 * 1024 * 1024 * 1024, LastSeen: time.Now()},
+		},
+	}
+
+	srv, err := api.NewServer(mgr, netStore, socketPath, nil, "", lister)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = srv.Serve(ctx) }()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond)
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.NodeList(context.Background())
+	require.NoError(t, err)
+	require.Len(t, resp.Nodes, 2)
+	require.Equal(t, "node-1", resp.Nodes[0].ID)
+	require.Equal(t, "alive", resp.Nodes[0].Status)
+	require.Equal(t, "suspect", resp.Nodes[1].Status)
 }
