@@ -406,7 +406,7 @@ func (m *Manager) waitForReplicasHealthy(ctx context.Context, vms []*vm.VM, time
 	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("waiting for healthy replicas: %w", ctx.Err())
 		default:
 		}
 
