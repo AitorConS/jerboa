@@ -7,8 +7,8 @@
 package pkg
 
 import (
-	"bytes"
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -675,7 +675,10 @@ func dockerCreate(image string) (string, error) {
 
 func dockerRemove(containerID string) error {
 	cmd := exec.Command("docker", "rm", "-f", containerID)
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("docker rm -f %s: %w", containerID, err)
+	}
+	return nil
 }
 
 func dockerCp(src, dst string) error {

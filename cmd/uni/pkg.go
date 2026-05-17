@@ -221,15 +221,16 @@ func newPkgCreateCmd() *cobra.Command {
 
 			if missingFiles {
 				missing, lddErr := pkg.MissingFiles(binaryPath)
-				if lddErr != nil {
+				switch {
+				case lddErr != nil:
 					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --missing-files could not run ldd: %v\n", lddErr)
-				} else if len(missing) > 0 {
+				case len(missing) > 0:
 					fmt.Fprintf(cmd.ErrOrStderr(), "Missing shared libraries detected (not on local filesystem):\n")
 					for _, m := range missing {
 						fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", m)
 					}
 					fmt.Fprintf(cmd.ErrOrStderr(), "Consider adding these with --libs or re-running with the binary on a Linux system.\n")
-				} else {
+				default:
 					fmt.Fprintf(cmd.ErrOrStderr(), "All shared library dependencies are present.\n")
 				}
 			}

@@ -86,29 +86,29 @@ project markers (go.mod, package.json, etc.).`,
 			}
 
 			if info.IsDir() {
-			cfg, err := builder.LoadConfig(srcPath)
-			if err != nil {
-				return fmt.Errorf("build: %w", err)
-			}
+				cfg, err := builder.LoadConfig(srcPath)
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
 
-			if cfg != nil && cfg.HasStages() {
-				binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang)
-				if err != nil {
-					return err
-				}
-				defer func() { _ = os.Remove(binaryPath) }()
-			} else {
-				binaryPath, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles)
-				if err != nil {
-					return err
-				}
-				if binaryPath != "" {
+				if cfg != nil && cfg.HasStages() {
+					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang)
+					if err != nil {
+						return err
+					}
 					defer func() { _ = os.Remove(binaryPath) }()
+				} else {
+					binaryPath, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles)
+					if err != nil {
+						return err
+					}
+					if binaryPath != "" {
+						defer func() { _ = os.Remove(binaryPath) }()
+					}
 				}
+			} else {
+				binaryPath = srcPath
 			}
-		} else {
-			binaryPath = srcPath
-		}
 
 			if name == "" {
 				name = args[0]
@@ -285,12 +285,13 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			return "", nil, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)
 		}
 
-		if result.BinaryPath != "" {
+		switch {
+		case result.BinaryPath != "":
 			stageOutputs[stage.Name] = &stageResult{
 				binaryPath: result.BinaryPath,
 				pkgFiles:   stagePkgs,
 			}
-		} else if result.SourceDir != "" {
+		case result.SourceDir != "":
 			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
 			if err != nil {
 				return "", nil, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
@@ -307,7 +308,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 				sourceDir:  result.SourceDir,
 				pkgFiles:   stagePkgs,
 			}
-		} else {
+		default:
 			return "", nil, fmt.Errorf("build stage %q: driver returned empty result", stage.Name)
 		}
 	}
