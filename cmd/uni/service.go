@@ -28,12 +28,13 @@ func newServiceCmd(socketPath *string, outputFmt *string) *cobra.Command {
 
 func newServiceRunCmd(socketPath *string, outputFmt *string) *cobra.Command {
 	var (
-		replicas    int
-		memory      string
-		cpus        int
-		env         []string
-		networkName string
-		strategy    string
+		replicas      int
+		memory        string
+		cpus          int
+		env           []string
+		networkName   string
+		strategy      string
+		healthTimeout int
 	)
 	cmd := &cobra.Command{
 		Use:   "run <name> <image>",
@@ -47,14 +48,15 @@ func newServiceRunCmd(socketPath *string, outputFmt *string) *cobra.Command {
 			defer client.Close()
 
 			p := api.ServiceRunParams{
-				Name:        args[0],
-				Image:       args[1],
-				Replicas:    replicas,
-				Memory:      memory,
-				CPUs:        cpus,
-				Env:         env,
-				NetworkName: networkName,
-				Strategy:    strategy,
+				Name:          args[0],
+				Image:         args[1],
+				Replicas:      replicas,
+				Memory:        memory,
+				CPUs:          cpus,
+				Env:           env,
+				NetworkName:   networkName,
+				Strategy:      strategy,
+				HealthTimeout: healthTimeout,
 			}
 			info, err := client.ServiceRun(context.Background(), p)
 			if err != nil {
@@ -73,6 +75,7 @@ func newServiceRunCmd(socketPath *string, outputFmt *string) *cobra.Command {
 	cmd.Flags().StringArrayVarP(&env, "env", "e", nil, "environment variables (KEY=VAL)")
 	cmd.Flags().StringVar(&networkName, "network", "", "network name for replicas")
 	cmd.Flags().StringVar(&strategy, "strategy", "RollingUpdate", "update strategy: RollingUpdate or Recreate")
+	cmd.Flags().IntVar(&healthTimeout, "health-timeout", 0, "seconds to wait for healthy replicas (0 = no wait)")
 	return cmd
 }
 
@@ -106,6 +109,7 @@ func newServiceScaleCmd(socketPath *string, outputFmt *string) *cobra.Command {
 }
 
 func newServiceUpdateCmd(socketPath *string, outputFmt *string) *cobra.Command {
+	var healthTimeout int
 	cmd := &cobra.Command{
 		Use:   "update <name> <image>",
 		Short: "Update a service to a new image",
@@ -116,7 +120,7 @@ func newServiceUpdateCmd(socketPath *string, outputFmt *string) *cobra.Command {
 				return fmt.Errorf("service update: %w", err)
 			}
 			defer client.Close()
-			info, err := client.ServiceUpdate(context.Background(), args[0], args[1])
+			info, err := client.ServiceUpdate(context.Background(), args[0], args[1], healthTimeout)
 			if err != nil {
 				return fmt.Errorf("service update: %w", err)
 			}
@@ -127,6 +131,7 @@ func newServiceUpdateCmd(socketPath *string, outputFmt *string) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().IntVar(&healthTimeout, "health-timeout", 0, "seconds to wait for healthy replicas during update (0 = no wait)")
 	return cmd
 }
 

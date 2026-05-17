@@ -141,7 +141,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 - `uni service ls` � list services with table/JSON output
 - `uni service inspect <name>` � show service details as JSON
 - `uni service rm <name>` � stop all replicas and delete service
-- Flags: `--replicas`, `--memory`, `--cpus`, `--env`, `--network`, `--strategy`
+- Flags: `--replicas`, `--memory`, `--cpus`, `--env`, `--network`, `--strategy`, `--health-timeout`
 
 ### E.3 � Rolling Updates
 
@@ -211,7 +211,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni network create/ls/inspect/rm` | `--subnet`, `--driver` | Manage networks |
 | `uni dns resolve/list/resolve-all` | `--network` | Resolve and inspect internal VM DNS records |
 | `uni node ls` | — | List cluster members with status + resource capacity |
-| `uni service run/scale/update/ls/inspect/rm` | `--replicas`, `--memory`, `--cpus`, `--env`, `--network`, `--strategy` | Manage services |
+| `uni service run/scale/update/ls/inspect/rm` | `--replicas`, `--memory`, `--cpus`, `--env`, `--network`, `--strategy`, `--health-timeout` | Manage services |
 | `uni run --network <name>` | `--network`, `--ip` | Auto-allocate IP from network |
 | `uni kernel check/update/list/use` | — | Manage kernel tools |
 | `uni pkg list/search/get/remove/create/from-docker/push` | — | Manage packages |
@@ -414,14 +414,15 @@ unireg gc
 
 | Package | Tests Added |
 |---|---|
-| `internal/service` | 20 new test functions |
+| `internal/service` | 24 test functions |
+| `internal/compose` | Replicas + Strategy validation tests |
 | `internal/scheduler` | ResolveAll added (existing test file) |
 | `internal/api` | Service RPC handler tests pass (existing framework) |
 
 ### Next Steps
 
-1. **E.6 — Service health check integration:** Wait for healthy replicas during rolling update before stopping old ones. Add `--health-timeout` flag.
-2. **E.7 — Compose service integration:** `services:` section in compose YAML maps to service orchestration. Deploy compose services as scalable services.
+1. **E.6 — Service health check integration:** DONE. `--health-timeout` on `uni service run/update`. `waitForReplicasHealthy()` polls health status during rolling/recreate updates.
+2. **E.7 — Compose service integration:** DONE. `replicas` and `strategy` fields in compose YAML. Services with `replicas > 1` deployed via `Service.Run`. `compose down` removes services via `ServiceRemove`. `ScalableServices` tracked in compose state.
 3. **Official Package Library (require Linux KVM runner):** Build and publish the 12 official packages via `packages.yml` workflow.
 4. **Self-hosted index server (6.4.3):** Deferred until package library is ready.
 5. **E2E Test Expansion** (when KVM runner available): service lifecycle, rolling updates, DNS round-robin.

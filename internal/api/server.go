@@ -693,6 +693,9 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 		Env:         p.Env,
 		NetworkName: p.NetworkName,
 	}
+	if p.HealthTimeout > 0 {
+		opts.HealthTimeout = time.Duration(p.HealthTimeout) * time.Second
+	}
 	if p.HealthCheck != nil {
 		opts.HealthCheck = &vm.HealthCheckConfig{
 			Type:     p.HealthCheck.Type,
@@ -767,7 +770,7 @@ func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
-	svc, err := s.svcMgr.Update(ctx, p.Name, p.Image)
+	svc, err := s.svcMgr.Update(ctx, p.Name, p.Image, time.Duration(p.HealthTimeout)*time.Second)
 	if err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}

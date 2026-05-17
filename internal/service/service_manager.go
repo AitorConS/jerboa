@@ -57,6 +57,7 @@ func (m *Manager) Run(ctx context.Context, name, image string, replicas int, opt
 		Image:           image,
 		DesiredReplicas: replicas,
 		Strategy:        strategy,
+		HealthTimeout:   opts.HealthTimeout,
 		Config:          cfg,
 		CreatedAt:       time.Now().UTC(),
 		UpdatedAt:       time.Now().UTC(),
@@ -82,6 +83,12 @@ func (m *Manager) Run(ctx context.Context, name, image string, replicas int, opt
 
 		createdVMs = append(createdVMs, v)
 		slog.Info("service replica started", "service", name, "replica", replicaCfg.Name, "vm_id", v.ID)
+	}
+
+	if svc.HealthTimeout > 0 {
+		if err := m.waitForReplicasHealthy(ctx, createdVMs, svc.HealthTimeout); err != nil {
+			slog.Warn("service run: health check timeout", "service", name, "error", err)
+		}
 	}
 
 	if err := m.store.Save(svc); err != nil {
@@ -168,7 +175,9 @@ func (m *Manager) scaleDown(ctx context.Context, svc *Service, currentReplicas [
 }
 
 // Update performs a rolling update of the service to a new image.
-func (m *Manager) Update(ctx context.Context, name, newImage string) (*Service, error) {
+// If healthTimeout > 0, it waits for new replicas to become healthy before
+// removing old ones.
+func (m *Manager) Update(ctx context.Context, name, newImage string, healthTimeout time.Duration) (*Service, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -177,20 +186,26 @@ func (m *Manager) Update(ctx context.Context, name, newImage string) (*Service, 
 		return nil, fmt.Errorf("service update: service %q not found", name)
 	}
 
-	if svc.Strategy == StrategyRecreate {
-		return m.recreateUpdate(ctx, svc, newImage)
+	timeout := healthTimeout
+	if timeout == 0 {
+		timeout = svc.HealthTimeout
 	}
-	return m.rollingUpdate(ctx, svc, newImage)
+
+	if svc.Strategy == StrategyRecreate {
+		return m.recreateUpdate(ctx, svc, newImage, timeout)
+	}
+	return m.rollingUpdate(ctx, svc, newImage, timeout)
 }
 
-// rollingUpdate creates new replicas one at a time, waits for health, then
-// removes old replicas.
-func (m *Manager) rollingUpdate(ctx context.Context, svc *Service, newImage string) (*Service, error) {
+// rollingUpdate creates new replicas, waits for them to become healthy (if
+// healthTimeout > 0), then removes old replicas.
+func (m *Manager) rollingUpdate(ctx context.Context, svc *Service, newImage string, healthTimeout time.Duration) (*Service, error) {
 	oldReplicas := m.replicaVMs(svc.Name)
 
 	newCfg := svc.Config
 	newCfg.ImagePath = newImage
 
+	var newReplicas []*vm.VM
 	for i := 0; i < svc.DesiredReplicas; i++ {
 		replicaCfg := newCfg
 		replicaCfg.Name = replicaName(svc.Name, i)
@@ -204,8 +219,15 @@ func (m *Manager) rollingUpdate(ctx context.Context, svc *Service, newImage stri
 			_ = m.mgr.Remove(ctx, v.ID)
 			return nil, fmt.Errorf("service update: start replica %d: %w", i, err)
 		}
+		newReplicas = append(newReplicas, v)
 
 		slog.Info("service update: new replica started", "service", svc.Name, "replica", replicaCfg.Name, "vm_id", v.ID, "image", newImage)
+	}
+
+	if healthTimeout > 0 {
+		if err := m.waitForReplicasHealthy(ctx, newReplicas, healthTimeout); err != nil {
+			slog.Warn("service update: health check timeout, proceeding with old replica removal", "service", svc.Name, "error", err)
+		}
 	}
 
 	for _, old := range oldReplicas {
@@ -227,7 +249,8 @@ func (m *Manager) rollingUpdate(ctx context.Context, svc *Service, newImage stri
 }
 
 // recreateUpdate stops all replicas, then starts new ones with the updated image.
-func (m *Manager) recreateUpdate(ctx context.Context, svc *Service, newImage string) (*Service, error) {
+// If healthTimeout > 0, it waits for new replicas to become healthy after starting.
+func (m *Manager) recreateUpdate(ctx context.Context, svc *Service, newImage string, healthTimeout time.Duration) (*Service, error) {
 	oldReplicas := m.replicaVMs(svc.Name)
 
 	for _, v := range oldReplicas {
@@ -241,6 +264,7 @@ func (m *Manager) recreateUpdate(ctx context.Context, svc *Service, newImage str
 	newCfg := svc.Config
 	newCfg.ImagePath = newImage
 
+	var newReplicas []*vm.VM
 	for i := 0; i < svc.DesiredReplicas; i++ {
 		replicaCfg := newCfg
 		replicaCfg.Name = replicaName(svc.Name, i)
@@ -253,6 +277,13 @@ func (m *Manager) recreateUpdate(ctx context.Context, svc *Service, newImage str
 		if err := m.mgr.Start(ctx, v.ID); err != nil {
 			_ = m.mgr.Remove(ctx, v.ID)
 			return nil, fmt.Errorf("service update (recreate): start replica %d: %w", i, err)
+		}
+		newReplicas = append(newReplicas, v)
+	}
+
+	if healthTimeout > 0 {
+		if err := m.waitForReplicasHealthy(ctx, newReplicas, healthTimeout); err != nil {
+			slog.Warn("service update (recreate): health check timeout", "service", svc.Name, "error", err)
 		}
 	}
 
@@ -356,4 +387,45 @@ func (m *Manager) replicaVMs(serviceName string) []*vm.VM {
 		}
 	}
 	return result
+}
+
+// healthCheckInterval is the polling interval when waiting for replicas
+// to become healthy.
+const healthCheckInterval = 500 * time.Millisecond
+
+// waitForReplicasHealthy polls the given VMs until all are healthy or the
+// timeout expires. Returns an error if the timeout is reached before all
+// replicas report healthy. Returns nil immediately if no health check is
+// configured on the VMs.
+func (m *Manager) waitForReplicasHealthy(ctx context.Context, vms []*vm.VM, timeout time.Duration) error {
+	if timeout <= 0 || len(vms) == 0 {
+		return nil
+	}
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		allHealthy := true
+		for _, v := range vms {
+			v, err := m.mgr.Get(v.ID)
+			if err != nil {
+				allHealthy = false
+				break
+			}
+			if v.GetHealthStatus() != vm.HealthHealthy {
+				allHealthy = false
+				break
+			}
+		}
+		if allHealthy {
+			return nil
+		}
+		time.Sleep(healthCheckInterval)
+	}
+	return fmt.Errorf("timed out waiting for replicas to become healthy after %v", timeout)
 }

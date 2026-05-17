@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/compose"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
 )
@@ -230,7 +231,7 @@ func TestServiceUpdateRolling(t *testing.T) {
 	_, err := svcMgr.Run(context.Background(), "web", "nginx:v1", 1, Options{})
 	require.NoError(t, err)
 
-	svc, err := svcMgr.Update(context.Background(), "web", "nginx:v2")
+	svc, err := svcMgr.Update(context.Background(), "web", "nginx:v2", 0)
 	require.NoError(t, err)
 	require.Equal(t, "nginx:v2", svc.Image)
 }
@@ -245,7 +246,7 @@ func TestServiceUpdateRecreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, StrategyRecreate, svc.Strategy)
 
-	svc, err = svcMgr.Update(context.Background(), "web", "nginx:v2")
+	svc, err = svcMgr.Update(context.Background(), "web", "nginx:v2", 0)
 	require.NoError(t, err)
 	require.Equal(t, "nginx:v2", svc.Image)
 }
@@ -255,7 +256,7 @@ func TestServiceUpdateNotFound(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Update(context.Background(), "nope", "nginx:v2")
+	_, err := svcMgr.Update(context.Background(), "nope", "nginx:v2", 0)
 	require.Error(t, err)
 }
 
@@ -347,4 +348,70 @@ func TestFileStoreDeleteIdempotent(t *testing.T) {
 
 	err = store.Delete("nonexistent")
 	require.NoError(t, err)
+}
+
+func TestServiceRunWithHealthTimeout(t *testing.T) {
+	mgr := vm.NewMockManager()
+	store := newMockStore()
+	svcMgr := NewManager(mgr, store)
+
+	opts := Options{HealthTimeout: 2 * time.Second}
+	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, opts)
+	require.NoError(t, err)
+	require.Equal(t, 2*time.Second, svc.HealthTimeout)
+}
+
+func TestServiceUpdateWithHealthTimeout(t *testing.T) {
+	mgr := vm.NewMockManager()
+	store := newMockStore()
+	svcMgr := NewManager(mgr, store)
+
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:v1", 1, Options{})
+	require.NoError(t, err)
+
+	svc, err := svcMgr.Update(context.Background(), "web", "nginx:v2", 5*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, "nginx:v2", svc.Image)
+}
+
+func TestComposeServiceReplicas(t *testing.T) {
+	data := []byte(`
+version: "1"
+services:
+  web:
+    image: nginx:latest
+    replicas: 3
+    strategy: RollingUpdate
+networks: {}
+`)
+	f, err := compose.Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, 3, f.Services["web"].Replicas)
+	require.Equal(t, "RollingUpdate", f.Services["web"].Strategy)
+}
+
+func TestComposeServiceReplicasValidation(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  web:
+    image: nginx:latest
+    replicas: -1
+networks: {}
+`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "replicas must be non-negative")
+}
+
+func TestComposeServiceStrategyValidation(t *testing.T) {
+	_, err := compose.Parse([]byte(`
+version: "1"
+services:
+  web:
+    image: nginx:latest
+    strategy: Invalid
+networks: {}
+`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "strategy must be RollingUpdate or Recreate")
 }

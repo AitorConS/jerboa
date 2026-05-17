@@ -28,6 +28,9 @@ type Service struct {
 	DesiredReplicas int
 	// Strategy controls how updates are applied.
 	Strategy Strategy
+	// HealthTimeout is the maximum duration to wait for new replicas to
+	// become healthy during rolling updates. Zero means no waiting.
+	HealthTimeout time.Duration
 	// Config holds the VM configuration template used for each replica.
 	Config vm.Config
 	// CreatedAt is the timestamp when the service was created.
@@ -60,14 +63,15 @@ type ReplicaInfo struct {
 
 // Options contains optional parameters for creating a service.
 type Options struct {
-	Memory      string
-	CPUs        int
-	Env         []string
-	PortMaps    []vm.PortMap
-	NetworkName string
-	HealthCheck *vm.HealthCheckConfig
-	Restart     vm.RestartConfig
-	Strategy    Strategy
+	Memory        string
+	CPUs          int
+	Env           []string
+	PortMaps      []vm.PortMap
+	NetworkName   string
+	HealthCheck   *vm.HealthCheckConfig
+	Restart       vm.RestartConfig
+	Strategy      Strategy
+	HealthTimeout time.Duration
 }
 
 // aggregateHealth computes the overall health of a service from its replicas.

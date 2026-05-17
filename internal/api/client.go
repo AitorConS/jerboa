@@ -256,9 +256,11 @@ func (c *Client) ServiceScale(_ context.Context, name string, desiredReplicas in
 }
 
 // ServiceUpdate performs a rolling update of a service to a new image.
-func (c *Client) ServiceUpdate(_ context.Context, name, image string) (ServiceInfoResult, error) {
+// healthTimeout is the maximum seconds to wait for new replicas to become
+// healthy before removing old ones. Zero means no waiting.
+func (c *Client) ServiceUpdate(_ context.Context, name, image string, healthTimeout int) (ServiceInfoResult, error) {
 	var result ServiceInfoResult
-	p := ServiceUpdateParams{Name: name, Image: image}
+	p := ServiceUpdateParams{Name: name, Image: image, HealthTimeout: healthTimeout}
 	if err := c.call("Service.Update", p, &result); err != nil {
 		return ServiceInfoResult{}, fmt.Errorf("client service update: %w", err)
 	}

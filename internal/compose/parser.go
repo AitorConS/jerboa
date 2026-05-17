@@ -74,6 +74,12 @@ func validate(f File) error {
 				return fmt.Errorf("compose: service %q restart: %w", name, err)
 			}
 		}
+		if svc.Replicas < 0 {
+			return fmt.Errorf("compose: service %q replicas must be non-negative, got %d", name, svc.Replicas)
+		}
+		if svc.Strategy != "" && svc.Strategy != "RollingUpdate" && svc.Strategy != "Recreate" {
+			return fmt.Errorf("compose: service %q strategy must be RollingUpdate or Recreate, got %q", name, svc.Strategy)
+		}
 	}
 	for name, vc := range f.Volumes {
 		if vc.Size != "" {
