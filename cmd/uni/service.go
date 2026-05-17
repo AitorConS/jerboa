@@ -47,14 +47,14 @@ func newServiceRunCmd(socketPath *string, outputFmt *string) *cobra.Command {
 			defer client.Close()
 
 			p := api.ServiceRunParams{
-				Name:     args[0],
-				Image:    args[1],
-				Replicas: replicas,
-				Memory:   memory,
-				CPUs:     cpus,
-				Env:      env,
+				Name:        args[0],
+				Image:       args[1],
+				Replicas:    replicas,
+				Memory:      memory,
+				CPUs:        cpus,
+				Env:         env,
 				NetworkName: networkName,
-				Strategy: strategy,
+				Strategy:    strategy,
 			}
 			info, err := client.ServiceRun(context.Background(), p)
 			if err != nil {

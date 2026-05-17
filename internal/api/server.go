@@ -687,7 +687,7 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
-	opts := service.ServiceOptions{
+	opts := service.Options{
 		Memory:      p.Memory,
 		CPUs:        p.CPUs,
 		Env:         p.Env,
@@ -721,15 +721,15 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
 	return ServiceInfoResult{
-		Name:             svcInfo.Name,
-		Image:            svcInfo.Image,
-		DesiredReplicas:  svcInfo.DesiredReplicas,
-		ReadyReplicas:    svcInfo.ReadyReplicas,
-		Strategy:         svcInfo.Strategy,
-		Health:           svcInfo.Health,
-		CreatedAt:        svcInfo.CreatedAt,
-		UpdatedAt:        svcInfo.UpdatedAt,
-		ReplicaIDs:       svcInfo.ReplicaIDs,
+		Name:            svcInfo.Name,
+		Image:           svcInfo.Image,
+		DesiredReplicas: svcInfo.DesiredReplicas,
+		ReadyReplicas:   svcInfo.ReadyReplicas,
+		Strategy:        svcInfo.Strategy,
+		Health:          svcInfo.Health,
+		CreatedAt:       svcInfo.CreatedAt,
+		UpdatedAt:       svcInfo.UpdatedAt,
+		ReplicaIDs:      svcInfo.ReplicaIDs,
 	}, nil
 }
 
@@ -747,15 +747,15 @@ func (s *Server) handleServiceScale(ctx context.Context, params json.RawMessage)
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
 	return ServiceInfoResult{
-		Name:             svcInfo.Name,
-		Image:            svcInfo.Image,
-		DesiredReplicas:  svcInfo.DesiredReplicas,
-		ReadyReplicas:    svcInfo.ReadyReplicas,
-		Strategy:         svcInfo.Strategy,
-		Health:           svcInfo.Health,
-		CreatedAt:        svcInfo.CreatedAt,
-		UpdatedAt:        svcInfo.UpdatedAt,
-		ReplicaIDs:       svcInfo.ReplicaIDs,
+		Name:            svcInfo.Name,
+		Image:           svcInfo.Image,
+		DesiredReplicas: svcInfo.DesiredReplicas,
+		ReadyReplicas:   svcInfo.ReadyReplicas,
+		Strategy:        svcInfo.Strategy,
+		Health:          svcInfo.Health,
+		CreatedAt:       svcInfo.CreatedAt,
+		UpdatedAt:       svcInfo.UpdatedAt,
+		ReplicaIDs:      svcInfo.ReplicaIDs,
 	}, nil
 }
 
@@ -773,15 +773,15 @@ func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
 	return ServiceInfoResult{
-		Name:             svcInfo.Name,
-		Image:            svcInfo.Image,
-		DesiredReplicas:  svcInfo.DesiredReplicas,
-		ReadyReplicas:    svcInfo.ReadyReplicas,
-		Strategy:         svcInfo.Strategy,
-		Health:           svcInfo.Health,
-		CreatedAt:        svcInfo.CreatedAt,
-		UpdatedAt:        svcInfo.UpdatedAt,
-		ReplicaIDs:       svcInfo.ReplicaIDs,
+		Name:            svcInfo.Name,
+		Image:           svcInfo.Image,
+		DesiredReplicas: svcInfo.DesiredReplicas,
+		ReadyReplicas:   svcInfo.ReadyReplicas,
+		Strategy:        svcInfo.Strategy,
+		Health:          svcInfo.Health,
+		CreatedAt:       svcInfo.CreatedAt,
+		UpdatedAt:       svcInfo.UpdatedAt,
+		ReplicaIDs:      svcInfo.ReplicaIDs,
 	}, nil
 }
 
@@ -797,15 +797,15 @@ func (s *Server) handleServiceList() (any, *RPCError) {
 	for i, svc := range services {
 		svcInfo := s.svcMgr.ServiceInfo(svc)
 		out[i] = ServiceInfoResult{
-			Name:             svcInfo.Name,
-			Image:            svcInfo.Image,
-			DesiredReplicas:  svcInfo.DesiredReplicas,
-			ReadyReplicas:    svcInfo.ReadyReplicas,
-			Strategy:         svcInfo.Strategy,
-			Health:           svcInfo.Health,
-			CreatedAt:        svcInfo.CreatedAt,
-			UpdatedAt:        svcInfo.UpdatedAt,
-			ReplicaIDs:       svcInfo.ReplicaIDs,
+			Name:            svcInfo.Name,
+			Image:           svcInfo.Image,
+			DesiredReplicas: svcInfo.DesiredReplicas,
+			ReadyReplicas:   svcInfo.ReadyReplicas,
+			Strategy:        svcInfo.Strategy,
+			Health:          svcInfo.Health,
+			CreatedAt:       svcInfo.CreatedAt,
+			UpdatedAt:       svcInfo.UpdatedAt,
+			ReplicaIDs:      svcInfo.ReplicaIDs,
 		}
 	}
 	return out, nil
@@ -827,15 +827,15 @@ func (s *Server) handleServiceGet(params json.RawMessage) (any, *RPCError) {
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
 	return ServiceInfoResult{
-		Name:             svcInfo.Name,
-		Image:            svcInfo.Image,
-		DesiredReplicas:  svcInfo.DesiredReplicas,
-		ReadyReplicas:    svcInfo.ReadyReplicas,
-		Strategy:         svcInfo.Strategy,
-		Health:           svcInfo.Health,
-		CreatedAt:        svcInfo.CreatedAt,
-		UpdatedAt:        svcInfo.UpdatedAt,
-		ReplicaIDs:       svcInfo.ReplicaIDs,
+		Name:            svcInfo.Name,
+		Image:           svcInfo.Image,
+		DesiredReplicas: svcInfo.DesiredReplicas,
+		ReadyReplicas:   svcInfo.ReadyReplicas,
+		Strategy:        svcInfo.Strategy,
+		Health:          svcInfo.Health,
+		CreatedAt:       svcInfo.CreatedAt,
+		UpdatedAt:       svcInfo.UpdatedAt,
+		ReplicaIDs:      svcInfo.ReplicaIDs,
 	}, nil
 }
 

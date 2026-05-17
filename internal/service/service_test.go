@@ -59,7 +59,7 @@ func TestServiceRun(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 2, ServiceOptions{Memory: "256M"})
+	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 2, Options{Memory: "256M"})
 	require.NoError(t, err)
 	require.Equal(t, "web", svc.Name)
 	require.Equal(t, "nginx:latest", svc.Image)
@@ -79,7 +79,7 @@ func TestServiceRunDefaults(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, ServiceOptions{})
+	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, Options{})
 	require.NoError(t, err)
 	require.Equal(t, "256M", svc.Config.Memory)
 	require.Equal(t, 1, svc.Config.CPUs)
@@ -90,9 +90,9 @@ func TestServiceRunDuplicate(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, Options{})
 	require.NoError(t, err)
-	_, err = svcMgr.Run(context.Background(), "web", "nginx:latest", 1, ServiceOptions{})
+	_, err = svcMgr.Run(context.Background(), "web", "nginx:latest", 1, Options{})
 	require.Error(t, err)
 }
 
@@ -101,13 +101,13 @@ func TestServiceRunValidation(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "", "nginx:latest", 1, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "", "nginx:latest", 1, Options{})
 	require.Error(t, err)
 
-	_, err = svcMgr.Run(context.Background(), "web", "", 1, ServiceOptions{})
+	_, err = svcMgr.Run(context.Background(), "web", "", 1, Options{})
 	require.Error(t, err)
 
-	_, err = svcMgr.Run(context.Background(), "web", "nginx:latest", 0, ServiceOptions{})
+	_, err = svcMgr.Run(context.Background(), "web", "nginx:latest", 0, Options{})
 	require.Error(t, err)
 }
 
@@ -116,7 +116,7 @@ func TestServiceScaleUp(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, Options{})
 	require.NoError(t, err)
 
 	svc, err := svcMgr.Scale(context.Background(), "web", 3)
@@ -132,7 +132,7 @@ func TestServiceScaleDown(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 3, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 3, Options{})
 	require.NoError(t, err)
 
 	svc, err := svcMgr.Scale(context.Background(), "web", 1)
@@ -163,7 +163,7 @@ func TestServiceRemove(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 2, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 2, Options{})
 	require.NoError(t, err)
 
 	err = svcMgr.Remove(context.Background(), "web")
@@ -190,9 +190,9 @@ func TestServiceList(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web1", "nginx:latest", 1, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web1", "nginx:latest", 1, Options{})
 	require.NoError(t, err)
-	_, err = svcMgr.Run(context.Background(), "web2", "redis:latest", 2, ServiceOptions{})
+	_, err = svcMgr.Run(context.Background(), "web2", "redis:latest", 2, Options{})
 	require.NoError(t, err)
 
 	services, err := svcMgr.List()
@@ -205,7 +205,7 @@ func TestServiceGet(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 1, Options{})
 	require.NoError(t, err)
 
 	svc, err := svcMgr.Get("web")
@@ -227,7 +227,7 @@ func TestServiceUpdateRolling(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	_, err := svcMgr.Run(context.Background(), "web", "nginx:v1", 1, ServiceOptions{})
+	_, err := svcMgr.Run(context.Background(), "web", "nginx:v1", 1, Options{})
 	require.NoError(t, err)
 
 	svc, err := svcMgr.Update(context.Background(), "web", "nginx:v2")
@@ -240,7 +240,7 @@ func TestServiceUpdateRecreate(t *testing.T) {
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	opts := ServiceOptions{Strategy: StrategyRecreate}
+	opts := Options{Strategy: StrategyRecreate}
 	svc, err := svcMgr.Run(context.Background(), "web", "nginx:v1", 1, opts)
 	require.NoError(t, err)
 	require.Equal(t, StrategyRecreate, svc.Strategy)
@@ -259,12 +259,12 @@ func TestServiceUpdateNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestServiceInfo(t *testing.T) {
+func TestInfo(t *testing.T) {
 	mgr := vm.NewMockManager()
 	store := newMockStore()
 	svcMgr := NewManager(mgr, store)
 
-	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 2, ServiceOptions{})
+	svc, err := svcMgr.Run(context.Background(), "web", "nginx:latest", 2, Options{})
 	require.NoError(t, err)
 
 	info := svcMgr.ServiceInfo(svc)

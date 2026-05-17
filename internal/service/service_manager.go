@@ -10,7 +10,7 @@ import (
 )
 
 // Run creates a service with the desired number of replicas and starts them.
-func (m *Manager) Run(ctx context.Context, name, image string, replicas int, opts ServiceOptions) (*Service, error) {
+func (m *Manager) Run(ctx context.Context, name, image string, replicas int, opts Options) (*Service, error) {
 	if name == "" {
 		return nil, fmt.Errorf("service run: name is required")
 	}
@@ -53,13 +53,13 @@ func (m *Manager) Run(ctx context.Context, name, image string, replicas int, opt
 	}
 
 	svc := &Service{
-		Name:             name,
-		Image:            image,
-		DesiredReplicas:  replicas,
-		Strategy:         strategy,
-		Config:           cfg,
-		CreatedAt:        time.Now().UTC(),
-		UpdatedAt:        time.Now().UTC(),
+		Name:            name,
+		Image:           image,
+		DesiredReplicas: replicas,
+		Strategy:        strategy,
+		Config:          cfg,
+		CreatedAt:       time.Now().UTC(),
+		UpdatedAt:       time.Now().UTC(),
 	}
 
 	createdVMs := make([]*vm.VM, 0, replicas)
@@ -314,8 +314,8 @@ func (m *Manager) Replicas(name string) []*vm.VM {
 	return m.replicaVMs(name)
 }
 
-// ServiceInfo builds a ServiceInfo from a Service and its live replicas.
-func (m *Manager) ServiceInfo(svc *Service) ServiceInfo {
+// ServiceInfo builds an Info from a Service and its live replicas.
+func (m *Manager) ServiceInfo(svc *Service) Info {
 	replicas := m.replicaVMs(svc.Name)
 	health := aggregateHealth(replicas)
 	ready := 0
@@ -332,7 +332,7 @@ func (m *Manager) ServiceInfo(svc *Service) ServiceInfo {
 		strategy = string(StrategyRollingUpdate)
 	}
 
-	return ServiceInfo{
+	return Info{
 		Name:            svc.Name,
 		Image:           svc.Image,
 		DesiredReplicas: svc.DesiredReplicas,

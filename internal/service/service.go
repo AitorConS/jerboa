@@ -36,34 +36,34 @@ type Service struct {
 	UpdatedAt time.Time
 }
 
-// ServiceInfo is the serialisable representation of a service for API responses.
-type ServiceInfo struct {
-	Name             string `json:"name"`
-	Image            string `json:"image"`
-	DesiredReplicas  int    `json:"desired_replicas"`
-	ReadyReplicas    int    `json:"ready_replicas"`
-	Strategy         string `json:"strategy"`
-	Health           string `json:"health"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
-	ReplicaIDs       []string `json:"replica_ids"`
+// Info is the serialisable representation of a service for API responses.
+type Info struct {
+	Name            string   `json:"name"`
+	Image           string   `json:"image"`
+	DesiredReplicas int      `json:"desired_replicas"`
+	ReadyReplicas   int      `json:"ready_replicas"`
+	Strategy        string   `json:"strategy"`
+	Health          string   `json:"health"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
+	ReplicaIDs      []string `json:"replica_ids"`
 }
 
 // ReplicaInfo describes a single replica within a service.
 type ReplicaInfo struct {
-	ID     string         `json:"id"`
-	Name   string         `json:"name"`
-	State  vm.State       `json:"state"`
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	State  vm.State        `json:"state"`
 	Health vm.HealthStatus `json:"health"`
-	IP     string         `json:"ip,omitempty"`
+	IP     string          `json:"ip,omitempty"`
 }
 
-// ServiceOptions contains optional parameters for creating a service.
-type ServiceOptions struct {
+// Options contains optional parameters for creating a service.
+type Options struct {
 	Memory      string
 	CPUs        int
 	Env         []string
-	PortMaps   []vm.PortMap
+	PortMaps    []vm.PortMap
 	NetworkName string
 	HealthCheck *vm.HealthCheckConfig
 	Restart     vm.RestartConfig
@@ -104,9 +104,9 @@ func replicaName(serviceName string, index int) string {
 
 // Manager manages service lifecycle: creation, scaling, updates, and removal.
 type Manager struct {
-	mgr    vm.Manager
-	store  StoreInterface
-	mu     sync.RWMutex
+	mgr   vm.Manager
+	store StoreInterface
+	mu    sync.RWMutex
 }
 
 // StoreInterface is the interface for persisting and retrieving services.
