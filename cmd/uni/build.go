@@ -86,86 +86,29 @@ project markers (go.mod, package.json, etc.).`,
 			}
 
 			if info.IsDir() {
-				cfg, err := builder.LoadConfig(srcPath)
-				if err != nil {
-					return fmt.Errorf("build: %w", err)
-				}
-
-				var langHint builder.Lang
-				switch {
-				case lang != "":
-					langHint, err = builder.ParseLang(lang)
-					if err != nil {
-						return fmt.Errorf("build: %w", err)
-					}
-				case cfg != nil && cfg.LangHint() != builder.LangUnknown:
-					langHint = cfg.LangHint()
-					fmt.Fprintf(cmd.ErrOrStderr(), "using language from %s: %s\n", builder.ConfigFileName, langHint)
-				}
-
-				var buildPlatform builder.Platform
-				if platform != "" {
-					buildPlatform, err = builder.ParsePlatform(platform)
-					if err != nil {
-						return fmt.Errorf("build: %w", err)
-					}
-				}
-
-				detected, err := builder.DetectLanguage(srcPath, langHint)
-				if err != nil {
-					return fmt.Errorf("build: %w", err)
-				}
-				driver, err := builder.GetDriver(detected)
-				if err != nil {
-					return fmt.Errorf("build: %w", err)
-				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
-
-				var entrypoint string
-				var buildArgs []string
-				if cfg != nil {
-					entrypoint = cfg.Build.Entrypoint
-					buildArgs = cfg.Build.Args
-				}
-
-				result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
-					Entrypoint: entrypoint,
-					BuildArgs:  buildArgs,
-					PkgFiles:   pkgFiles,
-					Platform:   buildPlatform,
-				})
-				if err != nil {
-					return fmt.Errorf("build %s: %w", detected, err)
-				}
-
-				switch {
-				case result.BinaryPath != "":
-					binaryPath = result.BinaryPath
-					defer func() { _ = os.Remove(binaryPath) }()
-				case result.SourceDir != "":
-					resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
-					if err != nil {
-						return fmt.Errorf("build: resolve packages: %w", err)
-					}
-					pkgFiles = append(pkgFiles, resolvedPkgs...)
-
-					runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
-					if err != nil {
-						return fmt.Errorf("build: %w", err)
-					}
-					binaryPath = runtimeBinary
-
-					srcFiles, err := sourceFiles(result.SourceDir)
-					if err != nil {
-						return fmt.Errorf("build: collect source files: %w", err)
-					}
-					pkgFiles = append(pkgFiles, srcFiles...)
-				default:
-					return fmt.Errorf("build %s: driver returned empty result", detected)
-				}
-			} else {
-				binaryPath = srcPath
+			cfg, err := builder.LoadConfig(srcPath)
+			if err != nil {
+				return fmt.Errorf("build: %w", err)
 			}
+
+			if cfg != nil && cfg.HasStages() {
+				binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = os.Remove(binaryPath) }()
+			} else {
+				binaryPath, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles)
+				if err != nil {
+					return err
+				}
+				if binaryPath != "" {
+					defer func() { _ = os.Remove(binaryPath) }()
+				}
+			}
+		} else {
+			binaryPath = srcPath
+		}
 
 			if name == "" {
 				name = args[0]
@@ -196,6 +139,186 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	return cmd
+}
+
+// buildSingle handles a single-language build (no stages).
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]string) (string, error) {
+	var langHint builder.Lang
+	var err error
+	switch {
+	case langFlag != "":
+		langHint, err = builder.ParseLang(langFlag)
+		if err != nil {
+			return "", fmt.Errorf("build: %w", err)
+		}
+	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
+		langHint = cfg.LangHint()
+		fmt.Fprintf(cmd.ErrOrStderr(), "using language from %s: %s\n", builder.ConfigFileName, langHint)
+	}
+
+	var buildPlatform builder.Platform
+	if platformFlag != "" {
+		buildPlatform, err = builder.ParsePlatform(platformFlag)
+		if err != nil {
+			return "", fmt.Errorf("build: %w", err)
+		}
+	}
+
+	detected, err := builder.DetectLanguage(srcPath, langHint)
+	if err != nil {
+		return "", fmt.Errorf("build: %w", err)
+	}
+	driver, err := builder.GetDriver(detected)
+	if err != nil {
+		return "", fmt.Errorf("build: %w", err)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
+
+	var entrypoint string
+	var buildArgs []string
+	if cfg != nil {
+		entrypoint = cfg.Build.Entrypoint
+		buildArgs = cfg.Build.Args
+	}
+
+	result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
+		Entrypoint: entrypoint,
+		BuildArgs:  buildArgs,
+		PkgFiles:   *pkgFiles,
+		Platform:   buildPlatform,
+	})
+	if err != nil {
+		return "", fmt.Errorf("build %s: %w", detected, err)
+	}
+
+	switch {
+	case result.BinaryPath != "":
+		return result.BinaryPath, nil
+	case result.SourceDir != "":
+		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
+		if err != nil {
+			return "", fmt.Errorf("build: resolve packages: %w", err)
+		}
+		*pkgFiles = append(*pkgFiles, resolvedPkgs...)
+
+		runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
+		if err != nil {
+			return "", fmt.Errorf("build: %w", err)
+		}
+
+		srcFiles, err := sourceFiles(result.SourceDir)
+		if err != nil {
+			return "", fmt.Errorf("build: collect source files: %w", err)
+		}
+		*pkgFiles = append(*pkgFiles, srcFiles...)
+		return runtimeBinary, nil
+	default:
+		return "", fmt.Errorf("build %s: driver returned empty result", detected)
+	}
+}
+
+// stageResult holds the output of a completed build stage.
+type stageResult struct {
+	binaryPath string
+	sourceDir  string
+	pkgFiles   []string
+}
+
+// buildStages processes multi-stage builds from unikernel.toml.
+// Each stage is built independently. CopyFrom directives copy artifacts
+// from previous stages. The final stage's output is used as the image binary.
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []string, platformFlag, langFlag string) (string, []string, error) {
+	stageOutputs := make(map[string]*stageResult)
+
+	var buildPlatform builder.Platform
+	var err error
+	if platformFlag != "" {
+		buildPlatform, err = builder.ParsePlatform(platformFlag)
+		if err != nil {
+			return "", nil, fmt.Errorf("build: %w", err)
+		}
+	}
+
+	for i, stage := range cfg.Stages {
+		fmt.Fprintf(cmd.ErrOrStderr(), "[stage %d/%d] Building %q (%s)...\n", i+1, len(cfg.Stages), stage.Name, stage.Lang)
+
+		stageLang, err := builder.ParseLang(stage.Lang)
+		if err != nil {
+			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+		}
+
+		detected, err := builder.DetectLanguage(srcPath, stageLang)
+		if err != nil {
+			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+		}
+		driver, err := builder.GetDriver(detected)
+		if err != nil {
+			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+		}
+
+		var stagePkgs []string
+		stagePkgs = append(stagePkgs, pkgFiles...)
+
+		for _, cf := range stage.CopyFrom {
+			prev, ok := stageOutputs[cf.Stage]
+			if !ok {
+				return "", nil, fmt.Errorf("build stage %q: copy_from references unknown stage %q", stage.Name, cf.Stage)
+			}
+			if prev.binaryPath == "" {
+				return "", nil, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
+			}
+			dst := cf.Dst
+			if dst == "" {
+				dst = filepath.Base(cf.Src)
+			}
+			stagePkgs = append(stagePkgs, prev.binaryPath)
+			_ = dst
+		}
+
+		result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
+			Entrypoint: stage.Entrypoint,
+			BuildArgs:  stage.Args,
+			PkgFiles:   stagePkgs,
+			Platform:   buildPlatform,
+		})
+		if err != nil {
+			return "", nil, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)
+		}
+
+		if result.BinaryPath != "" {
+			stageOutputs[stage.Name] = &stageResult{
+				binaryPath: result.BinaryPath,
+				pkgFiles:   stagePkgs,
+			}
+		} else if result.SourceDir != "" {
+			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
+			if err != nil {
+				return "", nil, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
+			}
+			stagePkgs = append(stagePkgs, resolvedPkgs...)
+
+			runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
+			if err != nil {
+				return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			}
+
+			stageOutputs[stage.Name] = &stageResult{
+				binaryPath: runtimeBinary,
+				sourceDir:  result.SourceDir,
+				pkgFiles:   stagePkgs,
+			}
+		} else {
+			return "", nil, fmt.Errorf("build stage %q: driver returned empty result", stage.Name)
+		}
+	}
+
+	finalStage := cfg.Stages[len(cfg.Stages)-1]
+	finalResult := stageOutputs[finalStage.Name]
+	if finalResult == nil {
+		return "", nil, fmt.Errorf("build: final stage %q has no output", finalStage.Name)
+	}
+
+	return finalResult.binaryPath, finalResult.pkgFiles, nil
 }
 
 // resolvePackages downloads and extracts packages, returning the list of

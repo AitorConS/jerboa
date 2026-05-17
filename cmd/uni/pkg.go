@@ -21,6 +21,8 @@ func newPkgCmd() *cobra.Command {
 		newPkgGetCmd(),
 		newPkgRemoveCmd(),
 		newPkgCreateCmd(),
+		newPkgFromDockerCmd(),
+		newPkgPushCmd(),
 	)
 	return cmd
 }
@@ -195,9 +197,10 @@ func newPkgRemoveCmd() *cobra.Command {
 
 func newPkgCreateCmd() *cobra.Command {
 	var (
-		libs        []string
-		description string
-		runtimeName string
+		libs         []string
+		description  string
+		runtimeName  string
+		missingFiles bool
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>[:<version>] <binary>",
@@ -216,12 +219,35 @@ func newPkgCreateCmd() *cobra.Command {
 				return fmt.Errorf("pkg create: binary not found: %s", binaryPath)
 			}
 
+			if missingFiles {
+				missing, lddErr := pkg.MissingFiles(binaryPath)
+				if lddErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --missing-files could not run ldd: %v\n", lddErr)
+				} else if len(missing) > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Missing shared libraries detected (not on local filesystem):\n")
+					for _, m := range missing {
+						fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", m)
+					}
+					fmt.Fprintf(cmd.ErrOrStderr(), "Consider adding these with --libs or re-running with the binary on a Linux system.\n")
+				} else {
+					fmt.Fprintf(cmd.ErrOrStderr(), "All shared library dependencies are present.\n")
+				}
+			}
+
+			allLibs := libs
+			resolved, err := resolveLibsFromLdd(binaryPath)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not auto-resolve shared libs: %v\n", err)
+			} else {
+				allLibs = append(allLibs, resolved...)
+			}
+
 			store, err := pkg.NewStore(pkgStorePath())
 			if err != nil {
 				return fmt.Errorf("pkg create: %w", err)
 			}
 
-			if err := store.Create(name, version, binaryPath, libs, description, runtimeName); err != nil {
+			if err := store.Create(name, version, binaryPath, allLibs, description, runtimeName); err != nil {
 				return fmt.Errorf("pkg create: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Package %s:%s created from %s.\n", name, version, filepath.Base(binaryPath))
@@ -231,7 +257,23 @@ func newPkgCreateCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&libs, "libs", nil, "Additional files to include (repeatable)")
 	cmd.Flags().StringVar(&description, "description", "", "Package description")
 	cmd.Flags().StringVar(&runtimeName, "runtime", "", "Runtime family (e.g. node, python)")
+	cmd.Flags().BoolVar(&missingFiles, "missing-files", false, "Report shared library dependencies missing from the local filesystem")
 	return cmd
+}
+
+func resolveLibsFromLdd(binaryPath string) ([]string, error) {
+	libs, err := pkg.Ldd(binaryPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var existing []string
+	for _, lib := range libs {
+		if _, err := os.Stat(lib); err == nil {
+			existing = append(existing, lib)
+		}
+	}
+	return existing, nil
 }
 
 // parsePkgRef parses "name" or "name:version" into its components.
@@ -251,4 +293,106 @@ func lastIndexByte(s string, c byte) int {
 		}
 	}
 	return -1
+}
+
+func newPkgFromDockerCmd() *cobra.Command {
+	var (
+		libs        []string
+		description string
+		runtimeName string
+	)
+	cmd := &cobra.Command{
+		Use:   "from-docker <name>[:<version>] <image>",
+		Short: "Create a package from a binary inside a Docker image",
+		Long: `Extract a binary and its shared library dependencies from a Docker image
+and create a local package. Uses 'docker create' + 'docker cp' to extract
+the binary, then runs 'ldd' inside the container to discover shared libraries.
+
+Example:
+  uni pkg from-docker node:20 node:20 --file /usr/local/bin/node --runtime node`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, version := parsePkgRef(args[0])
+			if version == "" {
+				version = "1.0.0"
+			}
+			dockerImage := args[1]
+
+			filePath, _ := cmd.Flags().GetString("file")
+			if filePath == "" {
+				return fmt.Errorf("pkg from-docker: --file is required")
+			}
+
+			store, err := pkg.NewStore(pkgStorePath())
+			if err != nil {
+				return fmt.Errorf("pkg from-docker: %w", err)
+			}
+
+			if store.IsDownloaded(name, version) {
+				return fmt.Errorf("pkg from-docker: package %s:%s already exists (remove it first)", name, version)
+			}
+
+			fmt.Fprintf(cmd.ErrOrStderr(), "Extracting %s from Docker image %s...\n", filePath, dockerImage)
+			files, err := pkg.FromDocker(dockerImage, filePath, libs)
+			if err != nil {
+				return fmt.Errorf("pkg from-docker: %w", err)
+			}
+			if len(files) == 0 {
+				return fmt.Errorf("pkg from-docker: no files extracted from image")
+			}
+
+			binaryPath := files[0]
+			extraFiles := files[1:]
+
+			if err := store.Create(name, version, binaryPath, extraFiles, description, runtimeName); err != nil {
+				return fmt.Errorf("pkg from-docker: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Package %s:%s created from Docker image %s (%d files).\n",
+				name, version, dockerImage, len(files))
+			return nil
+		},
+	}
+	cmd.Flags().String("file", "", "Path to the binary inside the Docker image (required)")
+	cmd.Flags().StringArrayVar(&libs, "libs", nil, "Additional library paths inside the container to include (repeatable)")
+	cmd.Flags().StringVar(&description, "description", "", "Package description")
+	cmd.Flags().StringVar(&runtimeName, "runtime", "", "Runtime family (e.g. node, python)")
+	return cmd
+}
+
+func newPkgPushCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "push <name>[:<version>] <index-url>",
+		Short: "Push a locally cached package to a remote package index",
+		Long: `Push a locally cached package archive and metadata to a remote package index.
+The index server must support POST /packages with multipart form data.
+
+Example:
+  uni pkg push node:20 https://packages.example.com`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name, version := parsePkgRef(args[0])
+			if version == "" {
+				return fmt.Errorf("pkg push: version is required (use name:version)")
+			}
+			indexURL := args[1]
+
+			store, err := pkg.NewStore(pkgStorePath())
+			if err != nil {
+				return fmt.Errorf("pkg push: %w", err)
+			}
+
+			if !store.IsDownloaded(name, version) {
+				return fmt.Errorf("pkg push: package %s:%s not found locally (create or download it first)", name, version)
+			}
+
+			if err := store.Push(name, version, indexURL); err != nil {
+				return fmt.Errorf("pkg push: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s:%s to %s\n", name, version, indexURL)
+			return nil
+		},
+	}
+	return cmd
 }

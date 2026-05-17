@@ -177,3 +177,144 @@ func TestValidatePortSpec(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigWithStages(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "go"
+
+[run]
+memory = "512M"
+
+[[stages]]
+name = "builder"
+lang = "go"
+entrypoint = "cmd/server"
+
+[[stages]]
+name = "runtime"
+lang = "node"
+entrypoint = "server.js"
+
+[[stages.copy_from]]
+stage = "builder"
+src = "/app/server"
+dst = "server"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	cfg, err := LoadConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Len(t, cfg.Stages, 2)
+	require.Equal(t, "builder", cfg.Stages[0].Name)
+	require.Equal(t, "go", cfg.Stages[0].Lang)
+	require.Equal(t, "runtime", cfg.Stages[1].Name)
+	require.Equal(t, "node", cfg.Stages[1].Lang)
+	require.Len(t, cfg.Stages[1].CopyFrom, 1)
+	require.Equal(t, "builder", cfg.Stages[1].CopyFrom[0].Stage)
+	require.Equal(t, "/app/server", cfg.Stages[1].CopyFrom[0].Src)
+	require.Equal(t, "server", cfg.Stages[1].CopyFrom[0].Dst)
+}
+
+func TestValidateStages(t *testing.T) {
+	tests := []struct {
+		name    string
+		stages  []StageConfig
+		wantErr string
+	}{
+		{
+			name: "valid stages",
+			stages: []StageConfig{
+				{Name: "builder", Lang: "go"},
+				{Name: "runtime", Lang: "node", CopyFrom: []CopyFromConfig{
+					{Stage: "builder", Src: "/app/server"},
+				}},
+			},
+			wantErr: "",
+		},
+		{
+			name:    "missing name",
+			stages:  []StageConfig{{Name: "", Lang: "go"}},
+			wantErr: "name is required",
+		},
+		{
+			name:    "missing lang",
+			stages:  []StageConfig{{Name: "builder", Lang: ""}},
+			wantErr: "lang is required",
+		},
+		{
+			name:    "invalid lang",
+			stages:  []StageConfig{{Name: "builder", Lang: "cobol"}},
+			wantErr: "unsupported language",
+		},
+		{
+			name: "duplicate name",
+			stages: []StageConfig{
+				{Name: "builder", Lang: "go"},
+				{Name: "builder", Lang: "node"},
+			},
+			wantErr: "duplicate stage name",
+		},
+		{
+			name: "copy from self",
+			stages: []StageConfig{
+				{Name: "builder", Lang: "go", CopyFrom: []CopyFromConfig{
+					{Stage: "builder", Src: "/app"},
+				}},
+			},
+			wantErr: "cannot copy from self",
+		},
+		{
+			name: "copy from unknown",
+			stages: []StageConfig{
+				{Name: "runtime", Lang: "node", CopyFrom: []CopyFromConfig{
+					{Stage: "nonexistent", Src: "/app"},
+				}},
+			},
+			wantErr: "unknown stage",
+		},
+		{
+			name: "copy from missing src",
+			stages: []StageConfig{
+				{Name: "builder", Lang: "go"},
+				{Name: "runtime", Lang: "node", CopyFrom: []CopyFromConfig{
+					{Stage: "builder", Src: ""},
+				}},
+			},
+			wantErr: "src is required",
+		},
+		{
+			name: "copy from missing stage ref",
+			stages: []StageConfig{
+				{Name: "builder", Lang: "go"},
+				{Name: "runtime", Lang: "node", CopyFrom: []CopyFromConfig{
+					{Stage: "", Src: "/app"},
+				}},
+			},
+			wantErr: "stage is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateStages(tt.stages)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestConfigHasStages(t *testing.T) {
+	cfg := &Config{Stages: []StageConfig{{Name: "builder", Lang: "go"}}}
+	require.True(t, cfg.HasStages())
+
+	cfg2 := &Config{}
+	require.False(t, cfg2.HasStages())
+
+	require.False(t, (*Config)(nil).HasStages())
+}

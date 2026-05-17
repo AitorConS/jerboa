@@ -400,3 +400,76 @@ func TestStore_Create_BinaryNotFound(t *testing.T) {
 	err = store.Create("myapp", "1.0.0", "/nonexistent/binary", nil, "", "")
 	require.Error(t, err)
 }
+
+func TestLdd(t *testing.T) {
+	binPath, err := os.Executable()
+	require.NoError(t, err)
+
+	libs, err := Ldd(binPath)
+	if err != nil {
+		t.Skipf("ldd not available or binary is static: %v", err)
+	}
+	require.NotEmpty(t, libs, "expected at least one shared library dependency")
+}
+
+func TestMissingFiles(t *testing.T) {
+	binPath, err := os.Executable()
+	require.NoError(t, err)
+
+	missing, err := MissingFiles(binPath)
+	if err != nil {
+		t.Skipf("ldd not available: %v", err)
+	}
+	t.Logf("Missing libraries for %s: %v", binPath, missing)
+}
+
+func TestMissingFiles_StaticBinary(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "staticbin")
+	require.NoError(t, os.WriteFile(binPath, []byte("not a real binary"), 0o755))
+
+	_, err := Ldd(binPath)
+	require.Error(t, err, "ldd on a fake binary should fail")
+}
+
+func TestTrimLddAddress(t *testing.T) {
+	cases := []struct {
+		input  string
+		expect string
+	}{
+		{"/lib/x86_64-linux-gnu/libc.so.6 (0x00007f1234560000)", "/lib/x86_64-linux-gnu/libc.so.6"},
+		{"/lib/x86_64-linux-gnu/libc.so.6", "/lib/x86_64-linux-gnu/libc.so.6"},
+		{"/lib/ld-linux-x86-64.so.2", "/lib/ld-linux-x86-64.so.2"},
+	}
+	for _, tc := range cases {
+		result := trimLddAddress(tc.input)
+		require.Equal(t, tc.expect, result)
+	}
+}
+
+func TestStore_Push_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	err = store.Push("nonexistent", "1.0.0", "http://localhost:0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read meta")
+}
+
+func TestPushMultipart(t *testing.T) {
+	meta := Package{
+		Name:    "testpkg",
+		Version: "1.0.0",
+		SHA256:  "abc123",
+		Size:    1024,
+	}
+	metaJSON, err := json.Marshal(meta)
+	require.NoError(t, err)
+
+	body, contentType, err := pushMultipart(metaJSON, []byte("fake archive data"))
+	require.NoError(t, err)
+	require.NotEmpty(t, contentType)
+	require.Contains(t, contentType, "multipart/form-data")
+	require.True(t, body.Len() > 0)
+}

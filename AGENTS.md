@@ -1,4 +1,4 @@
-# AGENTS.md â€” Unikernel Engine
+﻿# AGENTS.md â€” Unikernel Engine
 
 > Docker-like unikernel engine. Forks Nanos (C+ASM kernel), adds Go orchestration layer.
 > Stack: Go 1.25+, C, ASM on KVM/QEMU.
@@ -106,7 +106,7 @@ CI uses Go 1.25 in workflows; golangci-lint pinned to v2.12.2 with v2 config for
 
 ## Phase Status
 
-Currently in **Phase 10** (Observability & Production Hardening) â€” all items complete. Phase 10 is done. CI uses Go 1.25; golangci-lint pinned to v2.12.2.
+Currently in **Phase 11** (Cloud Native — planned). Phases 0-10 complete. CI uses Go 1.25; golangci-lint pinned to v2.12.2.
 
 | Phase | Status | Key deliverables |
 |---|---|---|
@@ -116,7 +116,7 @@ Currently in **Phase 10** (Observability & Production Hardening) â€” all it
 | 3 â€” Full CLI | âœ… done | `uni ps/logs/stop/rm/inspect/exec`, `--output json`, 81% cmd/uni coverage |
 | 4 â€” Compose | âœ… done | YAML parser, topological sort, shared volumes, `uni compose up/down/ps/logs` |
 | 5 â€” Complete Runtime | âœ… done | Port mapping, env vars, volumes, named instances, `--attach`, `--ip`, `uni cp`, TAP/bridge networking |
-| 6 â€” Package System | âœ… done | `uni pkg list/search/get/remove/create`, `--pkg` flag, package index/store, archive extraction |
+| 6 â€” Package System | âœ… done | `uni pkg list/search/get/remove/create/from-docker/push`, `--pkg` flag, package index/store, archive extraction |
 | 7 â€” Orchestrator | âœ… done | Health checks, restart policies, status, DNS, network/IPAM, compose integration (7.0â€“7.7) |
 | 8 â€” Registry & Distribution | âœ… done | OCI registry, auth/JWT/TLS, signing, `unireg`, search, GC |
 | 9 â€” Build System | âœ… done | Build Driver framework, 4 language drivers, `unikernel.toml`, `.unignore`, build cache, `--platform` |
@@ -176,7 +176,7 @@ Phases must be fully tested and stable before advancing. A phase is not done if 
 | `uni node ls` | â€” | List cluster members with status + resource capacity |
 | `uni run --network <name>` | `--network`, `--ip` | Auto-allocate IP from network |
 | `uni kernel check/update/list/use` | â€” | Manage kernel tools |
-| `uni pkg list/search/get/remove/create` | â€” | Manage packages |
+| `uni pkg list/search/get/remove/create/from-docker/push` | â€” | Manage packages |
 | `uni cp <src> <dst>` | â€” | Copy files to/from VM |
 | `uni upgrade` | â€” | Self-update CLI binary |
 
@@ -272,10 +272,10 @@ unireg gc
 | Host-side bridge/TAP | `internal/network/bridge_linux.go` â€” `CreateBridge`, `AttachTAP`, `DestroyBridge`; bridge name from `Config.BridgeName` (not hardcoded) |
 | Network Store + IPAM | `internal/network/store.go` â€” `Store` with `Create/Get/List/Remove/AllocateIP/ReleaseIP`; persistent `~/.uni/networks/<name>/` with `meta.json` + `state.json`; subnet allocator from 10.100.0.0/16 |
 | iptables port forwarding | `internal/network/portfwd_linux.go` â€” DNAT + MASQUERADE with `-i tapName` |
-| Package index/store | `internal/package/package.go` â€” `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll`, `Create` |
+| Package index/store | `internal/package/package.go` â€” `Store`, `FetchIndex`, `Search`, `Extract`, `ExtractedFiles`, `RemoveAll`, `Create`, `Push`, `FromDocker`, `Ldd`, `MissingFiles` |
 | Package download with SHA-256 | `internal/package/package.go::Download` â€” verifies `Package.SHA256` after download, removes archive on mismatch; skips when empty |
 | Package creation | `internal/package/package.go::Create` â€” creates local package archive from binary + optional libs, computes SHA256, writes meta.json |
-| `uni pkg` commands | `cmd/uni/pkg.go` â€” list, search, get, remove (all versions), create (from binary + libs) |
+| `uni pkg` commands | `cmd/uni/pkg.go` â€” list, search, get, remove (all versions), create (from binary + libs), from-docker (Docker image extraction), push (upload to index) |
 | Package resolution (build) | `cmd/uni/build.go::resolvePackages` â€” download, extract, list files for manifest |
 | Manifest with package files | `internal/image/builder.go::BuildManifest` â€” includes extracted package files as manifest children |
 | `uni pkg` CLI tests | `cmd/uni/pkg_test.go` â€” search, get, list, remove, remove-all-versions, create, not-found, parsePkgRef |
@@ -294,8 +294,8 @@ unireg gc
 | Build ignore file | `internal/builder/unignore.go` â€” `.unignore` parser with `.gitignore`-style patterns, `DefaultIgnorePatterns`, `IgnoreMatcher.Match()`, used by `sourceFiles()` in build CLI |
 | Build cache | `internal/builder/cache.go` â€” `BuildCache` with deterministic `CacheKey` hash from source files + lang + entrypoint, `Has`/`Store`/`Get` for skip-rebuild optimization |
 | Platform types | `internal/builder/platform.go` â€” `Platform` type, `ParsePlatform`, `GoCrossCompileEnv`, `RustTarget`, `IsNative`, `--platform` flag on `uni build` |
-| `unikernel.toml` parser | `internal/builder/config.go` â€” `Config`, `LoadConfig`, `validateConfig`, `LangHint()`; validates build.lang, run.memory, run.cpus, run.ports, env |
-| Build CLI (`--lang`) | `cmd/uni/build.go` â€” `--lang go` flag, auto-detection for directory args, `unikernel.toml` loaded for lang/entrypoint/args, SourceDir+Packages flow for interpreted languages |
+| `unikernel.toml` parser | `internal/builder/config.go` -- `Config`, `LoadConfig`, `validateConfig`, `LangHint()`, `HasStages()`; validates build.lang, run.memory, run.cpus, run.ports, env; `StageConfig` + `CopyFromConfig` for multi-stage builds |
+| Build CLI (`--lang`) | `cmd/uni/build.go` -- `--lang go` flag, auto-detection for directory args, `unikernel.toml` loaded for lang/entrypoint/args, SourceDir+Packages flow for interpreted languages, multi-stage builds (`[[stages]]`, `copy_from`) |
 | Health check probes | `internal/vm/health.go` â€” `HealthChecker`, TCP/HTTP probes, backoff, `probeTarget` |
 | Restart policy logic | `internal/vm/qemu.go::monitor` â€” evaluates `RestartConfig` on process exit, calls `restartVM` with backoff |
 | Restart policy CLI flag | `cmd/uni/run.go::parseRestartPolicy` â€” `--restart never/on-failure/always[:N]` |
@@ -354,35 +354,44 @@ unireg gc
 
 ## Session Handoff (2026-05-17)
 
-### Completed This Session
+### Completed This Session (Phase 6+9 Features)
 
-- **Phase A â€” Cierre documental Phase 10:** Fixed roadmap GoDriver 9.1 checkbox (already implemented), fixed AGENTS.md E2E status (already enabled, was stale TODO), replaced nightly webhook TODO with configuration note.
-- **Phase B â€” E2E Test Expansion:** Skipped (requires KVM/QEMU, can't verify on Windows).
-- **Phase C â€” Coverage Gaps:** Raised 5 internal packages to 80%+ coverage. metrics: 14%â†’90%, tracing: 46%â†’80.5%, vm: 60%â†’80.9%, image: 62%â†’90.3%, registry: 64%â†’83.4%. Added 4500+ lines of test code across 18 new test files.
-- **Phase D â€” Package Toolchain:** Added `Store.Create()` and `uni pkg create <name>[:<version>] <binary>` CLI command with `--libs`, `--description`, `--runtime` flags. Added `packages.yml` CI workflow for building official packages. Fixed `pkg.IndexURL` casing (UniCLi â†’ UniCli). Marked roadmap 6.6.1 as complete.
+- **`uni pkg from-docker` (6.6.2):** New CLI command and `pkg.FromDocker()` function in `internal/package/`. Extracts binary + shared libs from Docker images via `docker create` + `docker cp` + `docker run --entrypoint ldd`.
+- **`--missing-files` flag (6.6.3):** New `pkg.MissingFiles()` and `pkg.Ldd()` functions. Added `--missing-files` flag to `uni pkg create` that reports missing shared libs. Also auto-resolves local libs via `ldd` and includes them in the package.
+- **`uni pkg push` (6.6.4):** New CLI command and `Store.Push()` method in `internal/package/`. Pushes package archive + metadata to a remote index via multipart POST.
+- **Multi-stage builds (9.8):** Extended `unikernel.toml` with `[[stages]]` and `[[stages.copy_from]]` config. New `StageConfig` and `CopyFromConfig` types with full validation. Build pipeline processes stages sequentially, `buildStages()` in `cmd/uni/build.go`.
+- **CI workflow `packages.yml` (6.6.5):** Updated with 13-package matrix (node v20/v22, python 3.12/3.11, ruby, lua, php, nginx, caddy, redis, sqlite, curl, jq). Created build scripts in `scripts/`.
+- **Tests:** Added `TestLdd`, `TestMissingFiles`, `TestTrimLddAddress`, `TestPushMultipart`, `TestStore_Push_NotFound`, `TestPkgFromDockerCmd_NoFile`, `TestPkgPushCmd_NoVersion`, `TestPkgPushCmd_NotFound`, `TestLoadConfigWithStages`, `TestValidateStages` (9 subtests), `TestConfigHasStages`.
+- **Docs:** Updated `cli-reference.md` (pkg from-docker, pkg push, --missing-files, multi-stage builds), `roadmap.md` (6.6.2-6.6.5 ✅, 9.8 ✅), feature matrix.
 
 ### Coverage Snapshot
 
 | Package | Before | After |
 |---|---|---|
-| `internal/metrics` | 14.0% | 90.0% |
-| `internal/tracing` | 46.3% | 80.5% |
-| `internal/vm` | 59.9% | 80.9% |
-| `internal/image` | 61.6% | 90.3% |
-| `internal/registry` | 64.1% | 83.4% |
+| `internal/package` | existing | +7 new test functions |
+| `internal/builder` | existing | +12 new test functions (stages validation, config parsing) |
+| `cmd/uni` | existing | +3 new CLI test functions |
 
 ### Next Steps
 
-1. **Phase E â€” Cloud Native (large scope):**
+1. **Phase E — Cloud Native (large scope):**
    - E.1: `internal/service/` package with Service abstraction (DesiredReplicas, Strategy)
    - E.2: `uni scale <name>=N` CLI command with `--watch` flag
-   - E.3: Rolling updates (create new â†’ health check â†’ DNS update â†’ graceful stop old)
+   - E.3: Rolling updates (create new → health check → DNS update → graceful stop old)
    - E.4: Multi-VM DNS round-robin in `internal/scheduler/resolver.go`
    - E.5: (Optional) Lightweight load balancer with iptables DNAT
-2. **E2E Test Expansion** (when KVM runner available): image round-trip, compose networking, volume persistence, registry auth
-3. **Remaining Phase D items** (require Linux): D.1 (node:v20 build), D.3 (--missing-files ldd analysis), D.6 (uni pkg push)
+2. **Official Package Library (require Linux KVM runner):** Build and publish the 12 official packages (node, python, ruby, lua, php, nginx, caddy, redis, sqlite, curl, jq) via `packages.yml` workflow.
+3. **Self-hosted index server (6.4.3):** Deferred until package library is ready.
+4. **E2E Test Expansion** (when KVM runner available): image round-trip, compose networking, volume persistence, registry auth
 
 ### Validation Commands
 
 - `go test ./cmd/... ./internal/... -count=1`
 - `golangci-lint run --timeout 5m ./...`
+
+
+
+
+
+
+

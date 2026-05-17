@@ -4,9 +4,25 @@
 
 ---
 
-## Current status: Phase 10 — Observability & Production Hardening (complete ✅)
+## Current status: Phase 11 — Cloud Native (planned)
 
-### Phase 10 progress (2026-05-15)
+### Phase 6—10 progress (all complete ✅)
+
+Phase 10 (Observability & Production Hardening) is complete. All core features shipped.
+
+### Phase 6 — Package System (updates since Phase 10)
+
+- ✅ 6.6.1 — `uni pkg create <name> <binary> [--libs] [--description] [--runtime]` (done)
+- ✅ 6.6.2 — `uni pkg from-docker <image> --file <path>` — extract binary + libs from Docker image
+- ✅ 6.6.3 — `--missing-files` flag on `uni pkg create` — ldd analysis to detect missing shared libraries
+- ✅ 6.6.4 — `uni pkg push <name:version> <index-url>` — push local package to remote index
+- ✅ 6.6.5 — CI pipeline for official packages (`packages.yml` with 13 package matrix)
+- ⬜ 6.4.3 — Self-hosted index server tooling (deferred)
+- ⬜ 6.5.x — Official Package Library (node, python, ruby, lua, php, nginx, caddy, redis, sqlite, curl, jq) — build scripts ready, requires Linux KVM runner
+
+### Phase 9 — Build System (update)
+
+- ✅ 9.8 — Multi-stage builds: `[[stages]]` in `unikernel.toml` with `copy_from` directives
 
 - ✅ 10.1 — Prometheus metrics endpoint (`/metrics`, `/health`), `--metrics-addr` flag on `unid`
 - ✅ 10.2 — OpenTelemetry trace export (`--trace-addr`), VM lifecycle spans
@@ -244,10 +260,10 @@ Build and publish these packages to the official index. Deferred to a dedicated 
 ### 6.6 — Package Creation Toolchain
 
 - [x] 6.6.1 — `uni pkg create <name> <binary> [--libs <lib>...]` — scaffold a new package from a local binary
-- [ ] 6.6.2 — `uni pkg from-docker <image> --file <binary>` — convert a Docker image into a uni package (extract binary + libs)
-- [ ] 6.6.3 — `--missing-files` flag on `uni pkg load`: detect and report missing dynamic libs at build time (uses `ldd` output analysis)
-- [ ] 6.6.4 — `uni pkg push <name:version>` — push a locally created package to the index (requires `uni login`)
-- [ ] 6.6.5 — CI pipeline for building official packages: cross-compile on GitHub Actions, publish to index on tag
+- [x] 6.6.2 — `uni pkg from-docker <image> --file <binary>` — convert a Docker image into a uni package (extract binary + libs)
+- [x] 6.6.3 — `--missing-files` flag on `uni pkg create`: detect and report missing dynamic libs at build time (uses `ldd` output analysis)
+- [x] 6.6.4 — `uni pkg push <name:version>` — push a locally created package to the index (requires `uni login`)
+- [x] 6.6.5 — CI pipeline for building official packages: cross-compile on GitHub Actions, publish to index on tag
 
 **Done when:** package download/search/get/remove works, package files can be injected into built images with `--pkg`, and pipeline tests are green.
 
@@ -340,7 +356,7 @@ so developers can point at a project directory and get a runnable image.
 - [x] 9.5 — Auto-detect language if `--lang` omitted (inspect project files, fail loudly if ambiguous)
 - [x] 9.6 — `unikernel.toml` config file parser and validator: `[build]` lang/entrypoint/args, `[run]` memory/cpus/ports, `[env]`
 - [x] 9.7 — `uni build` reads `unikernel.toml` for build.lang, build.entrypoint, build.args
-- [ ] 9.8 — Multi-stage builds: separate build environment from runtime image (reduce image size)
+- [x] 9.8 — Multi-stage builds: separate build environment from runtime image
 - [x] 9.9 — `.unignore` file: exclude files from the disk image (like `.dockerignore`)
 - [x] 9.10 — Build cache: skip rebuild if source hash unchanged
 - [x] 9.11 — `uni build --platform linux/amd64,linux/arm64` — multi-arch image output (amd64 + ARM)
@@ -405,11 +421,14 @@ so developers can point at a project directory and get a runnable image.
 | Volume integration test | 5 | ✅ done |
 | Package system (`uni pkg list/search/get/remove`) | 6 | ✅ done |
 | `uni pkg create` | 6 | ✅ done |
-| Node.js runtime package | 6 | ⬜ |
-| Python runtime package | 6 | ⬜ |
-| Redis / Nginx packages | 6 | ⬜ |
+| `uni pkg from-docker` | 6 | ✅ done |
+| `--missing-files` (ldd analysis) | 6 | ✅ done |
+| `uni pkg push` | 6 | ✅ done |
+| Node.js runtime package | 6 | ⬜ (build script ready, needs KVM) |
+| Python runtime package | 6 | ⬜ (build script ready, needs KVM) |
+| Redis / Nginx packages | 6 | ⬜ (build script ready, needs KVM) |
 | Health checks + restart policies | 7 | ✅ done |
-| Auto-scaling (`uni scale`) | 7 | ⬜ deferred |
+| Auto-scaling (`uni scale`) | 7 | ⬜ deferred (Phase 11) |
 | Internal DNS | 7 | ✅ done |
 | OCI-compatible registry | 8 | ✅ done |
 | Image signing | 8 | ✅ done |
@@ -420,6 +439,7 @@ so developers can point at a project directory and get a runnable image.
 | `unikernel.toml` project config | 9 | ✅ done |
 | Build cache + `.unignore` | 9 | ✅ done |
 | `--platform` cross-compilation | 9 | ✅ done |
+| Multi-stage builds | 9 | ✅ done |
 | Prometheus metrics | 10 | ✅ done |
 | Structured JSON logging | 10 | ✅ done |
 | OpenTelemetry tracing | 10 | ✅ done |

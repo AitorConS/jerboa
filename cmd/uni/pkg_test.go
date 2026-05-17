@@ -322,3 +322,39 @@ func TestPkgCreateCmd_NotFound(t *testing.T) {
 	msg := execRootExpectError(t, socketPath, storePath, "pkg", "create", "bad:1.0.0", "/nonexistent/binary")
 	require.Contains(t, msg, "binary not found")
 }
+
+func TestPkgFromDockerCmd_NoFile(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "from-docker", "testpkg:1.0.0", "node:20")
+	require.Contains(t, msg, "--file is required")
+}
+
+func TestPkgPushCmd_NoVersion(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "push", "node", "http://localhost:5000")
+	require.Contains(t, msg, "version is required")
+}
+
+func TestPkgPushCmd_NotFound(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "push", "node:20", "http://localhost:5000")
+	require.Contains(t, msg, "not found locally")
+}

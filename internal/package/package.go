@@ -7,6 +7,7 @@
 package pkg
 
 import (
+	"bytes"
 	"archive/tar"
 	"compress/gzip"
 	"crypto/sha256"
@@ -16,8 +17,11 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -478,6 +482,277 @@ func (s *Store) createArchive(outPath string, files []string) (string, int64, er
 	cleanup = false
 
 	return hex.EncodeToString(hash.Sum(nil)), size, nil
+}
+
+// Push uploads a local package archive and metadata to a remote package index.
+// The index must accept POST /packages with multipart form data (archive + metadata).
+func (s *Store) Push(name, version string, indexURL string) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	dir := s.PackageDir(name, version)
+
+	metaPath := filepath.Join(dir, "meta.json")
+	metaData, err := os.ReadFile(metaPath)
+	if err != nil {
+		return fmt.Errorf("pkg push: read meta: %w", err)
+	}
+	var meta Package
+	if err := json.Unmarshal(metaData, &meta); err != nil {
+		return fmt.Errorf("pkg push: parse meta: %w", err)
+	}
+
+	archivePath := filepath.Join(dir, "files.tar.gz")
+	archiveData, err := os.ReadFile(archivePath)
+	if err != nil {
+		return fmt.Errorf("pkg push: read archive: %w", err)
+	}
+
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("pkg push: marshal meta: %w", err)
+	}
+
+	body, contentType, err := pushMultipart(metaJSON, archiveData)
+	if err != nil {
+		return fmt.Errorf("pkg push: build multipart: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, indexURL+"/packages", body)
+	if err != nil {
+		return fmt.Errorf("pkg push: request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return fmt.Errorf("pkg push: upload: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("pkg push: HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	slog.Info("package pushed", "name", name, "version", version, "url", indexURL)
+	return nil
+}
+
+// FromDocker extracts a binary and its shared library dependencies from a Docker
+// image, returning the local file paths. It creates a temporary container from
+// the image, copies the binary out, runs ldd inside the container to discover
+// shared libraries, and copies those out too.
+func FromDocker(image, containerPath string, extraLibs []string) ([]string, error) {
+	containerID, err := dockerCreate(image)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = dockerRemove(containerID) }()
+
+	tmpDir, err := os.MkdirTemp("", "uni-pkg-from-docker-*")
+	if err != nil {
+		return nil, fmt.Errorf("from-docker: temp dir: %w", err)
+	}
+
+	localBinary := filepath.Join(tmpDir, filepath.Base(containerPath))
+	if err := dockerCp(containerID+":"+containerPath, localBinary); err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("from-docker: copy binary: %w", err)
+	}
+	if err := os.Chmod(localBinary, 0o755); err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("from-docker: chmod binary: %w", err)
+	}
+
+	var allFiles []string
+	allFiles = append(allFiles, localBinary)
+
+	libs, err := dockerLdd(image, containerPath)
+	if err != nil {
+		slog.Warn("from-docker: ldd failed, skipping shared libs", "error", err)
+	} else {
+		for _, lib := range libs {
+			if lib == "" || lib == "not found" {
+				continue
+			}
+			localLib := filepath.Join(tmpDir, filepath.Base(lib))
+			if err := dockerCp(containerID+":"+lib, localLib); err != nil {
+				slog.Warn("from-docker: could not copy lib, skipping", "lib", lib, "error", err)
+				continue
+			}
+			allFiles = append(allFiles, localLib)
+		}
+	}
+
+	for _, lib := range extraLibs {
+		localLib := filepath.Join(tmpDir, filepath.Base(lib))
+		if err := dockerCp(containerID+":"+lib, localLib); err != nil {
+			slog.Warn("from-docker: could not copy extra lib, skipping", "lib", lib, "error", err)
+			continue
+		}
+		allFiles = append(allFiles, localLib)
+	}
+
+	return allFiles, nil
+}
+
+// Ldd analyses a binary with ldd and returns its shared library dependencies.
+// Returns the library paths as reported by ldd.
+func Ldd(binaryPath string) ([]string, error) {
+	cmd := exec.Command("ldd", binaryPath)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("ldd %s: %w", binaryPath, err)
+	}
+
+	var libs []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "=>") {
+			parts := strings.SplitN(line, "=>", 2)
+			if len(parts) == 2 {
+				path := strings.TrimSpace(parts[1])
+				path = trimLddAddress(path)
+				path = strings.TrimSpace(path)
+				if path != "" && path != "not found" {
+					libs = append(libs, path)
+				}
+			}
+		} else if strings.HasPrefix(line, "/") {
+			path := strings.TrimSpace(line)
+			idx := strings.Index(path, " ")
+			if idx > 0 {
+				path = path[:idx]
+			}
+			if path != "" {
+				libs = append(libs, path)
+			}
+		}
+	}
+	return libs, nil
+}
+
+// MissingFiles analyses a binary with ldd and returns library paths that are
+// not present on the local filesystem. Useful for identifying which shared
+// libraries need to be bundled in a package alongside the binary.
+func MissingFiles(binaryPath string) ([]string, error) {
+	libs, err := Ldd(binaryPath)
+	if err != nil {
+		return nil, err
+	}
+
+	var missing []string
+	for _, lib := range libs {
+		if _, err := os.Stat(lib); err != nil {
+			missing = append(missing, lib)
+		}
+	}
+	return missing, nil
+}
+
+// trimLddAddress removes the trailing address annotation from ldd output lines,
+// e.g. "/lib/x86_64-linux-gnu/libc.so.6 (0x00007f...)" becomes "/lib/x86_64-linux-gnu/libc.so.6".
+func trimLddAddress(s string) string {
+	idx := strings.LastIndex(s, " (0x")
+	if idx >= 0 {
+		return s[:idx]
+	}
+	return s
+}
+
+func dockerCreate(image string) (string, error) {
+	cmd := exec.Command("docker", "create", image, "sh", "-c", "true")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("docker create %s: %w", image, err)
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func dockerRemove(containerID string) error {
+	cmd := exec.Command("docker", "rm", "-f", containerID)
+	return cmd.Run()
+}
+
+func dockerCp(src, dst string) error {
+	cmd := exec.Command("docker", "cp", src, dst)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker cp %s %s: %w: %s", src, dst, err, string(output))
+	}
+	return nil
+}
+
+func dockerLdd(image, containerPath string) ([]string, error) {
+	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, "-c",
+		fmt.Sprintf("ldd %s", containerPath))
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("docker ldd %s: %w", containerPath, err)
+	}
+
+	var libs []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "linux-vdso") {
+			continue
+		}
+		if strings.Contains(line, "=>") {
+			parts := strings.SplitN(line, "=>", 2)
+			if len(parts) == 2 {
+				path := strings.TrimSpace(parts[1])
+				path = trimLddAddress(path)
+				path = strings.TrimSpace(path)
+				if path != "" && path != "not found" {
+					libs = append(libs, path)
+				}
+			}
+		} else if strings.HasPrefix(line, "/") {
+			path := strings.TrimSpace(line)
+			idx := strings.Index(path, " ")
+			if idx > 0 {
+				path = path[:idx]
+			}
+			if path != "" {
+				libs = append(libs, path)
+			}
+		}
+	}
+	return libs, nil
+}
+
+func pushMultipart(metaJSON, archiveData []byte) (*bytes.Buffer, string, error) {
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+
+	metaHeader := make(textproto.MIMEHeader)
+	metaHeader.Set("Content-Disposition", `form-data; name="metadata"`)
+	metaHeader.Set("Content-Type", "application/json")
+	metaPart, err := w.CreatePart(metaHeader)
+	if err != nil {
+		return nil, "", fmt.Errorf("create meta part: %w", err)
+	}
+	if _, err := metaPart.Write(metaJSON); err != nil {
+		return nil, "", fmt.Errorf("write meta: %w", err)
+	}
+
+	archivePart, err := w.CreateFormFile("archive", "files.tar.gz")
+	if err != nil {
+		return nil, "", fmt.Errorf("create archive part: %w", err)
+	}
+	if _, err := archivePart.Write(archiveData); err != nil {
+		return nil, "", fmt.Errorf("write archive: %w", err)
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, "", fmt.Errorf("close multipart: %w", err)
+	}
+
+	return &buf, w.FormDataContentType(), nil
 }
 
 func (s *Store) writeMeta(dir string, meta Package) error {

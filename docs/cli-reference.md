@@ -501,6 +501,29 @@ ports = ["8080:80", "9090:9090"]
 NODE_ENV = "production"
 ```
 
+**Multi-stage Builds:**
+
+`unikernel.toml` also supports multi-stage builds with `[[stages]]`. Each stage is built independently, and `copy_from` directives copy artifacts from previous stages:
+
+```toml
+[[stages]]
+name = "builder"
+lang = "go"
+entrypoint = "cmd/server"
+
+[[stages]]
+name = "runtime"
+lang = "node"
+entrypoint = "server.js"
+
+[[stages.copy_from]]
+stage = "builder"
+src = "/app/server"
+dst = "server"
+```
+
+The final stage's output is used as the image binary. Earlier stages produce intermediate build artifacts that can be copied into later stages.
+
 **`.unignore` File:**
 
 Exclude files from the build context with `.unignore` (similar to `.dockerignore`):
@@ -749,10 +772,12 @@ uni pkg remove redis
 Create a local package from a binary and optional additional files. The package archive is stored in the local package cache.
 
 ```
-uni pkg create <name>[:<version>] <binary> [--libs <file>...] [--description <desc>] [--runtime <runtime>]
+uni pkg create <name>[:<version>] <binary> [--libs <file>...] [--description <desc>] [--runtime <runtime>] [--missing-files]
 ```
 
 If no version is specified, `1.0.0` is used as the default.
+
+The `--missing-files` flag analyses the binary with `ldd` and reports shared library dependencies that are missing from the local filesystem. This is useful for identifying which libraries need to be included with `--libs`.
 
 ```bash
 # Create a package from a static binary
@@ -761,8 +786,66 @@ uni pkg create myapp:1.2.0 ./myapp --description "My application" --runtime cust
 # Create a package with additional library files
 uni pkg create myapp:1.2.0 ./myapp --libs ./libmyapp.so --description "With shared lib"
 
+# Check for missing shared library dependencies
+uni pkg create myapp:1.2.0 ./myapp --missing-files
+# Missing shared libraries detected (not on local filesystem):
+#   /lib/x86_64-linux-gnu/libssl.so.3
+#   /lib/x86_64-linux-gnu/libcrypto.so.3
+# Consider adding these with --libs or re-running with the binary on a Linux system.
+
+# Create with auto-resolved shared libs from ldd
+uni pkg create myapp:1.2.0 ./myapp
+
 # Create with auto-default version (1.0.0)
 uni pkg create myapp ./myapp
+```
+
+---
+
+### `uni pkg from-docker`
+
+Extract a binary and its shared library dependencies from a Docker image, creating a local package. Uses `docker create` + `docker cp` to extract the binary, then runs `ldd` inside the container to discover shared libraries.
+
+```
+uni pkg from-docker <name>[:<version>] <image> --file <path> [--libs <path>...] [--description <desc>] [--runtime <runtime>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--file` | *(required)* | Path to the binary inside the Docker image |
+| `--libs` | — | Additional library paths inside the container to include (repeatable) |
+| `--description` | `""` | Package description |
+| `--runtime` | `""` | Runtime family (e.g. `node`, `python`) |
+
+```bash
+# Extract Node.js from the official Docker image
+uni pkg from-docker node:20 node:20 --file /usr/local/bin/node --runtime node
+
+# Extract Redis with extra libraries
+uni pkg from-docker redis:7 redis:7 --file /usr/local/bin/redis-server --libs /usr/local/bin/redis-cli --runtime redis
+
+# Extract with auto-detected shared libraries
+uni pkg from-docker myapp:1.0 myapp:latest --file /app/myapp --description "My app from Docker"
+```
+
+---
+
+### `uni pkg push`
+
+Push a locally cached package to a remote package index. The index server must support `POST /packages` with multipart form data (archive + metadata).
+
+```
+uni pkg push <name>:<version> <index-url>
+```
+
+The version is required. Use `uni pkg list` to see locally cached packages.
+
+```bash
+# Push a package to a remote index
+uni pkg push node:20 https://packages.example.com
+
+# Push a locally created package
+uni pkg push myapp:1.2.0 https://packages.example.com
 ```
 
 ---
