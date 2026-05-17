@@ -12,6 +12,7 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/scheduler"
+	"github.com/AitorConS/unikernel-engine/internal/service"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 )
 
@@ -34,6 +35,7 @@ type ClusterMember struct {
 type Server struct {
 	mgr        vm.Manager
 	netStore   *network.Store
+	svcMgr     *service.Manager
 	listener   net.Listener
 	shutdownFn func()
 	version    string
@@ -46,7 +48,7 @@ type Server struct {
 // pass nil to disable remote shutdown.
 // version is returned by Daemon.Version RPC; pass "" if unknown.
 // Any existing socket file at socketPath is removed before binding.
-func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutdownFn func(), version string, clusterLister ClusterMemberLister) (*Server, error) {
+func NewServer(mgr vm.Manager, netStore *network.Store, svcMgr *service.Manager, socketPath string, shutdownFn func(), version string, clusterLister ClusterMemberLister) (*Server, error) {
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("api server remove stale socket: %w", err)
 	}
@@ -54,7 +56,7 @@ func NewServer(mgr vm.Manager, netStore *network.Store, socketPath string, shutd
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
-	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
+	return &Server{mgr: mgr, netStore: netStore, svcMgr: svcMgr, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
 }
 
 // Serve accepts connections and handles them until ctx is cancelled.
@@ -163,6 +165,20 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any
 		return s.handleDNSList(req.Params)
 	case "Node.List":
 		return s.handleNodeList()
+	case "Service.Run":
+		return s.handleServiceRun(ctx, req.Params)
+	case "Service.Scale":
+		return s.handleServiceScale(ctx, req.Params)
+	case "Service.Update":
+		return s.handleServiceUpdate(ctx, req.Params)
+	case "Service.List":
+		return s.handleServiceList()
+	case "Service.Get":
+		return s.handleServiceGet(req.Params)
+	case "Service.Remove":
+		return s.handleServiceRemove(ctx, req.Params)
+	case "DNS.ResolveAll":
+		return s.handleDNSResolveAll(req.Params)
 	default:
 		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -661,6 +677,198 @@ func (s *Server) handleNodeList() (any, *RPCError) {
 		}
 	}
 	return NodeListResponse{Nodes: rows}, nil
+}
+
+func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+	if s.svcMgr == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Run (service manager disabled)"}
+	}
+	var p ServiceRunParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	opts := service.ServiceOptions{
+		Memory:      p.Memory,
+		CPUs:        p.CPUs,
+		Env:         p.Env,
+		NetworkName: p.NetworkName,
+	}
+	if p.HealthCheck != nil {
+		opts.HealthCheck = &vm.HealthCheckConfig{
+			Type:     p.HealthCheck.Type,
+			Port:     p.HealthCheck.Port,
+			Path:     p.HealthCheck.Path,
+			Interval: time.Duration(p.HealthCheck.Interval) * time.Second,
+			Timeout:  time.Duration(p.HealthCheck.Timeout) * time.Second,
+			Retries:  p.HealthCheck.Retries,
+		}
+	}
+	if p.Restart != nil {
+		opts.Restart = vm.RestartConfig{
+			Policy:     vm.RestartPolicy(p.Restart.Policy),
+			MaxRetries: p.Restart.MaxRetries,
+		}
+	}
+	if len(p.PortMaps) > 0 {
+		opts.PortMaps = portMapsFromSpec(p.PortMaps)
+	}
+	if p.Strategy != "" {
+		opts.Strategy = service.Strategy(p.Strategy)
+	}
+	svc, err := s.svcMgr.Run(ctx, p.Name, p.Image, p.Replicas, opts)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	svcInfo := s.svcMgr.ServiceInfo(svc)
+	return ServiceInfoResult{
+		Name:             svcInfo.Name,
+		Image:            svcInfo.Image,
+		DesiredReplicas:  svcInfo.DesiredReplicas,
+		ReadyReplicas:    svcInfo.ReadyReplicas,
+		Strategy:         svcInfo.Strategy,
+		Health:           svcInfo.Health,
+		CreatedAt:        svcInfo.CreatedAt,
+		UpdatedAt:        svcInfo.UpdatedAt,
+		ReplicaIDs:       svcInfo.ReplicaIDs,
+	}, nil
+}
+
+func (s *Server) handleServiceScale(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+	if s.svcMgr == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Scale (service manager disabled)"}
+	}
+	var p ServiceScaleParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	svc, err := s.svcMgr.Scale(ctx, p.Name, p.DesiredReplicas)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	svcInfo := s.svcMgr.ServiceInfo(svc)
+	return ServiceInfoResult{
+		Name:             svcInfo.Name,
+		Image:            svcInfo.Image,
+		DesiredReplicas:  svcInfo.DesiredReplicas,
+		ReadyReplicas:    svcInfo.ReadyReplicas,
+		Strategy:         svcInfo.Strategy,
+		Health:           svcInfo.Health,
+		CreatedAt:        svcInfo.CreatedAt,
+		UpdatedAt:        svcInfo.UpdatedAt,
+		ReplicaIDs:       svcInfo.ReplicaIDs,
+	}, nil
+}
+
+func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+	if s.svcMgr == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Update (service manager disabled)"}
+	}
+	var p ServiceUpdateParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	svc, err := s.svcMgr.Update(ctx, p.Name, p.Image)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	svcInfo := s.svcMgr.ServiceInfo(svc)
+	return ServiceInfoResult{
+		Name:             svcInfo.Name,
+		Image:            svcInfo.Image,
+		DesiredReplicas:  svcInfo.DesiredReplicas,
+		ReadyReplicas:    svcInfo.ReadyReplicas,
+		Strategy:         svcInfo.Strategy,
+		Health:           svcInfo.Health,
+		CreatedAt:        svcInfo.CreatedAt,
+		UpdatedAt:        svcInfo.UpdatedAt,
+		ReplicaIDs:       svcInfo.ReplicaIDs,
+	}, nil
+}
+
+func (s *Server) handleServiceList() (any, *RPCError) {
+	if s.svcMgr == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Service.List (service manager disabled)"}
+	}
+	services, err := s.svcMgr.List()
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	out := make([]ServiceInfoResult, len(services))
+	for i, svc := range services {
+		svcInfo := s.svcMgr.ServiceInfo(svc)
+		out[i] = ServiceInfoResult{
+			Name:             svcInfo.Name,
+			Image:            svcInfo.Image,
+			DesiredReplicas:  svcInfo.DesiredReplicas,
+			ReadyReplicas:    svcInfo.ReadyReplicas,
+			Strategy:         svcInfo.Strategy,
+			Health:           svcInfo.Health,
+			CreatedAt:        svcInfo.CreatedAt,
+			UpdatedAt:        svcInfo.UpdatedAt,
+			ReplicaIDs:       svcInfo.ReplicaIDs,
+		}
+	}
+	return out, nil
+}
+
+func (s *Server) handleServiceGet(params json.RawMessage) (any, *RPCError) {
+	if s.svcMgr == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Get (service manager disabled)"}
+	}
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	svc, err := s.svcMgr.Get(p.Name)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	svcInfo := s.svcMgr.ServiceInfo(svc)
+	return ServiceInfoResult{
+		Name:             svcInfo.Name,
+		Image:            svcInfo.Image,
+		DesiredReplicas:  svcInfo.DesiredReplicas,
+		ReadyReplicas:    svcInfo.ReadyReplicas,
+		Strategy:         svcInfo.Strategy,
+		Health:           svcInfo.Health,
+		CreatedAt:        svcInfo.CreatedAt,
+		UpdatedAt:        svcInfo.UpdatedAt,
+		ReplicaIDs:       svcInfo.ReplicaIDs,
+	}, nil
+}
+
+func (s *Server) handleServiceRemove(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+	if s.svcMgr == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Remove (service manager disabled)"}
+	}
+	var p struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	if err := s.svcMgr.Remove(ctx, p.Name); err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"status": "ok"}, nil
+}
+
+func (s *Server) handleDNSResolveAll(params json.RawMessage) (any, *RPCError) {
+	var p DNSResolveParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	recs, err := s.resolver.ResolveAll(p.Name, p.Network)
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	out := make([]DNSRecord, len(recs))
+	for i, rec := range recs {
+		out[i] = DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
+	}
+	return out, nil
 }
 
 func (s *Server) writeError(conn net.Conn, id int64, rpcErr *RPCError) {

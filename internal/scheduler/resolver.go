@@ -60,6 +60,33 @@ func (r *Resolver) Resolve(name, network string) (Record, error) {
 	return Record{}, fmt.Errorf("record %q not found", host)
 }
 
+// ResolveAll returns all DNS records matching a name within a network scope.
+// For services with multiple replicas, this returns all healthy replica IPs,
+// enabling round-robin DNS load balancing.
+func (r *Resolver) ResolveAll(name, network string) ([]Record, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("name must not be empty")
+	}
+	host, scope := splitScopedName(name)
+	if network == "" {
+		network = scope
+	}
+
+	var matches []Record
+	for _, rec := range r.records(network) {
+		if rec.Name == host || rec.VMID == host {
+			matches = append(matches, rec)
+		}
+	}
+	if len(matches) == 0 {
+		if network != "" {
+			return nil, fmt.Errorf("record %q not found in network %q", host, network)
+		}
+		return nil, fmt.Errorf("record %q not found", host)
+	}
+	return matches, nil
+}
+
 // List returns all resolvable records, optionally filtered by network.
 func (r *Resolver) List(network string) []Record {
 	return r.records(network)

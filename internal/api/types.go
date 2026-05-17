@@ -202,3 +202,43 @@ type NodeRow struct {
 	MemCap   int64  `json:"mem_capacity_bytes"`
 	LastSeen string `json:"last_seen"`
 }
+
+// ServiceRunParams are the parameters for Service.Run.
+type ServiceRunParams struct {
+	Name             string            `json:"name"`
+	Image            string            `json:"image"`
+	Replicas         int               `json:"replicas"`
+	Memory           string            `json:"memory,omitempty"`
+	CPUs             int               `json:"cpus,omitempty"`
+	Env              []string          `json:"env,omitempty"`
+	NetworkName      string            `json:"network_name,omitempty"`
+	PortMaps         []PortMapSpec     `json:"port_maps,omitempty"`
+	HealthCheck      *HealthCheckSpec  `json:"health_check,omitempty"`
+	Restart          *RestartSpec       `json:"restart,omitempty"`
+	Strategy         string             `json:"strategy,omitempty"`
+}
+
+// ServiceScaleParams are the parameters for Service.Scale.
+type ServiceScaleParams struct {
+	Name             string `json:"name"`
+	DesiredReplicas  int    `json:"desired_replicas"`
+}
+
+// ServiceUpdateParams are the parameters for Service.Update (rolling update).
+type ServiceUpdateParams struct {
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+}
+
+// ServiceInfoResult is the result for Service.Get and Service.List.
+type ServiceInfoResult struct {
+	Name             string   `json:"name"`
+	Image            string   `json:"image"`
+	DesiredReplicas  int      `json:"desired_replicas"`
+	ReadyReplicas    int      `json:"ready_replicas"`
+	Strategy         string   `json:"strategy"`
+	Health           string   `json:"health"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+	ReplicaIDs       []string `json:"replica_ids"`
+}

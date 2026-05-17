@@ -236,6 +236,77 @@ func (c *Client) NodeList(_ context.Context) (NodeListResponse, error) {
 	return resp, nil
 }
 
+// ServiceRun creates and starts a service with the given parameters.
+func (c *Client) ServiceRun(_ context.Context, p ServiceRunParams) (ServiceInfoResult, error) {
+	var result ServiceInfoResult
+	if err := c.call("Service.Run", p, &result); err != nil {
+		return ServiceInfoResult{}, fmt.Errorf("client service run: %w", err)
+	}
+	return result, nil
+}
+
+// ServiceScale adjusts the number of replicas for a service.
+func (c *Client) ServiceScale(_ context.Context, name string, desiredReplicas int) (ServiceInfoResult, error) {
+	var result ServiceInfoResult
+	p := ServiceScaleParams{Name: name, DesiredReplicas: desiredReplicas}
+	if err := c.call("Service.Scale", p, &result); err != nil {
+		return ServiceInfoResult{}, fmt.Errorf("client service scale: %w", err)
+	}
+	return result, nil
+}
+
+// ServiceUpdate performs a rolling update of a service to a new image.
+func (c *Client) ServiceUpdate(_ context.Context, name, image string) (ServiceInfoResult, error) {
+	var result ServiceInfoResult
+	p := ServiceUpdateParams{Name: name, Image: image}
+	if err := c.call("Service.Update", p, &result); err != nil {
+		return ServiceInfoResult{}, fmt.Errorf("client service update: %w", err)
+	}
+	return result, nil
+}
+
+// ServiceList returns all services.
+func (c *Client) ServiceList(_ context.Context) ([]ServiceInfoResult, error) {
+	var result []ServiceInfoResult
+	if err := c.call("Service.List", nil, &result); err != nil {
+		return nil, fmt.Errorf("client service list: %w", err)
+	}
+	return result, nil
+}
+
+// ServiceGet returns a single service by name.
+func (c *Client) ServiceGet(_ context.Context, name string) (ServiceInfoResult, error) {
+	var result ServiceInfoResult
+	p := struct {
+		Name string `json:"name"`
+	}{Name: name}
+	if err := c.call("Service.Get", p, &result); err != nil {
+		return ServiceInfoResult{}, fmt.Errorf("client service get: %w", err)
+	}
+	return result, nil
+}
+
+// ServiceRemove stops all replicas of a service and deletes it.
+func (c *Client) ServiceRemove(_ context.Context, name string) error {
+	p := struct {
+		Name string `json:"name"`
+	}{Name: name}
+	if err := c.call("Service.Remove", p, nil); err != nil {
+		return fmt.Errorf("client service remove: %w", err)
+	}
+	return nil
+}
+
+// DNSResolveAll resolves all DNS records matching a name (round-robin).
+func (c *Client) DNSResolveAll(_ context.Context, name, network string) ([]DNSRecord, error) {
+	var recs []DNSRecord
+	p := DNSResolveParams{Name: name, Network: network}
+	if err := c.call("DNS.ResolveAll", p, &recs); err != nil {
+		return nil, fmt.Errorf("client dns resolve all: %w", err)
+	}
+	return recs, nil
+}
+
 // Attach connects to a VM's serial console and streams output to stdout.
 // It blocks until the VM stops or the connection is closed.
 // This method takes over the connection for raw reading; do not use the

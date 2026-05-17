@@ -4,7 +4,15 @@
 
 ---
 
-## Current status: Phase 11 — Cloud Native (planned)
+## Current status: Phase 11 — Cloud Native (in progress)
+
+### Phase E — Service Orchestration
+
+- ✅ E.1 — `internal/service/` package: Service struct, Strategy (RollingUpdate/Recreate), ServiceOptions, ServiceManager with Run/Scale/Update(List/Get/Remove), FileStore persistence
+- ✅ E.2 — `uni service run/scale/update/ls/inspect/rm` CLI commands
+- ✅ E.3 — Rolling update: create new replicas → stop old replicas (RollingUpdate strategy), stop-all-then-start (Recreate strategy)
+- ✅ E.4 — DNS round-robin: `Resolver.ResolveAll()` returns all matching records for service name, `DNS.ResolveAll` RPC, `uni dns resolve-all <name>`
+- ✅ E.5 — API: `Service.Run/Scale/Update/List/Get/Remove` RPC methods + client methods
 
 ### Phase 6—10 progress (all complete ✅)
 
@@ -279,8 +287,8 @@ Build and publish these packages to the official index. Deferred to a dedicated 
   - Compose syntax: `healthcheck: {test: ["HTTP", "http://localhost:8080/health"], interval: 10s, retries: 3}`
 - [x] 7.2 — Restart policy: `on-failure`, `always` with exponential backoff
 - [x] 7.3 — Auto-restart on crash: daemon monitors VM exit code, re-applies restart policy
-- [ ] 7.4 — Rolling updates: drain old → start new → verify healthy → repeat; zero downtime (deferred)
-- [ ] 7.5 — `uni scale <name>=N` — spawn or kill instances to reach target count (deferred)
+- [x] 7.4 — Rolling updates: drain old → start new → verify healthy → repeat; zero downtime (via Service.Update with RollingUpdate/Recreate strategies)
+- [x] 7.5 — `uni service scale <name> <N>` — spawn or kill instances to reach target count
 - [x] 7.6 — Internal DNS resolver in `unid`: service name/IP lookup for running VMs, scoped names (`name.network`), ambiguity detection, CLI `uni dns`
 - [x] 7.7 — `uni status` — VM summary view with health/restart info
 - [x] 7.8 — Compose integration with health checks + restart directives + wait-for-healthy
@@ -428,8 +436,11 @@ so developers can point at a project directory and get a runnable image.
 | Python runtime package | 6 | ⬜ (build script ready, needs KVM) |
 | Redis / Nginx packages | 6 | ⬜ (build script ready, needs KVM) |
 | Health checks + restart policies | 7 | ✅ done |
-| Auto-scaling (`uni scale`) | 7 | ⬜ deferred (Phase 11) |
+| Auto-scaling (`uni scale`) | 7 | ✅ done (Phase E via `uni service scale`) |
 | Internal DNS | 7 | ✅ done |
+| DNS round-robin | E | ✅ done |
+| Service orchestration | E | ✅ done (`uni service run/scale/update/ls/inspect/rm`) |
+| Rolling updates | E | ✅ done (RollingUpdate + Recreate strategies) |
 | OCI-compatible registry | 8 | ✅ done |
 | Image signing | 8 | ✅ done |
 | Registry auth (JWT) | 8 | ✅ done |

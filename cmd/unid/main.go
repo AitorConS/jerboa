@@ -21,6 +21,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/ociblob"
 	"github.com/AitorConS/unikernel-engine/internal/registry"
+	"github.com/AitorConS/unikernel-engine/internal/service"
 	"github.com/AitorConS/unikernel-engine/internal/slogformat"
 	"github.com/AitorConS/unikernel-engine/internal/tracing"
 	"github.com/AitorConS/unikernel-engine/internal/ui"
@@ -141,6 +142,12 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		return fmt.Errorf("unid: network store: %w", err)
 	}
 
+	svcStore, err := service.NewFileStore(servicesDir())
+	if err != nil {
+		return fmt.Errorf("unid: service store: %w", err)
+	}
+	svcMgr := service.NewManager(mgr, svcStore)
+
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -210,7 +217,7 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 		clusterLister = &clusterMemberAdapter{cluster: swimCluster}
 	}
 
-	vmSrv, err := api.NewServer(mgr, netStore, socketPath, stop, version, clusterLister)
+	vmSrv, err := api.NewServer(mgr, netStore, svcMgr, socketPath, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
@@ -349,6 +356,14 @@ func networksDir() string {
 		return ".uni/networks"
 	}
 	return home + "/.uni/networks"
+}
+
+func servicesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".uni/services"
+	}
+	return home + "/.uni/services"
 }
 
 func blobsDir() string {
