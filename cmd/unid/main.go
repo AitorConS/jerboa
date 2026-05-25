@@ -14,13 +14,9 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/autotls"
 	"github.com/AitorConS/unikernel-engine/internal/cluster"
-	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/metrics"
 	"github.com/AitorConS/unikernel-engine/internal/network"
-	"github.com/AitorConS/unikernel-engine/internal/ociblob"
-	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/service"
 	"github.com/AitorConS/unikernel-engine/internal/slogformat"
 	"github.com/AitorConS/unikernel-engine/internal/tracing"
@@ -40,50 +36,29 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath      string
-		qemuBin         string
-		registryAddr    string
-		registryToken   string
-		registryJWT     string
-		registryJWTIss  string
-		registryJWTAud  string
-		registryTLSCert string
-		registryTLSKey  string
-		storePath       string
-		vmStoreType     string
-		metricsAddr     string
-		uiAddr          string
-		logFormat       string
-		traceAddr       string
-		clusterAddr     string
-		joinAddrs       string
+		socketPath  string
+		qemuBin     string
+		storePath   string
+		vmStoreType string
+		metricsAddr string
+		uiAddr      string
+		logFormat   string
+		traceAddr   string
+		clusterAddr string
+		joinAddrs   string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs)
+			return serve(cmd.Context(), socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
 		"Unix socket path for VM management API")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
-	root.Flags().StringVar(&registryAddr, "registry-addr", "",
-		"HTTP address for image registry (e.g. :5000); empty disables it")
-	root.Flags().StringVar(&registryToken, "registry-token", os.Getenv("UNI_REGISTRY_TOKEN"),
-		"Optional bearer token for registry auth (or set UNI_REGISTRY_TOKEN)")
-	root.Flags().StringVar(&registryJWT, "registry-jwt-secret", os.Getenv("UNI_REGISTRY_JWT_SECRET"),
-		"Optional JWT HMAC secret for scoped registry auth (or set UNI_REGISTRY_JWT_SECRET)")
-	root.Flags().StringVar(&registryJWTIss, "registry-jwt-issuer", os.Getenv("UNI_REGISTRY_JWT_ISSUER"),
-		"Optional expected JWT issuer for registry auth (or set UNI_REGISTRY_JWT_ISSUER)")
-	root.Flags().StringVar(&registryJWTAud, "registry-jwt-audience", os.Getenv("UNI_REGISTRY_JWT_AUDIENCE"),
-		"Optional expected JWT audience for registry auth (or set UNI_REGISTRY_JWT_AUDIENCE)")
-	root.Flags().StringVar(&registryTLSCert, "registry-tls-cert", os.Getenv("UNI_REGISTRY_TLS_CERT"),
-		"Optional TLS cert file for registry HTTPS (or set UNI_REGISTRY_TLS_CERT)")
-	root.Flags().StringVar(&registryTLSKey, "registry-tls-key", os.Getenv("UNI_REGISTRY_TLS_KEY"),
-		"Optional TLS key file for registry HTTPS (or set UNI_REGISTRY_TLS_KEY)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
 	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
@@ -100,35 +75,10 @@ func newRootCmd() *cobra.Command {
 		"HTTP address for cluster gossip endpoint (e.g. :7946); empty disables cluster")
 	root.Flags().StringVar(&joinAddrs, "join", "",
 		"Comma-separated list of seed node addresses to join (e.g. 10.0.0.2:7946,10.0.0.3:7946)")
-	root.AddCommand(newRegistryGCCmd())
 	return root
 }
 
-func newRegistryGCCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "gc",
-		Short: "Garbage collect unreferenced registry blobs",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			blobStore, err := ociblob.NewStore(blobsDir())
-			if err != nil {
-				return fmt.Errorf("unid gc: blob store: %w", err)
-			}
-			ociStore, err := registry.NewOCIStore(ociDir())
-			if err != nil {
-				return fmt.Errorf("unid gc: OCI store: %w", err)
-			}
-			result, err := registry.GarbageCollect(blobStore, ociStore)
-			if err != nil {
-				return fmt.Errorf("unid gc: %w", err)
-			}
-			slog.Info("registry gc complete", "removed", result.Removed, "kept", result.Kept)
-			return nil
-		},
-	}
-	return cmd
-}
-
-func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken, registryJWT, registryJWTIss, registryJWTAud, registryTLSCert, registryTLSKey, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs string) error {
+func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs string) error {
 	setupLogger(logFormat)
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
@@ -224,87 +174,10 @@ func serve(ctx context.Context, socketPath, qemuBin, registryAddr, registryToken
 
 	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
 
-	if registryAddr != "" {
-		if err := validateRegistryTLSConfig(registryTLSCert, registryTLSKey); err != nil {
-			return fmt.Errorf("unid: registry TLS config: %w", err)
-		}
-
-		useTLS := false
-		if strings.TrimSpace(registryTLSCert) != "" {
-			useTLS = true
-		} else {
-			selfSignedCert := filepath.Join(autotls.DefaultCertDir(), "cert.pem")
-			selfSignedKey := filepath.Join(autotls.DefaultCertDir(), "key.pem")
-			_, err := autotls.EnsureCert(selfSignedCert, selfSignedKey)
-			if err != nil {
-				return fmt.Errorf("unid: generate self-signed cert: %w", err)
-			}
-			slog.Info("registry using auto-generated self-signed TLS certificate", "cert", selfSignedCert)
-			registryTLSCert = selfSignedCert
-			registryTLSKey = selfSignedKey
-			useTLS = true
-		}
-
-		imgStore, err := image.NewStore(storePath)
-		if err != nil {
-			return fmt.Errorf("unid: image store: %w", err)
-		}
-		blobStore, err := ociblob.NewStore(blobsDir())
-		if err != nil {
-			return fmt.Errorf("unid: blob store: %w", err)
-		}
-		ociStore, err := registry.NewOCIStore(ociDir())
-		if err != nil {
-			return fmt.Errorf("unid: OCI store: %w", err)
-		}
-		opts := []registry.Option{registry.WithBlobStore(blobStore), registry.WithOCIStore(ociStore)}
-		if registryToken != "" {
-			opts = append(opts, registry.WithBearerToken(registryToken, "uni-registry"))
-		}
-		if registryJWT != "" {
-			opts = append(opts, registry.WithJWTAuth(registryJWT, "uni-registry"))
-			opts = append(opts, registry.WithJWTValidation(registryJWTIss, registryJWTAud))
-		}
-		regSrv := &http.Server{
-			Addr:    registryAddr,
-			Handler: registry.NewServer(imgStore, opts...).Handler(),
-		}
-		go func() {
-			slog.Info("registry listening", "addr", registryAddr, "tls", useTLS)
-			var err error
-			if useTLS {
-				err = regSrv.ListenAndServeTLS(registryTLSCert, registryTLSKey)
-			} else {
-				err = regSrv.ListenAndServe()
-			}
-			if err != nil && err != http.ErrServerClosed {
-				slog.Error("registry server", "err", err)
-			}
-		}()
-		go func() {
-			<-ctx.Done()
-			if err := regSrv.Shutdown(context.Background()); err != nil {
-				slog.Warn("registry shutdown", "err", err)
-			}
-		}()
-	}
-
 	if err := vmSrv.Serve(ctx); err != nil {
 		return fmt.Errorf("unid serve: %w", err)
 	}
 	slog.Info("unid shutdown complete")
-	return nil
-}
-
-func validateRegistryTLSConfig(certPath, keyPath string) error {
-	cert := strings.TrimSpace(certPath)
-	key := strings.TrimSpace(keyPath)
-	if cert == "" && key == "" {
-		return nil
-	}
-	if cert == "" || key == "" {
-		return fmt.Errorf("both registry TLS cert and key are required")
-	}
 	return nil
 }
 

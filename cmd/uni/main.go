@@ -21,12 +21,9 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath       string
-		storePath        string
-		outputFmt        string
-		registryToken    string
-		registryCACert   string
-		registryInsecure bool
+		socketPath string
+		storePath  string
+		outputFmt  string
 	)
 
 	root := &cobra.Command{
@@ -40,23 +37,12 @@ func newRootCmd() *cobra.Command {
 		defaultStorePath(), "local image store path")
 	root.PersistentFlags().StringVar(&outputFmt, "output", "table",
 		"output format: table or json")
-	root.PersistentFlags().StringVar(&registryToken, "registry-token", os.Getenv("UNI_REGISTRY_TOKEN"),
-		"Optional bearer/JWT token for registry requests (or set UNI_REGISTRY_TOKEN)")
-	root.PersistentFlags().StringVar(&registryCACert, "registry-ca-cert", os.Getenv("UNI_REGISTRY_CA_CERT"),
-		"Optional CA certificate file for registry TLS (or set UNI_REGISTRY_CA_CERT)")
-	root.PersistentFlags().BoolVar(&registryInsecure, "registry-insecure", envBool("UNI_REGISTRY_INSECURE"),
-		"Skip registry TLS certificate verification (or set UNI_REGISTRY_INSECURE=true)")
-
-	regCfg := &registryClientConfig{token: &registryToken, caCert: &registryCACert, insecure: &registryInsecure}
 
 	root.AddCommand(
 		newRunCmd(&socketPath, &storePath),
 		newBuildCmd(&storePath),
 		newImagesCmd(&storePath),
 		newRmiCmd(&storePath),
-		newPushCmd(&storePath, regCfg),
-		newPullCmd(&storePath, regCfg),
-		newSearchCmd(regCfg),
 		newSignCmd(&storePath),
 		newVerifyCmd(&storePath),
 		newPsCmd(&socketPath, &outputFmt),

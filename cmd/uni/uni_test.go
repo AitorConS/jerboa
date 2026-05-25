@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,8 +14,6 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
-	"github.com/AitorConS/unikernel-engine/internal/ociblob"
-	"github.com/AitorConS/unikernel-engine/internal/registry"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/stretchr/testify/require"
@@ -101,38 +98,6 @@ func makeStore(t *testing.T) (storePath, diskPath string) {
 	return storePath, diskPath
 }
 
-// startRegistry starts an in-process registry HTTP server backed by a fresh store.
-func startRegistry(t *testing.T) (url, storePath string) {
-	t.Helper()
-	storePath = t.TempDir()
-	store, err := image.NewStore(storePath)
-	require.NoError(t, err)
-	srv := registry.NewServer(store)
-	ts := httptest.NewServer(srv.Handler())
-	t.Cleanup(ts.Close)
-	return ts.URL, storePath
-}
-
-func startSecureRegistry(t *testing.T, token string, withOCI bool) (url, storePath string) {
-	t.Helper()
-	storePath = t.TempDir()
-	store, err := image.NewStore(storePath)
-	require.NoError(t, err)
-
-	opts := []registry.Option{registry.WithBearerToken(token, "uni-test")}
-	if withOCI {
-		blobs, err := ociblob.NewStore(filepath.Join(t.TempDir(), "blobs"))
-		require.NoError(t, err)
-		ociStore, err := registry.NewOCIStore(filepath.Join(t.TempDir(), "oci"))
-		require.NoError(t, err)
-		opts = append(opts, registry.WithBlobStore(blobs), registry.WithOCIStore(ociStore))
-	}
-
-	srv := registry.NewServer(store, opts...)
-	ts := httptest.NewTLSServer(srv.Handler())
-	t.Cleanup(ts.Close)
-	return ts.URL, storePath
-}
 
 // --- ps ---
 
@@ -265,45 +230,6 @@ func TestRm_StoppedVM(t *testing.T) {
 	execRoot(t, socketPath, storePath, "rm", info.ID)
 }
 
-func TestRegistryPushPull_WithTLSAndAuth(t *testing.T) {
-	_, socketPath := startDaemon(t)
-	storePath, _ := makeStore(t)
-	registryURL, _ := startSecureRegistry(t, "secret-token", false)
-
-	out := execRoot(t, socketPath, storePath,
-		"--registry-token", "secret-token",
-		"--registry-insecure",
-		"push", "hello:latest", registryURL,
-	)
-	require.Contains(t, out, "pushed hello:latest")
-
-	pullStore := t.TempDir()
-	out = execRoot(t, socketPath, pullStore,
-		"--registry-token", "secret-token",
-		"--registry-insecure",
-		"pull", "hello:latest", registryURL,
-	)
-	require.Contains(t, out, "hello:latest")
-}
-
-func TestRegistrySearch_WithTLSAndAuth(t *testing.T) {
-	_, socketPath := startDaemon(t)
-	storePath, _ := makeStore(t)
-	registryURL, _ := startSecureRegistry(t, "secret-token", true)
-
-	execRoot(t, socketPath, storePath,
-		"--registry-token", "secret-token",
-		"--registry-insecure",
-		"push", "hello:latest", registryURL,
-	)
-
-	out := execRoot(t, socketPath, storePath,
-		"--registry-token", "secret-token",
-		"--registry-insecure",
-		"search", registryURL+"/hello",
-	)
-	require.Contains(t, out, "hello")
-}
 
 // --- exec ---
 
@@ -362,18 +288,6 @@ func TestRmi(t *testing.T) {
 
 	out := execRoot(t, socketPath, storePath, "rmi", "hello:latest")
 	require.Contains(t, out, "hello:latest")
-}
-
-// --- push / pull ---
-
-func TestPush_Pull(t *testing.T) {
-	_, socketPath := startDaemon(t)
-	srcStorePath, _ := makeStore(t)
-	registryURL, dstStorePath := startRegistry(t)
-
-	execRoot(t, socketPath, srcStorePath, "push", "hello:latest", registryURL)
-	out := execRoot(t, socketPath, dstStorePath, "pull", "hello:latest", registryURL)
-	require.Contains(t, out, "hello")
 }
 
 // --- build error paths ---
@@ -474,6 +388,20 @@ func TestFormatSize(t *testing.T) {
 	require.Equal(t, "1.0MB", formatSize(1<<20))
 	require.Equal(t, "1.0KB", formatSize(1<<10))
 	require.Equal(t, "512B", formatSize(512))
+}
+
+func TestRootCmd_NoRegistryCommandsOrFlags(t *testing.T) {
+	root := newRootCmd()
+
+	for _, name := range []string{"push", "pull", "search"} {
+		cmd, _, err := root.Find([]string{name})
+		require.Error(t, err)
+		require.Equal(t, root, cmd)
+	}
+
+	for _, flag := range []string{"registry-token", "registry-ca-cert", "registry-insecure"} {
+		require.Nil(t, root.PersistentFlags().Lookup(flag))
+	}
 }
 
 func TestShortDigest(t *testing.T) {

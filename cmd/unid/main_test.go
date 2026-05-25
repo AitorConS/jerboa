@@ -21,34 +21,10 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		err := serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", "", "", t.TempDir(), "file", "", "", "text", "", "", "")
+		err := serve(ctx, socketPath, "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "")
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Logf("serve returned: %v", err)
 		}
-	}()
-
-	require.Eventually(t, func() bool {
-		client, err := api.Dial(socketPath)
-		if err != nil {
-			return false
-		}
-		_ = client.Close()
-		return true
-	}, 5*time.Second, 50*time.Millisecond, "daemon did not start")
-
-	cancel()
-}
-
-func TestServe_WithRegistry(t *testing.T) {
-	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "unid-reg-test.sock")
-	storePath := t.TempDir()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "127.0.0.1:0", "", "", "", "", "", "", storePath, "file", "", "", "text", "", "", "")
 	}()
 
 	require.Eventually(t, func() bool {
@@ -81,13 +57,6 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	cmd := newRootCmd()
 	require.NotNil(t, cmd.Flag("socket"))
 	require.NotNil(t, cmd.Flag("qemu"))
-	require.NotNil(t, cmd.Flag("registry-addr"))
-	require.NotNil(t, cmd.Flag("registry-token"))
-	require.NotNil(t, cmd.Flag("registry-jwt-secret"))
-	require.NotNil(t, cmd.Flag("registry-jwt-issuer"))
-	require.NotNil(t, cmd.Flag("registry-jwt-audience"))
-	require.NotNil(t, cmd.Flag("registry-tls-cert"))
-	require.NotNil(t, cmd.Flag("registry-tls-key"))
 	require.NotNil(t, cmd.Flag("store"))
 	require.NotNil(t, cmd.Flag("vm-store"))
 	require.NotNil(t, cmd.Flag("metrics-addr"))
@@ -96,7 +65,6 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	require.NotNil(t, cmd.Flag("trace-addr"))
 	require.NotNil(t, cmd.Flag("cluster-addr"))
 	require.NotNil(t, cmd.Flag("join"))
-	require.NotNil(t, cmd.Commands())
 }
 
 func TestServe_VersionQuery(t *testing.T) {
@@ -107,7 +75,7 @@ func TestServe_VersionQuery(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", "", "", "", "", "", "", "", t.TempDir(), "file", "", "", "text", "", "", "")
+		_ = serve(ctx, socketPath, "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "")
 	}()
 
 	require.Eventually(t, func() bool {
@@ -123,12 +91,6 @@ func TestServe_VersionQuery(t *testing.T) {
 	cancel()
 }
 
-func TestServe_WithRegistryTLSMissingKeyFails(t *testing.T) {
-	err := serve(context.Background(), filepath.Join(t.TempDir(), "unid.sock"), "fake-qemu", "127.0.0.1:0", "", "", "", "", "cert.pem", "", t.TempDir(), "file", "", "", "text", "", "", "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "registry TLS config")
-}
-
 func TestNewRootCmd_Execute_Help(t *testing.T) {
 	cmd := newRootCmd()
 	cmd.SetArgs([]string{"--help"})
@@ -136,11 +98,4 @@ func TestNewRootCmd_Execute_Help(t *testing.T) {
 	cmd.SetErr(os.Stderr)
 	err := cmd.Execute()
 	require.NoError(t, err)
-}
-
-func TestNewRootCmd_HasGCCmd(t *testing.T) {
-	cmd := newRootCmd()
-	gccmd, _, err := cmd.Find([]string{"gc"})
-	require.NoError(t, err)
-	require.Equal(t, "gc", gccmd.Name())
 }
