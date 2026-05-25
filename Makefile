@@ -4,7 +4,7 @@ BUILD_DIR    := dist
 VERSION      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS      := -ldflags="-s -w -X main.version=$(VERSION)"
 
-.PHONY: build kernel test test-integration test-kernel lint e2e coverage clean
+.PHONY: build kernel test test-integration test-kernel lint e2e smoke coverage clean
 
 build:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/uni
@@ -27,6 +27,11 @@ lint:
 
 e2e:
 	go test -tags e2e -timeout 30m ./tests/e2e/...
+
+smoke:
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI) ./cmd/uni
+	go build $(LDFLAGS) -o $(BUILD_DIR)/uni-smoke ./cmd/uni-smoke
+	./$(BUILD_DIR)/uni-smoke --uni ./$(BUILD_DIR)/$(BINARY_UNI)
 
 coverage: test
 	go tool cover -html=coverage.out -o coverage.html
