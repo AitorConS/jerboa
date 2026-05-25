@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/AitorConS/unikernel-engine/internal/image"
@@ -27,6 +28,8 @@ func wslFunc(mkfsPath, bootImg, kernelImg string) (image.MkfsFunc, error) {
 		wslImg := windowsToWSLPath(imgPath)
 		if manifest == "" {
 			manifest = buildNanosManifest(wslBin)
+		} else {
+			manifest = rewriteManifestWindowsPathsToWSL(manifest)
 		}
 		cmd := exec.CommandContext(ctx, "wsl", "--",
 			wslMkfs,
@@ -61,4 +64,13 @@ func windowsToWSLPath(p string) string {
 		return "/mnt/" + drive + p[2:]
 	}
 	return p
+}
+
+var hostPathRe = regexp.MustCompile(`host:([^\)\s]+)`)
+
+func rewriteManifestWindowsPathsToWSL(manifest string) string {
+	return hostPathRe.ReplaceAllStringFunc(manifest, func(m string) string {
+		p := strings.TrimPrefix(m, "host:")
+		return "host:" + windowsToWSLPath(p)
+	})
 }

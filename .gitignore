@@ -12,3 +12,4 @@ examples/**/*.img
 *agents/*
 *claude/*
 skills-lock.json
+docs/guia-uni.html
