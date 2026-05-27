@@ -32,6 +32,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 		mkfs      string
 		updateYes bool
 		pkgs      []string
+		pkgSource string
 		lang      string
 		platform  string
 	)
@@ -68,14 +69,20 @@ project markers (go.mod, package.json, etc.).`,
 				return fmt.Errorf("build: %w", err)
 			}
 
-			var pkgFiles []string
-			if len(pkgs) > 0 {
-				resolved, err := resolvePackages(cmd.Context(), pkgs)
-				if err != nil {
-					return fmt.Errorf("build: %w", err)
-				}
-				pkgFiles = resolved
+		var pkgFiles []pkg.PkgFile
+		if len(pkgs) > 0 {
+			var resolved []pkg.PkgFile
+			var err error
+			if pkgSource == "ops" {
+				resolved, err = resolveOpsPackages(cmd.Context(), pkgs)
+			} else {
+				resolved, err = resolvePackages(cmd.Context(), pkgs)
 			}
+			if err != nil {
+				return fmt.Errorf("build: %w", err)
+			}
+			pkgFiles = resolved
+		}
 
 			srcPath := absPath(args[0])
 
@@ -136,13 +143,14 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&mkfs, "mkfs", "", "path to mkfs binary — skip auto-download (env: UNI_MKFS)")
 	cmd.Flags().BoolVarP(&updateYes, "update-kernel", "U", false, "auto-approve kernel update if one is available")
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
+	cmd.Flags().StringVar(&pkgSource, "pkg-source", "uni", "package source: \"uni\" (default) or \"ops\" (nanovms/ops ecosystem)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	return cmd
 }
 
 // buildSingle handles a single-language build (no stages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]string) (string, error) {
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.PkgFile) (string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
@@ -184,7 +192,6 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
 		Entrypoint: entrypoint,
 		BuildArgs:  buildArgs,
-		PkgFiles:   *pkgFiles,
 		Platform:   buildPlatform,
 	})
 	if err != nil {
@@ -221,13 +228,13 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 type stageResult struct {
 	binaryPath string
 	sourceDir  string
-	pkgFiles   []string
+	pkgFiles   []pkg.PkgFile
 }
 
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []string, platformFlag, langFlag string) (string, []string, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.PkgFile, platformFlag, langFlag string) (string, []pkg.PkgFile, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -256,7 +263,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 
-		var stagePkgs []string
+		var stagePkgs []pkg.PkgFile
 		stagePkgs = append(stagePkgs, pkgFiles...)
 
 		for _, cf := range stage.CopyFrom {
@@ -271,14 +278,19 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			if dst == "" {
 				dst = filepath.Base(cf.Src)
 			}
-			stagePkgs = append(stagePkgs, prev.binaryPath)
+			stagePkgs = append(stagePkgs, pkg.PkgFile{HostPath: prev.binaryPath, GuestPath: filepath.Base(prev.binaryPath)})
 			_ = dst
+		}
+
+		var driverPkgPaths []string
+		for _, pf := range stagePkgs {
+			driverPkgPaths = append(driverPkgPaths, pf.HostPath)
 		}
 
 		result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
 			Entrypoint: stage.Entrypoint,
 			BuildArgs:  stage.Args,
-			PkgFiles:   stagePkgs,
+			PkgFiles:   driverPkgPaths,
 			Platform:   buildPlatform,
 		})
 		if err != nil {
@@ -323,8 +335,8 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 }
 
 // resolvePackages downloads and extracts packages, returning the list of
-// file paths that should be included in the manifest.
-func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
+// package files that should be included in the manifest.
+func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, error) {
 	pkgStore, err := pkg.NewStore(pkgStorePath())
 	if err != nil {
 		return nil, fmt.Errorf("open package store: %w", err)
@@ -335,7 +347,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}
 
-	var files []string
+	var files []pkg.PkgFile
 	for _, ref := range pkgRefs {
 		pkgName, pkgVer := parsePkgRef(ref)
 		target := idx.Latest(pkgName)
@@ -371,9 +383,56 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]string, error) {
 				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
 			}
 		}
-		pkgFiles, err := pkgStore.ExtractedFiles(target.Name, target.Version)
+		paths, err := pkgStore.ExtractedFiles(target.Name, target.Version)
 		if err != nil {
 			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
+		}
+		for _, p := range paths {
+			files = append(files, pkg.PkgFile{HostPath: p, GuestPath: filepath.Base(p)})
+		}
+	}
+	return files, nil
+}
+
+// resolveOpsPackages downloads and extracts ops packages, returning the list
+// of package files with proper guest paths (preserving sysroot/ hierarchy).
+func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, error) {
+	opsStore, err := openOpsStore()
+	if err != nil {
+		return nil, fmt.Errorf("open ops package store: %w", err)
+	}
+
+	manifest, err := opsStore.FetchManifestCached()
+	if err != nil {
+		return nil, fmt.Errorf("fetch ops manifest: %w", err)
+	}
+
+	var files []pkg.PkgFile
+	for _, ref := range pkgRefs {
+		id, err := pkg.ParseOpsIdentifier(ref)
+		if err != nil {
+			return nil, fmt.Errorf("parse ops package %q: %w", ref, err)
+		}
+
+		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		if target == nil {
+			return nil, fmt.Errorf("ops package %q not found in manifest", ref)
+		}
+
+		if !opsStore.IsDownloaded(target.Namespace, target.Name, target.Version) {
+			if err := opsStore.Download(target.Namespace, target.Name, target.Version, target.SHA256); err != nil {
+				return nil, fmt.Errorf("download ops package %s: %w", target.Name, err)
+			}
+		}
+		if !opsStore.IsExtracted(target.Namespace, target.Name, target.Version) {
+			if err := opsStore.Extract(target.Namespace, target.Name, target.Version); err != nil {
+				return nil, fmt.Errorf("extract ops package %s: %w", target.Name, err)
+			}
+		}
+
+		pkgFiles, err := opsStore.ExtractedFiles(target.Namespace, target.Name, target.Version)
+		if err != nil {
+			return nil, fmt.Errorf("list ops package files %s: %w", target.Name, err)
 		}
 		files = append(files, pkgFiles...)
 	}
@@ -427,8 +486,8 @@ func defaultToolsPath() string {
 }
 
 // resolveAutoPackages resolves language runtime packages (e.g. "node:20")
-// and returns the list of extracted file paths.
-func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]string, error) {
+// and returns the list of extracted package files.
+func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.PkgFile, error) {
 	if len(autoPkgs) == 0 {
 		return nil, nil
 	}
@@ -443,7 +502,7 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]string, erro
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}
 
-	var files []string
+	var files []pkg.PkgFile
 	for _, ref := range autoPkgs {
 		pkgName, pkgVer := parsePkgRef(ref)
 		target := idx.Latest(pkgName)
@@ -479,11 +538,13 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]string, erro
 				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
 			}
 		}
-		pkgFiles, err := pkgStore.ExtractedFiles(target.Name, target.Version)
+		paths, err := pkgStore.ExtractedFiles(target.Name, target.Version)
 		if err != nil {
 			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
 		}
-		files = append(files, pkgFiles...)
+		for _, p := range paths {
+			files = append(files, pkg.PkgFile{HostPath: p, GuestPath: filepath.Base(p)})
+		}
 	}
 	return files, nil
 }
@@ -496,20 +557,20 @@ var runtimeBinaryNames = map[builder.Lang]string{
 
 // findRuntimeBinary searches the resolved package files for the runtime binary
 // of the given language.
-func findRuntimeBinary(pkgFiles []string, lang builder.Lang) (string, error) {
+func findRuntimeBinary(pkgFiles []pkg.PkgFile, lang builder.Lang) (string, error) {
 	binaryName, ok := runtimeBinaryNames[lang]
 	if !ok {
 		return "", fmt.Errorf("language %s does not have a runtime binary", lang)
 	}
 
 	for _, f := range pkgFiles {
-		if filepath.Base(f) == binaryName {
-			return f, nil
+		if filepath.Base(f.HostPath) == binaryName {
+			return f.HostPath, nil
 		}
 	}
 
 	for _, f := range pkgFiles {
-		matches, _ := filepath.Glob(filepath.Join(filepath.Dir(f), binaryName))
+		matches, _ := filepath.Glob(filepath.Join(filepath.Dir(f.HostPath), binaryName))
 		if len(matches) > 0 {
 			return matches[0], nil
 		}
@@ -520,13 +581,13 @@ func findRuntimeBinary(pkgFiles []string, lang builder.Lang) (string, error) {
 
 // sourceFiles collects application source files from dir for inclusion in the image.
 // It reads .unignore patterns and excludes matching files and directories.
-func sourceFiles(dir string) ([]string, error) {
+func sourceFiles(dir string) ([]pkg.PkgFile, error) {
 	ignore, err := builder.LoadIgnoreFile(dir)
 	if err != nil {
 		return nil, fmt.Errorf("load ignore file: %w", err)
 	}
 
-	var files []string
+	var files []pkg.PkgFile
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -544,7 +605,7 @@ func sourceFiles(dir string) ([]string, error) {
 			return nil
 		}
 		if !info.IsDir() {
-			files = append(files, rel)
+			files = append(files, pkg.PkgFile{HostPath: path, GuestPath: rel})
 		}
 		return nil
 	})

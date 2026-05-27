@@ -3,12 +3,15 @@ package main
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
@@ -518,4 +521,228 @@ func TestPkgListCmd_JSON(t *testing.T) {
 	out := execRoot(t, socketPath, storePath, "pkg", "list", "--output-json")
 	require.Contains(t, out, "jsonpkg")
 	require.Contains(t, out, "3.0.0")
+}
+
+func setupOpsServer(t *testing.T) (*httptest.Server, func(list pkg.OpsPackageList, archives map[string][]byte)) {
+	t.Helper()
+	mux := http.NewServeMux()
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	origManifestURL := pkg.OpsPackageManifestURL
+	pkg.OpsPackageManifestURL = ts.URL + "/manifest.json"
+	t.Cleanup(func() { pkg.OpsPackageManifestURL = origManifestURL })
+
+	origBaseURL := pkg.OpsPackageBaseURL
+	pkg.OpsPackageBaseURL = ts.URL
+	t.Cleanup(func() { pkg.OpsPackageBaseURL = origBaseURL })
+
+	configure := func(list pkg.OpsPackageList, archives map[string][]byte) {
+		idxData, err := json.Marshal(list)
+		require.NoError(t, err)
+
+		mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Length", strconv.Itoa(len(idxData)))
+			_, _ = w.Write(idxData)
+		})
+		for path, data := range archives {
+			mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/gzip")
+				_, _ = w.Write(data)
+			})
+		}
+	}
+
+	return ts, configure
+}
+
+func withOpsStoreDir(t *testing.T) {
+	t.Helper()
+	origDir := opsPkgStoreDir
+	opsPkgStoreDir = t.TempDir()
+	t.Cleanup(func() { opsPkgStoreDir = origDir })
+}
+
+func createOpsTestArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	pr, pw := io.Pipe()
+	gw := gzip.NewWriter(pw)
+	tw := tar.NewWriter(gw)
+
+	go func() {
+		for name, content := range files {
+			mode := int64(0o644)
+			if name == "node" {
+				mode = 0o755
+			}
+			hdr := &tar.Header{
+				Name: name,
+				Mode: mode,
+				Size: int64(len(content)),
+			}
+			_ = tw.WriteHeader(hdr)
+			_, _ = tw.Write([]byte(content))
+		}
+		_ = tw.Close()
+		_ = gw.Close()
+		_ = pw.Close()
+	}()
+
+	buf, err := io.ReadAll(pr)
+	require.NoError(t, err)
+	return buf
+}
+
+func TestPkgListOps_Empty(t *testing.T) {
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	out := execRoot(t, socketPath, storePath, "pkg", "list", "--source", "ops")
+	require.Contains(t, out, "No ops packages installed")
+}
+
+func TestPkgGetOps_AndList(t *testing.T) {
+	archiveData := createOpsTestArchive(t, map[string]string{
+		"node": "fake elf binary",
+	})
+
+	ts, configure := setupOpsServer(t)
+	_ = ts
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/node/v16.5.0.tar.gz": archiveData,
+	})
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	out := execRoot(t, socketPath, vmStorePath, "pkg", "get", "eyberg/node:v16.5.0", "--source", "ops")
+	require.Contains(t, out, "node")
+	require.Contains(t, out, "installed")
+
+	out = execRoot(t, socketPath, vmStorePath, "pkg", "list", "--source", "ops")
+	require.Contains(t, out, "eyberg")
+	require.Contains(t, out, "node")
+}
+
+func TestPkgSearchOps(t *testing.T) {
+	_, configure := setupOpsServer(t)
+
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node"},
+			{Name: "python", Version: "3.12", Namespace: "eyberg", Language: "python"},
+		},
+	}, nil)
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	out := execRoot(t, socketPath, vmStorePath, "pkg", "search", "node", "--source", "ops")
+	require.Contains(t, out, "node")
+}
+
+func TestPkgSearchOps_NoResults(t *testing.T) {
+	_, configure := setupOpsServer(t)
+
+	configure(pkg.OpsPackageList{
+		Version:  1,
+		Packages: []pkg.OpsPackage{},
+	}, nil)
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	out := execRoot(t, socketPath, vmStorePath, "pkg", "search", "nonexistent", "--source", "ops")
+	require.Contains(t, out, "No ops packages found")
+}
+
+func TestPkgRemoveOps(t *testing.T) {
+	archiveData := createOpsTestArchive(t, map[string]string{
+		"node": "fake elf binary",
+	})
+
+	ts, configure := setupOpsServer(t)
+	_ = ts
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/node/v16.5.0.tar.gz": archiveData,
+	})
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	execRoot(t, socketPath, vmStorePath, "pkg", "get", "eyberg/node:v16.5.0", "--source", "ops")
+
+	out := execRoot(t, socketPath, vmStorePath, "pkg", "remove", "eyberg/node:v16.5.0", "--source", "ops")
+	require.Contains(t, out, "Removed")
+}
+
+func TestPkgGetOps_AlreadyDownloaded(t *testing.T) {
+	archiveData := createOpsTestArchive(t, map[string]string{
+		"node": "fake elf binary",
+	})
+
+	ts, configure := setupOpsServer(t)
+	_ = ts
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/node/v16.5.0.tar.gz": archiveData,
+	})
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	execRoot(t, socketPath, vmStorePath, "pkg", "get", "eyberg/node:v16.5.0", "--source", "ops")
+
+	out := execRoot(t, socketPath, vmStorePath, "pkg", "get", "eyberg/node:v16.5.0", "--source", "ops")
+	require.Contains(t, out, "already downloaded")
+}
+
+func TestPkgGetOps_NotFound(t *testing.T) {
+	_, configure := setupOpsServer(t)
+
+	configure(pkg.OpsPackageList{
+		Version:  1,
+		Packages: []pkg.OpsPackage{},
+	}, nil)
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	msg := execRootExpectError(t, socketPath, vmStorePath, "pkg", "get", "eyberg/nonexistent:v1", "--source", "ops")
+	require.Contains(t, msg, "not found")
 }

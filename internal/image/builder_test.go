@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,14 +35,26 @@ func TestBuildManifest_NoPkgFiles(t *testing.T) {
 }
 
 func TestBuildManifest_WithPkgFiles(t *testing.T) {
-	pkgFiles := []string{
-		filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/bin/node"),
-		filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/lib/libnode.so"),
+	pkgFiles := []pkg.PkgFile{
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/bin/node"), GuestPath: "node"},
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/lib/libnode.so"), GuestPath: "libnode.so"},
 	}
 	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles)
 	require.Contains(t, got, "program:/program")
 	require.Contains(t, got, "node:(contents:(host:")
 	require.Contains(t, got, "libnode.so:(contents:(host:")
+}
+
+func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
+	pkgFiles := []pkg.PkgFile{
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/node"), GuestPath: "node"},
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2"), GuestPath: "lib/x86_64-linux-gnu/libnss_dns.so.2"},
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/etc/ssl/certs/ca-certificates.crt"), GuestPath: "etc/ssl/certs/ca-certificates.crt"},
+	}
+	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles)
+	require.Contains(t, got, "node:(contents:(host:")
+	require.Contains(t, got, "lib/x86_64-linux-gnu/libnss_dns.so.2:(contents:(host:")
+	require.Contains(t, got, "etc/ssl/certs/ca-certificates.crt:(contents:(host:")
 }
 
 func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
@@ -56,7 +69,10 @@ func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(binPath, []byte("binary"), 0o755))
 	require.NoError(t, os.WriteFile(libPath, []byte("sharedlib"), 0o644))
 
-	pkgFiles := []string{binPath, libPath}
+	pkgFiles := []pkg.PkgFile{
+		{HostPath: binPath, GuestPath: "myapp"},
+		{HostPath: libPath, GuestPath: "libmyapp.so"},
+	}
 	got := BuildManifest(binPath, pkgFiles)
 
 	require.Contains(t, got, "myapp:(contents:(host:")
@@ -160,7 +176,7 @@ func TestBuild_WithPkgFiles(t *testing.T) {
 		Name:       "hello",
 		BinaryPath: binPath,
 		MkfsRun:    mkfsRun,
-		PkgFiles:   []string{pkgFile},
+		PkgFiles:   []pkg.PkgFile{{HostPath: pkgFile, GuestPath: "node"}},
 	}
 
 	m, err := b.Build(context.Background(), cfg)

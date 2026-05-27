@@ -4,12 +4,15 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
@@ -110,14 +113,14 @@ func TestResolvePackages_DownloadExtractListFiles(t *testing.T) {
 
 	names := map[string]bool{}
 	for _, f := range files {
-		names[filepath.Base(f)] = true
+		names[filepath.Base(f.HostPath)] = true
 	}
 	require.True(t, names["app"])
 	require.True(t, names["lib.so"])
 
 	for _, f := range files {
-		_, err := os.Stat(f)
-		require.NoError(t, err, "extracted file should exist: %s", f)
+		_, err := os.Stat(f.HostPath)
+		require.NoError(t, err, "extracted file should exist: %s", f.HostPath)
 	}
 }
 
@@ -150,7 +153,7 @@ func TestResolvePackages_SpecificVersion(t *testing.T) {
 	files, err := resolvePackages(context.Background(), []string{"myrt:1.0.0"})
 	require.NoError(t, err)
 	require.Len(t, files, 1)
-	require.Equal(t, "app", filepath.Base(files[0]))
+	require.Equal(t, "app", filepath.Base(files[0].HostPath))
 }
 
 func TestResolvePackages_NotFound(t *testing.T) {
@@ -198,8 +201,146 @@ func TestResolvePackages_MultiplePackages(t *testing.T) {
 
 	names := map[string]bool{}
 	for _, f := range files {
-		names[filepath.Base(f)] = true
+		names[filepath.Base(f.HostPath)] = true
 	}
 	require.True(t, names["a.bin"])
 	require.True(t, names["b.bin"])
+}
+
+func createOpsResolveArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	pr, pw := io.Pipe()
+	gw := gzip.NewWriter(pw)
+	tw := tar.NewWriter(gw)
+
+	go func() {
+		for name, content := range files {
+			mode := int64(0o644)
+			if name == "node" {
+				mode = 0o755
+			}
+			hdr := &tar.Header{Name: name, Mode: mode, Size: int64(len(content)), Typeflag: tar.TypeReg}
+			_ = tw.WriteHeader(hdr)
+			_, _ = tw.Write([]byte(content))
+		}
+		_ = tw.Close()
+		_ = gw.Close()
+		_ = pw.Close()
+	}()
+
+	buf, err := io.ReadAll(pr)
+	require.NoError(t, err)
+	return buf
+}
+
+func withTempOpsStore(t *testing.T) {
+	t.Helper()
+	origDir := opsPkgStoreDir
+	opsPkgStoreDir = t.TempDir()
+	t.Cleanup(func() { opsPkgStoreDir = origDir })
+}
+
+func setupOpsResolveServer(t *testing.T, list pkg.OpsPackageList, archives map[string][]byte) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.NotFoundHandler())
+
+	origManifestURL := pkg.OpsPackageManifestURL
+	pkg.OpsPackageManifestURL = ts.URL + "/manifest.json"
+	t.Cleanup(func() { pkg.OpsPackageManifestURL = origManifestURL })
+
+	origBaseURL := pkg.OpsPackageBaseURL
+	pkg.OpsPackageBaseURL = ts.URL
+	t.Cleanup(func() { pkg.OpsPackageBaseURL = origBaseURL })
+
+	idxData, err := json.Marshal(list)
+	require.NoError(t, err)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(idxData)))
+		w.Write(idxData)
+	})
+	for path, data := range archives {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Write(data)
+		})
+	}
+	ts.Config.Handler = mux
+
+	return ts
+}
+
+func TestResolveOpsPackages_DownloadExtractList(t *testing.T) {
+	archiveData := createOpsResolveArchive(t, map[string]string{
+		"sysroot/lib/x86_64-linux-gnu/libc.so": "libc content",
+		"node": "fake elf binary",
+	})
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	setupOpsResolveServer(t, pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/node/v16.5.0.tar.gz": archiveData,
+	})
+
+	withTempOpsStore(t)
+
+	files, err := resolveOpsPackages(context.Background(), []string{"eyberg/node:v16.5.0"})
+	require.NoError(t, err)
+	require.Len(t, files, 2)
+
+	guestPaths := map[string]bool{}
+	for _, f := range files {
+		guestPaths[f.GuestPath] = true
+		_, statErr := os.Stat(f.HostPath)
+		require.NoError(t, statErr, "host file should exist: %s", f.HostPath)
+	}
+	require.True(t, guestPaths["lib/x86_64-linux-gnu/libc.so"])
+}
+
+func TestResolveOpsPackages_NotFound(t *testing.T) {
+	setupOpsResolveServer(t, pkg.OpsPackageList{
+		Version:  1,
+		Packages: []pkg.OpsPackage{},
+	}, nil)
+	withTempOpsStore(t)
+
+	_, err := resolveOpsPackages(context.Background(), []string{"eyberg/nonexistent:v1"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
+}
+
+func TestResolveOpsPackages_AlreadyDownloaded(t *testing.T) {
+	archiveData := createOpsResolveArchive(t, map[string]string{
+		"node": "fake elf binary",
+	})
+
+	h := sha256.Sum256(archiveData)
+	sha := hex.EncodeToString(h[:])
+
+	setupOpsResolveServer(t, pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+		},
+	}, map[string][]byte{
+		"/eyberg/node/v16.5.0.tar.gz": archiveData,
+	})
+
+	withTempOpsStore(t)
+
+	files, err := resolveOpsPackages(context.Background(), []string{"eyberg/node:v16.5.0"})
+	require.NoError(t, err)
+	require.True(t, len(files) >= 1)
+
+	files2, err := resolveOpsPackages(context.Background(), []string{"eyberg/node:v16.5.0"})
+	require.NoError(t, err)
+	require.Equal(t, len(files), len(files2))
 }

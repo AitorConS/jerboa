@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 )
 
 // MkfsFunc creates an exec.Cmd that runs mkfs to package binaryPath into imgPath.
@@ -30,9 +32,12 @@ type BuildConfig struct {
 	Memory string
 	// CPUs is the default number of virtual CPUs.
 	CPUs int
-	// PkgFiles is a list of additional file paths to include in the image.
-	// These are typically extracted package files from the package store.
-	PkgFiles []string
+	// PkgFiles is a list of package files to include in the image.
+	// Each entry carries both the host path (on the build machine) and the
+	// guest path (inside the Nanos image). For uni packages, GuestPath is
+	// typically filepath.Base(HostPath). For ops packages, GuestPath
+	// preserves the sysroot/ hierarchy (e.g. "lib/x86_64-linux-gnu/libc.so").
+	PkgFiles []pkg.PkgFile
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -150,16 +155,21 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 }
 
 // BuildManifest constructs a Nanos manifest that includes the main program and
-// any additional package files.
-func BuildManifest(binaryPath string, pkgFiles []string) string {
+// any additional package files. PkgFile entries carry both HostPath and
+// GuestPath so that ops packages can preserve their sysroot/ directory
+// hierarchy inside the image.
+func BuildManifest(binaryPath string, pkgFiles []pkg.PkgFile) string {
 	absBin, _ := filepath.Abs(binaryPath)
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n        program:(contents:(host:")
 	b.WriteString(absBin)
 	b.WriteString("))\n")
 	for _, f := range pkgFiles {
-		abs, _ := filepath.Abs(f)
-		name := filepath.Base(f)
+		abs, _ := filepath.Abs(f.HostPath)
+		name := f.GuestPath
+		if name == "" {
+			name = filepath.Base(f.HostPath)
+		}
 		b.WriteString("        ")
 		b.WriteString(name)
 		b.WriteString(":(contents:(host:")

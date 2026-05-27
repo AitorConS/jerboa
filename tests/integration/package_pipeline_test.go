@@ -104,7 +104,12 @@ func TestPackageBuildPipeline(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "testapp")
 	require.NoError(t, os.WriteFile(binPath, []byte("\x7fELFfake"), 0o755))
 
-	got := image.BuildManifest(binPath, files)
+	var pkgFiles []pkg.PkgFile
+	for _, f := range files {
+		pkgFiles = append(pkgFiles, pkg.PkgFile{HostPath: f, GuestPath: filepath.Base(f)})
+	}
+
+	got := image.BuildManifest(binPath, pkgFiles)
 
 	require.Contains(t, got, "app:(contents:(host:")
 	require.Contains(t, got, "lib.so:(contents:(host:")
