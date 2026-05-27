@@ -194,10 +194,12 @@ func main() {
 
 	printResults(results)
 
+	exitCode := 0
 	if hasFail(results) {
-		cancel()
-		os.Exit(1)
+		exitCode = 1
 	}
+	cancel()
+	os.Exit(exitCode)
 }
 
 func addCmd(run func(...string) (string, error), add func(string, error, string), name string, args ...string) {
