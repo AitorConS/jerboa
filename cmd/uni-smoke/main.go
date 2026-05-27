@@ -65,7 +65,6 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	netStore, err := network.NewStore(filepath.Join(homePath, ".uni", "networks"))
 	if err != nil {
@@ -103,6 +102,7 @@ func main() {
 	}
 
 	results := make([]result, 0, 40)
+	exitCode := 0
 	add := func(name string, err error, out string) {
 		if err != nil {
 			results = append(results, result{name: name, status: "FAIL", detail: trim(out, err.Error())})
@@ -194,12 +194,13 @@ func main() {
 
 	printResults(results)
 
-	exitCode := 0
+	cancel()
 	if hasFail(results) {
 		exitCode = 1
 	}
-	cancel()
-	os.Exit(exitCode)
+	if exitCode != 0 {
+		os.Exit(exitCode)
+	}
 }
 
 func addCmd(run func(...string) (string, error), add func(string, error, string), name string, args ...string) {
