@@ -358,3 +358,164 @@ func TestPkgPushCmd_NotFound(t *testing.T) {
 	msg := execRootExpectError(t, socketPath, storePath, "pkg", "push", "node:20", "http://localhost:5000")
 	require.Contains(t, msg, "not found locally")
 }
+
+func TestPkg_Get_AlreadyDownloaded(t *testing.T) {
+	archiveData := createTestPackageArchive(t, map[string]string{
+		"app": "binary",
+	})
+
+	ts, configure := startPkgServer(t)
+
+	configure(pkg.Index{
+		Packages: map[string][]pkg.Package{
+			"cachedpkg": {
+				{
+					Name:    "cachedpkg",
+					Version: "1.0.0",
+					URL:     ts.URL + "/cachedpkg-1.0.0.tar.gz",
+					Size:    int64(len(archiveData)),
+				},
+			},
+		},
+	}, map[string][]byte{
+		"/cachedpkg-1.0.0.tar.gz": archiveData,
+	})
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	out := execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg")
+	require.Contains(t, out, "cachedpkg")
+
+	out = execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg")
+	require.Contains(t, out, "already downloaded")
+}
+
+func TestPkg_Get_LatestVersion(t *testing.T) {
+	archiveData := createTestPackageArchive(t, map[string]string{"app": "latest binary"})
+
+	ts, configure := startPkgServer(t)
+
+	configure(pkg.Index{
+		Packages: map[string][]pkg.Package{
+			"latestpkg": {
+				{Name: "latestpkg", Version: "2.0.0", Description: "Latest", Runtime: "go", Size: int64(len(archiveData)), URL: ts.URL + "/latest-2.tar.gz"},
+				{Name: "latestpkg", Version: "1.0.0", Description: "Old", Runtime: "go", Size: int64(len(archiveData)), URL: ts.URL + "/latest-1.tar.gz"},
+			},
+		},
+	}, map[string][]byte{
+		"/latest-2.tar.gz": archiveData,
+		"/latest-1.tar.gz": archiveData,
+	})
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	out := execRoot(t, socketPath, storePath, "pkg", "get", "latestpkg")
+	require.Contains(t, out, "2.0.0")
+}
+
+func TestPkg_Get_VersionNotFound(t *testing.T) {
+	_, configure := startPkgServer(t)
+
+	configure(pkg.Index{
+		Packages: map[string][]pkg.Package{
+			"node": {{Name: "node", Version: "20.0.0"}},
+		},
+	}, nil)
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "get", "node:99.0.0")
+	require.Contains(t, msg, "not found")
+}
+
+func TestPkg_Remove_SpecificVersion(t *testing.T) {
+	archiveData := createTestPackageArchive(t, map[string]string{"f.txt": "data"})
+
+	ts, configure := startPkgServer(t)
+
+	configure(pkg.Index{
+		Packages: map[string][]pkg.Package{
+			"rmver": {
+				{Name: "rmver", Version: "2.0.0", Size: int64(len(archiveData)), URL: ts.URL + "/rmver-2.tar.gz"},
+				{Name: "rmver", Version: "1.0.0", Size: int64(len(archiveData)), URL: ts.URL + "/rmver-1.tar.gz"},
+			},
+		},
+	}, map[string][]byte{
+		"/rmver-2.tar.gz": archiveData,
+		"/rmver-1.tar.gz": archiveData,
+	})
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	execRoot(t, socketPath, storePath, "pkg", "get", "rmver:2.0.0")
+	execRoot(t, socketPath, storePath, "pkg", "get", "rmver:1.0.0")
+
+	out := execRoot(t, socketPath, storePath, "pkg", "list")
+	require.Contains(t, out, "rmver")
+
+	out = execRoot(t, socketPath, storePath, "pkg", "remove", "rmver:1.0.0")
+	require.Contains(t, out, "1.0.0")
+
+	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	require.Contains(t, out, "2.0.0")
+}
+
+func TestPkgCreateCmd_WithLibs(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary content"), 0o755))
+
+	libPath := filepath.Join(t.TempDir(), "libmyapp.so")
+	require.NoError(t, os.WriteFile(libPath, []byte("lib content"), 0o644))
+
+	out := execRoot(t, socketPath, storePath, "pkg", "create", "libpkg:1.0.0", binaryPath, "--libs", libPath, "--description", "With libs", "--runtime", "go")
+	require.Contains(t, out, "libpkg:1.0.0")
+	require.Contains(t, out, "created")
+
+	out = execRoot(t, socketPath, storePath, "pkg", "list")
+	require.Contains(t, out, "libpkg")
+}
+
+func TestPkgCreateCmd_Duplicate(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	binaryPath := filepath.Join(t.TempDir(), "dupapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+
+	execRoot(t, socketPath, storePath, "pkg", "create", "duppkg:1.0.0", binaryPath)
+
+	msg := execRootExpectError(t, socketPath, storePath, "pkg", "create", "duppkg:1.0.0", binaryPath)
+	require.Contains(t, msg, "already exists")
+}
+
+func TestPkgListCmd_JSON(t *testing.T) {
+	origStoreDir := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = origStoreDir })
+
+	store, err := pkg.NewStore(pkgStoreDir)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveMeta(pkg.Package{Name: "jsonpkg", Version: "3.0.0", Description: "JSON test", Runtime: "python", SHA256: "abc123", Size: 1024}))
+
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	out := execRoot(t, socketPath, storePath, "pkg", "list", "--output-json")
+	require.Contains(t, out, "jsonpkg")
+	require.Contains(t, out, "3.0.0")
+}

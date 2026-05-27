@@ -473,3 +473,410 @@ func TestPushMultipart(t *testing.T) {
 	require.Contains(t, contentType, "multipart/form-data")
 	require.True(t, body.Len() > 0)
 }
+
+func TestFetchIndex_HTTP(t *testing.T) {
+	idx := Index{
+		Packages: map[string][]Package{
+			"node": {{Name: "node", Version: "20.11.0", Description: "Node.js runtime", Runtime: "node"}},
+		},
+	}
+	idxData, err := json.Marshal(idx)
+	require.NoError(t, err)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(idxData)
+	}))
+	t.Cleanup(ts.Close)
+
+	origURL := IndexURL
+	IndexURL = ts.URL + "/packages.json"
+	t.Cleanup(func() { IndexURL = origURL })
+
+	got, err := FetchIndex()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Contains(t, got.Packages, "node")
+	require.Equal(t, "20.11.0", got.Packages["node"][0].Version)
+}
+
+func TestFetchIndex_HTTPError(t *testing.T) {
+	origURL := IndexURL
+	IndexURL = "http://127.0.0.1:0/nonexistent"
+	t.Cleanup(func() { IndexURL = origURL })
+
+	_, err := FetchIndex()
+	require.Error(t, err)
+}
+
+func TestFetchIndex_InvalidJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("not json"))
+	}))
+	t.Cleanup(ts.Close)
+
+	origURL := IndexURL
+	IndexURL = ts.URL + "/packages.json"
+	t.Cleanup(func() { IndexURL = origURL })
+
+	_, err := FetchIndex()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parse")
+}
+
+func TestFetchIndex_HTTPStatusNotOK(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(ts.Close)
+
+	origURL := IndexURL
+	IndexURL = ts.URL + "/packages.json"
+	t.Cleanup(func() { IndexURL = origURL })
+
+	_, err := FetchIndex()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "HTTP 404")
+}
+
+func TestStore_Download_AlreadyDownloaded(t *testing.T) {
+	content := []byte("already here")
+
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("cached", "1.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "files.tar.gz"), content, 0o644))
+
+	pkg := Package{
+		Name:    "cached",
+		Version: "1.0.0",
+		URL:     "http://invalid.unreachable/test.tar.gz",
+	}
+	require.NoError(t, store.Download(pkg), "should skip download when file already exists")
+}
+
+func TestStore_Download_SizeMismatch(t *testing.T) {
+	content := []byte("short")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(content)
+	}))
+	t.Cleanup(ts.Close)
+
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{
+		Name:    "bigpkg",
+		Version: "1.0.0",
+		Size:    999999,
+		URL:     ts.URL + "/bigpkg-1.0.0.tar.gz",
+	}
+	err = store.Download(pkg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "size mismatch")
+
+	archivePath := filepath.Join(dir, "bigpkg", "1.0.0", "files.tar.gz")
+	_, statErr := os.Stat(archivePath)
+	require.True(t, os.IsNotExist(statErr), "archive should be removed on size mismatch")
+}
+
+func TestStore_Download_HTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{
+		Name:    "failpkg",
+		Version: "1.0.0",
+		URL:     ts.URL + "/failpkg-1.0.0.tar.gz",
+	}
+	err = store.Download(pkg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "HTTP 500")
+}
+
+func TestStore_Extract_ArchiveNotFound(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{Name: "missing", Version: "1.0.0"}
+	err = store.Extract(pkg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "extract open")
+}
+
+func TestStore_Extract_InvalidGzip(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("badgz", "1.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "files.tar.gz"), []byte("not a gzip"), 0o644))
+
+	pkg := Package{Name: "badgz", Version: "1.0.0"}
+	err = store.Extract(pkg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "gzip")
+}
+
+func TestStore_Extract_DirectoryEntries(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("dirpkg", "1.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	archivePath := filepath.Join(pkgDir, "files.tar.gz")
+	f, err := os.Create(archivePath)
+	require.NoError(t, err)
+
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "usr", Typeflag: tar.TypeDir, Mode: 0o755,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "usr/local", Typeflag: tar.TypeDir, Mode: 0o755,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "usr/local/bin", Typeflag: tar.TypeDir, Mode: 0o755,
+	}))
+	require.NoError(t, tw.WriteHeader(&tar.Header{
+		Name: "usr/local/bin/app", Typeflag: tar.TypeReg, Size: 3, Mode: 0o755,
+	}))
+	_, err = tw.Write([]byte("hi!"))
+	require.NoError(t, err)
+
+	require.NoError(t, tw.Close())
+	require.NoError(t, gw.Close())
+	require.NoError(t, f.Close())
+
+	require.NoError(t, store.Extract(Package{Name: "dirpkg", Version: "1.0.0"}))
+
+	files, err := store.ExtractedFiles("dirpkg", "1.0.0")
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+	require.Contains(t, files[0], "app")
+}
+
+func TestStore_Create_WithDescriptionAndRuntime(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	binaryPath := filepath.Join(t.TempDir(), "myapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+
+	require.NoError(t, store.Create("myapp", "1.0.0", binaryPath, nil, "My description", "go"))
+
+	pkgDir := store.PackageDir("myapp", "1.0.0")
+	data, err := os.ReadFile(filepath.Join(pkgDir, "meta.json"))
+	require.NoError(t, err)
+
+	var meta Package
+	require.NoError(t, json.Unmarshal(data, &meta))
+	require.Equal(t, "My description", meta.Description)
+	require.Equal(t, "go", meta.Runtime)
+	require.NotEmpty(t, meta.SHA256)
+	require.Greater(t, meta.Size, int64(0))
+	require.Equal(t, "myapp", meta.Name)
+	require.Equal(t, "1.0.0", meta.Version)
+}
+
+func TestStore_SaveMeta(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkg := Package{
+		Name:        "meta-test",
+		Version:     "2.0.0",
+		Description: "test description",
+		Runtime:     "python",
+		SHA256:      "deadbeef",
+		Size:        12345,
+	}
+	require.NoError(t, store.SaveMeta(pkg))
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 1)
+	require.Equal(t, "meta-test", pkgs[0].Name)
+	require.Equal(t, "2.0.0", pkgs[0].Version)
+	require.Equal(t, "test description", pkgs[0].Description)
+	require.Equal(t, "python", pkgs[0].Runtime)
+	require.Equal(t, "deadbeef", pkgs[0].SHA256)
+	require.Equal(t, int64(12345), pkgs[0].Size)
+}
+
+func TestStore_List_CorruptMetaJSON(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("corrupt", "1.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "meta.json"), []byte("}{invalid json"), 0o644))
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 1)
+	require.Equal(t, "corrupt", pkgs[0].Name)
+	require.Equal(t, "1.0.0", pkgs[0].Version)
+	require.Empty(t, pkgs[0].Description, "should fall back to zero-value when meta is corrupt")
+}
+
+func TestStore_List_NoMetaJSON(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("nometa", "3.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 1)
+	require.Equal(t, "nometa", pkgs[0].Name)
+	require.Equal(t, "3.0.0", pkgs[0].Version)
+}
+
+func TestStore_List_Empty(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 0)
+}
+
+func TestStore_List_MultiplePackagesVersions(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	require.NoError(t, store.SaveMeta(Package{Name: "node", Version: "20.0.0", Description: "Node runtime"}))
+	require.NoError(t, store.SaveMeta(Package{Name: "node", Version: "18.0.0", Description: "Node runtime"}))
+	require.NoError(t, store.SaveMeta(Package{Name: "python", Version: "3.12.0", Description: "Python runtime"}))
+
+	pkgs, err := store.List()
+	require.NoError(t, err)
+	require.Len(t, pkgs, 3)
+
+	names := map[string]int{}
+	for _, p := range pkgs {
+		names[p.Name]++
+	}
+	require.Equal(t, 2, names["node"])
+	require.Equal(t, 1, names["python"])
+}
+
+func TestStore_Push_Success(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	binaryPath := filepath.Join(t.TempDir(), "pushapp")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary content"), 0o755))
+	require.NoError(t, store.Create("pushapp", "1.0.0", binaryPath, nil, "push test", "go"))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, http.MethodPost, r.Method)
+		require.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(ts.Close)
+
+	require.NoError(t, store.Push("pushapp", "1.0.0", ts.URL))
+}
+
+func TestStore_Push_ServerError(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewStore(dir)
+	require.NoError(t, err)
+
+	binaryPath := filepath.Join(t.TempDir(), "failpush")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary content"), 0o755))
+	require.NoError(t, store.Create("failpush", "1.0.0", binaryPath, nil, "", ""))
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal error"))
+	}))
+	t.Cleanup(ts.Close)
+
+	err = store.Push("failpush", "1.0.0", ts.URL)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "HTTP 500")
+}
+
+func TestIndex_Search_Empty(t *testing.T) {
+	idx := &Index{Packages: map[string][]Package{}}
+	results := idx.Search("anything")
+	require.Len(t, results, 0)
+}
+
+func TestIndex_Search_CaseInsensitive(t *testing.T) {
+	idx := &Index{
+		Packages: map[string][]Package{
+			"Node": {{Name: "Node", Version: "20.0.0", Description: "JavaScript Runtime"}},
+		},
+	}
+	results := idx.Search("node")
+	require.Len(t, results, 1)
+	require.Equal(t, "Node", results[0].Name)
+}
+
+func TestIndex_Search_MatchesDescription(t *testing.T) {
+	idx := &Index{
+		Packages: map[string][]Package{
+			"redis": {{Name: "redis", Version: "7.2.0", Description: "In-memory key-value store"}},
+		},
+	}
+	results := idx.Search("in-memory")
+	require.Len(t, results, 1)
+}
+
+func TestIndex_Search_MatchesRuntime(t *testing.T) {
+	idx := &Index{
+		Packages: map[string][]Package{
+			"deno": {{Name: "deno", Version: "1.0.0", Description: "Deno runtime", Runtime: "deno"}},
+		},
+	}
+	results := idx.Search("deno")
+	require.Len(t, results, 1)
+}
+
+func TestIndex_Latest_Empty(t *testing.T) {
+	idx := &Index{Packages: map[string][]Package{}}
+	require.Nil(t, idx.Latest("nonexistent"))
+}
+
+func TestIndex_Latest_MultipleVersions(t *testing.T) {
+	idx := &Index{
+		Packages: map[string][]Package{
+			"node": {
+				{Name: "node", Version: "22.0.0"},
+				{Name: "node", Version: "20.0.0"},
+				{Name: "node", Version: "18.0.0"},
+			},
+		},
+	}
+	require.Equal(t, "22.0.0", idx.Latest("node").Version)
+}
