@@ -275,7 +275,7 @@ func setupOpsResolveServer(t *testing.T, list pkg.OpsPackageList, archives map[s
 func TestResolveOpsPackages_DownloadExtractList(t *testing.T) {
 	archiveData := createOpsResolveArchive(t, map[string]string{
 		"sysroot/lib/x86_64-linux-gnu/libc.so": "libc content",
-		"node": "fake elf binary",
+		"node":                                 "fake elf binary",
 	})
 
 	h := sha256.Sum256(archiveData)

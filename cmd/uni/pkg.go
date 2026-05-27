@@ -119,7 +119,10 @@ func pkgListOps(cmd *cobra.Command, outputJSON bool) error {
 	for _, p := range pkgs {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.Namespace, p.Name, p.Version, p.Language, p.Arch)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("pkg list ops: %w", err)
+	}
+	return nil
 }
 
 func newPkgSearchCmd() *cobra.Command {
@@ -180,7 +183,10 @@ func pkgSearchOps(cmd *cobra.Command, query string, outputJSON bool) error {
 	for _, p := range results {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Namespace, p.Name, p.Version, p.Language, p.Arch, p.Description)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return fmt.Errorf("pkg search ops: %w", err)
+	}
+	return nil
 }
 
 func newPkgGetCmd() *cobra.Command {
@@ -551,7 +557,7 @@ Examples:
   uni pkg load myruntime:1.0.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var pkgFiles []pkg.PkgFile
+			var pkgFiles []pkg.File
 			var binaryPath string
 			var err error
 

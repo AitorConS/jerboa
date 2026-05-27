@@ -37,7 +37,7 @@ type BuildConfig struct {
 	// guest path (inside the Nanos image). For uni packages, GuestPath is
 	// typically filepath.Base(HostPath). For ops packages, GuestPath
 	// preserves the sysroot/ hierarchy (e.g. "lib/x86_64-linux-gnu/libc.so").
-	PkgFiles []pkg.PkgFile
+	PkgFiles []pkg.File
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -155,10 +155,10 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 }
 
 // BuildManifest constructs a Nanos manifest that includes the main program and
-// any additional package files. PkgFile entries carry both HostPath and
+// any additional package files. File entries carry both HostPath and
 // GuestPath so that ops packages can preserve their sysroot/ directory
 // hierarchy inside the image.
-func BuildManifest(binaryPath string, pkgFiles []pkg.PkgFile) string {
+func BuildManifest(binaryPath string, pkgFiles []pkg.File) string {
 	absBin, _ := filepath.Abs(binaryPath)
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n        program:(contents:(host:")

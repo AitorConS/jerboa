@@ -35,7 +35,7 @@ func TestBuildManifest_NoPkgFiles(t *testing.T) {
 }
 
 func TestBuildManifest_WithPkgFiles(t *testing.T) {
-	pkgFiles := []pkg.PkgFile{
+	pkgFiles := []pkg.File{
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/bin/node"), GuestPath: "node"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/lib/libnode.so"), GuestPath: "libnode.so"},
 	}
@@ -46,7 +46,7 @@ func TestBuildManifest_WithPkgFiles(t *testing.T) {
 }
 
 func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
-	pkgFiles := []pkg.PkgFile{
+	pkgFiles := []pkg.File{
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/node"), GuestPath: "node"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2"), GuestPath: "lib/x86_64-linux-gnu/libnss_dns.so.2"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/etc/ssl/certs/ca-certificates.crt"), GuestPath: "etc/ssl/certs/ca-certificates.crt"},
@@ -69,7 +69,7 @@ func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
 	require.NoError(t, os.WriteFile(binPath, []byte("binary"), 0o755))
 	require.NoError(t, os.WriteFile(libPath, []byte("sharedlib"), 0o644))
 
-	pkgFiles := []pkg.PkgFile{
+	pkgFiles := []pkg.File{
 		{HostPath: binPath, GuestPath: "myapp"},
 		{HostPath: libPath, GuestPath: "libmyapp.so"},
 	}
@@ -176,7 +176,7 @@ func TestBuild_WithPkgFiles(t *testing.T) {
 		Name:       "hello",
 		BinaryPath: binPath,
 		MkfsRun:    mkfsRun,
-		PkgFiles:   []pkg.PkgFile{{HostPath: pkgFile, GuestPath: "node"}},
+		PkgFiles:   []pkg.File{{HostPath: pkgFile, GuestPath: "node"}},
 	}
 
 	m, err := b.Build(context.Background(), cfg)

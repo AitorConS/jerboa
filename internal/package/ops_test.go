@@ -141,10 +141,10 @@ func TestOpsStore_DownloadAndExtract(t *testing.T) {
 	}
 
 	content := createOpsPackageArchive(t, map[string]string{
-		"package.manifest":                         `{"Program":"node","Args":["/node"],"Version":"v16.5.0"}`,
-		"node":                                     string([]byte{0x7f, 'E', 'L', 'F', 0, 0, 0, 0, 'f', 'a', 'k', 'e'}),
+		"package.manifest": `{"Program":"node","Args":["/node"],"Version":"v16.5.0"}`,
+		"node":             string([]byte{0x7f, 'E', 'L', 'F', 0, 0, 0, 0, 'f', 'a', 'k', 'e'}),
 		"sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2": "lib content",
-		"sysroot/etc/ssl/certs/ca-certificates.crt":      "certs content",
+		"sysroot/etc/ssl/certs/ca-certificates.crt":    "certs content",
 	})
 	sha := sha256.Sum256(content)
 	shaHex := hex.EncodeToString(sha[:])

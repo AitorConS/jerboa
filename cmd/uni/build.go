@@ -69,20 +69,20 @@ project markers (go.mod, package.json, etc.).`,
 				return fmt.Errorf("build: %w", err)
 			}
 
-		var pkgFiles []pkg.PkgFile
-		if len(pkgs) > 0 {
-			var resolved []pkg.PkgFile
-			var err error
-			if pkgSource == "ops" {
-				resolved, err = resolveOpsPackages(cmd.Context(), pkgs)
-			} else {
-				resolved, err = resolvePackages(cmd.Context(), pkgs)
+			var pkgFiles []pkg.File
+			if len(pkgs) > 0 {
+				var resolved []pkg.File
+				var err error
+				if pkgSource == "ops" {
+					resolved, err = resolveOpsPackages(cmd.Context(), pkgs)
+				} else {
+					resolved, err = resolvePackages(cmd.Context(), pkgs)
+				}
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+				pkgFiles = resolved
 			}
-			if err != nil {
-				return fmt.Errorf("build: %w", err)
-			}
-			pkgFiles = resolved
-		}
 
 			srcPath := absPath(args[0])
 
@@ -150,7 +150,7 @@ project markers (go.mod, package.json, etc.).`,
 }
 
 // buildSingle handles a single-language build (no stages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.PkgFile) (string, error) {
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File) (string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
@@ -228,13 +228,13 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 type stageResult struct {
 	binaryPath string
 	sourceDir  string
-	pkgFiles   []pkg.PkgFile
+	pkgFiles   []pkg.File
 }
 
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.PkgFile, platformFlag, langFlag string) (string, []pkg.PkgFile, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, langFlag string) (string, []pkg.File, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -263,7 +263,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 
-		var stagePkgs []pkg.PkgFile
+		var stagePkgs []pkg.File
 		stagePkgs = append(stagePkgs, pkgFiles...)
 
 		for _, cf := range stage.CopyFrom {
@@ -278,7 +278,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			if dst == "" {
 				dst = filepath.Base(cf.Src)
 			}
-			stagePkgs = append(stagePkgs, pkg.PkgFile{HostPath: prev.binaryPath, GuestPath: filepath.Base(prev.binaryPath)})
+			stagePkgs = append(stagePkgs, pkg.File{HostPath: prev.binaryPath, GuestPath: filepath.Base(prev.binaryPath)})
 			_ = dst
 		}
 
@@ -336,7 +336,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 
 // resolvePackages downloads and extracts packages, returning the list of
 // package files that should be included in the manifest.
-func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, error) {
+func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) {
 	pkgStore, err := pkg.NewStore(pkgStorePath())
 	if err != nil {
 		return nil, fmt.Errorf("open package store: %w", err)
@@ -347,7 +347,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, erro
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}
 
-	var files []pkg.PkgFile
+	var files []pkg.File
 	for _, ref := range pkgRefs {
 		pkgName, pkgVer := parsePkgRef(ref)
 		target := idx.Latest(pkgName)
@@ -388,7 +388,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, erro
 			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
 		}
 		for _, p := range paths {
-			files = append(files, pkg.PkgFile{HostPath: p, GuestPath: filepath.Base(p)})
+			files = append(files, pkg.File{HostPath: p, GuestPath: filepath.Base(p)})
 		}
 	}
 	return files, nil
@@ -396,7 +396,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, erro
 
 // resolveOpsPackages downloads and extracts ops packages, returning the list
 // of package files with proper guest paths (preserving sysroot/ hierarchy).
-func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, error) {
+func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) {
 	opsStore, err := openOpsStore()
 	if err != nil {
 		return nil, fmt.Errorf("open ops package store: %w", err)
@@ -407,7 +407,7 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.PkgFile, e
 		return nil, fmt.Errorf("fetch ops manifest: %w", err)
 	}
 
-	var files []pkg.PkgFile
+	var files []pkg.File
 	for _, ref := range pkgRefs {
 		id, err := pkg.ParseOpsIdentifier(ref)
 		if err != nil {
@@ -487,7 +487,7 @@ func defaultToolsPath() string {
 
 // resolveAutoPackages resolves language runtime packages (e.g. "node:20")
 // and returns the list of extracted package files.
-func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.PkgFile, error) {
+func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, error) {
 	if len(autoPkgs) == 0 {
 		return nil, nil
 	}
@@ -502,7 +502,7 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.PkgFile,
 		return nil, fmt.Errorf("fetch package index: %w", err)
 	}
 
-	var files []pkg.PkgFile
+	var files []pkg.File
 	for _, ref := range autoPkgs {
 		pkgName, pkgVer := parsePkgRef(ref)
 		target := idx.Latest(pkgName)
@@ -543,7 +543,7 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.PkgFile,
 			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
 		}
 		for _, p := range paths {
-			files = append(files, pkg.PkgFile{HostPath: p, GuestPath: filepath.Base(p)})
+			files = append(files, pkg.File{HostPath: p, GuestPath: filepath.Base(p)})
 		}
 	}
 	return files, nil
@@ -557,7 +557,7 @@ var runtimeBinaryNames = map[builder.Lang]string{
 
 // findRuntimeBinary searches the resolved package files for the runtime binary
 // of the given language.
-func findRuntimeBinary(pkgFiles []pkg.PkgFile, lang builder.Lang) (string, error) {
+func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
 	binaryName, ok := runtimeBinaryNames[lang]
 	if !ok {
 		return "", fmt.Errorf("language %s does not have a runtime binary", lang)
@@ -581,13 +581,13 @@ func findRuntimeBinary(pkgFiles []pkg.PkgFile, lang builder.Lang) (string, error
 
 // sourceFiles collects application source files from dir for inclusion in the image.
 // It reads .unignore patterns and excludes matching files and directories.
-func sourceFiles(dir string) ([]pkg.PkgFile, error) {
+func sourceFiles(dir string) ([]pkg.File, error) {
 	ignore, err := builder.LoadIgnoreFile(dir)
 	if err != nil {
 		return nil, fmt.Errorf("load ignore file: %w", err)
 	}
 
-	var files []pkg.PkgFile
+	var files []pkg.File
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -605,7 +605,7 @@ func sourceFiles(dir string) ([]pkg.PkgFile, error) {
 			return nil
 		}
 		if !info.IsDir() {
-			files = append(files, pkg.PkgFile{HostPath: path, GuestPath: rel})
+			files = append(files, pkg.File{HostPath: path, GuestPath: rel})
 		}
 		return nil
 	})

@@ -16,7 +16,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/httpclient"
 )
@@ -227,19 +226,19 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 	return nil
 }
 
-// PkgFile represents a file to be included in a unikernel image, with both
+// File represents a file to be included in a unikernel image, with both
 // its host path (on the build machine) and its guest path (inside the image).
-type PkgFile struct {
+type File struct {
 	HostPath  string
 	GuestPath string
 }
 
-// ExtractedFiles returns the files inside an extracted ops package as PkgFile
+// ExtractedFiles returns the files inside an extracted ops package as File
 // entries with proper guest paths. Files inside sysroot/ get their sysroot-
 // relative path as the guest path; top-level files use their basename.
-func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]PkgFile, error) {
+func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, error) {
 	dir := s.PackageDir(namespace, name, version)
-	var files []PkgFile
+	var files []File
 
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -251,7 +250,7 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]PkgFile, e
 
 		rel, err := filepath.Rel(dir, path)
 		if err != nil {
-			return err
+			return fmt.Errorf("ops list files rel path: %w", err)
 		}
 		rel = filepath.ToSlash(rel)
 
@@ -269,7 +268,7 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]PkgFile, e
 			guestPath = filepath.Base(rel)
 		}
 
-		files = append(files, PkgFile{
+		files = append(files, File{
 			HostPath:  path,
 			GuestPath: guestPath,
 		})
@@ -327,7 +326,10 @@ func (s *OpsStore) Remove(namespace, name, version string) error {
 // SaveManifest caches the ops manifest locally.
 func (s *OpsStore) SaveManifest(data []byte) error {
 	path := filepath.Join(s.root, "manifest.json")
-	return os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("ops save manifest %s: %w", path, err)
+	}
+	return nil
 }
 
 // LoadCachedManifest reads the locally cached ops manifest.
@@ -516,13 +518,4 @@ func isELFFile(path string) bool {
 		return false
 	}
 	return magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'
-}
-
-// lastModified returns the modification time of a file, or zero time on error.
-func lastModified(path string) time.Time {
-	stat, err := os.Stat(path)
-	if err != nil {
-		return time.Time{}
-	}
-	return stat.ModTime()
 }
