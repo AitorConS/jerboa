@@ -195,6 +195,7 @@ func main() {
 	printResults(results)
 
 	if hasFail(results) {
+		cancel()
 		os.Exit(1)
 	}
 }
@@ -206,15 +207,15 @@ func addCmd(run func(...string) (string, error), add func(string, error, string)
 
 func seedImageStore(storePath string) error {
 	if err := os.MkdirAll(storePath, 0o755); err != nil {
-		return err
+		return fmt.Errorf("create image store dir: %w", err)
 	}
 	store, err := image.NewStore(storePath)
 	if err != nil {
-		return err
+		return fmt.Errorf("open image store: %w", err)
 	}
 	disk := filepath.Join(storePath, "hello-disk.img")
 	if err := os.WriteFile(disk, []byte("fake-disk"), 0o600); err != nil {
-		return err
+		return fmt.Errorf("write disk image: %w", err)
 	}
 	m := image.Manifest{
 		SchemaVersion: image.SchemaVersion,

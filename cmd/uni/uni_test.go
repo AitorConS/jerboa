@@ -98,7 +98,6 @@ func makeStore(t *testing.T) (storePath, diskPath string) {
 	return storePath, diskPath
 }
 
-
 // --- ps ---
 
 func TestPs_Empty(t *testing.T) {
@@ -229,7 +228,6 @@ func TestRm_StoppedVM(t *testing.T) {
 
 	execRoot(t, socketPath, storePath, "rm", info.ID)
 }
-
 
 // --- exec ---
 

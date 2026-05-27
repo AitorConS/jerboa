@@ -239,14 +239,6 @@ func servicesDir() string {
 	return home + "/.uni/services"
 }
 
-func blobsDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".uni/blobs"
-	}
-	return home + "/.uni/blobs"
-}
-
 func setupLogger(format string) {
 	switch format {
 	case "json":
@@ -256,14 +248,6 @@ func setupLogger(format string) {
 			Level: slog.LevelInfo,
 		})))
 	}
-}
-
-func ociDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".uni/oci"
-	}
-	return home + "/.uni/oci"
 }
 
 func splitCommaList(s string) []string {

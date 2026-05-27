@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -65,11 +64,6 @@ func newRootCmd() *cobra.Command {
 		newServiceCmd(&socketPath, &outputFmt),
 	)
 	return root
-}
-
-func envBool(name string) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
 }
 
 func defaultSocketPath() string {
