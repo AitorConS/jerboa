@@ -27,6 +27,10 @@ type result struct {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	var uniBin string
 	flag.StringVar(&uniBin, "uni", "", "path to uni binary")
 	flag.Parse()
@@ -41,15 +45,18 @@ func main() {
 
 	absUni, err := filepath.Abs(uniBin)
 	if err != nil {
-		fail("resolve uni path", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (resolve uni path): %v\n", err)
+		return 2
 	}
 	if _, err := os.Stat(absUni); err != nil {
-		fail("uni binary not found", fmt.Errorf("%s: %w", absUni, err))
+		fmt.Fprintf(os.Stderr, "smoke setup failed (uni binary not found): %s: %v\n", absUni, err)
+		return 2
 	}
 
 	baseDir, err := os.MkdirTemp("", "uni-smoke-")
 	if err != nil {
-		fail("create temp dir", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (create temp dir): %v\n", err)
+		return 2
 	}
 	defer os.RemoveAll(baseDir)
 
@@ -57,22 +64,27 @@ func main() {
 	storePath := filepath.Join(baseDir, "images")
 	homePath := filepath.Join(baseDir, "home")
 	if err := os.MkdirAll(homePath, 0o755); err != nil {
-		fail("create temp home", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (create temp home): %v\n", err)
+		return 2
 	}
 
 	if err := seedImageStore(storePath); err != nil {
-		fail("seed image store", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (seed image store): %v\n", err)
+		return 2
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	netStore, err := network.NewStore(filepath.Join(homePath, ".uni", "networks"))
 	if err != nil {
-		fail("create network store", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (create network store): %v\n", err)
+		return 2
 	}
 	svcStore, err := service.NewFileStore(filepath.Join(homePath, ".uni", "services"))
 	if err != nil {
-		fail("create service store", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (create service store): %v\n", err)
+		return 2
 	}
 
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
@@ -80,13 +92,15 @@ func main() {
 	clusterLister := staticClusterLister{}
 	srv, err := api.NewServer(mgr, netStore, svcMgr, socketPath, nil, "smoke", clusterLister)
 	if err != nil {
-		fail("start api server", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (start api server): %v\n", err)
+		return 2
 	}
 	go func() {
 		_ = srv.Serve(ctx)
 	}()
 	if err := waitForSocket(socketPath, 5*time.Second); err != nil {
-		fail("wait daemon", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (wait daemon): %v\n", err)
+		return 2
 	}
 
 	runUni := func(args ...string) (string, error) {
@@ -102,7 +116,6 @@ func main() {
 	}
 
 	results := make([]result, 0, 40)
-	exitCode := 0
 	add := func(name string, err error, out string) {
 		if err != nil {
 			results = append(results, result{name: name, status: "FAIL", detail: trim(out, err.Error())})
@@ -194,13 +207,10 @@ func main() {
 
 	printResults(results)
 
-	cancel()
 	if hasFail(results) {
-		exitCode = 1
+		return 1
 	}
-	if exitCode != 0 {
-		os.Exit(exitCode)
-	}
+	return 0
 }
 
 func addCmd(run func(...string) (string, error), add func(string, error, string), name string, args ...string) {
@@ -290,11 +300,6 @@ func trim(parts ...string) string {
 		return s[:220] + "..."
 	}
 	return s
-}
-
-func fail(what string, err error) {
-	fmt.Fprintf(os.Stderr, "smoke setup failed (%s): %v\n", what, err)
-	os.Exit(2)
 }
 
 type staticClusterLister struct{}
