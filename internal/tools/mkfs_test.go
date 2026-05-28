@@ -75,10 +75,9 @@ func TestDownloadArtifact_Success(t *testing.T) {
 	t.Parallel()
 
 	content := []byte("artifact")
-	checksum := hex.EncodeToString(sha256.New().Sum(nil))
 	hasher := sha256.New()
 	hasher.Write(content)
-	checksum = hex.EncodeToString(hasher.Sum(nil))
+	checksum := hex.EncodeToString(hasher.Sum(nil))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ".sha256") {
