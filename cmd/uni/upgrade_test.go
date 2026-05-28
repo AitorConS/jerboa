@@ -98,17 +98,14 @@ func TestInstallBinary(t *testing.T) {
 	got, err := os.ReadFile(dest)
 	require.NoError(t, err)
 	require.Equal(t, "content", string(got))
-
-	_, err = os.Stat(src)
-	require.True(t, os.IsNotExist(err), "source should be renamed away")
 }
 
-func TestDownloadTo_ServerError(t *testing.T) {
+func TestDownloadToVerified_ServerError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	var buf bytes.Buffer
-	err := downloadTo(ctx, "http://127.0.0.1:0/nonexistent", &buf)
+	err := downloadToVerified(ctx, "http://127.0.0.1:0/nonexistent", &buf)
 	require.Error(t, err)
 }
 

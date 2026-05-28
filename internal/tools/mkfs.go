@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -91,16 +93,70 @@ func downloadArtifact(ctx context.Context, url, dest string) error {
 			name, resp.StatusCode)
 	}
 
+	checksumURL := url + ".sha256"
+	expectedSHA, shaErr := fetchChecksum(ctx, checksumURL)
+	if shaErr != nil {
+		fmt.Printf("warning: could not verify checksum for %s: %v\n", name, shaErr)
+	}
+
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return fmt.Errorf("tools: create %s: %w", name, err)
 	}
 	defer func() { _ = f.Close() }()
 
-	size, err := io.Copy(f, resp.Body)
+	hash := sha256.New()
+	mw := io.MultiWriter(f, hash)
+
+	size, err := io.Copy(mw, resp.Body)
 	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(dest)
 		return fmt.Errorf("tools: write %s: %w", name, err)
 	}
-	fmt.Printf("%s downloaded (%.1f MB) → %s\n", name, float64(size)/(1<<20), dest)
+
+	if expectedSHA != "" {
+		got := hex.EncodeToString(hash.Sum(nil))
+		if !strings.EqualFold(got, expectedSHA) {
+			_ = f.Close()
+			_ = os.Remove(dest)
+			gotShort := got
+			wantShort := expectedSHA
+			if len(gotShort) > 16 {
+				gotShort = gotShort[:16]
+			}
+			if len(wantShort) > 16 {
+				wantShort = wantShort[:16]
+			}
+			return fmt.Errorf("tools: checksum mismatch for %s (got %s..., want %s...)", name, gotShort, wantShort)
+		}
+		fmt.Printf("%s downloaded (%.1f MB) → %s [verified]\n", name, float64(size)/(1<<20), dest)
+	} else {
+		fmt.Printf("%s downloaded (%.1f MB) → %s\n", name, float64(size)/(1<<20), dest)
+	}
 	return nil
+}
+
+func fetchChecksum(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("build checksum request: %w", err)
+	}
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch checksum: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checksum HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read checksum: %w", err)
+	}
+	parts := strings.Fields(strings.TrimSpace(string(data)))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty checksum file")
+	}
+	return parts[0], nil
 }

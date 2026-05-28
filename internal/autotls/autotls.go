@@ -67,7 +67,11 @@ func EnsureCert(certPath, keyPath string) (tls.Certificate, error) {
 	}
 
 	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("autotls: marshal key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyBytes})
 
 	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
 		return tls.Certificate{}, fmt.Errorf("autotls: write cert: %w", err)

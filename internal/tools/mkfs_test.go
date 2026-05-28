@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -71,9 +74,20 @@ func TestResolveMkfs_UsesExistingToolsDir(t *testing.T) {
 func TestDownloadArtifact_Success(t *testing.T) {
 	t.Parallel()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	content := []byte("artifact")
+	checksum := hex.EncodeToString(sha256.New().Sum(nil))
+	hasher := sha256.New()
+	hasher.Write(content)
+	checksum = hex.EncodeToString(hasher.Sum(nil))
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(checksum + "  mkfs"))
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("artifact"))
+		_, _ = w.Write(content)
 	}))
 	defer srv.Close()
 
@@ -83,7 +97,7 @@ func TestDownloadArtifact_Success(t *testing.T) {
 
 	data, readErr := os.ReadFile(dest)
 	require.NoError(t, readErr)
-	require.Equal(t, "artifact", string(data))
+	require.Equal(t, string(content), string(data))
 }
 
 func TestDownloadArtifact_HTTPError(t *testing.T) {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -211,19 +213,41 @@ func downloadBinary(ctx context.Context, dir, name, ver string) (string, error) 
 	artifact := fmt.Sprintf("%s-%s-%s%s", name, runtime.GOOS, runtime.GOARCH, binaryExt())
 	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, artifact)
 
-	// No .exe suffix on the temp file: Windows AV locks newly-written .exe
-	// files for scanning, which would block the rename into place.
-	tmp, err := os.CreateTemp(dir, name+"-upgrade-*")
+	tmp, err := os.CreateTemp(dir, name+"-upgrade-*"+binaryExt())
 	if err != nil {
 		return "", fmt.Errorf("create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 
-	if err := downloadTo(ctx, url, tmp); err != nil {
+	hash := sha256.New()
+	mw := io.MultiWriter(tmp, hash)
+
+	if err := downloadToVerified(ctx, url, mw); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 		return "", err
 	}
+
+	expectedSHA, shaErr := fetchUpgradeChecksum(ctx, url+".sha256")
+	if shaErr != nil {
+		fmt.Printf("warning: could not verify checksum for %s: %v\n", name, shaErr)
+	} else {
+		got := hex.EncodeToString(hash.Sum(nil))
+		if !strings.EqualFold(got, expectedSHA) {
+			_ = tmp.Close()
+			_ = os.Remove(tmpPath)
+			gotShort := got
+			wantShort := expectedSHA
+			if len(gotShort) > 16 {
+				gotShort = gotShort[:16]
+			}
+			if len(wantShort) > 16 {
+				wantShort = wantShort[:16]
+			}
+			return "", fmt.Errorf("upgrade: checksum mismatch for %s (got %s..., want %s...)", name, gotShort, wantShort)
+		}
+	}
+
 	if err := tmp.Chmod(0o755); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
@@ -245,11 +269,7 @@ func downloadBinary(ctx context.Context, dir, name, ver string) (string, error) 
 // finishes, when the previous process has already exited.
 func installBinary(src, dest string) error {
 	if runtime.GOOS == "windows" {
-		bak := dest + ".bak"
-		_ = os.Remove(bak) // best-effort: remove stale .bak from earlier upgrades
-		if err := os.Rename(dest, bak); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("rename %s to .bak: %w", dest, err)
-		}
+		return windowsReplaceFile(src, dest)
 	}
 	if err := os.Rename(src, dest); err != nil {
 		return fmt.Errorf("install %s: %w", dest, err)
@@ -270,6 +290,29 @@ func cleanupBackups(dir string) {
 			_ = os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
+}
+
+func windowsReplaceFile(src, dest string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open source %s: %w", src, err)
+	}
+	defer srcFile.Close()
+
+	destFile, err := os.OpenFile(dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	if err != nil {
+		return fmt.Errorf("open dest %s: %w", dest, err)
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		return fmt.Errorf("copy %s to %s: %w", src, dest, err)
+	}
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("sync %s: %w", dest, err)
+	}
+	_ = os.Remove(src)
+	return nil
 }
 
 func binaryName(name string) string { return name + binaryExt() }
@@ -386,7 +429,7 @@ func listCLIVersions(ctx context.Context) ([]string, error) {
 	return versions, nil
 }
 
-func downloadTo(ctx context.Context, url string, w io.Writer) error {
+func downloadToVerified(ctx context.Context, url string, w io.Writer) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -403,6 +446,30 @@ func downloadTo(ctx context.Context, url string, w io.Writer) error {
 		return fmt.Errorf("write: %w", err)
 	}
 	return nil
+}
+
+func fetchUpgradeChecksum(ctx context.Context, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("build checksum request: %w", err)
+	}
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch checksum: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("checksum HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read checksum: %w", err)
+	}
+	parts := strings.Fields(strings.TrimSpace(string(data)))
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty checksum file")
+	}
+	return parts[0], nil
 }
 
 func cliIsNewer(local, remote string) bool { return cliSemverGT(remote, local) }

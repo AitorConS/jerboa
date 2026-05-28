@@ -209,7 +209,14 @@ func (s *Store) Extract(pkg Package) error {
 			return fmt.Errorf("package extract tar %s: %w", pkg.Name, err)
 		}
 
-		target := filepath.Join(filesDir, hdr.Name)
+		cleanName := filepath.Clean(hdr.Name)
+		if strings.HasPrefix(cleanName, "..") || strings.HasPrefix(cleanName, "/") {
+			return fmt.Errorf("package extract: insecure path %q in archive", hdr.Name)
+		}
+		target := filepath.Join(filesDir, cleanName)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(filesDir)+string(os.PathSeparator)) && cleanName != "." {
+			return fmt.Errorf("package extract: path %q escapes extraction directory", hdr.Name)
+		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -248,6 +249,10 @@ func TestRemoteVersion_NoReleases(t *testing.T) {
 
 func TestDownloadVersion(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".sha256") {
+			http.NotFound(w, r)
+			return
+		}
 		w.Write([]byte("fake-artifact-content"))
 	}))
 	defer srv.Close()
