@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/builder"
@@ -99,13 +100,13 @@ project markers (go.mod, package.json, etc.).`,
 				}
 
 				if cfg != nil && cfg.HasStages() {
-					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang)
+					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang, pkgSource)
 					if err != nil {
 						return err
 					}
 					defer func() { _ = os.Remove(binaryPath) }()
 				} else {
-					binaryPath, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles)
+					binaryPath, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource)
 					if err != nil {
 						return err
 					}
@@ -150,7 +151,7 @@ project markers (go.mod, package.json, etc.).`,
 }
 
 // buildSingle handles a single-language build (no stages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File) (string, error) {
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string) (string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
@@ -202,7 +203,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	case result.BinaryPath != "":
 		return result.BinaryPath, nil
 	case result.SourceDir != "":
-		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
+		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
 		if err != nil {
 			return "", fmt.Errorf("build: resolve packages: %w", err)
 		}
@@ -234,7 +235,7 @@ type stageResult struct {
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, langFlag string) (string, []pkg.File, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, langFlag, pkgSource string) (string, []pkg.File, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -304,7 +305,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 				pkgFiles:   stagePkgs,
 			}
 		case result.SourceDir != "":
-			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages)
+			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
 			if err != nil {
 				return "", nil, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
 			}
@@ -487,9 +488,13 @@ func defaultToolsPath() string {
 
 // resolveAutoPackages resolves language runtime packages (e.g. "node:20")
 // and returns the list of extracted package files.
-func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, error) {
+func resolveAutoPackages(ctx context.Context, autoPkgs []string, pkgSource string) ([]pkg.File, error) {
 	if len(autoPkgs) == 0 {
 		return nil, nil
+	}
+
+	if pkgSource == "ops" {
+		return resolveOpsAutoPackages(ctx, autoPkgs)
 	}
 
 	pkgStore, err := pkg.NewStore(pkgStorePath())
@@ -549,6 +554,83 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, er
 	return files, nil
 }
 
+func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.OpsPackage {
+	namespaces := []string{"eyberg", "nanovms", "myuniverse"}
+	for _, ns := range namespaces {
+		if t := manifest.Lookup(ns, name, version); t != nil {
+			return t
+		}
+	}
+	if version == "" || version == "latest" {
+		return nil
+	}
+	for _, ns := range namespaces {
+		for i := range manifest.Packages {
+			p := &manifest.Packages[i]
+			if p.Namespace != ns || p.Name != name {
+				continue
+			}
+			pv := strings.TrimPrefix(p.Version, "v")
+			if strings.HasPrefix(pv, version+".") || strings.HasPrefix(pv, version+"-") || pv == version {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, error) {
+	opsStore, err := openOpsStore()
+	if err != nil {
+		return nil, fmt.Errorf("open ops package store: %w", err)
+	}
+
+	manifest, err := opsStore.FetchManifestCached()
+	if err != nil {
+		return nil, fmt.Errorf("fetch ops manifest: %w", err)
+	}
+
+	var files []pkg.File
+	for _, ref := range autoPkgs {
+		pkgName, pkgVer := parsePkgRef(ref)
+
+		var target *pkg.OpsPackage
+		if strings.Contains(pkgName, "/") {
+			id, parseErr := pkg.ParseOpsIdentifier(pkgName)
+			if parseErr != nil {
+				return nil, fmt.Errorf("parse ops package %q: %w", pkgName, parseErr)
+			}
+			if pkgVer != "" && pkgVer != "latest" {
+				id.Version = pkgVer
+			}
+			target = manifest.Lookup(id.Namespace, id.Name, id.Version)
+		} else {
+			target = lookupOpsPackage(manifest, pkgName, pkgVer)
+		}
+		if target == nil {
+			return nil, fmt.Errorf("ops package %q not found in manifest (try --pkg eyberg/%s)", ref, pkgName)
+		}
+
+		if !opsStore.IsDownloaded(target.Namespace, target.Name, target.Version) {
+			if err := opsStore.Download(target.Namespace, target.Name, target.Version, target.SHA256); err != nil {
+				return nil, fmt.Errorf("download ops package %s: %w", target.Name, err)
+			}
+		}
+		if !opsStore.IsExtracted(target.Namespace, target.Name, target.Version) {
+			if err := opsStore.Extract(target.Namespace, target.Name, target.Version); err != nil {
+				return nil, fmt.Errorf("extract ops package %s: %w", target.Name, err)
+			}
+		}
+
+		pkgFiles, err := opsStore.ExtractedFiles(target.Namespace, target.Name, target.Version)
+		if err != nil {
+			return nil, fmt.Errorf("list ops package files %s: %w", target.Name, err)
+		}
+		files = append(files, pkgFiles...)
+	}
+	return files, nil
+}
+
 // runtimeBinaryNames maps a language to the expected binary name within its package.
 var runtimeBinaryNames = map[builder.Lang]string{
 	builder.LangNode:   "node",
@@ -564,13 +646,16 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
 	}
 
 	for _, f := range pkgFiles {
-		if filepath.Base(f.HostPath) == binaryName {
+		base := filepath.Base(f.HostPath)
+		if base == binaryName {
 			return f.HostPath, nil
 		}
 	}
 
 	for _, f := range pkgFiles {
-		matches, _ := filepath.Glob(filepath.Join(filepath.Dir(f.HostPath), binaryName))
+		dir := filepath.Dir(f.HostPath)
+		prefix := binaryName
+		matches, _ := filepath.Glob(filepath.Join(dir, prefix+"*"))
 		if len(matches) > 0 {
 			return matches[0], nil
 		}
