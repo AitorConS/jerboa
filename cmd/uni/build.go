@@ -119,7 +119,7 @@ project markers (go.mod, package.json, etc.).`,
 			}
 
 			if name == "" {
-				name = args[0]
+				name = filepath.Base(filepath.Clean(args[0]))
 			}
 			m, err := image.NewBuilder(store).Build(cmd.Context(), image.BuildConfig{
 				Name:       name,
