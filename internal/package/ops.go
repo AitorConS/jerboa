@@ -147,16 +147,32 @@ func SearchOpsPackages(query string) (*OpsPackageList, error) {
 
 // Lookup finds a package in the manifest by namespace, name, and optional version.
 // If version is empty or "latest", returns the first match for namespace+name.
+// Version matching normalizes "v" prefixes and supports major/minor prefix matching
+// (e.g., "11" matches "v11.5.0", "3.10" matches "3.10.6").
 func (l *OpsPackageList) Lookup(namespace, name, version string) *OpsPackage {
 	for i := range l.Packages {
 		p := &l.Packages[i]
 		if p.Namespace == namespace && p.Name == name {
-			if version == "" || version == "latest" || p.Version == version {
+			if version == "" || version == "latest" || opsVersionMatch(p.Version, version) {
 				return p
 			}
 		}
 	}
 	return nil
+}
+
+// opsVersionMatch reports whether pkgVersion satisfies queryVersion.
+// Handles "v" prefix normalization and major/minor prefix matching.
+func opsVersionMatch(pkgVersion, queryVersion string) bool {
+	if pkgVersion == queryVersion {
+		return true
+	}
+	normPkg := strings.TrimPrefix(pkgVersion, "v")
+	normQuery := strings.TrimPrefix(queryVersion, "v")
+	if normPkg == normQuery {
+		return true
+	}
+	return strings.HasPrefix(normPkg, normQuery+".") || strings.HasPrefix(normPkg, normQuery+"-")
 }
 
 // ArchSlug returns the architecture suffix used by ops packages.

@@ -49,19 +49,34 @@ func (s *OpsStore) IsDownloaded(namespace, name, version string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// IsExtracted returns true if the ops package has been extracted.
+// IsExtracted returns true if the ops package has been extracted and its
+// main binary is present. Checking the binary guards against partial
+// extractions where directory entries were created but the binary was
+// removed (e.g. by AV quarantine) after extraction completed.
 func (s *OpsStore) IsExtracted(namespace, name, version string) bool {
 	dir := s.PackageDir(namespace, name, version)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
+	hasContent := false
 	for _, e := range entries {
 		if e.IsDir() || (!strings.HasSuffix(e.Name(), ".tar.gz") && e.Name() != "manifest.json") {
-			return true
+			hasContent = true
+			break
 		}
 	}
-	return false
+	if !hasContent {
+		return false
+	}
+	cfg, err := s.LoadPackageManifest(namespace, name, version)
+	if err == nil && cfg.Program != "" {
+		binPath := filepath.Join(dir, filepath.Base(cfg.Program))
+		if _, statErr := os.Stat(binPath); os.IsNotExist(statErr) {
+			return false
+		}
+	}
+	return true
 }
 
 // Download fetches an ops package from repo.ops.city and stores it locally.
@@ -476,14 +491,17 @@ func (s *OpsStore) FindBinary(namespace, name, version string) (string, error) {
 
 	cfg, err := s.LoadPackageManifest(namespace, name, version)
 	if err == nil && cfg.Program != "" {
-		binPath := filepath.Join(dir, cfg.Program)
-		if _, statErr := os.Stat(binPath); statErr == nil {
-			return binPath, nil
-		}
-		slashed := strings.ReplaceAll(cfg.Program, "/", string(filepath.Separator))
-		binPath = filepath.Join(dir, slashed)
-		if _, statErr := os.Stat(binPath); statErr == nil {
-			return binPath, nil
+		// ops Program field may be "pkg_version/binary" (relative to the ops packages
+		// root), so try direct, OS-separator variant, and basename in order.
+		for _, candidate := range []string{
+			cfg.Program,
+			strings.ReplaceAll(cfg.Program, "/", string(filepath.Separator)),
+			filepath.Base(cfg.Program),
+		} {
+			binPath := filepath.Join(dir, candidate)
+			if _, statErr := os.Stat(binPath); statErr == nil {
+				return binPath, nil
+			}
 		}
 	}
 

@@ -135,6 +135,64 @@ func TestOpsPackageList_Lookup(t *testing.T) {
 	require.Nil(t, pkg)
 }
 
+func TestOpsPackageList_Lookup_VersionNormalization(t *testing.T) {
+	list := &OpsPackageList{
+		Packages: []OpsPackage{
+			{Name: "node", Version: "v11.5.0", Namespace: "eyberg"},
+			{Name: "python", Version: "3.10.6", Namespace: "eyberg"},
+		},
+	}
+
+	// Major version prefix ("11" matches "v11.5.0")
+	pkg := list.Lookup("eyberg", "node", "11")
+	require.NotNil(t, pkg)
+	require.Equal(t, "v11.5.0", pkg.Version)
+
+	// "v" prefix stripped on query side ("v11" matches "v11.5.0")
+	pkg = list.Lookup("eyberg", "node", "v11")
+	require.NotNil(t, pkg)
+	require.Equal(t, "v11.5.0", pkg.Version)
+
+	// No "v" on stored version, minor prefix ("3.10" matches "3.10.6")
+	pkg = list.Lookup("eyberg", "python", "3.10")
+	require.NotNil(t, pkg)
+	require.Equal(t, "3.10.6", pkg.Version)
+
+	// Full version without "v" ("11.5.0" matches "v11.5.0")
+	pkg = list.Lookup("eyberg", "node", "11.5.0")
+	require.NotNil(t, pkg)
+	require.Equal(t, "v11.5.0", pkg.Version)
+
+	// No false positives ("12" should not match "v11.5.0")
+	pkg = list.Lookup("eyberg", "node", "12")
+	require.Nil(t, pkg)
+}
+
+func TestOpsVersionMatch(t *testing.T) {
+	tests := []struct {
+		pkgVer   string
+		query    string
+		expected bool
+	}{
+		{"v11.5.0", "v11.5.0", true},
+		{"v11.5.0", "11.5.0", true},
+		{"v11.5.0", "11", true},
+		{"v11.5.0", "v11", true},
+		{"3.10.6", "3.10.6", true},
+		{"3.10.6", "3.10", true},
+		{"3.10.6", "3", true},
+		{"v11.5.0", "12", false},
+		{"v11.5.0", "v12", false},
+		{"3.10.6", "3.11", false},
+		{"v11.5.0", "115", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.pkgVer+"/"+tt.query, func(t *testing.T) {
+			require.Equal(t, tt.expected, opsVersionMatch(tt.pkgVer, tt.query))
+		})
+	}
+}
+
 func TestOpsStore_DownloadAndExtract(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks and some ops package features are Linux-only")
@@ -335,6 +393,42 @@ func TestOpsStore_FetchManifestCached(t *testing.T) {
 	got2, err := store.FetchManifestCached()
 	require.NoError(t, err)
 	require.Len(t, got2.Packages, 1)
+}
+
+func TestOpsStore_IsExtracted_MissingBinary(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewOpsStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("eyberg", "node", "v20.0.0")
+	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "sysroot", "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "package.manifest"),
+		[]byte(`{"Program":"node_v20.0.0/node","Version":"20.0.0"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "amd64.tar.gz"), []byte("fake"), 0o644))
+
+	// sysroot/ exists but the program binary ("node") does not — should return false.
+	require.False(t, store.IsExtracted("eyberg", "node", "v20.0.0"))
+
+	// After placing the binary it should return true.
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "node"), []byte("elf"), 0o755))
+	require.True(t, store.IsExtracted("eyberg", "node", "v20.0.0"))
+}
+
+func TestOpsStore_FindBinary_PrefixedProgram(t *testing.T) {
+	dir := t.TempDir()
+	store, err := NewOpsStore(dir)
+	require.NoError(t, err)
+
+	pkgDir := store.PackageDir("eyberg", "node", "v20.0.0")
+	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "package.manifest"),
+		[]byte(`{"Program":"node_v20.0.0/node","Version":"20.0.0"}`), 0o644))
+	elfContent := []byte{0x7f, 'E', 'L', 'F', 0, 0, 0, 0, 'f', 'a', 'k', 'e'}
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "node"), elfContent, 0o755))
+
+	binPath, err := store.FindBinary("eyberg", "node", "v20.0.0")
+	require.NoError(t, err)
+	require.True(t, strings.HasSuffix(filepath.ToSlash(binPath), "/node"))
 }
 
 func TestOpsStore_Extract_Idempotent(t *testing.T) {
