@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -155,27 +156,80 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 }
 
 // BuildManifest constructs a Nanos manifest that includes the main program and
-// any additional package files. File entries carry both HostPath and
-// GuestPath so that ops packages can preserve their sysroot/ directory
-// hierarchy inside the image.
+// any additional package files. Guest paths with directory separators (e.g.
+// "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialised
+// as nested nodes — the Nanos manifest parser treats '/' as an unknown
+// discriminator and rejects flat slash-separated keys.
 func BuildManifest(binaryPath string, pkgFiles []pkg.File) string {
 	absBin, _ := filepath.Abs(binaryPath)
-	var b strings.Builder
-	b.WriteString("(\n    children:(\n        program:(contents:(host:")
-	b.WriteString(absBin)
-	b.WriteString("))\n")
+
+	root := newManifestNode()
+	root.children["program"] = &manifestNode{hostPath: absBin}
+
 	for _, f := range pkgFiles {
 		abs, _ := filepath.Abs(f.HostPath)
-		name := f.GuestPath
-		if name == "" {
-			name = filepath.Base(f.HostPath)
+		guestPath := f.GuestPath
+		if guestPath == "" {
+			guestPath = filepath.Base(f.HostPath)
 		}
-		b.WriteString("        ")
-		b.WriteString(name)
-		b.WriteString(":(contents:(host:")
-		b.WriteString(abs)
-		b.WriteString("))\n")
+		insertManifestFile(root, filepath.ToSlash(guestPath), abs)
 	}
+
+	var b strings.Builder
+	b.WriteString("(\n    children:(\n")
+	writeManifestChildren(&b, root, "        ")
 	b.WriteString("    )\n    program:/program\n    environment:()\n)")
 	return b.String()
+}
+
+// manifestNode is a node in the Nanos manifest filesystem tree.
+type manifestNode struct {
+	hostPath string
+	children map[string]*manifestNode
+}
+
+func newManifestNode() *manifestNode {
+	return &manifestNode{children: make(map[string]*manifestNode)}
+}
+
+// insertManifestFile inserts a file at the given slash-separated guest path.
+func insertManifestFile(node *manifestNode, guestPath, hostPath string) {
+	parts := strings.FieldsFunc(guestPath, func(r rune) bool { return r == '/' })
+	cur := node
+	for i, part := range parts {
+		if i == len(parts)-1 {
+			cur.children[part] = &manifestNode{hostPath: hostPath}
+		} else {
+			if cur.children[part] == nil {
+				cur.children[part] = newManifestNode()
+			}
+			cur = cur.children[part]
+		}
+	}
+}
+
+// writeManifestChildren serialises the children of node into b at the given indent level.
+func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string) {
+	keys := make([]string, 0, len(node.children))
+	for k := range node.children {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		child := node.children[key]
+		b.WriteString(indent)
+		b.WriteString(key)
+		b.WriteString(":")
+		if child.hostPath != "" {
+			b.WriteString("(contents:(host:")
+			b.WriteString(child.hostPath)
+			b.WriteString("))\n")
+		} else {
+			b.WriteString("(\n")
+			writeManifestChildren(b, child, indent+"    ")
+			b.WriteString(indent)
+			b.WriteString(")\n")
+		}
+	}
 }

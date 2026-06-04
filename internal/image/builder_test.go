@@ -53,8 +53,14 @@ func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 	}
 	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles)
 	require.Contains(t, got, "node:(contents:(host:")
-	require.Contains(t, got, "lib/x86_64-linux-gnu/libnss_dns.so.2:(contents:(host:")
-	require.Contains(t, got, "etc/ssl/certs/ca-certificates.crt:(contents:(host:")
+	// Nested tree — no slash-separated flat keys (the Nanos parser rejects them).
+	require.NotContains(t, got, "lib/x86_64-linux-gnu")
+	require.NotContains(t, got, "etc/ssl/certs")
+	require.Contains(t, got, "lib:(\n")
+	require.Contains(t, got, "x86_64-linux-gnu:(\n")
+	require.Contains(t, got, "libnss_dns.so.2:(contents:(host:")
+	require.Contains(t, got, "etc:(\n")
+	require.Contains(t, got, "ca-certificates.crt:(contents:(host:")
 }
 
 func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
