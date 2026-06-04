@@ -34,7 +34,7 @@ jobs:
         working-directory: docs
 
       - name: Build site
-        run: bundle exec jekyll build --destination _site --baseurl "/${{ github.event.repository.name }}"
+        run: bundle exec jekyll build --destination _site --baseurl ""
         working-directory: docs
         env:
           JEKYLL_ENV: production
