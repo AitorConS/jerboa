@@ -157,6 +157,12 @@ func (s *Store) resolveRef(ref string) (string, error) {
 	if sha, ok := refs[ref]; ok {
 		return sha, nil
 	}
+	// Bare name without tag → try :latest.
+	if !strings.Contains(ref, ":") {
+		if sha, ok := refs[ref+":latest"]; ok {
+			return sha, nil
+		}
+	}
 	// Try direct sha256 match or prefix.
 	if sha, ok := s.findBySHA(refs, ref); ok {
 		return sha, nil

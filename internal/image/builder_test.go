@@ -28,7 +28,7 @@ func failureCmd() *exec.Cmd {
 }
 
 func TestBuildManifest_NoPkgFiles(t *testing.T) {
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), nil)
+	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), nil, "")
 	require.Contains(t, got, "program:/program")
 	require.Contains(t, got, "program:(contents:(host:")
 	require.NotContains(t, got, "node")
@@ -39,7 +39,7 @@ func TestBuildManifest_WithPkgFiles(t *testing.T) {
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/bin/node"), GuestPath: "node"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/lib/libnode.so"), GuestPath: "libnode.so"},
 	}
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles)
+	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles, "")
 	require.Contains(t, got, "program:/program")
 	require.Contains(t, got, "node:(contents:(host:")
 	require.Contains(t, got, "libnode.so:(contents:(host:")
@@ -51,7 +51,7 @@ func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2"), GuestPath: "lib/x86_64-linux-gnu/libnss_dns.so.2"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/etc/ssl/certs/ca-certificates.crt"), GuestPath: "etc/ssl/certs/ca-certificates.crt"},
 	}
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles)
+	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles, "")
 	require.Contains(t, got, "node:(contents:(host:")
 	// Nested tree — no slash-separated flat manifest keys (the Nanos parser rejects them).
 	// Check key form "foo/bar:" is absent; host path may still contain the substring.
@@ -80,7 +80,7 @@ func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
 		{HostPath: binPath, GuestPath: "myapp"},
 		{HostPath: libPath, GuestPath: "libmyapp.so"},
 	}
-	got := BuildManifest(binPath, pkgFiles)
+	got := BuildManifest(binPath, pkgFiles, "")
 
 	require.Contains(t, got, "myapp:(contents:(host:")
 	require.Contains(t, got, "libmyapp.so:(contents:(host:")

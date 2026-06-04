@@ -39,6 +39,9 @@ type BuildConfig struct {
 	// typically filepath.Base(HostPath). For ops packages, GuestPath
 	// preserves the sysroot/ hierarchy (e.g. "lib/x86_64-linux-gnu/libc.so").
 	PkgFiles []pkg.File
+	// Entrypoint is the script or file to pass as the first argument to the
+	// runtime binary (e.g. "hi.js" for Node.js). Empty for compiled languages.
+	Entrypoint string
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -79,7 +82,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	manifest := BuildManifest(cfg.BinaryPath, cfg.PkgFiles)
+	manifest := BuildManifest(cfg.BinaryPath, cfg.PkgFiles, cfg.Entrypoint)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
@@ -160,7 +163,9 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 // "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialised
 // as nested nodes — the Nanos manifest parser treats '/' as an unknown
 // discriminator and rejects flat slash-separated keys.
-func BuildManifest(binaryPath string, pkgFiles []pkg.File) string {
+// entrypoint, if non-empty, is emitted as arguments:("/<entrypoint>") so that
+// the runtime interpreter (e.g. node) receives the script path on startup.
+func BuildManifest(binaryPath string, pkgFiles []pkg.File, entrypoint string) string {
 	absBin, _ := filepath.Abs(binaryPath)
 
 	root := newManifestNode()
@@ -178,7 +183,11 @@ func BuildManifest(binaryPath string, pkgFiles []pkg.File) string {
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n")
 	writeManifestChildren(&b, root, "        ")
-	b.WriteString("    )\n    program:/program\n    environment:()\n)")
+	b.WriteString("    )\n    program:/program\n")
+	if entrypoint != "" {
+		b.WriteString("    arguments:(0:/program 1:/" + filepath.ToSlash(entrypoint) + ")\n")
+	}
+	b.WriteString("    environment:()\n)")
 	return b.String()
 }
 
@@ -209,6 +218,8 @@ func insertManifestFile(node *manifestNode, guestPath, hostPath string) {
 }
 
 // writeManifestChildren serialises the children of node into b at the given indent level.
+// Directory nodes wrap their entries in a nested children:(...) scope — the Nanos manifest
+// parser only descends into a directory when it finds a children: key inside the node.
 func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string) {
 	keys := make([]string, 0, len(node.children))
 	for k := range node.children {
@@ -226,8 +237,13 @@ func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string
 			b.WriteString(child.hostPath)
 			b.WriteString("))\n")
 		} else {
+			inner := indent + "    "
 			b.WriteString("(\n")
-			writeManifestChildren(b, child, indent+"    ")
+			b.WriteString(inner)
+			b.WriteString("children:(\n")
+			writeManifestChildren(b, child, inner+"    ")
+			b.WriteString(inner)
+			b.WriteString(")\n")
 			b.WriteString(indent)
 			b.WriteString(")\n")
 		}

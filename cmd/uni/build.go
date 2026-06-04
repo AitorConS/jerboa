@@ -26,16 +26,17 @@ func absPath(p string) string {
 
 func newBuildCmd(storePath *string) *cobra.Command {
 	var (
-		name      string
-		tag       string
-		memory    string
-		cpus      int
-		mkfs      string
-		updateYes bool
-		pkgs      []string
-		pkgSource string
-		lang      string
-		platform  string
+		name       string
+		tag        string
+		memory     string
+		cpus       int
+		mkfs       string
+		updateYes  bool
+		pkgs       []string
+		pkgSource  string
+		lang       string
+		platform   string
+		entrypoint string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -106,12 +107,16 @@ project markers (go.mod, package.json, etc.).`,
 					}
 					defer func() { _ = os.Remove(binaryPath) }()
 				} else {
-					binaryPath, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource)
+					var buildEntrypoint string
+					binaryPath, buildEntrypoint, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource)
 					if err != nil {
 						return err
 					}
 					if binaryPath != "" {
 						defer func() { _ = os.Remove(binaryPath) }()
+					}
+					if buildEntrypoint != "" {
+						entrypoint = buildEntrypoint
 					}
 				}
 			} else {
@@ -129,6 +134,7 @@ project markers (go.mod, package.json, etc.).`,
 				Memory:     memory,
 				CPUs:       cpus,
 				PkgFiles:   pkgFiles,
+				Entrypoint: entrypoint,
 			})
 			if err != nil {
 				return fmt.Errorf("build: %w", err)
@@ -151,14 +157,17 @@ project markers (go.mod, package.json, etc.).`,
 }
 
 // buildSingle handles a single-language build (no stages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string) (string, error) {
+// Returns (binaryPath, entrypoint, error). entrypoint is non-empty for interpreted
+// languages (e.g. "hi.js" for Node) and must be passed to the image manifest so the
+// runtime interpreter knows which script to execute.
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string) (string, string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
 	case langFlag != "":
 		langHint, err = builder.ParseLang(langFlag)
 		if err != nil {
-			return "", fmt.Errorf("build: %w", err)
+			return "", "", fmt.Errorf("build: %w", err)
 		}
 	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
 		langHint = cfg.LangHint()
@@ -169,59 +178,59 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", fmt.Errorf("build: %w", err)
+			return "", "", fmt.Errorf("build: %w", err)
 		}
 	}
 
 	detected, err := builder.DetectLanguage(srcPath, langHint)
 	if err != nil {
-		return "", fmt.Errorf("build: %w", err)
+		return "", "", fmt.Errorf("build: %w", err)
 	}
 	driver, err := builder.GetDriver(detected)
 	if err != nil {
-		return "", fmt.Errorf("build: %w", err)
+		return "", "", fmt.Errorf("build: %w", err)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
 
-	var entrypoint string
+	var cfgEntrypoint string
 	var buildArgs []string
 	if cfg != nil {
-		entrypoint = cfg.Build.Entrypoint
+		cfgEntrypoint = cfg.Build.Entrypoint
 		buildArgs = cfg.Build.Args
 	}
 
 	result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
-		Entrypoint: entrypoint,
+		Entrypoint: cfgEntrypoint,
 		BuildArgs:  buildArgs,
 		Platform:   buildPlatform,
 	})
 	if err != nil {
-		return "", fmt.Errorf("build %s: %w", detected, err)
+		return "", "", fmt.Errorf("build %s: %w", detected, err)
 	}
 
 	switch {
 	case result.BinaryPath != "":
-		return result.BinaryPath, nil
+		return result.BinaryPath, "", nil
 	case result.SourceDir != "":
 		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
 		if err != nil {
-			return "", fmt.Errorf("build: resolve packages: %w", err)
+			return "", "", fmt.Errorf("build: resolve packages: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, resolvedPkgs...)
 
 		runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
 		if err != nil {
-			return "", fmt.Errorf("build: %w", err)
+			return "", "", fmt.Errorf("build: %w", err)
 		}
 
 		srcFiles, err := sourceFiles(result.SourceDir)
 		if err != nil {
-			return "", fmt.Errorf("build: collect source files: %w", err)
+			return "", "", fmt.Errorf("build: collect source files: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, srcFiles...)
-		return runtimeBinary, nil
+		return runtimeBinary, result.Entrypoint, nil
 	default:
-		return "", fmt.Errorf("build %s: driver returned empty result", detected)
+		return "", "", fmt.Errorf("build %s: driver returned empty result", detected)
 	}
 }
 
