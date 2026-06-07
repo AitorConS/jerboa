@@ -217,7 +217,7 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("ops extract mkdir %s: %w", filepath.Dir(target), err)
 			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode))
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fs.FileMode(hdr.Mode)|0o200)
 			if err != nil {
 				return fmt.Errorf("ops extract create %s: %w", target, err)
 			}
