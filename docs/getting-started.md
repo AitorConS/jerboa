@@ -112,9 +112,12 @@ sudo unid --qemu qemu-system-x86_64
 # Without sudo (custom socket path)
 unid --socket /tmp/unid.sock --qemu qemu-system-x86_64
 
-# With image registry enabled (port 5000)
-unid --socket /tmp/unid.sock --registry-addr :5000
+# With observability enabled — Prometheus metrics + web dashboard
+unid --socket /tmp/unid.sock --metrics-addr :9090 --ui-addr :8080
 ```
+
+{: .note }
+See [Observability]({% link observability.md %}) for the full set of daemon flags that enable metrics, tracing, structured logging, the dashboard, and the SQLite VM store.
 
 Keep this terminal open, or run as a background service (see [Running as a Service](#running-as-a-service)).
 
@@ -169,7 +172,48 @@ If a newer kernel version is available, `uni build` will prompt before building:
 Update kernel before building? [y/N]
 ```
 
-You can also manage the kernel tools explicitly — see [`uni kernel`](#uni-kernel) below.
+You can also manage the kernel tools explicitly — see [Kernel Commands]({% link cli-reference.md %}#kernel-commands) in the CLI reference.
+
+### 2b. Or build directly from source
+
+For Go, Node.js, Python, and Rust projects, `uni build` can skip the manual cross-compilation step entirely: point it at a source directory and it detects the language from project markers (`go.mod`, `package.json`, `pyproject.toml`/`requirements.txt`, `Cargo.toml`), compiles it, resolves a matching language runtime, and packages everything into one image.
+
+**Example: a Node.js app**
+
+```js
+// hi.js
+console.log("Hello from uni+node!");
+```
+
+```json
+// package.json — "engines.node" pins the runtime's major version
+{
+  "name": "myapp",
+  "version": "1.0.0",
+  "main": "hi.js",
+  "engines": { "node": "11" }
+}
+```
+
+```bash
+# The Node.js driver reads "engines.node", resolves the closest matching
+# runtime from the nanovms/ops ecosystem (here: eyberg/node:v11.x), and
+# bundles the node binary together with your script
+uni build ./myapp --name myapp --pkg-source ops
+uni run myapp:latest --attach
+# Hello from uni+node!
+```
+
+Without `engines.node`, the driver defaults to Node 20. The same pattern applies to the other drivers:
+
+| Language | Detected by | What happens |
+|---|---|---|
+| `go` | `go.mod` | Compiled with `CGO_ENABLED=0` into a static ELF binary — no runtime package needed |
+| `node` | `package.json` | `npm install --production`, then bundled with a `node` runtime (version from `engines.node`, default `20`) |
+| `python` | `pyproject.toml` / `requirements.txt` | Dependencies installed with `pip`, bundled with a `python` runtime (version from `requires-python`) |
+| `rust` | `Cargo.toml` | Compiled with `cargo build --release` against a musl target into a static binary |
+
+You can force a specific driver with `--lang go|node|python|rust`, cross-compile with `--platform linux/arm64`, and configure builds declaratively (including multi-stage builds) with a `unikernel.toml` file. See [`uni build`]({% link cli-reference.md %}#uni-build) for the complete flag reference and `unikernel.toml` format.
 
 ### 3. Run it
 
@@ -179,8 +223,8 @@ uni run hello:latest
 
 # Check it's running
 uni ps
-# ID                                    STATE    IMAGE
-# a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f  running  hello:latest
+# ID                                    NAME  STATE    HEALTH   IMAGE
+# a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f  -     running  unknown  hello:latest
 
 # Read the serial console output
 uni logs a3f8c2d1
@@ -216,23 +260,30 @@ uni inspect web
 uni run hello:latest --rm
 ```
 
-### 5. Advanced networking (TAP + static IP)
+### 5. Managed networks and static IPs
 
-On Linux you can attach a VM to a TAP interface for full network access:
+Uni manages its own Linux bridge networks. Create one with `uni network create`, then attach VMs to it with `uni run --network` — Uni wires up a TAP interface per VM, attaches it to the bridge, and either auto-allocates an IP or uses the one you specify with `--ip`.
 
 ```bash
-# Create a TAP interface (requires root or CAP_NET_ADMIN)
-sudo ip tuntap add dev uni-tap0 mode tap
-sudo ip link set uni-tap0 up
+# Create a managed network — auto-allocates a /24 from 10.100.0.0/16
+uni network create app
 
-# Run with TAP networking and assign a static IP
-uni run myapp:latest --network uni-tap0 --ip 192.168.100.10 -p 8080:80
+# Run a VM on it with an auto-assigned IP and a published port
+uni run myapp:latest --network app -p 8080:80 --name web
+
+# Or pin a static IP explicitly (still inside the network's subnet)
+uni run myapp:latest --network app --ip 10.100.0.10 -p 8080:80 --name web2
+
+# Inspect the network, list VMs and resolve them by name
+uni network inspect app
+uni dns resolve web --network app
+uni dns list --network app
 ```
 
-When using `--network` with `-p`, iptables DNAT rules are automatically set up so port forwarding works through the TAP interface. This requires Linux and `iptables`.
+When you publish ports with `-p` on a managed network, Uni configures the iptables DNAT rules automatically so traffic reaches the VM through its bridge interface. See [Architecture → Networking]({% link architecture.md %}) for how this fits together, and [`uni network` / `uni dns`]({% link cli-reference.md %}#network-and-dns-commands) for the full command reference.
 
 {: .note }
-TAP networking and static IP assignment require Linux and elevated permissions. They are not available on Windows. See `internal/network/tap.go` (Linux-only build tag).
+Managed networks, static IPs, and DNAT port forwarding require Linux with `CAP_NET_ADMIN`/root and `iptables` (the relevant code is built only on Linux — see `internal/network/bridge_linux.go` and `tap.go`). On Windows and macOS, `uni run -p` still works through QEMU's user-mode SLIRP networking, but `--network` and `--ip` are not available.
 
 ### 6. Use persistent volumes
 
@@ -253,18 +304,22 @@ uni volume ls
 uni volume rm mydata
 ```
 
-### 7. Copy files from a stopped VM
+### 7. Copy files to and from a stopped VM
 
-Use `uni cp` to extract files from a stopped VM's disk image. The `dump` tool is downloaded automatically on first use.
+`uni cp` copies files between the host and a stopped VM's disk image, in either direction. The `dump` and `mkfs` tools are downloaded automatically on first use.
 
 ```bash
 # Copy a file from a stopped VM to the host
 uni cp myvm:/etc/config.json ./config.json
 # copied myvm:/etc/config.json → ./config.json
+
+# Copy a file from the host into a stopped VM (rebuilds the disk image)
+uni cp ./local.conf myvm:/etc/config.json
+# copied ./local.conf → myvm:/etc/config.json
 ```
 
 {: .note }
-`uni cp` currently only supports copying **from** a stopped VM, not **to** a VM. The VM must be in `stopped` state.
+The VM must be in `stopped` state for either direction. Run `uni stop <id>` first.
 
 ---
 
@@ -303,8 +358,9 @@ sudo systemctl status unid
 ```bash
 # Check if a newer version exists
 uni upgrade check
-# Installed: v0.1.0
-# Latest:    v0.1.1
+# Installed CLI:  v0.1.0
+# Running daemon: v0.1.0
+# Latest:         v0.1.1
 # Update available. Run `uni upgrade` to install v0.1.1.
 
 # Install latest (prompts for confirmation)

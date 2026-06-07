@@ -36,13 +36,25 @@ This starts an HTTP server with:
 
 | Metric | Type | Description |
 |---|---|---|
-| `uni_vms_total` | gauge | Total VMs registered |
-| `uni_vms_running` | gauge | VMs currently in running state |
-| `uni_vms_stopped` | gauge | VMs currently in stopped state |
-| `uni_vm_lifecycle_total` | counter | VM lifecycle transitions (create, start, stop, kill, remove) |
-| `uni_registry_push_total` | counter | Image push operations |
-| `uni_registry_pull_total` | counter | Image pull operations |
-| `uni_build_info` | gauge | Build info (version label) |
+| `uni_vms_created_total` | gauge | Number of VMs in created state |
+| `uni_vms_starting_total` | gauge | Number of VMs in starting state |
+| `uni_vms_running_total` | gauge | Number of VMs in running state |
+| `uni_vms_stopping_total` | gauge | Number of VMs in stopping state |
+| `uni_vms_stopped_total` | gauge | Number of VMs in stopped state |
+| `uni_vm_starts_total` | counter | Total number of VM start operations |
+| `uni_vm_stops_total` | counter | Total number of VM stop operations |
+| `uni_vm_restarts_total` | counter | Total number of VM restart operations |
+| `uni_vm_errors_total` | counter | Total number of VM errors |
+| `uni_build_info` | gauge | Build information for the daemon (`version` label) |
+| `uni_images_total` | gauge | Number of locally stored images |
+| `uni_push_total` / `uni_pull_total` | counter | Total number of image push/pull operations |
+| `uni_push_errors_total` / `uni_pull_errors_total` | counter | Total number of image push/pull errors |
+| `uni_port_forwards_active` | gauge | Number of active port forwarding rules |
+| `uni_bridge_count` | gauge | Number of active network bridges |
+| `uni_start_time_seconds` | gauge | Unix timestamp of daemon start time |
+
+{: .note }
+The five `uni_vms_*_total` gauges reflect a live snapshot of the VM registry (how many VMs are currently in each state), refreshed every 5 seconds — they are not cumulative counts despite the `_total` suffix. The `uni_vm_*_total` counters (starts, stops, restarts, errors) are the cumulative lifecycle counters.
 
 ### Prometheus Scrape Config
 
@@ -73,12 +85,14 @@ The daemon creates spans for these VM lifecycle events:
 
 | Span Name | Description |
 |---|---|
-| `vm.lifecycle` | Parent span for a VM operation |
-| `vm.create` | VM registration |
+| `vm.lifecycle` | Parent span for a VM state transition (carries `vm.id`, `vm.state`, `vm.event` attributes) |
+| `vm.create` | VM registration (carries `vm.image`, `vm.memory`, `vm.cpus`, and optionally `vm.name`/`vm.network`) |
 | `vm.start` | QEMU process launch |
 | `vm.stop` | Graceful shutdown |
 | `vm.kill` | Immediate kill |
+| `vm.signal` | Sending an arbitrary signal to the VM |
 | `vm.remove` | VM removal from store |
+| `vm.monitor` | Background QEMU process monitoring |
 
 ### Collector Setup
 
@@ -126,7 +140,7 @@ The `uni stats` command shows real-time resource usage per VM:
 # One-time snapshot
 uni stats <vm-id>
 
-# Continuous watch (3s interval by default)
+# Continuous watch (2s interval by default)
 uni stats <vm-id> --watch
 
 # Custom interval
@@ -141,7 +155,7 @@ uni stats <vm-id> --watch --interval 5s
 | Memory | Resident memory in bytes |
 | Net RX | Total network bytes received |
 | Net TX | Total network bytes transmitted |
-| Source | `proc` (Linux /proc) or `fallback` (non-Linux) |
+| Source | `procfs` (Linux `/proc`) or `fallback` (non-Linux, all values zero) |
 
 ### JSON Output
 
@@ -220,18 +234,18 @@ These run in `.github/workflows/nightly.yml` at 02:00 UTC daily.
 When running on Linux with cgroup v2, you can enforce CPU and memory limits per VM:
 
 ```bash
-# Limit CPU shares (1-10000, cgroup v2 weight)
+# Limit CPU shares (1-10000 cgroup v2 weight, default 100)
 uni run myapp:latest --cpu-shares 512
 
-# Set memory hard limit
+# Set a memory hard limit (K/M/G suffixes)
 uni run myapp:latest --memory-max 1G
 ```
 
-If cgroup v2 is not available, the flags are accepted but no limits are enforced (a warning is logged).
+If cgroup v2 is not available, the flags are accepted but no limits are enforced (a warning is logged). See [Resource Quotas]({% link architecture.md %}#resource-quotas) in the architecture reference for how the daemon manages cgroups.
 
 ## I/O Throttling
 
-Disk I/O for the boot disk can be limited using QEMU's native throttle:
+Disk I/O for the **boot disk only** (not mounted volumes) can be limited using QEMU's native drive throttle:
 
 ```bash
 # Limit to 1000 IOPS
@@ -240,3 +254,5 @@ uni run myapp:latest --disk-iops 1000
 # Limit throughput to 10MB/s
 uni run myapp:latest --disk-bps 10M
 ```
+
+See [I/O Throttling]({% link architecture.md %}#io-throttling) in the architecture reference for details.

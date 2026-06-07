@@ -37,10 +37,15 @@ services:
       - "host:guest[/tcp|udp]"
     volumes:
       - "name:guestpath[:ro]"
+    health_check: "tcp:PORT" | "http:PORT[:/path]"
+    restart: "never" | "on-failure[:max-retries]" | "always[:max-retries]"
+    replicas: <number>
+    strategy: "RollingUpdate" | "Recreate"
 
 networks:
   <network-name>:
     driver: bridge
+    subnet: <CIDR, e.g. 10.100.0.0/24>
 
 volumes:
   <volume-name>:
@@ -70,10 +75,17 @@ volumes:
 | `memory` | No | `256M` | VM memory (QEMU format: `256M`, `1G`, `4G`) |
 | `cpus` | No | `1` | Number of virtual CPUs |
 | `depends_on` | No | `[]` | Services that must start before this one |
-| `networks` | No | `[]` | Logical networks to attach to |
+| `networks` | No | `[]` | Logical networks to attach to. Only the **first** entry is actually wired up — a service connects to one managed network |
 | `environment` | No | `[]` | Environment variables as `KEY=VALUE` strings |
-| `ports` | No | `[]` | Port mappings: `"host:guest"` or `"host:guest/udp"` |
-| `volumes` | No | `[]` | Volume mounts: `"name:guestpath"` or `"name:guestpath:ro"` |
+| `ports` | No | `[]` | Port mappings: `"host:guest"`, `"host:guest/tcp"`, or `"host:guest/udp"` |
+| `volumes` | No | `[]` | Volume mounts: `"name:guestpath"` or `"name:guestpath:ro"`. Each `name` must match a key under the top-level `volumes:` map |
+| `health_check` | No | — | Liveness probe spec: `"tcp:PORT"` or `"http:PORT[:/path]"`. See [Health Checks]({% link architecture.md %}#health-checks) |
+| `restart` | No | — | Restart policy spec: `"never"`, `"on-failure[:max-retries]"`, or `"always[:max-retries]"`. See [Restart Policies]({% link architecture.md %}#restart-policies) |
+| `replicas` | No | `0` | Number of identical instances to run behind a shared service name. `replicas > 1` deploys the service as a managed [Service]({% link cli-reference.md %}#service-commands) instead of a single VM — see [Scaling with replicas](#scaling-with-replicas) below |
+| `strategy` | No | — | Update strategy for scaled services: `RollingUpdate` or `Recreate`. Only meaningful when `replicas > 1` |
+
+{: .note }
+`health_check` and `restart` apply to single-instance services (`replicas` unset or `1`). For scaled services (`replicas > 1`), lifecycle is managed by `uni service` instead — see below.
 
 ---
 
@@ -82,6 +94,7 @@ volumes:
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `driver` | No | `bridge` | Network driver. Only `bridge` is supported |
+| `subnet` | No | auto-allocated | CIDR block for the network (e.g. `10.100.0.0/24`). If omitted, Uni auto-allocates a `/24` from its internal range |
 
 ### Volume fields
 
@@ -123,6 +136,8 @@ services:
       - LOG_LEVEL=info
     ports:
       - "8080:8080"
+    health_check: "http:8080:/healthz"
+    restart: "on-failure:5"
 
   web:
     image: myweb:v1.0
@@ -139,10 +154,12 @@ services:
       - "443:443"
     volumes:
       - staticfiles:/var/www/html:ro
+    restart: always
 
 networks:
   backend-net:
     driver: bridge
+    subnet: 10.100.0.0/24
   frontend-net:
     driver: bridge
 
@@ -167,6 +184,43 @@ db  →  api  →  web
 ```
 web  →  api  →  db
 ```
+
+---
+
+## Scaling with replicas
+
+Add `replicas` to a service to run it as a group of identical, load-balanced VMs instead of a single instance:
+
+```yaml
+services:
+  api:
+    image: myapi:v1.0
+    memory: 256M
+    cpus: 1
+    networks:
+      - backend-net
+    replicas: 3
+    strategy: RollingUpdate
+```
+
+**What changes when `replicas > 1`:**
+
+- `compose up` does **not** call `VM.Run` directly for that service. Instead it calls `Service.Run` (the same machinery behind [`uni service run`]({% link cli-reference.md %}#service-commands)), which creates `replicas` VMs behind the shared name `api`, attaches each to the service's first network with its own auto-allocated IP, and registers internal DNS records for all of them
+- Other services can reach the group by its name — `uni dns resolve-all api --network backend-net` returns every replica's IP, and the daemon round-robins between them for service-to-service traffic
+- `health_check` and `restart` are not set per-replica from the compose file; the service is managed as a unit instead. Use `strategy: RollingUpdate` (replace replicas one at a time) or `strategy: Recreate` (stop all, then start all) to control how `uni service update` rolls out changes
+- The compose state file records the service under `scalable_services`, so `compose down` knows to call `Service.Remove` (which stops and deletes every replica) instead of `VM.Stop`/`VM.Remove` for a single VM
+- `compose ps` and `compose logs` resolve the underlying replica VM IDs through the service so they keep working transparently
+
+You can also manage a scaled service directly once it's running:
+
+```bash
+uni service ls
+uni service inspect api
+uni service scale api --replicas 5
+uni service update api --image myapi:v1.1 --strategy RollingUpdate
+```
+
+See [Service Commands]({% link cli-reference.md %}#service-commands) for the full reference.
 
 ---
 
@@ -217,11 +271,26 @@ Content:
   "created_volumes": [
     "dbdata",
     "staticfiles"
-  ]
+  ],
+  "created_networks": [
+    "backend-net",
+    "frontend-net"
+  ],
+  "scalable_services": {
+    "api": "api"
+  }
 }
 ```
 
-Commands `down`, `ps`, and `logs` read this file to know which VM IDs belong to the stack. `service_networks` and `service_ips` are used during `compose down` to deterministically release allocated IPs back to IPAM.
+| Field | Used for |
+|---|---|
+| `services` | Maps each service name to its VM ID (or, for scaled services, the service name — see `scalable_services`) |
+| `service_networks` / `service_ips` | Deterministically release allocated IPs back to IPAM on `compose down` |
+| `created_volumes` | Tracks which volumes `compose up` auto-created, so `compose down --volumes` knows what it's allowed to remove |
+| `created_networks` | Tracks which networks `compose up` auto-created (networks that already existed are left alone and not recorded here), so `compose down` knows which ones it's safe to remove |
+| `scalable_services` | Marks services deployed via `Service.Run` (`replicas > 1`); `compose down` calls `Service.Remove` for these instead of stopping a single VM — see [Scaling with replicas](#scaling-with-replicas) |
+
+Commands `down`, `ps`, and `logs` read this file to know which VM IDs (or services) belong to the stack.
 
 {: .warning }
 Do not delete `.uni-compose-state.json` manually while the stack is running. If it gets lost, use `uni ps` to find the VM IDs and stop them individually with `uni stop`.

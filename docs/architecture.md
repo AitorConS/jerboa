@@ -25,12 +25,13 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │                                                         │
 │  build · run · ps · status · logs · stop · rm · inspect · exec · cp │
 │  compose up · compose down · compose ps · compose logs  │
+│  service run · service scale · service update · service ls/inspect/rm │
 │  volume create · volume ls · volume rm · volume inspect │
 │  network create · network ls · network inspect · network rm │
-│  dns resolve · dns list                                  │
+│  dns resolve · dns resolve-all · dns list                │
 │  node ls                                                  │
 │  sign · verify                                            │
-│  pkg list · pkg search · pkg get · pkg remove           │
+│  pkg list · pkg search · pkg get · pkg remove · pkg load│
 │  kernel check · kernel update · kernel list · kernel use│
 │  upgrade · upgrade check · upgrade list                 │
 └──────────────────────────┬──────────────────────────────┘
@@ -42,22 +43,21 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │  unid  (daemon — long-running background process)       │
 │                                                         │
 │  ┌──────────────────┐  ┌──────────────────────────────┐ │
-│  │   VM Manager     │  │   Image Registry (HTTP)      │ │
-│  │                  │  │                              │ │
-│  │  QEMUManager     │  │   GET  /v2/images            │ │
-│  │  ┌────────────┐  │  │   POST /v2/images            │ │
-│  │  │ VM #1      │  │  │   GET  /v2/images/{ref}      │ │
-│  │  │ qemu-sys.. │  │  │   GET  /v2/images/{ref}/disk │ │
-│  │  └────────────┘  │  │   DELETE /v2/images/{ref}    │ │
+│  │   VM Manager     │  │   Image Store                │ │
+│  │                  │  │   content-addressed (SHA256) │ │
+│  │  QEMUManager     │  │                              │ │
+│  │  ┌────────────┐  │  │   ~/.uni/images/             │ │
+│  │  │ VM #1      │  │  │     <sha256>/manifest.json   │ │
+│  │  │ qemu-sys.. │  │  │     <sha256>/disk.img        │ │
+│  │  └────────────┘  │  │     refs.json                │ │
 │  │  ┌────────────┐  │  └──────────────────────────────┘ │
 │  │  │ VM #2      │  │                                   │
 │  │  │ qemu-sys.. │  │  ┌──────────────────────────────┐ │
-│  │  └────────────┘  │  │   Image Store                │ │
-│  └──────────────────┘  │   ~/.uni/images/             │ │
-│                        │   <sha256>/manifest.json     │ │
-│                        │   <sha256>/disk.img          │ │
-│                        │   refs.json                  │ │
+│  │  └────────────┘  │  │  Networks · Volumes · Compose│ │
+│  └──────────────────┘  │  Services · Cluster gossip   │ │
 │                        └──────────────────────────────┘ │
+│  Observability: Prometheus · OTLP traces · dashboard ·  │
+│  structured logs · file/SQLite VM store                 │
 └──────────────────────────┬──────────────────────────────┘
                            │  spawns
 ┌──────────────────────────▼──────────────────────────────┐
@@ -71,16 +71,7 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
                            │  boots
 ┌──────────────────────────▼──────────────────────────────┐
 │  Nanos Kernel (C + ASM fork)                            │
-│  Loads and runs the static ELF application              │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│  unireg  (standalone registry server)                    │
-│                                                          │
-│  Same OCI/legacy HTTP API as embedded registry.          │
-│  Independently deployable for multi-node or CI use.      │
-│  Flags: --addr, --token, --jwt-secret, --tls-cert,      │
-│         --tls-key, --no-auto-tls                         │
+│  Loads and runs the application image                   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -101,9 +92,10 @@ The command-line interface. It is a **thin client** — it does no VM management
 The long-running background process that owns everything:
 
 - Listens on a Unix domain socket (JSON-RPC 2.0)
-- Manages the VM registry (in-memory `Store`)
+- Manages the VM registry (`FileStore` or `SQLiteStore`, selected with `--vm-store`)
 - Spawns and monitors QEMU processes
-- Optionally serves the HTTP image registry
+- Owns the local image store, networks, volumes, compose state, services, and (optionally) cluster membership
+- Optionally exposes Prometheus metrics, OpenTelemetry traces, a web dashboard, and structured JSON logs — see [Observability]({% link observability.md %})
 
 ### VM Manager (`internal/vm/`)
 
@@ -119,7 +111,7 @@ Every transition is atomic (protected by `sync.RWMutex`) and logged with `slog`.
 **Key types:**
 - `VM` — represents one virtual machine (ID, config, state, timestamps, log buffer, health status, restart count)
 - `QEMUManager` — implements the `Manager` interface by spawning `qemu-system-x86_64`
-- `Store` — thread-safe registry interface for all known VMs; `MemoryStore` for in-memory, `FileStore` for JSON persistence
+- `Store` — thread-safe registry interface for all known VMs; `MemoryStore` (in-memory), `FileStore` (JSON file persistence), or `SQLiteStore` (SQLite persistence) — selected with the daemon's `--vm-store file|sqlite` flag
 - `HealthChecker` — manages TCP/HTTP probe goroutines per VM
 - `RestartConfig` / `RestartPolicy` — controls automatic restart behaviour
 - `RuntimeStats` / `StatsCollector` — runtime resource usage (CPU%, memory, network I/O) per VM; `ProcStatsCollector` on Linux reads `/proc/[pid]/stat`, `/proc/[pid]/statm`, `/proc/[pid]/net/dev`; `NoopStatsCollector` fallback on other platforms
@@ -204,9 +196,16 @@ JSON-RPC 2.0 over a Unix domain socket.
 | `VM.Stats` | Runtime resource usage (CPU, memory, network) |
 | `Network.Create/List/Get/Remove` | Manage named networks |
 | `Network.AllocateIP/ReleaseIP` | IPAM allocation lifecycle |
-| `DNS.Resolve` | Resolve service/VM names to IP |
+| `DNS.Resolve` | Resolve a service/VM name to an IP on a network |
+| `DNS.ResolveAll` | Resolve a name to every matching IP (for replica round-robin) |
 | `DNS.List` | List active DNS records |
+| `Service.Run` | Create and start a replicated service |
+| `Service.Scale` | Change a service's replica count |
+| `Service.Update` | Roll out a new image/config across a service's replicas |
+| `Service.List/Get/Remove` | Manage known services |
 | `Node.List` | List cluster members (requires `--cluster-addr`) |
+| `Daemon.Version` | Report the daemon's version |
+| `Daemon.Shutdown` | Gracefully stop the daemon |
 
 ### Compose (`internal/compose/`)
 
@@ -217,7 +216,9 @@ Parses compose YAML files and resolves startup order:
 
 ### Package System (`internal/package/`)
 
-Manages pre-packaged files that can be included in images at build time:
+Two independent package ecosystems are supported, selected with `--source`/`--pkg-source uni|ops` (see [Package Commands]({% link cli-reference.md %}#package-commands)):
+
+**`uni` native index** — pre-packaged files for inclusion in images at build time:
 
 - **Store** — local cache at `~/.uni/packages/<name>/<version>/` holding:
   - `files.tar.gz` — the downloaded package archive
@@ -240,6 +241,16 @@ Packages are included at build time via `uni build --pkg <name>[:<version>]`. Th
 4. Collects all individual file paths from `files/` via `ExtractedFiles()`
 5. Passes the file list to `buildManifest()` which includes each file in the Nanos manifest
 
+**`ops` ecosystem (`OpsStore`)** — pre-built language runtimes from the `nanovms`/`eyberg` package hub at `repo.ops.city`, used both by `uni pkg` (with `--source ops`) and as the runtime source for source-based builds (`uni build --pkg-source ops`):
+
+- **`OpsStore`** — local cache at `~/.uni/packages-ops/<namespace>/<name>/<version>/`, mirroring the layout the upstream `ops` tool expects
+- **`FetchOpsManifest`/`FetchManifestCached`** — downloads (and caches) the manifest at `repo.ops.city/v2/manifest.json`, listing every available `<namespace>/<name>:<version>` package with its language, architecture, and SHA256
+- **`Lookup`** — resolves a `<namespace>/<name>[:<version>]` reference against the manifest, normalizing `v` prefixes and matching version prefixes (e.g., a query of `11` matches `v11.5.0`)
+- **`Download`/`Extract`/`FindBinary`** — fetches the package archive (verifying its SHA256), extracts it, and locates the runtime binary inside it
+- **`lookupOpsPackage`** — used by `uni build --pkg-source ops` to resolve an unqualified runtime name (e.g., `node`) by searching the namespaces `eyberg`, `nanovms`, and `myuniverse`, in that order, for the closest version match to the project's declared runtime version (e.g., `engines.node` in `package.json`)
+
+This is the mechanism behind [building directly from source]({% link getting-started.md %}#2b-or-build-directly-from-source): the language driver detects the project's runtime requirement, resolves a matching `ops` package, downloads and extracts it, and bundles the runtime binary into the image alongside the compiled application.
+
 ### Environment Variable Injection
 
 Environment variables passed via `uni run -e KEY=VALUE` reach the guest through QEMU's `fw_cfg` device — no disk rebuild required.
@@ -256,75 +267,12 @@ This is x86-64 only; the function compiles to a no-op stub on aarch64.
 Static IP configuration passed via `uni run --ip` reaches the guest through QEMU's `fw_cfg` device, the same mechanism used for environment variables.
 
 **Flow:**
-1. `uni run --ip 10.0.0.2 --network tap0` → daemon builds `-fw_cfg name=opt/uni/network,string=10.0.0.2/24,10.0.0.1`
+1. `uni run --network app --ip 10.0.0.2` → daemon builds `-fw_cfg name=opt/uni/network,string=10.0.0.2/24,10.0.0.1`
 2. QEMU exposes this as a named file on the fw_cfg device (I/O ports `0x510`/`0x511`)
 3. At boot, `net_inject_from_fw_cfg()` in the kernel reads `opt/uni/network`, parses the IP/CIDR and gateway, and injects them into the root tuple
 4. `init_network_iface()` picks up the injected values to configure the first ethernet interface with a static IP instead of DHCP
 
 The format is `IP/CIDR,GATEWAY` (e.g. `10.0.0.2/24,10.0.0.1`). This is x86-64 only.
-
----
-
-## Image Registry
-
-When started with `--registry-addr :5000`, `unid` serves an HTTP registry.
-
-Current behavior is hybrid:
-- Legacy API under `/v2/images` is still available for backward compatibility.
-- OCI v2 foundations are available under `/v2/...` for blob upload/download and manifest put/get/delete.
-- OCI blobs are persisted in `~/.uni/blobs`.
-- OCI manifest refs/bodies are persisted in `~/.uni/oci` and survive daemon restarts.
-
-```
-GET    /v2/images                          list all images (legacy)
-GET    /v2/images/{ref}                    get manifest (legacy)
-GET    /v2/images/{ref}/disk               download raw disk image (legacy)
-POST   /v2/images                          push image multipart (legacy)
-DELETE /v2/images/{ref}                    remove image (legacy)
-
-GET    /v2/                                OCI API base (200 when available)
-GET    /v2/_catalog                        list OCI repositories
-POST   /v2/{name}/blobs/uploads/           start OCI blob upload
-PATCH  /v2/{name}/blobs/uploads/{uuid}     append OCI blob upload chunk
-PUT    /v2/{name}/blobs/uploads/{uuid}     complete OCI blob upload
-GET    /v2/{name}/blobs/{digest}           download OCI blob
-HEAD   /v2/{name}/blobs/{digest}           check OCI blob existence + digest
-DELETE /v2/{name}/blobs/{digest}           delete OCI blob
-PUT    /v2/{name}/manifests/{ref}          store OCI manifest ref
-GET    /v2/{name}/manifests/{ref}          read OCI manifest ref
-HEAD   /v2/{name}/manifests/{ref}          check OCI manifest existence + digest
-DELETE /v2/{name}/manifests/{ref}          delete OCI manifest ref
-```
-
-`{name}` supports nested repository names (e.g. `team/api`, `org/project/service`) for OCI blob and manifest routes.
-
-Full OCI compliance/auth/signing is tracked in Phase 8, but the migration path is active:
-`uni push/pull` use OCI first and fall back to legacy endpoints if needed.
-
-Registry auth is now available as an optional static bearer token gate:
-
-- Start daemon with `--registry-token <token>` (or `UNI_REGISTRY_TOKEN=<token>`)
-- When enabled, registry endpoints require `Authorization: Bearer <token>`
-- Unauthorized requests return `401` with Docker-style challenge headers including `realm`, `service`, and scoped `repository:<name>:pull|push` when applicable
-
-Scoped JWT auth is also available for registry endpoints:
-
-- Start daemon with `--registry-jwt-secret <secret>` (or `UNI_REGISTRY_JWT_SECRET=<secret>`)
-- Optional claim checks can be configured with `--registry-jwt-issuer` / `UNI_REGISTRY_JWT_ISSUER` and `--registry-jwt-audience` / `UNI_REGISTRY_JWT_AUDIENCE`
-- Tokens are validated as HMAC JWTs and must include a `scope` claim
-- Supported scope format is Docker-style: `repository:<name>:pull,push` (supports `*` repo wildcard)
-- Missing/invalid tokens return `401`; valid tokens without required action scope return `403`
-
-Registry HTTPS can be enabled with custom certificate files:
-
-- Start daemon with `--registry-tls-cert <path>` and `--registry-tls-key <path>`
-- Environment alternatives: `UNI_REGISTRY_TLS_CERT` and `UNI_REGISTRY_TLS_KEY`
-- Both cert and key are required together; partial TLS config is rejected at startup
-
-Registry blob garbage collection is available via daemon command:
-
-- Run `unid gc` to remove OCI blobs in `~/.uni/blobs` that are not referenced by any manifest in `~/.uni/oci`
-- Referenced blobs (manifest config + layer digests) are preserved
 
 ---
 
@@ -348,11 +296,11 @@ This requires the VM to be in `stopped` state because the disk image must not be
 
 ## Networking
 
-Each VM can use one of two networking modes:
+Each VM can use one of two networking modes, chosen automatically based on the flags passed to `uni run`:
 
-**SLIRP user-mode** (default for `-p`): QEMU's built-in user-mode networking with port forwarding via `hostfwd` rules. Works on any platform without root access. Does not support inbound ICMP (ping).
+**SLIRP user-mode** (used when `-p` is set without `--network`): QEMU's built-in user-mode networking with port forwarding via `hostfwd` rules. Works on any platform without root access. Does not support inbound ICMP (ping).
 
-**TAP + bridge**: A TAP interface is created and bridged on the Linux host, giving the VM full network access including its own IP address. Requires Linux and elevated permissions. When port mappings (`-p`) are used together with `--network`, iptables DNAT rules are automatically configured so that traffic arriving at the host is forwarded to the guest's static IP. The bridge is created via `internal/network/bridge_linux.go`, the TAP is attached, and iptables rules (with interface filtering via `-i tapName`) are applied for port forwarding. When `--ip` is specified, the guest-side static IP is configured via fw_cfg (`opt/uni/network`) — no DHCP required.
+**TAP + bridge** (used when `--network <name>` is set): `--network` takes the name of a *managed network* created beforehand with `uni network create` — not a raw host interface name. The daemon looks it up via `Network.Get`, creates a TAP interface, and bridges it on the Linux host, giving the VM full network access including its own IP address (auto-allocated from the network's subnet, or pinned with `--ip`). Requires Linux and elevated permissions (`CAP_NET_ADMIN`/root). When port mappings (`-p`) are used together with `--network`, iptables DNAT rules are automatically configured so that traffic arriving at the host is forwarded to the guest's static IP. The bridge is created via `internal/network/bridge_linux.go`, the TAP is attached, and iptables rules (with interface filtering via `-i tapName`) are applied for port forwarding. When `--ip` is specified, the guest-side static IP is configured via fw_cfg (`opt/uni/network`) — no DHCP required.
 
 {: .note }
 TAP networking requires Linux and elevated permissions. It is not available on Windows. See `internal/network/tap.go` (Linux-only build tag).

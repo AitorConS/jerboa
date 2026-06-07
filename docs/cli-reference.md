@@ -431,7 +431,8 @@ When `<path>` is a directory, `uni build` detects the language from project mark
 | `--cpus` | `1` | Default CPU count baked into the image |
 | `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
 | `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
-| `--pkg` | — | Include package in the image (repeatable). Downloads, extracts, and includes the package files |
+| `--pkg` | — | Include package in the image (repeatable), e.g. `node:20`. Downloads, extracts, and includes the package files |
+| `--pkg-source` | `uni` | Source to resolve `--pkg` (and language-driver auto-detected runtime packages) from: `uni` or `ops` |
 | `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`) |
 | `--platform` | *(native)* | Target platform for cross-compilation (e.g. `linux/amd64`, `linux/arm64`) |
 
@@ -459,6 +460,11 @@ uni build ./myapp --name myapp --pkg node:20
 
 # Include multiple packages
 uni build ./myapp --name myapp --pkg node:20 --pkg redis:7
+
+# Build a Node.js project from source — the language driver detects
+# package.json, reads "engines.node" for the version, and resolves the
+# matching runtime package automatically (no --pkg needed)
+uni build ./myapp --name myapp --pkg-source ops
 
 # Build from source directory (Go project)
 uni build --lang go .
@@ -582,91 +588,17 @@ uni rmi hello:latest
 
 ---
 
-### `uni push`
+### `uni sign`
 
-Push a local image to a registry.
-
-`uni push` now prefers the OCI Distribution flow (`/v2/<name>/blobs/...` + `/v2/<name>/manifests/<tag>`).
-If the target registry does not support OCI endpoints yet, it automatically falls back to the legacy
-`/v2/images` API.
-
-Registry auth/TLS options are available as global flags:
-
-- `--registry-token` (or `UNI_REGISTRY_TOKEN`) to send bearer/JWT auth
-- `--registry-ca-cert` (or `UNI_REGISTRY_CA_CERT`) to trust a custom CA
-- `--registry-insecure` (or `UNI_REGISTRY_INSECURE=true`) to skip TLS verification in development
+Sign a local image with an Ed25519 key pair. If no key pair exists, one is generated automatically and stored in `~/.uni/keys/`.
 
 ```
-uni push <ref> <registry-url>
+uni sign <image> [--key <path>]
 ```
-
-**Example:**
-
-```bash
-uni push hello:latest http://registry.example.com:5000
-# pushed hello:latest to http://registry.example.com:5000
-```
-
----
-
-### `uni pull`
-
-Pull an image from a registry into the local store.
-
-`uni pull` now prefers the OCI Distribution flow and automatically falls back to the legacy
-`/v2/images` API when needed.
-
-The same global registry auth/TLS flags used by `uni push` apply to `uni pull`.
-
-```
-uni pull <ref> <registry-url>
-```
-
-**Example:**
-
-```bash
-uni pull hello:latest http://registry.example.com:5000
-# sha256:abc123...  hello:latest
-
-# Pull with signature verification
-uni pull hello:latest http://registry.example.com:5000 --verify enforce
-```
-
-**Flags:**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--verify` | `off` | Image signature verification: `off`, `warn`, `enforce` |
-
----
-
-### `uni search`
-
-Search remote registry repositories using OCI catalog data.
-
-```
-uni search <registry>/<query>
-```
-
-**Example:**
-
-```bash
-uni search https://registry.example.com:5000/hello
-# hello
-# hello-api
-```
-
-`uni search` supports the same global registry auth/TLS flags as `uni push`/`uni pull`.
-
----
-
-### `uni sign`
-
-Sign a local image with the default Ed25519 key pair. If no key pair exists, one is generated automatically and stored in `~/.uni/keys/`.
-
-```
-uni sign <image>
-```
+| `--key` | *(default key pair in `~/.uni/keys/`)* | Path to a custom signing key |
 
 **Example:**
 
@@ -696,21 +628,40 @@ uni verify hello:latest
 
 ## Package Commands
 
-Manage pre-packaged files that can be included in images at build time. Packages are cached locally in `~/.uni/packages/`.
+Manage pre-packaged runtime files that can be included in images at build time (with `uni build --pkg`) or run directly (with `uni pkg load`).
+
+Uni can fetch packages from two sources, selected with the `--source` flag on `list`, `search`, `get`, and `remove`:
+
+| Source | Identifier format | Cached in | Description |
+|---|---|---|---|
+| `uni` (default) | `<name>[:<version>]` | `~/.uni/packages/` | Uni's own package index |
+| `ops` | `<namespace>/<name>[:<version>]` | `~/.uni/packages-ops/` | The [nanovms/ops](https://ops.city) package ecosystem (`eyberg/node`, `eyberg/python`, …) |
+
+> **Tip:** When building from a source directory with a language driver (`--lang node`, `--lang python`, …), `uni build` resolves the matching runtime package automatically — you don't normally need to run `uni pkg get` yourself. See [`uni build`](#uni-build) and [Getting Started]({% link getting-started.md %}) for the full workflow, including how to use `ops` packages such as `eyberg/node:v11.5.0`.
 
 ### `uni pkg list`
 
 List locally cached packages.
 
 ```
-uni pkg list
+uni pkg list [--source uni|ops] [--output-json]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--output-json` | `false` | Print as JSON instead of a table |
 
 ```bash
 uni pkg list
-# NAME       VERSION   SIZE
-# redis      7.2       12.5MB
-# nginx      1.25      8.3MB
+# NAME       VERSION   RUNTIME   DESCRIPTION
+# redis      7.2       redis     In-memory data store
+# node       20        node      Node.js runtime
+
+# List cached ops packages
+uni pkg list --source ops
+# NAMESPACE   NAME    VERSION   LANGUAGE   ARCH
+# eyberg      node    v11.5.0   node       amd64
 ```
 
 ---
@@ -720,14 +671,25 @@ uni pkg list
 Search the remote package index.
 
 ```
-uni pkg search <query>
+uni pkg search <query> [--source uni|ops] [--output-json]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--output-json` | `false` | Print as JSON instead of a table |
 
 ```bash
 uni pkg search redis
-# NAME       VERSION   SIZE      DESCRIPTION
-# redis      7.2       12.5MB    In-memory data store
-# redis-cli  7.2       3.1MB     Redis command-line client
+# NAME       VERSION   RUNTIME   DESCRIPTION
+# redis      7.2       redis     In-memory data store
+# redis-cli  7.2       redis     Redis command-line client
+
+# Search the ops package hub
+uni pkg search node --source ops
+# NAMESPACE   NAME   VERSION   LANGUAGE   ARCH      DESCRIPTION
+# eyberg      node   v11.5.0   node       amd64     Node.js v11.5.0
+# eyberg      node   v16.5.0   node       amd64     Node.js v16.5.0
 ```
 
 ---
@@ -737,15 +699,23 @@ uni pkg search redis
 Download and install a package from the remote index.
 
 ```
-uni pkg get <name>[:version]
+uni pkg get <name>[:version] [--source uni|ops]
 ```
 
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `uni` | Package source: `uni` or `ops` |
+
 ```bash
-# Install the latest version
+# Install the latest version from the uni index
 uni pkg get redis
 
 # Install a specific version
 uni pkg get redis:7.2
+
+# Install an ops package (note the <namespace>/<name>:<version> form)
+uni pkg get eyberg/node:v11.5.0 --source ops
+# Ops package eyberg/node v11.5.0 installed.
 ```
 
 ---
@@ -755,8 +725,12 @@ uni pkg get redis:7.2
 Remove locally cached package(s). Without a version suffix, all versions of the package are removed.
 
 ```
-uni pkg remove <name>[:version]
+uni pkg remove <name>[:version] [--source uni|ops]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `uni` | Package source: `uni` or `ops` |
 
 ```bash
 # Remove a specific version
@@ -765,7 +739,40 @@ uni pkg remove redis:7.2
 # Remove all locally cached versions
 uni pkg remove redis
 # Removed all versions of package redis.
+
+# Remove an ops package
+uni pkg remove eyberg/node:v11.5.0 --source ops
 ```
+
+---
+
+### `uni pkg load`
+
+Download a package, build a unikernel image from it, and (optionally) print the command to run it — a one-step shortcut comparable to `ops pkg load`.
+
+```
+uni pkg load <package> [--source uni|ops] [-d|--detach]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--source` | `uni` | Package source: `uni` or `ops` |
+| `-d`, `--detach` | `false` | Build the image only; don't print run instructions |
+
+```bash
+# Build an image from a cached uni package
+uni pkg load myruntime:1.0.0
+
+# Download an ops package, build, and get run instructions
+uni pkg load eyberg/node:v16.5.0 --source ops
+# Built image pkg-load:latest (sha256:abc123...)
+# Run with: uni run pkg-load:latest
+```
+
+{: .note }
+The resulting image is always named `pkg-load`. For a properly named, reproducible image built from your own source code (with the package wired in automatically), prefer `uni build --lang <lang> <dir>` — see [`uni build`](#uni-build).
+
+---
 
 ### `uni pkg create`
 
@@ -938,6 +945,8 @@ uni volume rm mydata
 
 ## Network and DNS Commands
 
+A managed network gives VMs their own bridge, subnet, gateway, and internal DNS — connect VMs to it with `uni run --network <name>`. See [Architecture]({% link architecture.md %}) for how networking is implemented.
+
 ### `uni network create`
 
 Create a managed network. When `--subnet` is omitted, Uni auto-allocates a `/24` from `10.100.0.0/16`.
@@ -945,6 +954,73 @@ Create a managed network. When `--subnet` is omitted, Uni auto-allocates a `/24`
 ```
 uni network create <name> [--subnet <cidr>] [--driver bridge]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--subnet` | *(auto-assigned)* | CIDR subnet, e.g. `10.100.0.0/24` |
+| `--driver` | `bridge` | Network driver |
+
+```bash
+uni network create app
+uni network create app --subnet 10.100.5.0/24
+```
+
+---
+
+### `uni network ls`
+
+List all managed networks.
+
+```
+uni network ls
+```
+
+```bash
+uni network ls
+# NAME   DRIVER   SUBNET           GATEWAY      BRIDGE
+# app    bridge   10.100.0.0/24    10.100.0.1   uni-app
+
+# JSON output
+uni --output json network ls
+```
+
+---
+
+### `uni network inspect`
+
+Show full details for a network as JSON.
+
+```
+uni network inspect <name>
+```
+
+```json
+{
+  "name": "app",
+  "driver": "bridge",
+  "subnet": "10.100.0.0/24",
+  "gateway": "10.100.0.1",
+  "bridge": "uni-app",
+  "created_at": "2026-04-19T10:00:00Z"
+}
+```
+
+---
+
+### `uni network rm`
+
+Remove a managed network and its bridge.
+
+```
+uni network rm <name>
+```
+
+```bash
+uni network rm app
+# removed app
+```
+
+---
 
 ### `uni dns resolve`
 
@@ -954,14 +1030,29 @@ Resolve a running VM/service name to its IP address.
 uni dns resolve <name> [--network <name>]
 ```
 
-Examples:
-
 ```bash
 uni dns resolve frontend --network app
 uni dns resolve frontend.app
+# NAME      NETWORK   IP            VM
+# frontend  app       10.100.0.10   a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f
 ```
 
-If the same service name exists in multiple networks, `--network` (or `name.network`) is required.
+If the same service name exists in multiple networks, `--network` (or the `name.network` form) is required.
+
+### `uni dns resolve-all`
+
+Resolve **all** IP addresses registered for a service/VM name — useful for scaled services where several replicas share the same DNS name (round-robin DNS).
+
+```
+uni dns resolve-all <name> [--network <name>]
+```
+
+```bash
+uni dns resolve-all backend --network app
+# NAME      NETWORK   IP            VM
+# backend   app       10.100.0.11   b4e9d3e2-...
+# backend   app       10.100.0.12   c5f0a4b3-...
+```
 
 ### `uni dns list`
 
@@ -969,6 +1060,139 @@ List resolvable records from running VMs.
 
 ```
 uni dns list [--network <name>]
+```
+
+```bash
+uni dns list --network app
+# NAME      NETWORK   IP            VM
+# frontend  app       10.100.0.10   a3f8c2d1-...
+# backend   app       10.100.0.11   b4e9d3e2-...
+```
+
+---
+
+## Service Commands
+
+A **service** manages a group of VM replicas running the same image as a single unit: it keeps the desired number of replicas alive, rolls out updates, and reports aggregate health. This is the same mechanism `uni compose up` uses internally whenever a compose service declares `replicas` greater than 1 — see [Compose Reference]({% link compose.md %}#scaling-with-replicas).
+
+### `uni service run`
+
+Create and start a service with the given number of replicas.
+
+```
+uni service run <name> <image> [flags]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--replicas` | `1` | Number of replicas to run |
+| `--memory` | — | Memory per replica (e.g. `256M`) |
+| `--cpus` | `0` | CPUs per replica |
+| `-e`, `--env` | — | Environment variable `KEY=VALUE` (repeatable) |
+| `--network` | — | Managed network for replicas (enables service DNS / round-robin resolution) |
+| `--strategy` | `RollingUpdate` | Update strategy: `RollingUpdate` or `Recreate` |
+| `--health-timeout` | `0` | Seconds to wait for replicas to become healthy (`0` = don't wait) |
+
+```bash
+# Start a service with 3 replicas on a managed network
+uni service run backend api:latest --replicas 3 --network app -e PORT=8080
+
+# Start with resource limits per replica
+uni service run worker worker:latest --replicas 2 --memory 512M --cpus 2
+```
+
+---
+
+### `uni service scale`
+
+Change the number of running replicas for a service.
+
+```
+uni service scale <name> <replicas>
+```
+
+```bash
+uni service scale backend 5
+```
+
+---
+
+### `uni service update`
+
+Roll a service over to a new image, following its configured update strategy.
+
+```
+uni service update <name> <image> [--health-timeout <seconds>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--health-timeout` | `0` | Seconds to wait for replicas to become healthy during the update (`0` = don't wait) |
+
+```bash
+uni service update backend api:v2
+```
+
+---
+
+### `uni service ls`
+
+List all services.
+
+```
+uni service ls
+```
+
+```bash
+uni service ls
+# NAME      IMAGE        DESIRED  READY  STRATEGY        HEALTH
+# backend   api:latest   3        3      RollingUpdate   healthy
+# worker    worker:v1    2        1      Recreate        degraded
+
+# JSON output
+uni --output json service ls
+```
+
+---
+
+### `uni service inspect`
+
+Show full details for a service as JSON, including the IDs of its replica VMs.
+
+```
+uni service inspect <name>
+```
+
+```bash
+uni service inspect backend
+```
+
+The table output equivalent (used internally after `run`/`scale`/`update`) shows:
+
+```
+Service:     backend
+Image:       api:latest
+Replicas:    3 desired, 3 ready
+Strategy:    RollingUpdate
+Health:      healthy
+Created:     2026-04-19T10:00:00Z
+Updated:     2026-04-19T10:05:00Z
+Replicas:    [a3f8c2d1-... b4e9d3e2-... c5f0a4b3-...]
+```
+
+---
+
+### `uni service rm`
+
+Remove a service and stop all of its replicas.
+
+```
+uni service rm <name>
+```
+
+```bash
+uni service rm backend
+# removed backend
 ```
 
 ---
@@ -1037,7 +1261,6 @@ uni kernel update [--yes]
 uni kernel update
 # New kernel version available: v0.1.1 (installed: v0.1.0)
 # Update? [y/N] y
-# Downloading kernel.img...
 # Kernel updated to v0.1.1.
 ```
 
@@ -1086,7 +1309,7 @@ Manage the `uni` and `unid` binaries themselves. The CLI is versioned independen
 
 ### `uni upgrade`
 
-Download and install the latest `uni` (and `unid` if found alongside it), replacing the running binaries in-place.
+Download and install the latest `uni` and `unid` binaries side by side, stopping the running daemon (if any) before replacing it and restarting it afterward.
 
 ```
 uni upgrade [--yes]
@@ -1098,13 +1321,17 @@ uni upgrade [--yes]
 
 ```bash
 uni upgrade
-# Installed: v0.1.0
-# Latest:    v0.1.1
+# Installed CLI:  v0.1.0
+# Running daemon: v0.1.0
+# Latest:         v0.1.1
 # New version available: v0.1.1
 # Upgrade? [y/N] y
-# Downloading uni-linux-amd64...
-# Downloading unid-linux-amd64...
-# Upgraded to v0.1.1.
+# Downloading uni...
+# Downloading unid...
+# uni  → /usr/local/bin/uni
+# unid → /usr/local/bin/unid
+# Starting new unid...
+# Daemon restarted and ready.
 ```
 
 {: .note }
@@ -1114,7 +1341,7 @@ On Windows, the running binary is renamed to `.bak` before the new one is placed
 
 ### `uni upgrade check`
 
-Show the installed CLI version and whether a newer one is available, without installing anything.
+Show the installed CLI version, the running daemon's version, and whether a newer release is available — without installing anything.
 
 ```
 uni upgrade check
@@ -1122,8 +1349,9 @@ uni upgrade check
 
 ```bash
 uni upgrade check
-# Installed: v0.1.0
-# Latest:    v0.1.1
+# Installed CLI:  v0.1.0
+# Running daemon: v0.1.0
+# Latest:         v0.1.1
 # Update available. Run `uni upgrade` to install v0.1.1.
 ```
 
@@ -1244,14 +1472,8 @@ When using `uni run --attach`, the command blocks until the VM reaches the `stop
 |---|---|---|
 | `--socket` | `/var/run/unid.sock` (Linux) / `%TEMP%\unid.sock` (Windows) | Unix socket path for VM management API |
 | `--qemu` | `qemu-system-x86_64` | QEMU binary to use |
-| `--registry-addr` | (empty, disabled) | HTTP address for image registry (e.g. `:5000`) |
-| `--registry-token` | `$UNI_REGISTRY_TOKEN` | Bearer token for registry auth |
-| `--registry-jwt-secret` | `$UNI_REGISTRY_JWT_SECRET` | JWT HMAC secret for scoped registry auth |
-| `--registry-jwt-issuer` | `$UNI_REGISTRY_JWT_ISSUER` | Expected JWT issuer for registry auth |
-| `--registry-jwt-audience` | `$UNI_REGISTRY_JWT_AUDIENCE` | Expected JWT audience for registry auth |
-| `--registry-tls-cert` | `$UNI_REGISTRY_TLS_CERT` | TLS cert file for registry HTTPS |
-| `--registry-tls-key` | `$UNI_REGISTRY_TLS_KEY` | TLS key file for registry HTTPS |
 | `--store` | `~/.uni/images` | Image store root directory |
+| `--vm-store` | `file` | VM state backend: `file` (per-VM JSON files) or `sqlite` (single database) |
 | `--metrics-addr` | (empty, disabled) | HTTP address for Prometheus metrics (e.g. `:9090`) |
 | `--ui-addr` | (empty, disabled) | HTTP address for web dashboard (e.g. `:8080`) |
 | `--log-format` | `text` | Log format: `text` (default) or `json` |
@@ -1261,27 +1483,19 @@ When using `uni run --attach`, the command blocks until the VM reaches the `stop
 
 ### Observability Endpoints
 
-When `--metrics-addr` is set, `unid` exposes:
+`--metrics-addr`, `--ui-addr`, `--trace-addr`, `--log-format`, and `--vm-store` together make up Uni's observability stack — Prometheus metrics, a web dashboard, OpenTelemetry tracing, structured logging, and a SQLite-backed VM store. See the full [Observability]({% link observability.md %}) guide for endpoint lists, metric names, and setup examples; the short version:
 
-| Path | Description |
+| Flag | Enables |
 |---|---|
-| `/metrics` | Prometheus metrics endpoint |
-| `/health` | Health check endpoint (returns `200 ok`) |
-
-When `--log-format json` is set, all daemon logs are structured JSON lines with `ts`, `level`, `msg`, and custom attributes.
-
-When `--trace-addr` is set, `unid` exports OpenTelemetry traces via OTLP gRPC for VM lifecycle events (create, start, stop, kill, remove).
+| `--metrics-addr :9090` | `/metrics` (Prometheus) and `/health` |
+| `--ui-addr :8080` | Web dashboard at `/ui` and JSON API at `/ui/api/...` |
+| `--trace-addr localhost:4317` | OTLP gRPC trace export for VM lifecycle spans |
+| `--log-format json` | Structured JSON log lines (`ts`, `level`, `msg`, plus contextual fields) |
+| `--vm-store sqlite` | SQLite-backed VM state store instead of per-VM JSON files |
 
 ### Dashboard
 
-When `--ui-addr` is set, `unid` serves a web dashboard:
-
-| Path | Description |
-|---|---|
-| `/ui` | VM list with state and health |
-| `/ui/api/vms` | JSON endpoint for VM list |
-
-The dashboard shows all registered VMs with their ID, name, state, health status, and image. It auto-refreshes via the `/ui/api/vms` endpoint.
+When `--ui-addr` is set, `unid` serves a read-only web dashboard showing all registered VMs with their ID, name, state, health, and image — see [Observability → Web Dashboard]({% link observability.md %}#web-dashboard) for the full route and JSON API reference.
 
 ### VM Runtime Stats
 
