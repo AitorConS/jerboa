@@ -64,6 +64,30 @@ func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 	require.Contains(t, got, "ca-certificates.crt:(contents:(host:")
 }
 
+func TestBuildManifest_NamesWithSpecialChars(t *testing.T) {
+	pkgFiles := []pkg.File{
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"), GuestPath: "usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"},
+		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"), GuestPath: "usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"},
+	}
+	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles, "")
+
+	// Names containing characters the tuple parser treats as terminators
+	// (whitespace, parens) must be quoted, or the parser misreads them —
+	// e.g. "Lorem ipsum.txt" unquoted is read as name "Lorem", landing on
+	// 'i' (of "ipsum") where ':' is expected: "unknown property discriminator 105".
+	require.Contains(t, got, `"Lorem ipsum.txt":(contents:(host:`)
+	require.Contains(t, got, `"script (dev).tmpl":(contents:(host:`)
+	require.NotContains(t, got, "Lorem ipsum.txt:(contents:(host:")
+	require.NotContains(t, got, "script (dev).tmpl:(contents:(host:")
+
+	// host path values are quoted too — they embed the (possibly
+	// space/paren-containing) filename and would hit the same value_terminal
+	// truncation ("unknown property discriminator 41" for an unmatched ')').
+	require.Contains(t, got, `(contents:(host:"`)
+	require.Contains(t, got, `Lorem ipsum.txt"))`)
+	require.Contains(t, got, `script (dev).tmpl"))`)
+}
+
 func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
 	pkgDir := t.TempDir()
 	binDir := filepath.Join(pkgDir, "bin")

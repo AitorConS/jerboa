@@ -163,8 +163,11 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 // "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialised
 // as nested nodes — the Nanos manifest parser treats '/' as an unknown
 // discriminator and rejects flat slash-separated keys.
-// entrypoint, if non-empty, is emitted as arguments:("/<entrypoint>") so that
-// the runtime interpreter (e.g. node) receives the script path on startup.
+// entrypoint, if non-empty, is emitted as arguments:(0:/program 1:/<entrypoint>)
+// so that the runtime interpreter (e.g. node, python) receives its own path as
+// argv[0] and the script path as argv[1] on startup. The Nanos tuple parser
+// reads '(' as a tuple of name:value pairs — not a bare value list — so
+// arguments must use integer-string keys rather than e.g. ("/<entrypoint>").
 func BuildManifest(binaryPath string, pkgFiles []pkg.File, entrypoint string) string {
 	absBin, _ := filepath.Abs(binaryPath)
 
@@ -217,6 +220,33 @@ func insertManifestFile(node *manifestNode, guestPath, hostPath string) {
 	}
 }
 
+// manifestNameTerminals are the characters the Nanos tuple parser treats as
+// name terminators (whitespace, parens, brackets, colons, pipes). Package
+// trees can contain filenames with such characters (e.g. "Lorem ipsum.txt",
+// "script (dev).tmpl"), which would otherwise truncate the parsed name and
+// derail the parser — so those names must be quoted.
+const manifestNameTerminals = " \t\n\r()[]:|/\"\\"
+
+// manifestName returns name formatted for use as a manifest tuple key, quoting
+// it when it contains characters the tuple parser would treat as terminators.
+// The parser's quoted-string reader only recognises "\" as an escape for the
+// following literal character, so only '"' and '\' need escaping.
+func manifestName(name string) string {
+	if !strings.ContainsAny(name, manifestNameTerminals) {
+		return name
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range name {
+		if r == '"' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 // writeManifestChildren serialises the children of node into b at the given indent level.
 // Directory nodes wrap their entries in a nested children:(...) scope — the Nanos manifest
 // parser only descends into a directory when it finds a children: key inside the node.
@@ -230,12 +260,15 @@ func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string
 	for _, key := range keys {
 		child := node.children[key]
 		b.WriteString(indent)
-		b.WriteString(key)
+		b.WriteString(manifestName(key))
 		b.WriteString(":")
 		if child.hostPath != "" {
-			b.WriteString("(contents:(host:")
-			b.WriteString(child.hostPath)
-			b.WriteString("))\n")
+			// Quoted: host paths can contain spaces or parens (e.g. extracted
+			// package files like "Lorem ipsum.txt" or "script (dev).tmpl"),
+			// which the tuple parser would otherwise treat as value terminators.
+			b.WriteString(`(contents:(host:"`)
+			b.WriteString(filepath.ToSlash(child.hostPath))
+			b.WriteString(`"))` + "\n")
 		} else {
 			inner := indent + "    "
 			b.WriteString("(\n")

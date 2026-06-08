@@ -66,11 +66,14 @@ func windowsToWSLPath(p string) string {
 	return p
 }
 
-var hostPathRe = regexp.MustCompile(`host:([^\)\s]+)`)
+// BuildManifest always quotes host path values (they can contain spaces or
+// parens from extracted package filenames), so host:"<path>" is the only
+// form generated manifests use.
+var hostPathRe = regexp.MustCompile(`host:"([^"]*)"`)
 
 func rewriteManifestWindowsPathsToWSL(manifest string) string {
 	return hostPathRe.ReplaceAllStringFunc(manifest, func(m string) string {
-		p := strings.TrimPrefix(m, "host:")
-		return "host:" + windowsToWSLPath(p)
+		p := m[len(`host:"`) : len(m)-1]
+		return `host:"` + windowsToWSLPath(p) + `"`
 	})
 }
