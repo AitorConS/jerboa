@@ -108,7 +108,7 @@ project markers (go.mod, package.json, etc.).`,
 					defer func() { _ = os.Remove(binaryPath) }()
 				} else {
 					var buildEntrypoint string
-					binaryPath, buildEntrypoint, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource)
+					binaryPath, buildEntrypoint, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs)
 					if err != nil {
 						return err
 					}
@@ -160,7 +160,7 @@ project markers (go.mod, package.json, etc.).`,
 // Returns (binaryPath, entrypoint, error). entrypoint is non-empty for interpreted
 // languages (e.g. "hi.js" for Node) and must be passed to the image manifest so the
 // runtime interpreter knows which script to execute.
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string) (string, string, error) {
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string) (string, string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
@@ -212,13 +212,14 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	case result.BinaryPath != "":
 		return result.BinaryPath, "", nil
 	case result.SourceDir != "":
-		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
+		autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
+		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)
 		if err != nil {
 			return "", "", fmt.Errorf("build: resolve packages: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, resolvedPkgs...)
 
-		runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
+		runtimeBinary, err := findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
 		if err != nil {
 			return "", "", fmt.Errorf("build: %w", err)
 		}
@@ -493,6 +494,34 @@ func defaultToolsPath() string {
 		return filepath.Join(".uni", "tools")
 	}
 	return filepath.Join(home, ".uni", "tools")
+}
+
+// filterCoveredAutoPkgs removes auto-packages whose base name is already
+// covered by a user-provided package, so the driver doesn't double-resolve.
+// e.g. driver emits "python:3.12" but user passed "--pkg eyberg/python:3.10.6".
+func filterCoveredAutoPkgs(autoPkgs, userPkgs []string) []string {
+	if len(userPkgs) == 0 {
+		return autoPkgs
+	}
+	userBaseNames := make(map[string]struct{}, len(userPkgs))
+	for _, ref := range userPkgs {
+		name, _ := parsePkgRef(ref)
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			name = name[idx+1:]
+		}
+		userBaseNames[name] = struct{}{}
+	}
+	filtered := autoPkgs[:0:0]
+	for _, ref := range autoPkgs {
+		name, _ := parsePkgRef(ref)
+		if idx := strings.LastIndex(name, "/"); idx >= 0 {
+			name = name[idx+1:]
+		}
+		if _, covered := userBaseNames[name]; !covered {
+			filtered = append(filtered, ref)
+		}
+	}
+	return filtered
 }
 
 // resolveAutoPackages resolves language runtime packages (e.g. "node:20")
