@@ -46,6 +46,22 @@ DEBUG = "false"
 	require.Equal(t, "false", cfg.Env["DEBUG"])
 }
 
+func TestLoadConfigBuildRun(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "node"
+entrypoint = ".output/server/index.mjs"
+run = ["npm install", "npm run build"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	cfg, err := LoadConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, []string{"npm install", "npm run build"}, cfg.Build.Run)
+	require.Equal(t, ".output/server/index.mjs", cfg.Build.Entrypoint)
+}
+
 func TestLoadConfigMinimal(t *testing.T) {
 	dir := t.TempDir()
 	content := `[build]

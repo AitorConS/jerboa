@@ -22,6 +22,10 @@ type BuildConfig struct {
 	Lang       string   `toml:"lang"`
 	Entrypoint string   `toml:"entrypoint"`
 	Args       []string `toml:"args"`
+	// Run lists shell commands to execute before the language driver packages the project.
+	// Equivalent to RUN instructions in a Dockerfile — use for build steps like
+	// "npm run build", "nuxt build", "python manage.py collectstatic", etc.
+	Run []string `toml:"run"`
 }
 
 type RunConfig struct {

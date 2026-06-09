@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -173,6 +175,21 @@ project markers (go.mod, package.json, etc.).`,
 	return cmd
 }
 
+// runBuildCommand executes a single shell command string in dir, streaming output
+// to stderr. Uses sh -c on Unix and cmd /c on Windows so arbitrary shell syntax works.
+func runBuildCommand(ctx context.Context, dir, command string) error {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/c", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	cmd.Dir = dir
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
 // loadOpsPackageEnvs reads the Env field from each ops package's package.manifest
 // and returns a merged map. Errors are silently skipped — missing or malformed
 // manifests must not block the build.
@@ -249,9 +266,20 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 
 	var cfgEntrypoint string
 	var buildArgs []string
+	var buildRun []string
 	if cfg != nil {
 		cfgEntrypoint = cfg.Build.Entrypoint
 		buildArgs = cfg.Build.Args
+		buildRun = cfg.Build.Run
+	}
+
+	// Execute user-defined build commands (unikernel.toml [build] run = [...]).
+	// These run before the driver packages the project — equivalent to RUN in a Dockerfile.
+	for _, command := range buildRun {
+		fmt.Fprintf(cmd.ErrOrStderr(), "$ %s\n", command)
+		if err := runBuildCommand(cmd.Context(), srcPath, command); err != nil {
+			return "", "", nil, fmt.Errorf("build: run %q: %w", command, err)
+		}
 	}
 
 	result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
