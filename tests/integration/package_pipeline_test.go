@@ -109,7 +109,7 @@ func TestPackageBuildPipeline(t *testing.T) {
 		pkgFiles = append(pkgFiles, pkg.File{HostPath: f, GuestPath: filepath.Base(f)})
 	}
 
-	got := image.BuildManifest(binPath, pkgFiles, "")
+	got := image.BuildManifest(image.BuildConfig{BinaryPath: binPath, PkgFiles: pkgFiles})
 
 	require.Contains(t, got, "app:(contents:(host:")
 	require.Contains(t, got, "lib.so:(contents:(host:")

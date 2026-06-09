@@ -42,6 +42,12 @@ type BuildConfig struct {
 	// Entrypoint is the script or file to pass as the first argument to the
 	// runtime binary (e.g. "hi.js" for Node.js). Empty for compiled languages.
 	Entrypoint string
+	// Env holds runtime environment variables to bake into the image manifest.
+	// Sourced from ops package.manifest Env fields and language driver output.
+	Env map[string]string
+	// Port, when non-zero, declares the service port and enables the network
+	// section in the manifest (required for any HTTP server to bind).
+	Port int
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -82,7 +88,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
-	manifest := BuildManifest(cfg.BinaryPath, cfg.PkgFiles, cfg.Entrypoint)
+	manifest := BuildManifest(cfg)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
@@ -163,18 +169,21 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 // "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialised
 // as nested nodes — the Nanos manifest parser treats '/' as an unknown
 // discriminator and rejects flat slash-separated keys.
-// entrypoint, if non-empty, is emitted as arguments:(0:/program 1:/<entrypoint>)
+// cfg.Entrypoint, if non-empty, is emitted as arguments:(0:/program 1:/<entrypoint>)
 // so that the runtime interpreter (e.g. node, python) receives its own path as
 // argv[0] and the script path as argv[1] on startup. The Nanos tuple parser
 // reads '(' as a tuple of name:value pairs — not a bare value list — so
 // arguments must use integer-string keys rather than e.g. ("/<entrypoint>").
-func BuildManifest(binaryPath string, pkgFiles []pkg.File, entrypoint string) string {
-	absBin, _ := filepath.Abs(binaryPath)
+// cfg.Env entries are emitted as environment:(KEY:val ...) sorted by key.
+// When cfg.Port > 0 a network section is added with QEMU user-mode defaults,
+// which is required for any service that binds to a port.
+func BuildManifest(cfg BuildConfig) string {
+	absBin, _ := filepath.Abs(cfg.BinaryPath)
 
 	root := newManifestNode()
 	root.children["program"] = &manifestNode{hostPath: absBin}
 
-	for _, f := range pkgFiles {
+	for _, f := range cfg.PkgFiles {
 		abs, _ := filepath.Abs(f.HostPath)
 		guestPath := f.GuestPath
 		if guestPath == "" {
@@ -187,10 +196,28 @@ func BuildManifest(binaryPath string, pkgFiles []pkg.File, entrypoint string) st
 	b.WriteString("(\n    children:(\n")
 	writeManifestChildren(&b, root, "        ")
 	b.WriteString("    )\n    program:/program\n")
-	if entrypoint != "" {
-		b.WriteString("    arguments:(0:/program 1:/" + filepath.ToSlash(entrypoint) + ")\n")
+	if cfg.Entrypoint != "" {
+		b.WriteString("    arguments:(0:/program 1:/" + filepath.ToSlash(cfg.Entrypoint) + ")\n")
 	}
-	b.WriteString("    environment:()\n)")
+	b.WriteString("    environment:(")
+	if len(cfg.Env) > 0 {
+		keys := make([]string, 0, len(cfg.Env))
+		for k := range cfg.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			b.WriteString(manifestName(k))
+			b.WriteByte(':')
+			b.WriteString(manifestValue(cfg.Env[k]))
+			b.WriteByte(' ')
+		}
+	}
+	b.WriteString(")\n")
+	if cfg.Port > 0 {
+		b.WriteString("    network:(ip:10.0.2.15 gateway:10.0.2.2 netmask:255.255.255.0)\n")
+	}
+	b.WriteString(")")
 	return b.String()
 }
 
@@ -238,6 +265,29 @@ func manifestName(name string) string {
 	var b strings.Builder
 	b.WriteByte('"')
 	for _, r := range name {
+		if r == '"' || r == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// manifestValueTerminals are value terminators in the Nanos tuple parser.
+// Values have a smaller terminal set than names: only whitespace and parens/brackets.
+// Unlike names, values may contain ':', '/', '|' unquoted.
+const manifestValueTerminals = " \t\n\r()[]"
+
+// manifestValue returns v formatted for use as a manifest tuple value, quoting
+// it when it contains characters the tuple parser would treat as terminators.
+func manifestValue(v string) string {
+	if !strings.ContainsAny(v, manifestValueTerminals+"\"\\") {
+		return v
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range v {
 		if r == '"' || r == '\\' {
 			b.WriteByte('\\')
 		}

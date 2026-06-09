@@ -30,6 +30,7 @@ func newBuildCmd(storePath *string) *cobra.Command {
 		tag        string
 		memory     string
 		cpus       int
+		port       int
 		mkfs       string
 		updateYes  bool
 		pkgs       []string
@@ -86,6 +87,14 @@ project markers (go.mod, package.json, etc.).`,
 				pkgFiles = resolved
 			}
 
+			// Seed image env vars from ops package manifests (e.g. HOME, PYTHONPATH set by eyberg/python).
+			pkgEnv := make(map[string]string)
+			if pkgSource == "ops" && len(pkgs) > 0 {
+				for k, v := range loadOpsPackageEnvs(pkgs) {
+					pkgEnv[k] = v
+				}
+			}
+
 			srcPath := absPath(args[0])
 
 			var binaryPath string
@@ -108,7 +117,8 @@ project markers (go.mod, package.json, etc.).`,
 					defer func() { _ = os.Remove(binaryPath) }()
 				} else {
 					var buildEntrypoint string
-					binaryPath, buildEntrypoint, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs)
+					var driverEnv map[string]string
+					binaryPath, buildEntrypoint, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs)
 					if err != nil {
 						return err
 					}
@@ -117,6 +127,10 @@ project markers (go.mod, package.json, etc.).`,
 					}
 					if buildEntrypoint != "" {
 						entrypoint = buildEntrypoint
+					}
+					// Driver env (e.g. PYTHONPATH) overrides package manifest env for same keys.
+					for k, v := range driverEnv {
+						pkgEnv[k] = v
 					}
 				}
 			} else {
@@ -135,6 +149,8 @@ project markers (go.mod, package.json, etc.).`,
 				CPUs:       cpus,
 				PkgFiles:   pkgFiles,
 				Entrypoint: entrypoint,
+				Env:        pkgEnv,
+				Port:       port,
 			})
 			if err != nil {
 				return fmt.Errorf("build: %w", err)
@@ -153,21 +169,60 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&pkgSource, "pkg-source", "uni", "package source: \"uni\" (default) or \"ops\" (nanovms/ops ecosystem)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
+	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	return cmd
 }
 
+// loadOpsPackageEnvs reads the Env field from each ops package's package.manifest
+// and returns a merged map. Errors are silently skipped — missing or malformed
+// manifests must not block the build.
+func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
+	opsStore, err := openOpsStore()
+	if err != nil {
+		return nil
+	}
+
+	manifest, err := opsStore.FetchManifestCached()
+	if err != nil {
+		return nil
+	}
+
+	env := make(map[string]string)
+	for _, ref := range pkgRefs {
+		id, parseErr := pkg.ParseOpsIdentifier(ref)
+		if parseErr != nil {
+			continue
+		}
+		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		if target == nil {
+			continue
+		}
+		cfg, loadErr := opsStore.LoadPackageManifest(target.Namespace, target.Name, target.Version)
+		if loadErr != nil {
+			continue
+		}
+		for k, v := range cfg.Env {
+			env[k] = v
+		}
+	}
+	if len(env) == 0 {
+		return nil
+	}
+	return env
+}
+
 // buildSingle handles a single-language build (no stages).
-// Returns (binaryPath, entrypoint, error). entrypoint is non-empty for interpreted
-// languages (e.g. "hi.js" for Node) and must be passed to the image manifest so the
-// runtime interpreter knows which script to execute.
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string) (string, string, error) {
+// Returns (binaryPath, entrypoint, env, error). entrypoint is non-empty for
+// interpreted languages (e.g. "hi.js" for Node). env holds runtime environment
+// variables the driver requires (e.g. PYTHONPATH when pip installed packages).
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string) (string, string, map[string]string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
 	case langFlag != "":
 		langHint, err = builder.ParseLang(langFlag)
 		if err != nil {
-			return "", "", fmt.Errorf("build: %w", err)
+			return "", "", nil, fmt.Errorf("build: %w", err)
 		}
 	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
 		langHint = cfg.LangHint()
@@ -178,17 +233,17 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", "", fmt.Errorf("build: %w", err)
+			return "", "", nil, fmt.Errorf("build: %w", err)
 		}
 	}
 
 	detected, err := builder.DetectLanguage(srcPath, langHint)
 	if err != nil {
-		return "", "", fmt.Errorf("build: %w", err)
+		return "", "", nil, fmt.Errorf("build: %w", err)
 	}
 	driver, err := builder.GetDriver(detected)
 	if err != nil {
-		return "", "", fmt.Errorf("build: %w", err)
+		return "", "", nil, fmt.Errorf("build: %w", err)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
 
@@ -205,33 +260,44 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		Platform:   buildPlatform,
 	})
 	if err != nil {
-		return "", "", fmt.Errorf("build %s: %w", detected, err)
+		return "", "", nil, fmt.Errorf("build %s: %w", detected, err)
 	}
 
 	switch {
 	case result.BinaryPath != "":
-		return result.BinaryPath, "", nil
+		return result.BinaryPath, "", nil, nil
 	case result.SourceDir != "":
 		autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
 		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)
 		if err != nil {
-			return "", "", fmt.Errorf("build: resolve packages: %w", err)
+			return "", "", nil, fmt.Errorf("build: resolve packages: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, resolvedPkgs...)
 
 		runtimeBinary, err := findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
 		if err != nil {
-			return "", "", fmt.Errorf("build: %w", err)
+			return "", "", nil, fmt.Errorf("build: %w", err)
 		}
 
 		srcFiles, err := sourceFiles(result.SourceDir)
 		if err != nil {
-			return "", "", fmt.Errorf("build: collect source files: %w", err)
+			return "", "", nil, fmt.Errorf("build: collect source files: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, srcFiles...)
-		return runtimeBinary, result.Entrypoint, nil
+
+		// Merge env from auto-resolved ops packages, then driver (driver takes priority).
+		env := make(map[string]string)
+		if pkgSource == "ops" && len(autoPkgs) > 0 {
+			for k, v := range loadOpsPackageEnvs(autoPkgs) {
+				env[k] = v
+			}
+		}
+		for k, v := range result.Env {
+			env[k] = v
+		}
+		return runtimeBinary, result.Entrypoint, env, nil
 	default:
-		return "", "", fmt.Errorf("build %s: driver returned empty result", detected)
+		return "", "", nil, fmt.Errorf("build %s: driver returned empty result", detected)
 	}
 }
 

@@ -28,7 +28,7 @@ func failureCmd() *exec.Cmd {
 }
 
 func TestBuildManifest_NoPkgFiles(t *testing.T) {
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), nil, "")
+	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello")})
 	require.Contains(t, got, "program:/program")
 	require.Contains(t, got, "program:(contents:(host:")
 	require.NotContains(t, got, "node")
@@ -39,7 +39,7 @@ func TestBuildManifest_WithPkgFiles(t *testing.T) {
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/bin/node"), GuestPath: "node"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/lib/libnode.so"), GuestPath: "libnode.so"},
 	}
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles, "")
+	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello"), PkgFiles: pkgFiles})
 	require.Contains(t, got, "program:/program")
 	require.Contains(t, got, "node:(contents:(host:")
 	require.Contains(t, got, "libnode.so:(contents:(host:")
@@ -51,7 +51,7 @@ func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2"), GuestPath: "lib/x86_64-linux-gnu/libnss_dns.so.2"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/etc/ssl/certs/ca-certificates.crt"), GuestPath: "etc/ssl/certs/ca-certificates.crt"},
 	}
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles, "")
+	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello"), PkgFiles: pkgFiles})
 	require.Contains(t, got, "node:(contents:(host:")
 	// Nested tree — no slash-separated flat manifest keys (the Nanos parser rejects them).
 	// Check key form "foo/bar:" is absent; host path may still contain the substring.
@@ -69,7 +69,7 @@ func TestBuildManifest_NamesWithSpecialChars(t *testing.T) {
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"), GuestPath: "usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"},
 		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"), GuestPath: "usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"},
 	}
-	got := BuildManifest(filepath.FromSlash("/usr/bin/hello"), pkgFiles, "")
+	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello"), PkgFiles: pkgFiles})
 
 	// Names containing characters the tuple parser treats as terminators
 	// (whitespace, parens) must be quoted, or the parser misreads them —
@@ -104,7 +104,7 @@ func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
 		{HostPath: binPath, GuestPath: "myapp"},
 		{HostPath: libPath, GuestPath: "libmyapp.so"},
 	}
-	got := BuildManifest(binPath, pkgFiles, "")
+	got := BuildManifest(BuildConfig{BinaryPath: binPath, PkgFiles: pkgFiles})
 
 	require.Contains(t, got, "myapp:(contents:(host:")
 	require.Contains(t, got, "libmyapp.so:(contents:(host:")
@@ -112,6 +112,62 @@ func TestBuildManifest_PkgFilesIntegration(t *testing.T) {
 
 	lines := strings.Count(got, ":(contents:(host:")
 	require.Equal(t, 3, lines)
+}
+
+func TestBuildManifest_WithEnv(t *testing.T) {
+	env := map[string]string{
+		"HOME":             "/",
+		"PYTHONPATH":       "/packages",
+		"PYTHONUNBUFFERED": "1",
+	}
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/python3"),
+		Env:        env,
+	})
+	require.Contains(t, got, "HOME:/")
+	require.Contains(t, got, "PYTHONPATH:/packages")
+	require.Contains(t, got, "PYTHONUNBUFFERED:1")
+	// Keys must be sorted alphabetically within environment:(...)
+	homeIdx := strings.Index(got, "HOME:/")
+	pathIdx := strings.Index(got, "PYTHONPATH:")
+	require.True(t, homeIdx < pathIdx, "env keys must be sorted: HOME before PYTHONPATH")
+}
+
+func TestBuildManifest_WithPort(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/python3"),
+		Port:       8080,
+	})
+	require.Contains(t, got, "network:(")
+	require.Contains(t, got, "ip:10.0.2.15")
+	require.Contains(t, got, "gateway:10.0.2.2")
+	require.Contains(t, got, "netmask:255.255.255.0")
+}
+
+func TestBuildManifest_NoPortNoNetwork(t *testing.T) {
+	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/python3")})
+	require.NotContains(t, got, "network:(")
+}
+
+func TestManifestValue(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"/", "/"},
+		{"1", "1"},
+		{"/packages", "/packages"},
+		{"/packages:/usr/lib", "/packages:/usr/lib"},
+		{"hello world", `"hello world"`},
+		{"val(x)", `"val(x)"`},
+		{"a]b", `"a]b"`},
+		{`q"r`, `"q\"r"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			require.Equal(t, tc.want, manifestValue(tc.input))
+		})
+	}
 }
 
 func TestNewBuilder(t *testing.T) {

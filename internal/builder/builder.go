@@ -75,6 +75,9 @@ type BuildResult struct {
 	// Packages lists language runtime packages that should be included in the image
 	// (e.g. "node:20" for Node.js projects).
 	Packages []string
+	// Env holds runtime environment variables required by this build (e.g. PYTHONPATH
+	// when pip installed packages into a non-default directory).
+	Env map[string]string
 }
 
 // Driver is the interface that each language builder must implement.
@@ -287,6 +290,7 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 		return BuildResult{}, err
 	}
 
+	var env map[string]string
 	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
 		pipCmd := exec.CommandContext(ctx, "pip", "install", "-r", "requirements.txt", "--target", "packages")
 		pipCmd.Dir = dir
@@ -295,6 +299,8 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 		if err := pipCmd.Run(); err != nil {
 			return BuildResult{}, fmt.Errorf("python driver: pip install: %w", err)
 		}
+		// pip installs to packages/; Python's default sys.path doesn't include it
+		env = map[string]string{"PYTHONPATH": "/packages"}
 	}
 
 	pkgRef := "python:" + pythonVersion
@@ -302,6 +308,7 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 		SourceDir:  dir,
 		Entrypoint: entrypoint,
 		Packages:   []string{pkgRef},
+		Env:        env,
 	}, nil
 }
 
