@@ -187,7 +187,10 @@ func runBuildCommand(ctx context.Context, dir, command string) error {
 	cmd.Dir = dir
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("run command: %w", err)
+	}
+	return nil
 }
 
 // loadOpsPackageEnvs reads the Env field from each ops package's package.manifest
