@@ -68,14 +68,19 @@ func LoadIgnoreFile(dir string) (*IgnoreMatcher, error) {
 
 // Match returns true if relPath should be excluded from the build context.
 // relPath should be a forward-slash-separated path relative to the project root.
+// Patterns are evaluated in order; a later "!pattern" re-includes a path
+// excluded by an earlier pattern (gitignore-style negation).
 func (m *IgnoreMatcher) Match(relPath string, isDir bool) bool {
 	name := filepath.Base(relPath)
+	excluded := false
 	for _, pattern := range m.patterns {
-		if matchIgnorePattern(pattern, relPath, name, isDir) {
-			return true
+		negate := strings.HasPrefix(pattern, "!")
+		p := strings.TrimPrefix(pattern, "!")
+		if matchIgnorePattern(p, relPath, name, isDir) {
+			excluded = !negate
 		}
 	}
-	return false
+	return excluded
 }
 
 // matchIgnorePattern matches a single .gitignore-style pattern against a path.

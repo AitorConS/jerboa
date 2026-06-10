@@ -1,0 +1,5 @@
+# .next is ignored by default (it's normally a build cache), but the
+# standalone server output we run lives at .next/standalone/server.js,
+# with its own pruned node_modules under .next/standalone/node_modules.
+!.next
+!node_modules

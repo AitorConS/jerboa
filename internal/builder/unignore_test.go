@@ -88,6 +88,23 @@ func TestMatchIgnorePatternNegation(t *testing.T) {
 	require.False(t, matchIgnorePattern("!important.log", "important.log", "important.log", false))
 }
 
+func TestMatchNegationOverridesEarlierPattern(t *testing.T) {
+	m := NewIgnoreMatcher([]string{"*.log", "!important.log"})
+	require.True(t, m.Match("debug.log", false))
+	require.False(t, m.Match("important.log", false))
+}
+
+func TestMatchNegationOverridesDefault(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, UnignoreFile), []byte("!node_modules\n"), 0o644))
+
+	m, err := LoadIgnoreFile(dir)
+	require.NoError(t, err)
+	require.False(t, m.Match("node_modules", true))
+	require.False(t, m.Match("node_modules/pkg/index.js", false))
+	require.True(t, m.Match(".git", true))
+}
+
 func TestMatchIgnorePatternEmpty(t *testing.T) {
 	require.False(t, matchIgnorePattern("", "foo", "foo", false))
 	require.False(t, matchIgnorePattern("#", "foo", "foo", false))

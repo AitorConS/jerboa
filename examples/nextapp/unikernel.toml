@@ -1,0 +1,4 @@
+[build]
+lang = "node"
+run = ["npm install", "npm run build"]
+entrypoint = ".next/standalone/server.js"

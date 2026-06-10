@@ -7,6 +7,10 @@ kernel/build/
 kernel/output/
 examples/**/*-linux
 examples/**/*.img
+examples/nextapp/node_modules/
+examples/nextapp/.next/
+examples/flaskapp/packages/
+examples/flaskapp/__pycache__/
 *.exe
 *.bak
 *agents/*
