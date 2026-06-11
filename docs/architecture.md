@@ -171,9 +171,31 @@ The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded f
 
 **Builder pipeline** (`image.Builder`):
 1. Validate ELF magic bytes on the binary
-2. Run `mkfs` (Nanos tool) to create a raw disk image containing the binary
-3. Compute SHA256 of the disk
-4. Write manifest + disk to the store
+2. Build the Nanos boot manifest with `BuildManifest(BuildConfig)` (see below)
+3. Run `mkfs` (Nanos tool) to create a raw disk image containing the binary and the boot manifest
+4. Compute SHA256 of the disk
+5. Write manifest.json + disk to the store
+
+**Nanos boot manifest** (`BuildManifest`, distinct from `manifest.json` above): a tuple-format manifest passed to `mkfs` that tells the Nanos kernel how to set up the guest at boot. Built from `image.BuildConfig`:
+
+```
+(
+    children:(
+        node:(contents:(host:/home/user/.uni/packages/node/20.11.0/files/bin/node))
+        ...
+    )
+    program:/program
+    arguments:(0:/program 1:/server.js)
+    environment:(NODE_ENV:production PYTHONPATH:/packages)
+    network:(ip:10.0.2.15 gateway:10.0.2.2 netmask:255.255.255.0)
+)
+```
+
+- `children` — package files and source files included in the image, nested by guest path (`pkg.File.GuestPath`)
+- `arguments` — when `BuildConfig.Entrypoint` is set (interpreted languages), `argv[1]` is the entrypoint script so the runtime (`node`, `python`, ...) knows what to execute
+- `environment` — `BuildConfig.Env`, sorted by key. Sourced from `unikernel.toml`'s `[env]` section, the language driver (e.g. `PYTHONPATH=/packages` from the Python driver when `requirements.txt` is present), and — for `--pkg-source ops` — the `Env` field of each resolved ops package's manifest (driver values win on key conflicts)
+- `network` — emitted only when `BuildConfig.Port > 0` (i.e. `uni build --port <n>`). Without it, Nanos never initializes its network stack and any HTTP server fails to bind
+- Manifest tuple values use `manifestValue()` for quoting: names and values have different terminal character sets, so e.g. `/packages:/usr/lib` does not need quoting but `hello world` does
 
 ### API (`internal/api/`)
 

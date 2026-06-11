@@ -215,6 +215,21 @@ Without `engines.node`, the driver defaults to Node 20. The same pattern applies
 
 You can force a specific driver with `--lang go|node|python|rust`, cross-compile with `--platform linux/arm64`, and configure builds declaratively (including multi-stage builds) with a `unikernel.toml` file. See [`uni build`]({% link cli-reference.md %}#uni-build) for the complete flag reference and `unikernel.toml` format.
 
+{: .important }
+Building an HTTP server (Flask, Express, Next.js, ...)? Pass `--port <port>` to `uni build` so Nanos brings up its network stack at boot — without it the unikernel has no network and the server can't bind. See [Networking & Environment in the Image Manifest]({% link cli-reference.md %}#networking-environment-in-the-image-manifest).
+
+**Framework examples:** the repo's `examples/` directory includes a minimal Flask app (`examples/flaskapp`, no `unikernel.toml` needed) and a Next.js app using `output: "standalone"` (`examples/nextapp`, using `[build] run` and `.unignore` — see [Framework Build Steps]({% link cli-reference.md %}#framework-build-steps)):
+
+```bash
+# Flask
+uni build examples/flaskapp --pkg-source ops --pkg eyberg/python:3.10.6 --port 8080 --name flaskapp
+uni run flaskapp -p 8080:8080
+
+# Next.js
+uni build examples/nextapp --pkg-source ops --port 3000 --name nextapp
+uni run nextapp -p 3000:3000
+```
+
 ### 3. Run it
 
 ```bash

@@ -435,6 +435,7 @@ When `<path>` is a directory, `uni build` detects the language from project mark
 | `--pkg-source` | `uni` | Source to resolve `--pkg` (and language-driver auto-detected runtime packages) from: `uni` or `ops` |
 | `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`) |
 | `--platform` | *(native)* | Target platform for cross-compilation (e.g. `linux/amd64`, `linux/arm64`) |
+| `--port` | `0` | Declared service port; enables the `network` section in the image manifest (required for any HTTP server to bind — see [Networking & Environment in the Image Manifest](#networking-environment-in-the-image-manifest)) |
 
 If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
 
@@ -477,6 +478,9 @@ uni build --lang go --platform linux/arm64 .
 
 # Build with unikernel.toml config
 uni build .
+
+# Build a web app — declare its port so Nanos brings up the network stack
+uni build ./myapi --name myapi --port 8080
 ```
 
 **Language Drivers:**
@@ -497,6 +501,7 @@ When `uni build` is run on a directory, it automatically reads `unikernel.toml` 
 lang = "go"
 entrypoint = "cmd/server"
 args = ["-v"]
+run = ["go generate ./..."]
 
 [run]
 memory = "512M"
@@ -506,6 +511,30 @@ ports = ["8080:80", "9090:9090"]
 [env]
 NODE_ENV = "production"
 ```
+
+| Section | Field | Description |
+|---|---|---|
+| `[build]` | `lang` | Force a specific language driver (`go`, `node`, `python`, `rust`), skipping auto-detection |
+| `[build]` | `entrypoint` | Override the driver's default entrypoint (e.g. a custom server script path) |
+| `[build]` | `args` | Extra arguments passed to the build tool |
+| `[build]` | `run` | Shell commands executed in the project directory **before** the language driver runs — see [Framework Build Steps](#framework-build-steps) below |
+| `[run]` | `memory`, `cpus`, `ports` | Default VM resource and port settings baked into the image, used when `uni run` is called without overriding flags |
+| `[env]` | *(any key)* | Environment variables baked into the image's Nanos manifest — see [Networking & Environment in the Image Manifest](#networking-environment-in-the-image-manifest) |
+
+**Framework Build Steps:**
+
+`[build] run` is a list of shell commands executed in the project directory **before** the language driver packages the project — the equivalent of `RUN` instructions in a Dockerfile. Use it for any build step a framework requires: `npm run build`, `nuxt build`, `python manage.py collectstatic`, etc. Commands run via `sh -c` on Unix and `cmd /c` on Windows, with output streamed to stderr. If any command fails, the build aborts.
+
+**Example: Next.js with `output: "standalone"`**
+
+```toml
+[build]
+lang = "node"
+run = ["npm install", "npm run build"]
+entrypoint = ".next/standalone/server.js"
+```
+
+`.next` and `node_modules` are excluded from the build context by default (see [`.unignore` File](#unignore-file)); a project-level `.unignore` with `!.next` and `!node_modules` re-includes the standalone server output and its pruned dependencies. See `examples/nextapp/` for the complete working setup, and `examples/flaskapp/` for a Python project that needs no `unikernel.toml` at all (the Python driver's defaults are sufficient).
 
 **Multi-stage Builds:**
 
@@ -541,6 +570,43 @@ build/
 .git
 node_modules
 !important.log
+```
+
+The following patterns are **always excluded**, even without a `.unignore` file:
+
+```
+.git
+.uni-build
+node_modules
+__pycache__
+.tox
+venv
+.venv
+dist
+.next
+target
+```
+
+Patterns are evaluated in order, gitignore-style: a later `!pattern` re-includes a path excluded by an earlier pattern — including the always-excluded defaults above. This is required for frameworks whose runtime output lives inside one of the default-excluded directories, e.g. a Next.js `output: "standalone"` build, where `.next/standalone/server.js` and its pruned `.next/standalone/node_modules` must ship in the image:
+
+```
+!.next
+!node_modules
+```
+
+**Networking & Environment in the Image Manifest:**
+
+Two pieces of information are baked into the image's Nanos manifest at build time, and both are required for HTTP servers built from source:
+
+- **`--port`** — when set to a non-zero value, adds a `network` section to the manifest (`network:(ip:10.0.2.15 gateway:10.0.2.2 netmask:255.255.255.0)`) so Nanos initializes its network stack at boot. Without it, the unikernel has no network and any HTTP server fails to bind.
+- **`[env]`** in `unikernel.toml` — each key/value pair is written into the manifest's `environment:(...)` section, sorted by key, and is available to the running process (e.g. `NODE_ENV = "production"`).
+
+The Python driver also sets `PYTHONPATH=/packages` automatically whenever `requirements.txt` is present, since `pip install --target packages` installs dependencies outside Python's default `sys.path`. When `--pkg-source ops` is used, environment variables declared in the resolved `ops` package's manifest (e.g. `HOME` for `eyberg/python`) are merged in as well; driver-provided values (like `PYTHONPATH`) take precedence on key conflicts.
+
+```bash
+# Flask app — PYTHONPATH set automatically, --port enables the network stack
+uni build examples/flaskapp --pkg-source ops --pkg eyberg/python:3.10.6 --port 8080 --name flaskapp
+uni run flaskapp -p 8080:8080
 ```
 
 **Output:**
