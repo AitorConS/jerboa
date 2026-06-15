@@ -26,6 +26,8 @@ func TestParseLang(t *testing.T) {
 		{"py", LangPython, false},
 		{"rust", LangRust, false},
 		{"Rust", LangRust, false},
+		{"raw", LangRaw, false},
+		{"RAW", LangRaw, false},
 		{"unknown", LangUnknown, true},
 		{"", LangUnknown, true},
 		{"java", LangUnknown, true},
@@ -51,6 +53,7 @@ func TestLangString(t *testing.T) {
 		{LangNode, "node"},
 		{LangPython, "python"},
 		{LangRust, "rust"},
+		{LangRaw, "raw"},
 		{LangUnknown, "unknown"},
 	}
 	for _, tt := range tests {
@@ -137,6 +140,21 @@ func TestAvailableDriversIncludesAll(t *testing.T) {
 	require.True(t, langs[LangNode])
 	require.True(t, langs[LangPython])
 	require.True(t, langs[LangRust])
+	require.True(t, langs[LangRaw])
+}
+
+func TestRawDriver(t *testing.T) {
+	dir := t.TempDir()
+	d := &RawDriver{}
+
+	require.Equal(t, LangRaw, d.Lang())
+	require.False(t, d.Detect(dir))
+
+	result, err := d.Build(context.Background(), dir, Options{})
+	require.NoError(t, err)
+	require.Equal(t, dir, result.SourceDir)
+	require.Empty(t, result.BinaryPath)
+	require.Empty(t, result.Packages)
 }
 
 func TestNodeDriverDetect(t *testing.T) {
@@ -352,6 +370,12 @@ func TestGetDriverGo(t *testing.T) {
 func TestGetDriverUnknown(t *testing.T) {
 	_, err := GetDriver(LangUnknown)
 	require.Error(t, err)
+}
+
+func TestGetDriverRaw(t *testing.T) {
+	d, err := GetDriver(LangRaw)
+	require.NoError(t, err)
+	require.Equal(t, LangRaw, d.Lang())
 }
 
 func TestGoDriverDetect(t *testing.T) {

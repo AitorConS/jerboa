@@ -89,6 +89,54 @@ lang = "cobol"
 	require.Contains(t, err.Error(), "build.lang")
 }
 
+func TestLoadConfigRawProgram(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "raw"
+run = ["mvn -q -DskipTests package"]
+
+[program]
+path = "java"
+args = ["-jar", "/app.jar"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	cfg, err := LoadConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, "raw", cfg.Build.Lang)
+	require.Equal(t, LangRaw, cfg.LangHint())
+	require.Equal(t, "java", cfg.Program.Path)
+	require.Equal(t, []string{"-jar", "/app.jar"}, cfg.Program.Args)
+}
+
+func TestLoadConfigRawWithoutProgram(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "raw"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	_, err := LoadConfig(dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `program.path is required when build.lang = "raw"`)
+}
+
+func TestLoadConfigProgramWithoutRaw(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "go"
+
+[program]
+path = "java"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	_, err := LoadConfig(dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `program: only valid when build.lang = "raw"`)
+}
+
 func TestLoadConfigInvalidMemory(t *testing.T) {
 	dir := t.TempDir()
 	content := `[run]

@@ -433,7 +433,7 @@ When `<path>` is a directory, `uni build` detects the language from project mark
 | `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
 | `--pkg` | — | Include package in the image (repeatable), e.g. `node:20`. Downloads, extracts, and includes the package files |
 | `--pkg-source` | `uni` | Source to resolve `--pkg` (and language-driver auto-detected runtime packages) from: `uni` or `ops` |
-| `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`) |
+| `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`, `raw`) |
 | `--platform` | *(native)* | Target platform for cross-compilation (e.g. `linux/amd64`, `linux/arm64`) |
 | `--port` | `0` | Declared service port; enables the `network` section in the image manifest (required for any HTTP server to bind — see [Networking & Environment in the Image Manifest](#networking-environment-in-the-image-manifest)) |
 
@@ -491,6 +491,7 @@ uni build ./myapi --name myapi --port 8080
 | `node` | `package.json` | `npm install --production` | Uses `node` runtime package |
 | `python` | `pyproject.toml` / `requirements.txt` | `pip install -r requirements.txt` | Uses `python` runtime package |
 | `rust` | `Cargo.toml` | `cargo build --release --target <triple>` | Static ELF binary via musl |
+| `raw` | *none — explicit `lang = "raw"` only* | `[build] run` only (no compilation) | Runtime binary and arguments come from `[program]` — see *Generic Runtimes* below |
 
 **`unikernel.toml` Configuration:**
 
@@ -514,12 +515,14 @@ NODE_ENV = "production"
 
 | Section | Field | Description |
 |---|---|---|
-| `[build]` | `lang` | Force a specific language driver (`go`, `node`, `python`, `rust`), skipping auto-detection |
+| `[build]` | `lang` | Force a specific language driver (`go`, `node`, `python`, `rust`, `raw`), skipping auto-detection |
 | `[build]` | `entrypoint` | Override the driver's default entrypoint (e.g. a custom server script path) |
 | `[build]` | `args` | Extra arguments passed to the build tool |
 | `[build]` | `run` | Shell commands executed in the project directory **before** the language driver runs — see [Framework Build Steps](#framework-build-steps) below |
 | `[run]` | `memory`, `cpus`, `ports` | Default VM resource and port settings baked into the image, used when `uni run` is called without overriding flags |
 | `[env]` | *(any key)* | Environment variables baked into the image's Nanos manifest — see [Networking & Environment in the Image Manifest](#networking-environment-in-the-image-manifest) |
+| `[program]` | `path` | Runtime binary to execute, resolved against `--pkg` files (exact guest path, path suffix, or basename). Required when `lang = "raw"`; invalid otherwise |
+| `[program]` | `args` | Arguments passed to the resolved binary — Docker `CMD` equivalent |
 
 **Framework Build Steps:**
 
@@ -558,6 +561,38 @@ dst = "server"
 ```
 
 The final stage's output is used as the image binary. Earlier stages produce intermediate build artifacts that can be copied into later stages.
+
+**Generic Runtimes (`lang = "raw"`):**
+
+For runtimes without a dedicated driver (Java, .NET, Ruby, PHP, ...), `lang = "raw"` skips compilation entirely: `[build] run` performs the build, and `[program]` declares the runtime binary — resolved against the package files supplied via `--pkg` — and its arguments. This is the equivalent of Docker's `ENTRYPOINT` (`path`) plus `CMD` (`args`).
+
+```toml
+[build]
+lang = "raw"
+run = ["mvn -q -DskipTests package"]
+
+[program]
+path = "java"               # resolved against --pkg files: exact guest path,
+                             # path suffix (e.g. "jdk-21/bin/java"), or basename
+args = ["-jar", "/app.jar"] # passed through literally as argv[1..]
+```
+
+`target` is excluded from the build context by default (see [`.unignore` File](#unignore-file)); re-include the Maven output jar:
+
+```
+!target
+!target/*.jar
+```
+
+Find a JDK package from the `ops` ecosystem and build:
+
+```bash
+uni pkg search openjdk --source ops
+uni build ./myjavaapp --pkg-source ops --pkg eyberg/openjdk-21 --port 8080 --name myjavaapp
+uni run myjavaapp -p 8080:8080
+```
+
+> **Note:** `lang = "raw"` is not currently supported inside `[[stages]]` (multi-stage builds).
 
 **`.unignore` File:**
 

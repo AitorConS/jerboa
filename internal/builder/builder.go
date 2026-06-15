@@ -27,6 +27,8 @@ const (
 	LangPython
 	// LangRust indicates a Rust project.
 	LangRust
+	// LangRaw indicates a generic, driver-agnostic build (see RawDriver).
+	LangRaw
 )
 
 // String returns the human-readable name of the language.
@@ -40,6 +42,8 @@ func (l Lang) String() string {
 		return "python"
 	case LangRust:
 		return "rust"
+	case LangRaw:
+		return "raw"
 	default:
 		return "unknown"
 	}
@@ -56,8 +60,10 @@ func ParseLang(s string) (Lang, error) {
 		return LangPython, nil
 	case "rust":
 		return LangRust, nil
+	case "raw":
+		return LangRaw, nil
 	default:
-		return LangUnknown, fmt.Errorf("unsupported language %q: use go, node, python, or rust", s)
+		return LangUnknown, fmt.Errorf("unsupported language %q: use go, node, python, rust, or raw", s)
 	}
 }
 
@@ -154,7 +160,27 @@ func AvailableDrivers() []Driver {
 		&NodeDriver{},
 		&PythonDriver{},
 		&RustDriver{},
+		&RawDriver{},
 	}
+}
+
+// RawDriver is a language-agnostic build mode for runtimes without a
+// dedicated driver (Java, .NET, Ruby, PHP, ...). It performs no compilation
+// itself — [build] run handles build steps, and [program] in unikernel.toml
+// names the runtime binary (resolved from --pkg files) and its arguments.
+// Never auto-detected; opt-in via lang = "raw".
+type RawDriver struct{}
+
+// Lang returns LangRaw.
+func (r *RawDriver) Lang() Lang { return LangRaw }
+
+// Detect always returns false — raw mode is opt-in only.
+func (r *RawDriver) Detect(dir string) bool { return false }
+
+// Build returns dir as the source directory, deferring all program/argument
+// resolution to the caller's [program] handling.
+func (r *RawDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
+	return BuildResult{SourceDir: dir}, nil
 }
 
 // NodeDriver builds Node.js projects into unikernel images.

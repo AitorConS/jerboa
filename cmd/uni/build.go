@@ -100,6 +100,7 @@ project markers (go.mod, package.json, etc.).`,
 			srcPath := absPath(args[0])
 
 			var binaryPath string
+			var programArgs []string
 			info, err := os.Stat(srcPath)
 			if err != nil {
 				return fmt.Errorf("build: stat %s: %w", srcPath, err)
@@ -120,7 +121,7 @@ project markers (go.mod, package.json, etc.).`,
 				} else {
 					var buildEntrypoint string
 					var driverEnv map[string]string
-					binaryPath, buildEntrypoint, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs)
+					binaryPath, buildEntrypoint, programArgs, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs)
 					if err != nil {
 						return err
 					}
@@ -151,6 +152,7 @@ project markers (go.mod, package.json, etc.).`,
 				CPUs:       cpus,
 				PkgFiles:   pkgFiles,
 				Entrypoint: entrypoint,
+				Args:       programArgs,
 				Env:        pkgEnv,
 				Port:       port,
 			})
@@ -232,17 +234,19 @@ func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
 }
 
 // buildSingle handles a single-language build (no stages).
-// Returns (binaryPath, entrypoint, env, error). entrypoint is non-empty for
-// interpreted languages (e.g. "hi.js" for Node). env holds runtime environment
-// variables the driver requires (e.g. PYTHONPATH when pip installed packages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string) (string, string, map[string]string, error) {
+// Returns (binaryPath, entrypoint, args, env, error). entrypoint is non-empty
+// for interpreted languages (e.g. "hi.js" for Node). args holds additional
+// argv elements for lang="raw" builds (from [program].args). env holds
+// runtime environment variables the driver requires (e.g. PYTHONPATH when
+// pip installed packages).
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string) (string, string, []string, map[string]string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
 	case langFlag != "":
 		langHint, err = builder.ParseLang(langFlag)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("build: %w", err)
+			return "", "", nil, nil, fmt.Errorf("build: %w", err)
 		}
 	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
 		langHint = cfg.LangHint()
@@ -253,17 +257,17 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("build: %w", err)
+			return "", "", nil, nil, fmt.Errorf("build: %w", err)
 		}
 	}
 
 	detected, err := builder.DetectLanguage(srcPath, langHint)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("build: %w", err)
+		return "", "", nil, nil, fmt.Errorf("build: %w", err)
 	}
 	driver, err := builder.GetDriver(detected)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("build: %w", err)
+		return "", "", nil, nil, fmt.Errorf("build: %w", err)
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
 
@@ -281,7 +285,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	for _, command := range buildRun {
 		fmt.Fprintf(cmd.ErrOrStderr(), "$ %s\n", command)
 		if err := runBuildCommand(cmd.Context(), srcPath, command); err != nil {
-			return "", "", nil, fmt.Errorf("build: run %q: %w", command, err)
+			return "", "", nil, nil, fmt.Errorf("build: run %q: %w", command, err)
 		}
 	}
 
@@ -291,45 +295,86 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		Platform:   buildPlatform,
 	})
 	if err != nil {
-		return "", "", nil, fmt.Errorf("build %s: %w", detected, err)
+		return "", "", nil, nil, fmt.Errorf("build %s: %w", detected, err)
 	}
 
 	switch {
 	case result.BinaryPath != "":
-		return result.BinaryPath, "", nil, nil
+		return result.BinaryPath, "", nil, nil, nil
 	case result.SourceDir != "":
-		autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
-		resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("build: resolve packages: %w", err)
-		}
-		*pkgFiles = append(*pkgFiles, resolvedPkgs...)
+		var runtimeBinary string
+		var programArgs []string
+		env := make(map[string]string)
 
-		runtimeBinary, err := findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
-		if err != nil {
-			return "", "", nil, fmt.Errorf("build: %w", err)
+		if detected == builder.LangRaw {
+			if cfg == nil || cfg.Program.Path == "" {
+				return "", "", nil, nil, fmt.Errorf("build: lang %q requires %s with [program] path = \"...\"", "raw", builder.ConfigFileName)
+			}
+			runtimeBinary, err = findProgramBinary(*pkgFiles, cfg.Program.Path)
+			if err != nil {
+				return "", "", nil, nil, fmt.Errorf("build: %w", err)
+			}
+			programArgs = cfg.Program.Args
+		} else {
+			autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
+			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)
+			if err != nil {
+				return "", "", nil, nil, fmt.Errorf("build: resolve packages: %w", err)
+			}
+			*pkgFiles = append(*pkgFiles, resolvedPkgs...)
+
+			runtimeBinary, err = findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
+			if err != nil {
+				return "", "", nil, nil, fmt.Errorf("build: %w", err)
+			}
+
+			// Merge env from auto-resolved ops packages, then driver (driver takes priority).
+			if pkgSource == "ops" && len(autoPkgs) > 0 {
+				for k, v := range loadOpsPackageEnvs(autoPkgs) {
+					env[k] = v
+				}
+			}
 		}
 
 		srcFiles, err := sourceFiles(result.SourceDir)
 		if err != nil {
-			return "", "", nil, fmt.Errorf("build: collect source files: %w", err)
+			return "", "", nil, nil, fmt.Errorf("build: collect source files: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, srcFiles...)
 
-		// Merge env from auto-resolved ops packages, then driver (driver takes priority).
-		env := make(map[string]string)
-		if pkgSource == "ops" && len(autoPkgs) > 0 {
-			for k, v := range loadOpsPackageEnvs(autoPkgs) {
-				env[k] = v
-			}
-		}
 		for k, v := range result.Env {
 			env[k] = v
 		}
-		return runtimeBinary, result.Entrypoint, env, nil
+		return runtimeBinary, result.Entrypoint, programArgs, env, nil
 	default:
-		return "", "", nil, fmt.Errorf("build %s: driver returned empty result", detected)
+		return "", "", nil, nil, fmt.Errorf("build %s: driver returned empty result", detected)
 	}
+}
+
+// findProgramBinary resolves [program].path (lang = "raw") against the
+// package files supplied via --pkg. It matches, in order: an exact guest
+// path, a guest path suffix (preserving directory structure, e.g.
+// "jdk-21/bin/java"), or a basename match (e.g. "java").
+func findProgramBinary(pkgFiles []pkg.File, programPath string) (string, error) {
+	want := filepath.ToSlash(programPath)
+
+	for _, f := range pkgFiles {
+		if filepath.ToSlash(f.GuestPath) == want {
+			return f.HostPath, nil
+		}
+	}
+	for _, f := range pkgFiles {
+		if strings.HasSuffix(filepath.ToSlash(f.GuestPath), "/"+want) {
+			return f.HostPath, nil
+		}
+	}
+	base := filepath.Base(want)
+	for _, f := range pkgFiles {
+		if filepath.Base(f.HostPath) == base {
+			return f.HostPath, nil
+		}
+	}
+	return "", fmt.Errorf("program %q not found in resolved packages (--pkg)", programPath)
 }
 
 // stageResult holds the output of a completed build stage.

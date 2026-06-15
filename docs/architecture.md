@@ -192,7 +192,7 @@ The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded f
 ```
 
 - `children` — package files and source files included in the image, nested by guest path (`pkg.File.GuestPath`)
-- `arguments` — when `BuildConfig.Entrypoint` is set (interpreted languages), `argv[1]` is the entrypoint script so the runtime (`node`, `python`, ...) knows what to execute
+- `arguments` — built from `BuildConfig.Entrypoint` (if set, `argv[1]` is the entrypoint script so the runtime — `node`, `python`, ... — knows what to execute) followed by `BuildConfig.Args`. For `lang = "raw"` builds, `Entrypoint` is empty and `Args` comes from `unikernel.toml`'s `[program] args`, e.g. `arguments:(0:/program 1:-jar 2:/app.jar)` for `[program] path = "java"`, `args = ["-jar", "/app.jar"]`. The `arguments` tuple is omitted entirely when both are empty
 - `environment` — `BuildConfig.Env`, sorted by key. Sourced from `unikernel.toml`'s `[env]` section, the language driver (e.g. `PYTHONPATH=/packages` from the Python driver when `requirements.txt` is present), and — for `--pkg-source ops` — the `Env` field of each resolved ops package's manifest (driver values win on key conflicts)
 - `network` — emitted only when `BuildConfig.Port > 0` (i.e. `uni build --port <n>`). Without it, Nanos never initializes its network stack and any HTTP server fails to bind
 - Manifest tuple values use `manifestValue()` for quoting: names and values have different terminal character sets, so e.g. `/packages:/usr/lib` does not need quoting but `hello world` does

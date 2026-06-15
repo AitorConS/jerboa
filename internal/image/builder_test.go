@@ -149,6 +149,44 @@ func TestBuildManifest_NoPortNoNetwork(t *testing.T) {
 	require.NotContains(t, got, "network:(")
 }
 
+func TestBuildManifest_NoArgsNoArguments(t *testing.T) {
+	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello")})
+	require.NotContains(t, got, "arguments:(")
+}
+
+func TestBuildManifest_EntrypointOnly(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/node"),
+		Entrypoint: "server.js",
+	})
+	require.Contains(t, got, "arguments:(0:/program 1:/server.js)")
+}
+
+func TestBuildManifest_ArgsOnly(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/java"),
+		Args:       []string{"-jar", "/app.jar"},
+	})
+	require.Contains(t, got, "arguments:(0:/program 1:-jar 2:/app.jar)")
+}
+
+func TestBuildManifest_EntrypointAndArgs(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/python3"),
+		Entrypoint: "main.py",
+		Args:       []string{"--verbose"},
+	})
+	require.Contains(t, got, "arguments:(0:/program 1:/main.py 2:--verbose)")
+}
+
+func TestBuildManifest_ArgsWithSpaceQuoted(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/java"),
+		Args:       []string{"-jar", "/My App.jar"},
+	})
+	require.Contains(t, got, `arguments:(0:/program 1:-jar 2:"/My App.jar")`)
+}
+
 func TestManifestValue(t *testing.T) {
 	cases := []struct {
 		input string

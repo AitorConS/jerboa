@@ -12,10 +12,11 @@ import (
 const ConfigFileName = "unikernel.toml"
 
 type Config struct {
-	Build  BuildConfig   `toml:"build"`
-	Run    RunConfig     `toml:"run"`
-	Env    EnvConfig     `toml:"env"`
-	Stages []StageConfig `toml:"stages"`
+	Build   BuildConfig   `toml:"build"`
+	Run     RunConfig     `toml:"run"`
+	Env     EnvConfig     `toml:"env"`
+	Program ProgramConfig `toml:"program"`
+	Stages  []StageConfig `toml:"stages"`
 }
 
 type BuildConfig struct {
@@ -62,6 +63,15 @@ type CopyFromConfig struct {
 
 type EnvConfig map[string]string
 
+// ProgramConfig declares the runtime entrypoint for lang = "raw" builds —
+// analogous to Docker's ENTRYPOINT (Path) + CMD (Args). Path is resolved
+// against the package files supplied via --pkg; Args are passed through
+// literally as the program's argv[1..].
+type ProgramConfig struct {
+	Path string   `toml:"path"`
+	Args []string `toml:"args"`
+}
+
 func LoadConfig(dir string) (*Config, error) {
 	path := filepath.Join(dir, ConfigFileName)
 	data, err := os.ReadFile(path)
@@ -89,6 +99,14 @@ func validateConfig(cfg *Config) error {
 		if _, err := ParseLang(cfg.Build.Lang); err != nil {
 			return fmt.Errorf("build.lang: %w", err)
 		}
+	}
+
+	isRaw := strings.EqualFold(cfg.Build.Lang, "raw")
+	switch {
+	case isRaw && cfg.Program.Path == "":
+		return fmt.Errorf(`program.path is required when build.lang = "raw"`)
+	case !isRaw && cfg.Program.Path != "":
+		return fmt.Errorf(`program: only valid when build.lang = "raw"`)
 	}
 
 	if cfg.Run.Memory != "" {

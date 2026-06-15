@@ -41,7 +41,13 @@ type BuildConfig struct {
 	PkgFiles []pkg.File
 	// Entrypoint is the script or file to pass as the first argument to the
 	// runtime binary (e.g. "hi.js" for Node.js). Empty for compiled languages.
+	// Emitted with a leading "/" (image-root-relative).
 	Entrypoint string
+	// Args holds additional argv elements appended after Entrypoint (if set).
+	// Used by lang="raw" builds to pass arguments to the resolved program
+	// (e.g. ["-jar", "/app.jar"]). Each element is emitted as-is — use
+	// absolute in-image paths for file arguments.
+	Args []string
 	// Env holds runtime environment variables to bake into the image manifest.
 	// Sourced from ops package.manifest Env fields and language driver output.
 	Env map[string]string
@@ -169,9 +175,12 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 // "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialised
 // as nested nodes — the Nanos manifest parser treats '/' as an unknown
 // discriminator and rejects flat slash-separated keys.
-// cfg.Entrypoint, if non-empty, is emitted as arguments:(0:/program 1:/<entrypoint>)
+// cfg.Entrypoint, if non-empty, is emitted as arguments:(0:/program 1:/<entrypoint> ...)
 // so that the runtime interpreter (e.g. node, python) receives its own path as
-// argv[0] and the script path as argv[1] on startup. The Nanos tuple parser
+// argv[0] and the script path as argv[1] on startup. cfg.Args, if non-empty,
+// is appended after the entrypoint (or starting at argv[1] if cfg.Entrypoint
+// is empty) — used by lang="raw" builds to pass arguments such as
+// ["-jar", "/app.jar"] to the resolved program. The Nanos tuple parser
 // reads '(' as a tuple of name:value pairs — not a bare value list — so
 // arguments must use integer-string keys rather than e.g. ("/<entrypoint>").
 // cfg.Env entries are emitted as environment:(KEY:val ...) sorted by key.
@@ -196,8 +205,17 @@ func BuildManifest(cfg BuildConfig) string {
 	b.WriteString("(\n    children:(\n")
 	writeManifestChildren(&b, root, "        ")
 	b.WriteString("    )\n    program:/program\n")
+	var argv []string
 	if cfg.Entrypoint != "" {
-		b.WriteString("    arguments:(0:/program 1:/" + filepath.ToSlash(cfg.Entrypoint) + ")\n")
+		argv = append(argv, "/"+filepath.ToSlash(cfg.Entrypoint))
+	}
+	argv = append(argv, cfg.Args...)
+	if len(argv) > 0 {
+		b.WriteString("    arguments:(0:/program")
+		for i, a := range argv {
+			fmt.Fprintf(&b, " %d:%s", i+1, manifestValue(a))
+		}
+		b.WriteString(")\n")
 	}
 	b.WriteString("    environment:(")
 	if len(cfg.Env) > 0 {
