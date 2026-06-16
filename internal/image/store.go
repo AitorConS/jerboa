@@ -117,6 +117,13 @@ func (s *Store) Remove(ref string) error {
 		return fmt.Errorf("image store remove: %w", err)
 	}
 	sha, ok := refs[ref]
+	if !ok && !strings.Contains(ref, ":") {
+		// Bare name without tag → try :latest (mirrors Resolve behaviour).
+		sha, ok = refs[ref+":latest"]
+		if ok {
+			ref = ref + ":latest"
+		}
+	}
 	if !ok {
 		// Try resolving as sha256 prefix.
 		sha, ok = s.findBySHA(refs, ref)

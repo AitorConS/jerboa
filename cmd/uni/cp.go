@@ -222,9 +222,14 @@ func buildRebuildManifest(rootDir string) string {
 
 // parseCpSpec parses a string like "id:/path" into (isVM, id, path).
 // For non-VM paths it returns (false, "", s).
+// Single-letter prefixes (e.g. "C:\...") are Windows drive letters, not VM IDs.
 func parseCpSpec(s string) (bool, string, string) {
 	if idx := strings.Index(s, ":"); idx > 0 {
-		return true, s[:idx], s[idx+1:]
+		prefix := s[:idx]
+		if len(prefix) == 1 && (prefix[0] >= 'A' && prefix[0] <= 'Z' || prefix[0] >= 'a' && prefix[0] <= 'z') {
+			return false, "", s
+		}
+		return true, prefix, s[idx+1:]
 	}
 	return false, "", s
 }

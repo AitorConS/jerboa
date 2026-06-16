@@ -33,10 +33,18 @@ func TestParseCpSpec(t *testing.T) {
 }
 
 func TestParseCpSpec_WindowsDrive(t *testing.T) {
-	isVM, id, path := parseCpSpec(`C:\Users\file.txt`)
-	require.True(t, isVM)
-	require.Equal(t, "C", id)
-	require.Equal(t, `\Users\file.txt`, path)
+	// Windows drive letters (single char before ':') must not be treated as VM IDs.
+	tests := []struct {
+		input string
+	}{
+		{`C:\Users\file.txt`},
+		{`c:/Users/file.txt`},
+		{`D:\data\file.txt`},
+	}
+	for _, tt := range tests {
+		isVM, _, _ := parseCpSpec(tt.input)
+		require.False(t, isVM, "drive letter path %q should not be parsed as a VM reference", tt.input)
+	}
 }
 
 func TestCopyFile(t *testing.T) {
