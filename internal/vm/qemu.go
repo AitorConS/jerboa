@@ -80,7 +80,18 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
-	cmd := m.buildCmd(ctx, v.Cfg)
+
+	// Find a free port for QMP before building the QEMU command args.
+	// QMP over TCP is used cross-platform (instead of OS signals) for
+	// graceful shutdown and exec signal delivery.
+	qmpAddr := ""
+	if port, portErr := freePort(); portErr == nil {
+		qmpAddr = fmt.Sprintf("127.0.0.1:%d", port)
+	} else {
+		slog.Warn("qemu start: cannot find free QMP port; stop/signal may fall back to OS signals", "vm_id", id, "err", portErr)
+	}
+
+	cmd := m.buildCmd(ctx, v.Cfg, qmpAddr)
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
@@ -104,6 +115,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	v.mu.Lock()
 	v.proc = &osProcess{cmd.Process}
 	v.StartedAt = &now
+	v.qmpAddr = qmpAddr
 	v.mu.Unlock()
 	if newStatsCollector != nil {
 		v.SetStatsProvider(func() RuntimeStats {
@@ -173,17 +185,31 @@ func (m *QEMUManager) Stop(ctx context.Context, id string) error {
 	v.SetExplicitStop()
 	v.mu.RLock()
 	proc := v.proc
+	qmpAddr := v.qmpAddr
 	v.mu.RUnlock()
 	if proc == nil {
 		return nil
 	}
-	if err := proc.signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		// SIGTERM not supported on this platform (e.g. Windows); fall back to kill.
-		slog.Debug("qemu stop: sigterm unsupported, falling back to kill", "vm_id", id, "err", err)
-		if killErr := proc.kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
-			return fmt.Errorf("qemu stop %s: kill after failed sigterm: %w", id, killErr)
+
+	// Try graceful guest shutdown via QMP (cross-platform: TCP-based).
+	// Falls back to OS SIGTERM → kill for backwards compat with old VMs / test fakes.
+	qmpOK := false
+	if qmpAddr != "" {
+		if err := qmpDo(qmpAddr, "system_powerdown"); err == nil {
+			qmpOK = true
+		} else {
+			slog.Debug("qemu stop: qmp powerdown failed, using OS signal", "vm_id", id, "err", err)
 		}
-		return nil
+	}
+	if !qmpOK {
+		if err := proc.signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			// SIGTERM not supported on this platform (e.g. Windows); fall back to kill.
+			slog.Debug("qemu stop: sigterm unsupported, falling back to kill", "vm_id", id, "err", err)
+			if killErr := proc.kill(); killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+				return fmt.Errorf("qemu stop %s: kill after failed sigterm: %w", id, killErr)
+			}
+			return nil
+		}
 	}
 	select {
 	case <-v.Done():
@@ -220,7 +246,10 @@ func (m *QEMUManager) Kill(_ context.Context, id string) error {
 	return nil
 }
 
-// Signal sends sig to the VM's QEMU process.
+// Signal sends sig to the VM. SIGKILL terminates the QEMU host process immediately
+// (cross-platform). All other signals request graceful guest shutdown via QEMU QMP
+// (system_powerdown sends an ACPI power-button event); if QMP is unavailable the
+// call falls back to an OS-level signal (Linux/macOS only).
 func (m *QEMUManager) Signal(_ context.Context, id string, sig os.Signal) error {
 	v, err := m.store.Resolve(id)
 	if err != nil {
@@ -228,11 +257,28 @@ func (m *QEMUManager) Signal(_ context.Context, id string, sig os.Signal) error 
 	}
 	v.mu.RLock()
 	proc := v.proc
+	qmpAddr := v.qmpAddr
 	v.mu.RUnlock()
 	if proc == nil {
 		return fmt.Errorf("qemu signal %s: no process", id)
 	}
-	if err := proc.signal(sig); err != nil {
+	// SIGKILL: immediately terminate the QEMU host process.
+	// os.Process.Kill() is cross-platform (TerminateProcess on Windows).
+	if sig == syscall.SIGKILL {
+		if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("qemu signal %s: %w", id, err)
+		}
+		return nil
+	}
+	// For all other signals, try QMP system_powerdown (cross-platform).
+	if qmpAddr != "" {
+		if err := qmpDo(qmpAddr, "system_powerdown"); err == nil {
+			return nil
+		}
+		slog.Debug("qemu signal: qmp failed, falling back to OS signal", "vm_id", id)
+	}
+	// Fallback: OS-level signal (Linux/macOS). Fails on Windows for non-Kill signals.
+	if err := proc.signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return fmt.Errorf("qemu signal %s: %w", id, err)
 	}
 	return nil
@@ -268,7 +314,7 @@ func (m *QEMUManager) List() []*VM {
 	return m.store.List()
 }
 
-func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config) *exec.Cmd {
+func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) *exec.Cmd {
 	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio"
 	if cfg.DiskIOPS > 0 {
 		driveArg += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
@@ -290,6 +336,10 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config) *exec.Cmd {
 	args = append(args, buildEnvArgs(cfg.Env)...)
 	args = append(args, buildNetworkCfgArgs(cfg)...)
 	args = append(args, buildVolumeArgs(cfg.Volumes)...)
+	if qmpAddr != "" {
+		// QMP over TCP: works on Linux, macOS, and Windows without admin privileges.
+		args = append(args, "-qmp", "tcp:"+qmpAddr+",server,nowait")
+	}
 
 	cmd := m.mkCmd(ctx, m.qemuBin, args...)
 	return cmd

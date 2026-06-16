@@ -354,36 +354,9 @@ uni rm a3f8c2d1
 
 ---
 
-### `uni cp`
-
-Copy files to or from a stopped VM disk image. The `dump` and `mkfs` tools are downloaded automatically on first use from the kernel release.
-
-```
-uni cp <src> <dst>
-```
-
-One operand must be a VM reference in the form `id:path`, the other a local file path. Copying **to** a VM rebuilds the disk image with the new file included.
-
-**Examples:**
-
-```bash
-# Copy a file from a stopped VM to the host
-uni cp myvm:/etc/config.json ./config.json
-# copied myvm:/etc/config.json → ./config.json
-
-# Copy a file from the host into a stopped VM
-uni cp ./local.conf myvm:/etc/config.json
-# copied ./local.conf → myvm:/etc/config.json
-
-# Copy from a VM identified by prefix
-uni cp a3f8:/var/log/app.log ./app.log
-```
-
----
-
 ### `uni exec`
 
-Send a signal to a running VM process.
+Request graceful shutdown or immediate termination of a running VM.
 
 ```
 uni exec <id> --signal <SIG>
@@ -391,16 +364,23 @@ uni exec <id> --signal <SIG>
 
 | Flag | Default | Description |
 |---|---|---|
-| `--signal` | `SIGTERM` | Signal name (e.g. `SIGTERM`, `SIGHUP`) or number (e.g. `15`) |
+| `--signal` | `SIGTERM` | Signal name (e.g. `SIGTERM`, `SIGKILL`) or number (e.g. `9`) |
+
+Signals are delivered via QEMU Machine Protocol (QMP) over TCP, which works on Linux, macOS, and Windows without admin privileges.
+
+| Signal | Effect |
+|---|---|
+| `SIGTERM` (and others) | Sends an ACPI power-button event to the guest OS for graceful shutdown |
+| `SIGKILL` | Immediately terminates the QEMU host process |
 
 **Examples:**
 
 ```bash
-# Reload configuration (if the app handles SIGHUP)
-uni exec a3f8c2d1 --signal SIGHUP
+# Request graceful guest shutdown
+uni exec a3f8c2d1 --signal SIGTERM
 
-# Send signal by number
-uni exec a3f8c2d1 --signal 1
+# Immediately kill the QEMU process
+uni exec a3f8c2d1 --signal SIGKILL
 ```
 
 **Supported signal names:** `SIGTERM`, `SIGINT`, `SIGKILL`, `SIGHUP`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`

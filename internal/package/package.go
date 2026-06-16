@@ -547,23 +547,18 @@ func (s *Store) Push(name, version string, indexURL string) error {
 }
 
 // FromDocker extracts a binary and its shared library dependencies from a Docker
-// image, returning the local file paths. It creates a temporary container from
-// the image, copies the binary out, runs ldd inside the container to discover
-// shared libraries, and copies those out too.
+// image, returning the local file paths. It uses "docker run --rm sh -c cat"
+// to read files directly from the container filesystem, which follows symlinks
+// automatically without creating them on the host — making it work on all
+// platforms including Windows (where docker cp fails with symlinks).
 func FromDocker(image, containerPath string, extraLibs []string) ([]string, error) {
-	containerID, err := dockerCreate(image)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = dockerRemove(containerID) }()
-
 	tmpDir, err := os.MkdirTemp("", "uni-pkg-from-docker-*")
 	if err != nil {
 		return nil, fmt.Errorf("from-docker: temp dir: %w", err)
 	}
 
 	localBinary := filepath.Join(tmpDir, filepath.Base(containerPath))
-	if err := dockerCp(containerID+":"+containerPath, localBinary); err != nil {
+	if err := dockerReadFile(image, containerPath, localBinary); err != nil {
 		os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("from-docker: copy binary: %w", err)
 	}
@@ -584,7 +579,7 @@ func FromDocker(image, containerPath string, extraLibs []string) ([]string, erro
 				continue
 			}
 			localLib := filepath.Join(tmpDir, filepath.Base(lib))
-			if err := dockerCp(containerID+":"+lib, localLib); err != nil {
+			if err := dockerReadFile(image, lib, localLib); err != nil {
 				slog.Warn("from-docker: could not copy lib, skipping", "lib", lib, "error", err)
 				continue
 			}
@@ -594,7 +589,7 @@ func FromDocker(image, containerPath string, extraLibs []string) ([]string, erro
 
 	for _, lib := range extraLibs {
 		localLib := filepath.Join(tmpDir, filepath.Base(lib))
-		if err := dockerCp(containerID+":"+lib, localLib); err != nil {
+		if err := dockerReadFile(image, lib, localLib); err != nil {
 			slog.Warn("from-docker: could not copy extra lib, skipping", "lib", lib, "error", err)
 			continue
 		}
@@ -671,30 +666,26 @@ func trimLddAddress(s string) string {
 	return s
 }
 
-func dockerCreate(image string) (string, error) {
-	cmd := exec.Command("docker", "create", image, "sh", "-c", "true")
-	output, err := cmd.Output()
+// dockerReadFile runs a temporary container from image and reads containerPath
+// via "sh -c cat", writing the result to localPath. The shell cat follows
+// symlinks automatically inside the container, so no filesystem symlinks are
+// created on the host — making this work on Windows without admin privileges.
+func dockerReadFile(image, containerPath, localPath string) error {
+	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image,
+		"-c", "cat "+shellescape(containerPath))
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("docker create %s: %w", image, err)
+		return fmt.Errorf("docker run cat %s: %w", containerPath, err)
 	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func dockerRemove(containerID string) error {
-	cmd := exec.Command("docker", "rm", "-f", containerID)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("docker rm -f %s: %w", containerID, err)
+	if err := os.WriteFile(localPath, out, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", localPath, err)
 	}
 	return nil
 }
 
-func dockerCp(src, dst string) error {
-	cmd := exec.Command("docker", "cp", src, dst)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker cp %s %s: %w: %s", src, dst, err, string(output))
-	}
-	return nil
+// shellescape single-quote-escapes s for safe use in a POSIX shell command string.
+func shellescape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func dockerLdd(image, containerPath string) ([]string, error) {

@@ -247,6 +247,7 @@ type VM struct {
 	explicitStop  bool
 	statsProvider func() RuntimeStats
 	cgroupMgr     *CgroupManager
+	qmpAddr       string // TCP "host:port" of QMP socket; set at start, cleared when stopped
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.

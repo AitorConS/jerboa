@@ -226,7 +226,7 @@ func captureArgs(mgr *QEMUManager, cfg Config) []string {
 		got = args
 		return fakeQEMUCmd(false)(context.Background(), "", args...)
 	}
-	_ = mgr.buildCmd(context.Background(), cfg)
+	_ = mgr.buildCmd(context.Background(), cfg, "")
 	return got
 }
 

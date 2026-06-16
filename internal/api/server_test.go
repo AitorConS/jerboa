@@ -227,15 +227,13 @@ func TestServer_KillNotFound(t *testing.T) {
 // --- Signal ---
 
 func TestServer_Signal(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("signal delivery not supported on Windows")
-	}
 	client, _ := startTestServer(t)
 
 	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 
-	require.NoError(t, client.Signal(context.Background(), info.ID, "SIGTERM"))
+	// SIGKILL uses proc.Kill() which is cross-platform (TerminateProcess on Windows).
+	require.NoError(t, client.Signal(context.Background(), info.ID, "SIGKILL"))
 }
 
 func TestServer_SignalInvalid(t *testing.T) {
