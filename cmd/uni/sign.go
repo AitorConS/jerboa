@@ -10,8 +10,7 @@ import (
 )
 
 func newSignCmd(storePath *string) *cobra.Command {
-	var keyPath string
-	cmd := &cobra.Command{
+	return &cobra.Command{
 		Use:   "sign <image>",
 		Short: "Sign a local image with the default Ed25519 key",
 		Args:  cobra.ExactArgs(1),
@@ -43,10 +42,6 @@ func newSignCmd(storePath *string) *cobra.Command {
 			digest := image.DigestSHA256(manifestData)
 
 			imageDir := imageDirFromDigest(home, m.DiskDigest)
-			if keyPath != "" {
-				fmt.Fprintf(cmd.ErrOrStderr(), "note: --key flag is informational; using default key pair\n")
-			}
-
 			sig, err := sigStore.SignManifest(digest, imageDir)
 			if err != nil {
 				return fmt.Errorf("sign: %w", err)
@@ -56,8 +51,6 @@ func newSignCmd(storePath *string) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&keyPath, "key", "", "path to signing key (uses default key pair)")
-	return cmd
 }
 
 func newVerifyCmd(storePath *string) *cobra.Command {

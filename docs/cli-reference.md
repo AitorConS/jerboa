@@ -694,12 +694,8 @@ uni rmi hello:latest
 Sign a local image with an Ed25519 key pair. If no key pair exists, one is generated automatically and stored in `~/.uni/keys/`.
 
 ```
-uni sign <image> [--key <path>]
+uni sign <image>
 ```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--key` | *(default key pair in `~/.uni/keys/`)* | Path to a custom signing key |
 
 **Example:**
 
@@ -993,6 +989,10 @@ List all volumes.
 ```
 uni volume ls [--output json]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--output` | *(table)* | Output format: omit for table, `json` for JSON |
 
 ```bash
 uni volume ls
