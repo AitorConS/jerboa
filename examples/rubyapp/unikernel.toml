@@ -1,0 +1,9 @@
+[build]
+lang = "raw"
+
+[program]
+path = "ruby"
+args = ["/app.rb"]
+
+[run]
+ports = ["8080:8080"]
