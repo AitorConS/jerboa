@@ -121,7 +121,7 @@ func (s *Store) Remove(ref string) error {
 		// Bare name without tag → try :latest (mirrors Resolve behaviour).
 		sha, ok = refs[ref+":latest"]
 		if ok {
-			ref = ref + ":latest"
+			ref += ":latest"
 		}
 	}
 	if !ok {
