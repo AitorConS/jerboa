@@ -854,37 +854,45 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 	return files, nil
 }
 
-// runtimeBinaryNames maps a language to the expected binary name within its package.
-var runtimeBinaryNames = map[builder.Lang]string{
-	builder.LangNode:   "node",
-	builder.LangPython: "python3",
+// runtimeBinaryCandidates maps a language to an ordered list of binary names to
+// search for within its package files. The first exact match wins; if none is
+// found, a prefix-glob is tried for each candidate in order.
+// Multiple candidates handle packages that ship python2.x, python3.x, etc.
+var runtimeBinaryCandidates = map[builder.Lang][]string{
+	builder.LangNode:   {"node"},
+	builder.LangPython: {"python3", "python2", "python"},
 }
 
 // findRuntimeBinary searches the resolved package files for the runtime binary
 // of the given language.
 func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
-	binaryName, ok := runtimeBinaryNames[lang]
+	candidates, ok := runtimeBinaryCandidates[lang]
 	if !ok {
 		return "", fmt.Errorf("language %s does not have a runtime binary", lang)
 	}
 
-	for _, f := range pkgFiles {
-		base := filepath.Base(f.HostPath)
-		if base == binaryName {
-			return f.HostPath, nil
+	// Exact base-name match: try each candidate in priority order.
+	for _, name := range candidates {
+		for _, f := range pkgFiles {
+			if filepath.Base(f.HostPath) == name {
+				return f.HostPath, nil
+			}
 		}
 	}
 
-	for _, f := range pkgFiles {
-		dir := filepath.Dir(f.HostPath)
-		prefix := binaryName
-		matches, _ := filepath.Glob(filepath.Join(dir, prefix+"*"))
-		if len(matches) > 0 {
-			return matches[0], nil
+	// Prefix-glob on disk: try each candidate prefix in priority order.
+	// This catches versioned binaries like python2.7 or python3.12.
+	for _, name := range candidates {
+		for _, f := range pkgFiles {
+			dir := filepath.Dir(f.HostPath)
+			matches, _ := filepath.Glob(filepath.Join(dir, name+"*"))
+			if len(matches) > 0 {
+				return matches[0], nil
+			}
 		}
 	}
 
-	return "", fmt.Errorf("runtime binary %q not found in package files", binaryName)
+	return "", fmt.Errorf("runtime binary %q (or variant) not found in package files", candidates[0])
 }
 
 // sourceFiles collects application source files from dir for inclusion in the image.
