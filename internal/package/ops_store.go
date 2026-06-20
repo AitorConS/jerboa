@@ -249,9 +249,40 @@ type File struct {
 	GuestPath string
 }
 
+// opsRuntimeBloatDir reports whether a slash-separated package-relative path
+// is a directory that is only needed at compile time, not at runtime inside
+// a unikernel. Returning true causes the walker to skip the whole subtree.
+//
+// Excluded subtrees (with typical sizes for eyberg/python3:3.12.3):
+//   - lib/python*/config-*/   — 27 MB: static libpython + build headers
+//   - lib/python*/test/       —  1.3 MB: CPython's own test suite
+//   - lib/python*/lib2to3/    —  1 MB: Python 2→3 migration tool
+//   - lib/python*/pydoc_data/ —  1.3 MB: HTML documentation data for pydoc
+func opsRuntimeBloatDir(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		if !strings.HasPrefix(part, "python") {
+			continue
+		}
+		if i+1 >= len(parts) {
+			break
+		}
+		next := parts[i+1]
+		if strings.HasPrefix(next, "config-") ||
+			next == "test" ||
+			next == "lib2to3" ||
+			next == "pydoc_data" {
+			return true
+		}
+	}
+	return false
+}
+
 // ExtractedFiles returns the files inside an extracted ops package as File
 // entries with proper guest paths. Files inside sysroot/ get their sysroot-
 // relative path as the guest path; top-level files use their basename.
+// Build-only subtrees (static libs, test suites, etc.) are excluded to keep
+// the image lean — see opsRuntimeBloatDir for the full list.
 func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, error) {
 	dir := s.PackageDir(namespace, name, version)
 	var files []File
@@ -260,15 +291,19 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		if err != nil {
 			return err
 		}
-		if d.IsDir() {
-			return nil
-		}
 
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return fmt.Errorf("ops list files rel path: %w", err)
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return fmt.Errorf("ops list files rel path: %w", relErr)
 		}
 		rel = filepath.ToSlash(rel)
+
+		if d.IsDir() {
+			if opsRuntimeBloatDir(rel) {
+				return fs.SkipDir
+			}
+			return nil
+		}
 
 		if strings.HasSuffix(rel, ".tar.gz") || rel == "manifest.json" || rel == "package.manifest" {
 			return nil
