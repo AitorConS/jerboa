@@ -4,7 +4,7 @@ BUILD_DIR    := dist
 VERSION      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS      := -ldflags="-s -w -X main.version=$(VERSION)"
 
-.PHONY: build kernel test test-integration test-kernel lint e2e smoke coverage clean
+.PHONY: build kernel test test-integration test-kernel lint tidy-check e2e smoke coverage clean
 
 build:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/uni
@@ -24,6 +24,10 @@ test-kernel:
 
 lint:
 	golangci-lint run ./...
+
+tidy-check:
+	go mod tidy
+	git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum out of sync — commit the result of 'go mod tidy'" && exit 1)
 
 e2e:
 	go test -tags e2e -timeout 30m ./tests/e2e/...

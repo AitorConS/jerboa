@@ -1,6 +1,7 @@
 version: "2"
 linters:
   enable:
+    # existing
     - bodyclose
     - errcheck
     - gocritic
@@ -9,6 +10,19 @@ linters:
     - revive
     - staticcheck
     - wrapcheck
+    # error handling
+    - errorlint      # errors.Is/As instead of == for wrapped errors
+    - nilerr         # return nil when err != nil (hiding errors)
+    # security
+    - gosec          # path traversal, hardcoded credentials, weak crypto, etc.
+    # code quality
+    - misspell       # typos in comments and string literals
+    - unparam        # function parameters always passed the same constant value
+    - usestdlibvars  # http.MethodGet, http.StatusOK instead of magic strings/numbers
+    - noctx          # http.Get / http.Post calls without a context
+    # test quality
+    - testifylint    # testify anti-patterns (assert vs require, wrong arg order)
+
   settings:
     revive:
       rules:
@@ -18,6 +32,18 @@ linters:
     wrapcheck:
       ignore-package-globs:
         - github.com/AitorConS/unikernel-engine/*
+    gosec:
+      excludes:
+        - G304  # file path from variable — expected in a CLI tool
+        - G107  # URL from variable — expected when calling package registries
+        - G306  # file permissions — we use 0755 for executables intentionally
+    errorlint:
+      errorf: true
+      asserts: true
+      comparison: true
+    misspell:
+      locale: US
+
   exclusions:
     generated: lax
     presets:
@@ -29,13 +55,17 @@ linters:
       - linters:
           - errcheck
           - wrapcheck
+          - gosec
+          - unparam
         path: _test.go
     paths:
       - third_party$
       - builtin$
       - examples$
+
 issues:
   max-same-issues: 0
+
 formatters:
   enable:
     - gofmt
