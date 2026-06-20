@@ -683,26 +683,34 @@ func defaultToolsPath() string {
 
 // filterCoveredAutoPkgs removes auto-packages whose base name is already
 // covered by a user-provided package, so the driver doesn't double-resolve.
-// e.g. driver emits "python:3.12" but user passed "--pkg eyberg/python:3.10.6".
+// Uses prefix matching so "python3" (user) covers "python" (auto) and vice versa.
 func filterCoveredAutoPkgs(autoPkgs, userPkgs []string) []string {
 	if len(userPkgs) == 0 {
 		return autoPkgs
 	}
-	userBaseNames := make(map[string]struct{}, len(userPkgs))
+	userBaseNames := make([]string, 0, len(userPkgs))
 	for _, ref := range userPkgs {
 		name, _ := parsePkgRef(ref)
 		if idx := strings.LastIndex(name, "/"); idx >= 0 {
 			name = name[idx+1:]
 		}
-		userBaseNames[name] = struct{}{}
+		userBaseNames = append(userBaseNames, name)
 	}
 	filtered := autoPkgs[:0:0]
 	for _, ref := range autoPkgs {
-		name, _ := parsePkgRef(ref)
-		if idx := strings.LastIndex(name, "/"); idx >= 0 {
-			name = name[idx+1:]
+		autoName, _ := parsePkgRef(ref)
+		if idx := strings.LastIndex(autoName, "/"); idx >= 0 {
+			autoName = autoName[idx+1:]
 		}
-		if _, covered := userBaseNames[name]; !covered {
+		covered := false
+		for _, userName := range userBaseNames {
+			// Exact match or prefix relationship catches python/python3/python2 variants.
+			if userName == autoName || strings.HasPrefix(userName, autoName) || strings.HasPrefix(autoName, userName) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
 			filtered = append(filtered, ref)
 		}
 	}
@@ -778,24 +786,40 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string, pkgSource strin
 }
 
 func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.OpsPackage {
+	// Build a list of name aliases to try: the ops ecosystem names the Python
+	// runtime "python3" rather than "python", so try both.
+	names := []string{name}
+	switch name {
+	case "python":
+		names = append(names, "python3", "python2")
+	case "python3":
+		names = append(names, "python")
+	case "python2":
+		names = append(names, "python")
+	}
+
 	namespaces := []string{"eyberg", "nanovms", "myuniverse"}
-	for _, ns := range namespaces {
-		if t := manifest.Lookup(ns, name, version); t != nil {
-			return t
+	for _, alias := range names {
+		for _, ns := range namespaces {
+			if t := manifest.Lookup(ns, alias, version); t != nil {
+				return t
+			}
 		}
 	}
 	if version == "" || version == "latest" {
 		return nil
 	}
-	for _, ns := range namespaces {
-		for i := range manifest.Packages {
-			p := &manifest.Packages[i]
-			if p.Namespace != ns || p.Name != name {
-				continue
-			}
-			pv := strings.TrimPrefix(p.Version, "v")
-			if strings.HasPrefix(pv, version+".") || strings.HasPrefix(pv, version+"-") || pv == version {
-				return p
+	for _, alias := range names {
+		for _, ns := range namespaces {
+			for i := range manifest.Packages {
+				p := &manifest.Packages[i]
+				if p.Namespace != ns || p.Name != alias {
+					continue
+				}
+				pv := strings.TrimPrefix(p.Version, "v")
+				if strings.HasPrefix(pv, version+".") || strings.HasPrefix(pv, version+"-") || pv == version {
+					return p
+				}
 			}
 		}
 	}
