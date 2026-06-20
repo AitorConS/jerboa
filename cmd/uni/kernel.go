@@ -12,16 +12,16 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newKernelCmd() *cobra.Command {
+func newKernelCmd(verbose *bool) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "kernel",
 		Short: "Manage the kernel tools (kernel.img, boot.img, mkfs)",
 	}
 	cmd.AddCommand(
 		newKernelCheckCmd(),
-		newKernelUpdateCmd(),
+		newKernelUpdateCmd(verbose),
 		newKernelListCmd(),
-		newKernelUseCmd(),
+		newKernelUseCmd(verbose),
 	)
 	return cmd
 }
@@ -89,7 +89,7 @@ func newKernelListCmd() *cobra.Command {
 }
 
 // newKernelUseCmd implements `uni kernel use <version>`.
-func newKernelUseCmd() *cobra.Command {
+func newKernelUseCmd(verbose *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "use <version>",
@@ -120,12 +120,15 @@ func newKernelUseCmd() *cobra.Command {
 				return fmt.Errorf("kernel use: clear cache: %w", err)
 			}
 
+			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+			sp.Start(fmt.Sprintf("Downloading kernel %s", version))
 			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer cancel()
 			if err := tools.DownloadVersion(ctx, toolsDir, version); err != nil {
+				sp.Fail("Download failed")
 				return fmt.Errorf("kernel use: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Kernel switched to %s.\n", version)
+			sp.Done(fmt.Sprintf("Kernel switched to %s", version))
 			return nil
 		},
 	}
@@ -134,7 +137,7 @@ func newKernelUseCmd() *cobra.Command {
 }
 
 // newKernelUpdateCmd implements `uni kernel update`.
-func newKernelUpdateCmd() *cobra.Command {
+func newKernelUpdateCmd(verbose *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -168,12 +171,15 @@ func newKernelUpdateCmd() *cobra.Command {
 				return fmt.Errorf("kernel update: clear cache: %w", err)
 			}
 
+			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+			sp.Start(fmt.Sprintf("Downloading kernel %s", remote))
 			dlCtx, dlCancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
 			defer dlCancel()
 			if err := tools.DownloadVersion(dlCtx, toolsDir, "latest"); err != nil {
+				sp.Fail("Download failed")
 				return fmt.Errorf("kernel update: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Kernel updated to %s.\n", remote)
+			sp.Done(fmt.Sprintf("Kernel updated to %s", remote))
 			return nil
 		},
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,7 @@ func absPath(p string) string {
 	return abs
 }
 
-func newBuildCmd(storePath *string) *cobra.Command {
+func newBuildCmd(storePath *string, verbose *bool) *cobra.Command {
 	var (
 		name       string
 		tag        string
@@ -53,6 +54,8 @@ If --lang is omitted for a directory, the language is auto-detected from
 project markers (go.mod, package.json, etc.).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
+
 			store, err := image.NewStore(*storePath)
 			if err != nil {
 				return fmt.Errorf("build: open store: %w", err)
@@ -60,6 +63,7 @@ project markers (go.mod, package.json, etc.).`,
 
 			toolsDir := defaultToolsPath()
 
+			// Kernel update check may prompt the user — run before the spinner.
 			if mkfs == "" && os.Getenv("UNI_MKFS") == "" && tools.Exist(toolsDir) {
 				if err := checkKernelUpdateForBuild(cmd, toolsDir, updateYes); err != nil {
 					return err
@@ -69,24 +73,37 @@ project markers (go.mod, package.json, etc.).`,
 			if mkfs == "" {
 				mkfs = os.Getenv("UNI_MKFS")
 			}
+
+			needsKernelDL := mkfs == "" && !tools.Exist(toolsDir)
+			if needsKernelDL {
+				sp.Start("Downloading kernel tools")
+			}
 			mkfsRun, err := tools.ResolveMkfs(cmd.Context(), toolsDir, mkfs)
 			if err != nil {
+				if needsKernelDL {
+					sp.Fail("Kernel tools unavailable")
+				}
 				return fmt.Errorf("build: %w", err)
+			}
+			if needsKernelDL {
+				sp.Done("Kernel tools ready")
 			}
 
 			var pkgFiles []pkg.File
 			if len(pkgs) > 0 {
+				sp.Start("Resolving packages")
 				var resolved []pkg.File
-				var err error
 				if pkgSource == "ops" {
 					resolved, err = resolveOpsPackages(cmd.Context(), pkgs)
 				} else {
 					resolved, err = resolvePackages(cmd.Context(), pkgs)
 				}
 				if err != nil {
+					sp.Fail("Package resolution failed")
 					return fmt.Errorf("build: %w", err)
 				}
 				pkgFiles = resolved
+				sp.Done(fmt.Sprintf("Resolved %d package(s)", len(pkgFiles)))
 			}
 
 			// Seed image env vars from ops package manifests (e.g. HOME, PYTHONPATH set by eyberg/python).
@@ -106,6 +123,13 @@ project markers (go.mod, package.json, etc.).`,
 				return fmt.Errorf("build: stat %s: %w", srcPath, err)
 			}
 
+			// Writers for build output: info messages and subprocess output.
+			infoW := io.Writer(io.Discard)
+			if *verbose {
+				infoW = cmd.ErrOrStderr()
+			}
+			subW := sp.SubWriter()
+
 			if info.IsDir() {
 				cfg, err := builder.LoadConfig(srcPath)
 				if err != nil {
@@ -113,18 +137,24 @@ project markers (go.mod, package.json, etc.).`,
 				}
 
 				if cfg != nil && cfg.HasStages() {
-					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang, pkgSource)
+					sp.Start("Building project")
+					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang, pkgSource, infoW, subW)
 					if err != nil {
+						sp.Fail("Build failed")
 						return err
 					}
+					sp.Done("Build complete")
 					defer func() { _ = os.Remove(binaryPath) }()
 				} else {
+					sp.Start("Building project")
 					var buildEntrypoint string
 					var driverEnv map[string]string
-					binaryPath, buildEntrypoint, programArgs, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs)
+					binaryPath, buildEntrypoint, programArgs, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
 					if err != nil {
+						sp.Fail("Build failed")
 						return err
 					}
+					sp.Done("Build complete")
 					if binaryPath != "" {
 						defer func() { _ = os.Remove(binaryPath) }()
 					}
@@ -143,6 +173,8 @@ project markers (go.mod, package.json, etc.).`,
 			if name == "" {
 				name = filepath.Base(filepath.Clean(args[0]))
 			}
+
+			sp.Start("Assembling image")
 			m, err := image.NewBuilder(store).Build(cmd.Context(), image.BuildConfig{
 				Name:       name,
 				Tag:        tag,
@@ -155,10 +187,14 @@ project markers (go.mod, package.json, etc.).`,
 				Args:       programArgs,
 				Env:        pkgEnv,
 				Port:       port,
+				Output:     subW,
 			})
 			if err != nil {
+				sp.Fail("Image assembly failed")
 				return fmt.Errorf("build: %w", err)
 			}
+			sp.Done(fmt.Sprintf("%s  %s:%s", m.Name, m.Tag, m.DiskDigest))
+
 			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s\n", m.DiskDigest, m.Name, m.Tag)
 			return nil
 		},
@@ -177,9 +213,9 @@ project markers (go.mod, package.json, etc.).`,
 	return cmd
 }
 
-// runBuildCommand executes a single shell command string in dir, streaming output
-// to stderr. Uses sh -c on Unix and cmd /c on Windows so arbitrary shell syntax works.
-func runBuildCommand(ctx context.Context, dir, command string) error {
+// runBuildCommand executes a single shell command string in dir, writing output to w.
+// Uses sh -c on Unix and cmd /c on Windows so arbitrary shell syntax works.
+func runBuildCommand(ctx context.Context, dir, command string, w io.Writer) error {
 	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		cmd = exec.CommandContext(ctx, "cmd", "/c", command)
@@ -187,8 +223,8 @@ func runBuildCommand(ctx context.Context, dir, command string) error {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	}
 	cmd.Dir = dir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = w
+	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("run command: %w", err)
 	}
@@ -239,7 +275,7 @@ func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
 // argv elements for lang="raw" builds (from [program].args). env holds
 // runtime environment variables the driver requires (e.g. PYTHONPATH when
 // pip installed packages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string) (string, string, []string, map[string]string, error) {
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, []string, map[string]string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
@@ -250,7 +286,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		}
 	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
 		langHint = cfg.LangHint()
-		fmt.Fprintf(cmd.ErrOrStderr(), "using language from %s: %s\n", builder.ConfigFileName, langHint)
+		fmt.Fprintf(infoW, "using language from %s: %s\n", builder.ConfigFileName, langHint)
 	}
 
 	var buildPlatform builder.Platform
@@ -269,7 +305,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	if err != nil {
 		return "", "", nil, nil, fmt.Errorf("build: %w", err)
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "detected language: %s\n", detected)
+	fmt.Fprintf(infoW, "detected language: %s\n", detected)
 
 	var cfgEntrypoint string
 	var buildArgs []string
@@ -283,8 +319,8 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	// Execute user-defined build commands (unikernel.toml [build] run = [...]).
 	// These run before the driver packages the project — equivalent to RUN in a Dockerfile.
 	for _, command := range buildRun {
-		fmt.Fprintf(cmd.ErrOrStderr(), "$ %s\n", command)
-		if err := runBuildCommand(cmd.Context(), srcPath, command); err != nil {
+		fmt.Fprintf(infoW, "$ %s\n", command)
+		if err := runBuildCommand(cmd.Context(), srcPath, command, subW); err != nil {
 			return "", "", nil, nil, fmt.Errorf("build: run %q: %w", command, err)
 		}
 	}
@@ -293,6 +329,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		Entrypoint: cfgEntrypoint,
 		BuildArgs:  buildArgs,
 		Platform:   buildPlatform,
+		Output:     subW,
 	})
 	if err != nil {
 		return "", "", nil, nil, fmt.Errorf("build %s: %w", detected, err)
@@ -387,7 +424,7 @@ type stageResult struct {
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, langFlag, pkgSource string) (string, []pkg.File, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, langFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, []pkg.File, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -400,7 +437,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 	}
 
 	for i, stage := range cfg.Stages {
-		fmt.Fprintf(cmd.ErrOrStderr(), "[stage %d/%d] Building %q (%s)...\n", i+1, len(cfg.Stages), stage.Name, stage.Lang)
+		fmt.Fprintf(infoW, "[stage %d/%d] Building %q (%s)...\n", i+1, len(cfg.Stages), stage.Name, stage.Lang)
 
 		stageLang, err := builder.ParseLang(stage.Lang)
 		if err != nil {
@@ -445,6 +482,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			BuildArgs:  stage.Args,
 			PkgFiles:   driverPkgPaths,
 			Platform:   buildPlatform,
+			Output:     subW,
 		})
 		if err != nil {
 			return "", nil, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)

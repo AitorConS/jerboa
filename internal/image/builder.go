@@ -3,6 +3,7 @@ package image
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,6 +55,8 @@ type BuildConfig struct {
 	// Port, when non-zero, declares the service port and enables the network
 	// section in the manifest (required for any HTTP server to bind).
 	Port int
+	// Output is where mkfs subprocess output is written. Nil defaults to os.Stderr.
+	Output io.Writer
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -95,7 +98,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	defer func() { _ = os.Remove(tmpPath) }()
 
 	manifest := BuildManifest(cfg)
-	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest); err != nil {
+	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
@@ -160,10 +163,15 @@ func checkELF(path string) error {
 	return nil
 }
 
-func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, manifest string) error {
+func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, manifest string, output io.Writer) error {
 	cmd := mkfsRun(ctx, imgPath, binaryPath, manifest)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	if output != nil {
+		cmd.Stdout = output
+		cmd.Stderr = output
+	} else {
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("mkfs: %w", err)
 	}

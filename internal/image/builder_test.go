@@ -473,14 +473,14 @@ func TestRunMkfs(t *testing.T) {
 		mkfsRun := func(ctx context.Context, imgPath, binaryPath string, manifest string) *exec.Cmd {
 			return successCmd()
 		}
-		require.NoError(t, runMkfs(context.Background(), mkfsRun, "/tmp/img", "/tmp/bin", "manifest"))
+		require.NoError(t, runMkfs(context.Background(), mkfsRun, "/tmp/img", "/tmp/bin", "manifest", nil))
 	})
 
 	t.Run("failure", func(t *testing.T) {
 		mkfsRun := func(ctx context.Context, imgPath, binaryPath string, manifest string) *exec.Cmd {
 			return failureCmd()
 		}
-		err := runMkfs(context.Background(), mkfsRun, "/tmp/img", "/tmp/bin", "manifest")
+		err := runMkfs(context.Background(), mkfsRun, "/tmp/img", "/tmp/bin", "manifest", nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "mkfs")
 	})

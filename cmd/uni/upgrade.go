@@ -32,7 +32,7 @@ const (
 	daemonPollInterval = 100 * time.Millisecond
 )
 
-func newUpgradeCmd(socketPath *string) *cobra.Command {
+func newUpgradeCmd(socketPath *string, verbose *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "upgrade",
@@ -40,7 +40,7 @@ func newUpgradeCmd(socketPath *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
 			defer cancel()
-			return runUpgrade(ctx, cmd, *socketPath, yes)
+			return runUpgrade(ctx, cmd, *socketPath, yes, *verbose)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation prompt")
@@ -48,7 +48,7 @@ func newUpgradeCmd(socketPath *string) *cobra.Command {
 	return cmd
 }
 
-func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes bool) error {
+func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes bool, verbose bool) error {
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
 
@@ -90,19 +90,25 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 	}
 	dir := filepath.Dir(exe)
 
+	sp := newSpinner(errOut, verbose)
+
 	// 3. Download both binaries to temp files before touching anything on disk.
-	fmt.Fprintln(out, "Downloading uni...")
+	sp.Start("Downloading uni " + remote)
 	uniTmp, err := downloadBinary(ctx, dir, "uni", remote)
 	if err != nil {
+		sp.Fail("Download failed")
 		return fmt.Errorf("upgrade: download uni: %w", err)
 	}
+	sp.Done("Downloaded uni " + remote)
 	defer func() { _ = os.Remove(uniTmp) }()
 
-	fmt.Fprintln(out, "Downloading unid...")
+	sp.Start("Downloading unid " + remote)
 	unidTmp, err := downloadBinary(ctx, dir, "unid", remote)
 	if err != nil {
+		sp.Fail("Download failed")
 		return fmt.Errorf("upgrade: download unid: %w", err)
 	}
+	sp.Done("Downloaded unid " + remote)
 	defer func() { _ = os.Remove(unidTmp) }()
 
 	// 4. Stop the daemon gracefully if it is running.
@@ -127,14 +133,16 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 
 	// 7. Restart daemon if it was running before.
 	if daemonWasRunning {
-		fmt.Fprintln(out, "Starting new unid...")
+		sp.Start("Starting new unid")
 		if err := launchDaemon(unidDest, socketPath); err != nil {
+			sp.Fail("Could not start unid")
 			fmt.Fprintf(errOut, "warning: start unid: %v\n", err)
 			fmt.Fprintln(errOut, "Start unid manually: unid --socket "+socketPath)
 		} else if err := waitForSocket(socketPath, daemonReadyTimeout); err != nil {
+			sp.Fail("Daemon did not become ready")
 			fmt.Fprintf(errOut, "warning: unid did not become ready: %v\n", err)
 		} else {
-			fmt.Fprintln(out, "Daemon restarted and ready.")
+			sp.Done("Daemon restarted and ready")
 		}
 	}
 

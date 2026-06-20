@@ -23,6 +23,7 @@ func newRootCmd() *cobra.Command {
 		socketPath string
 		storePath  string
 		outputFmt  string
+		verbose    bool
 	)
 
 	root := &cobra.Command{
@@ -36,10 +37,12 @@ func newRootCmd() *cobra.Command {
 		defaultStorePath(), "local image store path")
 	root.PersistentFlags().StringVar(&outputFmt, "output", "table",
 		"output format: table or json")
+	root.PersistentFlags().BoolVarP(&verbose, "verbose", "V", false,
+		"show raw build and download output (useful for debugging)")
 
 	root.AddCommand(
 		newRunCmd(&socketPath, &storePath),
-		newBuildCmd(&storePath),
+		newBuildCmd(&storePath, &verbose),
 		newImagesCmd(&storePath, &outputFmt),
 		newRmiCmd(&storePath),
 		newSignCmd(&storePath),
@@ -53,9 +56,9 @@ func newRootCmd() *cobra.Command {
 		newExecCmd(&socketPath),
 		newComposeCmd(&socketPath, &storePath, &outputFmt),
 		newVolumeCmd(&storePath, &outputFmt),
-		newKernelCmd(),
+		newKernelCmd(&verbose),
 		newPkgCmd(),
-		newUpgradeCmd(&socketPath),
+		newUpgradeCmd(&socketPath, &verbose),
 		newNetworkCmd(&socketPath, &outputFmt),
 		newDNSCmd(&socketPath, &outputFmt),
 		newStatsCmd(&socketPath, &outputFmt),

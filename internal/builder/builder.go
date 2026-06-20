@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -111,6 +112,17 @@ type Options struct {
 	PkgFiles []string
 	// Platform is the target platform for cross-compilation. Defaults to the current platform.
 	Platform Platform
+	// Output is where subprocess output (compiler, package manager, etc.) is written.
+	// If nil, defaults to os.Stderr.
+	Output io.Writer
+}
+
+// buildOutput returns the writer for subprocess output, falling back to os.Stderr.
+func (o Options) buildOutput() io.Writer {
+	if o.Output != nil {
+		return o.Output
+	}
+	return os.Stderr
 }
 
 // DetectLanguage inspects dir and returns the language detected.
@@ -211,8 +223,9 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	if _, err := os.Stat(filepath.Join(dir, "node_modules")); os.IsNotExist(err) {
 		installCmd := exec.CommandContext(ctx, "npm", "install", "--production")
 		installCmd.Dir = dir
-		installCmd.Stdout = os.Stderr
-		installCmd.Stderr = os.Stderr
+		w := opts.buildOutput()
+		installCmd.Stdout = w
+		installCmd.Stderr = w
 		if err := installCmd.Run(); err != nil {
 			return BuildResult{}, fmt.Errorf("node driver: npm install: %w", err)
 		}
@@ -320,8 +333,9 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
 		pipCmd := exec.CommandContext(ctx, "pip", "install", "-r", "requirements.txt", "--target", "packages")
 		pipCmd.Dir = dir
-		pipCmd.Stdout = os.Stderr
-		pipCmd.Stderr = os.Stderr
+		w := opts.buildOutput()
+		pipCmd.Stdout = w
+		pipCmd.Stderr = w
 		if err := pipCmd.Run(); err != nil {
 			return BuildResult{}, fmt.Errorf("python driver: pip install: %w", err)
 		}
@@ -435,8 +449,9 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 
 	cmd := exec.CommandContext(ctx, "cargo", args...)
 	cmd.Dir = dir
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	w := opts.buildOutput()
+	cmd.Stdout = w
+	cmd.Stderr = w
 	cmd.Env = append(os.Environ(), "CARGO_BUILD_TARGET="+target)
 
 	if err := cmd.Run(); err != nil {
@@ -553,8 +568,9 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), platform.GoCrossCompileEnv()...)
 	cmd.Env = append(cmd.Env, opts.Env...)
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	w := opts.buildOutput()
+	cmd.Stdout = w
+	cmd.Stderr = w
 
 	if err := cmd.Run(); err != nil {
 		return BuildResult{}, fmt.Errorf("go build: %w", err)
