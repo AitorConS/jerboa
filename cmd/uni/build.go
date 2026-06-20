@@ -54,6 +54,7 @@ If --lang is omitted for a directory, the language is auto-detected from
 project markers (go.mod, package.json, etc.).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			buildStart := time.Now()
 			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
 
 			store, err := image.NewStore(*storePath)
@@ -193,9 +194,13 @@ project markers (go.mod, package.json, etc.).`,
 				sp.Fail("Image assembly failed")
 				return fmt.Errorf("build: %w", err)
 			}
-			sp.Done(fmt.Sprintf("%s  %s:%s", m.Name, m.Tag, m.DiskDigest))
 
-			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s\n", m.DiskDigest, m.Name, m.Tag)
+			elapsed := time.Since(buildStart)
+			sizeStr := formatSize(m.DiskSize)
+			sp.Done(fmt.Sprintf("%s:%s  ·  %s  ·  built in %s", m.Name, m.Tag, sizeStr, formatDuration(elapsed)))
+
+			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s  ·  %s  ·  built in %s\n",
+				m.DiskDigest, m.Name, m.Tag, sizeStr, formatDuration(elapsed))
 			return nil
 		},
 	}

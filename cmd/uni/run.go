@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
@@ -182,10 +183,12 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				})
 			}
 
+			startTime := time.Now()
 			info, err := client.Run(cmd.Context(), params)
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
 			}
+			startElapsed := time.Since(startTime)
 
 			if attach {
 				if err := client.Attach(cmd.Context(), info.ID, cmd.OutOrStdout()); err != nil {
@@ -195,6 +198,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", info.ID)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Started in %s\n", formatDuration(startElapsed))
 			return nil
 		},
 	}
