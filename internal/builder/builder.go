@@ -331,7 +331,22 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 
 	var env map[string]string
 	if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
-		pipCmd := exec.CommandContext(ctx, "pip", "install", "-r", "requirements.txt", "--target", "packages")
+		// Download Linux x86_64 wheels regardless of the host OS.
+		// The unikernel runs on Linux/x86_64, so we need manylinux wheels, not
+		// Windows or macOS ones. --only-binary :all: prevents pip from falling
+		// back to source distributions that would compile for the host.
+		// ABI tag: "3.12" → "cp312", "3.9" → "cp39", etc.
+		abiTag := "cp" + strings.ReplaceAll(pythonVersion, ".", "")
+		pipCmd := exec.CommandContext(ctx, "pip", "install",
+			"-r", "requirements.txt",
+			"--target", "packages",
+			"--upgrade",
+			"--platform", "manylinux_2_17_x86_64",
+			"--python-version", pythonVersion,
+			"--implementation", "cp",
+			"--abi", abiTag,
+			"--only-binary", ":all:",
+		)
 		pipCmd.Dir = dir
 		w := opts.buildOutput()
 		pipCmd.Stdout = w
