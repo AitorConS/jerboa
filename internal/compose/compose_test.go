@@ -204,7 +204,7 @@ volumes:
 	require.NoError(t, err)
 	require.Equal(t, []string{"data:/data", "backup:/backup:ro"}, f.Services["db"].Volumes)
 	require.Equal(t, "512M", f.Volumes["data"].Size)
-	require.Equal(t, "", f.Volumes["backup"].Size)
+	require.Empty(t, f.Volumes["backup"].Size)
 }
 
 func TestParse_VolumeDefaultSize(t *testing.T) {
@@ -225,7 +225,7 @@ services:
 `)
 	f, err := compose.Parse(data)
 	require.NoError(t, err)
-	require.Len(t, f.Volumes, 0)
+	require.Empty(t, f.Volumes)
 }
 
 func TestParse_UnknownVolume(t *testing.T) {
@@ -314,7 +314,7 @@ services:
 `)
 	f, err := compose.Parse(data)
 	require.NoError(t, err)
-	require.Len(t, f.Volumes, 0)
+	require.Empty(t, f.Volumes)
 }
 
 func TestParse_HealthCheckTCP(t *testing.T) {

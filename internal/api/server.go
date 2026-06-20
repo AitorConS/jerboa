@@ -52,14 +52,14 @@ func NewServer(mgr vm.Manager, netStore *network.Store, svcMgr *service.Manager,
 	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("api server remove stale socket: %w", err)
 	}
-	l, err := net.Listen("unix", socketPath)
+	l, err := net.Listen("unix", socketPath) //nolint:noctx // server setup; lifecycle managed by Serve's ctx
 	if err != nil {
 		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
 	}
 	return &Server{mgr: mgr, netStore: netStore, svcMgr: svcMgr, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
 }
 
-// Serve accepts connections and handles them until ctx is cancelled.
+// Serve accepts connections and handles them until ctx is canceled.
 func (s *Server) Serve(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
@@ -71,7 +71,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil
+				return nil //nolint:nilerr // ctx cancellation is graceful shutdown — not an error
 			}
 			return fmt.Errorf("api server accept: %w", err)
 		}

@@ -118,7 +118,7 @@ func (s *Store) Remove(ref string) error {
 	}
 	sha, ok := refs[ref]
 	if !ok && !strings.Contains(ref, ":") {
-		// Bare name without tag → try :latest (mirrors Resolve behaviour).
+		// Bare name without tag → try :latest (mirrors Resolve behavior).
 		sha, ok = refs[ref+":latest"]
 		if ok {
 			ref += ":latest"

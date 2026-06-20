@@ -74,7 +74,7 @@ const (
 	RestartAlways RestartPolicy = "always"
 )
 
-// RestartConfig controls automatic VM restart behaviour.
+// RestartConfig controls automatic VM restart behavior.
 type RestartConfig struct {
 	// Policy is the restart policy: "never", "on-failure", or "always".
 	Policy RestartPolicy
@@ -137,7 +137,7 @@ type Config struct {
 	SubnetMask string
 	// HealthCheck configures liveness probing for the VM. Nil disables probing.
 	HealthCheck *HealthCheckConfig
-	// Restart controls automatic restart behaviour when the VM exits.
+	// Restart controls automatic restart behavior when the VM exits.
 	Restart RestartConfig
 	// CPUShares is the cgroup v2 CPU weight (1–10000). 0 means no limit.
 	CPUShares uint64

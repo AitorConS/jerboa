@@ -42,6 +42,9 @@ func TestDefault_Get_ServerError(t *testing.T) {
 
 func TestDefault_Get_ConnectionRefused(t *testing.T) {
 	// Port 1 is reserved and will refuse connections.
-	_, err := httpclient.Default.Get("http://127.0.0.1:1/")
+	resp, err := httpclient.Default.Get("http://127.0.0.1:1/") //nolint:noctx
+	if resp != nil {
+		resp.Body.Close()
+	}
 	require.Error(t, err, "connection refused must return an error")
 }

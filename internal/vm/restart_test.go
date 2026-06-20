@@ -8,9 +8,9 @@ import (
 )
 
 func TestRestartPolicyConstants(t *testing.T) {
-	require.Equal(t, RestartPolicy("never"), RestartNever)
-	require.Equal(t, RestartPolicy("on-failure"), RestartOnFailure)
-	require.Equal(t, RestartPolicy("always"), RestartAlways)
+	require.Equal(t, RestartNever, RestartPolicy("never"))
+	require.Equal(t, RestartOnFailure, RestartPolicy("on-failure"))
+	require.Equal(t, RestartAlways, RestartPolicy("always"))
 }
 
 func TestRestartConfig_Defaults(t *testing.T) {

@@ -180,7 +180,7 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 
 // BuildManifest constructs a Nanos manifest that includes the main program and
 // any additional package files. Guest paths with directory separators (e.g.
-// "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialised
+// "lib/x86_64-linux-gnu/libc.so.6" from ops sysroot packages) are serialized
 // as nested nodes — the Nanos manifest parser treats '/' as an unknown
 // discriminator and rejects flat slash-separated keys.
 // cfg.Entrypoint, if non-empty, is emitted as arguments:(0:/program 1:/<entrypoint> ...)
@@ -282,7 +282,7 @@ const manifestNameTerminals = " \t\n\r()[]:|/\"\\"
 
 // manifestName returns name formatted for use as a manifest tuple key, quoting
 // it when it contains characters the tuple parser would treat as terminators.
-// The parser's quoted-string reader only recognises "\" as an escape for the
+// The parser's quoted-string reader only recognizes "\" as an escape for the
 // following literal character, so only '"' and '\' need escaping.
 func manifestName(name string) string {
 	if !strings.ContainsAny(name, manifestNameTerminals) {
@@ -323,7 +323,7 @@ func manifestValue(v string) string {
 	return b.String()
 }
 
-// writeManifestChildren serialises the children of node into b at the given indent level.
+// writeManifestChildren serializes the children of node into b at the given indent level.
 // Directory nodes wrap their entries in a nested children:(...) scope — the Nanos manifest
 // parser only descends into a directory when it finds a children: key inside the node.
 func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string) {

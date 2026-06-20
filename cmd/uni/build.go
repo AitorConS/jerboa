@@ -138,7 +138,7 @@ project markers (go.mod, package.json, etc.).`,
 
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
-					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, lang, pkgSource, infoW, subW)
+					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -424,7 +424,7 @@ type stageResult struct {
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, langFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, []pkg.File, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, []pkg.File, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -527,7 +527,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 
 // resolvePackages downloads and extracts packages, returning the list of
 // package files that should be included in the manifest.
-func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) {
+func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation
 	pkgStore, err := pkg.NewStore(pkgStorePath())
 	if err != nil {
 		return nil, fmt.Errorf("open package store: %w", err)
@@ -587,7 +587,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) 
 
 // resolveOpsPackages downloads and extracts ops packages, returning the list
 // of package files with proper guest paths (preserving sysroot/ hierarchy).
-func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) {
+func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation
 	opsStore, err := openOpsStore()
 	if err != nil {
 		return nil, fmt.Errorf("open ops package store: %w", err)
@@ -797,7 +797,7 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.O
 	return nil
 }
 
-func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, error) {
+func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation
 	opsStore, err := openOpsStore()
 	if err != nil {
 		return nil, fmt.Errorf("open ops package store: %w", err)

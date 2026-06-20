@@ -303,7 +303,7 @@ func Serve(ctx context.Context, addr string, mgr vm.Manager, version string) err
 	mux.Handle("/ui/", h)
 	mux.Handle("/ui/api/vms", h)
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
 	slog.Info("dashboard server listening", "addr", addr)
 
 	errCh := make(chan error, 1)

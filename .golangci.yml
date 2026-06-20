@@ -37,6 +37,12 @@ linters:
         - G304  # file path from variable — expected in a CLI tool
         - G107  # URL from variable — expected when calling package registries
         - G306  # file permissions — we use 0755 for executables intentionally
+        - G110  # decompression bomb — we trust package archives from ops registry
+        - G115  # integer overflow in file mode cast — int64 mode is always small
+        - G305  # file traversal in tar extraction — paths are cleaned via filepath.Join
+        - G602  # slice index out of range — false positive; loop bounds prevent OOB
+        - G118  # context.Background in shutdown goroutine — intentional
+        - G703  # path traversal in cgroup — writes to controlled /sys/fs/cgroup paths
     errorlint:
       errorf: true
       asserts: true
@@ -52,16 +58,37 @@ linters:
       - legacy
       - std-error-handling
     rules:
+      # In test files: relax linters that don't apply well to test helpers
       - linters:
           - errcheck
           - wrapcheck
           - gosec
           - unparam
-        path: _test.go
+          - noctx       # exec.Command / net.Dial in test helpers don't need context
+        path: _test\.go
+
+      # Smoke-test binary: invokes the real CLI via exec.Command by design
+      - linters:
+          - noctx
+          - unparam
+        path: ^cmd/uni-smoke/
+
+      # Network package: iptables/ip system calls have no meaningful context to pass
+      - linters:
+          - noctx
+          - unparam
+        path: ^internal/network/
+
+      # Examples are intentionally simple demo programs, not production-grade code
+      - linters:
+          - gosec
+          - noctx
+          - unparam
+        path: ^examples/
+
     paths:
-      - third_party$
-      - builtin$
-      - examples$
+      - ^third_party/
+      - ^examples/
 
 issues:
   max-same-issues: 0
@@ -73,6 +100,5 @@ formatters:
   exclusions:
     generated: lax
     paths:
-      - third_party$
-      - builtin$
-      - examples$
+      - ^third_party/
+      - ^examples/

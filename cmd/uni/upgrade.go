@@ -178,7 +178,7 @@ func stopDaemon(ctx context.Context, socketPath string, out, errOut io.Writer) b
 
 	deadline := time.Now().Add(daemonStopTimeout)
 	for time.Now().Before(deadline) {
-		if _, err := net.Dial("unix", socketPath); err != nil {
+		if _, err := net.Dial("unix", socketPath); err != nil { //nolint:noctx // polling loop has no request context
 			return true // socket gone — daemon exited
 		}
 		time.Sleep(daemonPollInterval)
@@ -192,7 +192,7 @@ func stopDaemon(ctx context.Context, socketPath string, out, errOut io.Writer) b
 func waitForSocket(socketPath string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := net.Dial("unix", socketPath)
+		conn, err := net.Dial("unix", socketPath) //nolint:noctx // polling loop has no request context
 		if err == nil {
 			_ = conn.Close()
 			return nil
@@ -204,7 +204,7 @@ func waitForSocket(socketPath string, timeout time.Duration) error {
 
 // launchDaemon starts a new unid process detached from the current terminal.
 func launchDaemon(unidBin, socketPath string) error {
-	cmd := exec.Command(unidBin, "--socket", socketPath)
+	cmd := exec.Command(unidBin, "--socket", socketPath) //nolint:noctx // daemon outlives the CLI process; no context to pass
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {

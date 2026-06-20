@@ -338,9 +338,9 @@ func TestResolveOpsPackages_AlreadyDownloaded(t *testing.T) {
 
 	files, err := resolveOpsPackages(context.Background(), []string{"eyberg/node:v16.5.0"})
 	require.NoError(t, err)
-	require.True(t, len(files) >= 1)
+	require.GreaterOrEqual(t, len(files), 1)
 
 	files2, err := resolveOpsPackages(context.Background(), []string{"eyberg/node:v16.5.0"})
 	require.NoError(t, err)
-	require.Equal(t, len(files), len(files2))
+	require.Len(t, files2, len(files))
 }

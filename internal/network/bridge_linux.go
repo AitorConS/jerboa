@@ -64,8 +64,8 @@ func DetachTAP(tapName string) error {
 }
 
 // enableForwarding enables IPv4 forwarding on the host (best-effort).
-func enableForwarding() error {
-	_ = exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run()
+func enableForwarding() error { //nolint:unparam // error kept for interface consistency
+	_ = exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run() //nolint:noctx
 	return nil
 }
 

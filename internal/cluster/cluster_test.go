@@ -291,7 +291,7 @@ func TestRegisterGossipHandler_ValidGossip(t *testing.T) {
 	err = json.NewDecoder(resp.Body).Decode(&result)
 	require.NoError(t, err)
 	require.Equal(t, c.LocalID(), result.MemberID)
-	require.True(t, len(result.Members) >= 2)
+	require.GreaterOrEqual(t, len(result.Members), 2)
 }
 
 func TestParseAddr(t *testing.T) {

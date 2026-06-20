@@ -76,7 +76,7 @@ func (id OpsPackageIdentifier) String() string {
 
 // FetchOpsManifest downloads and parses the ops package manifest.
 func FetchOpsManifest() (*OpsPackageList, error) {
-	req, err := http.NewRequest(http.MethodGet, OpsPackageManifestURL, nil)
+	req, err := http.NewRequest(http.MethodGet, OpsPackageManifestURL, nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return nil, fmt.Errorf("ops manifest request: %w", err)
 	}
@@ -127,7 +127,7 @@ func SearchOpsPackages(query string) (*OpsPackageList, error) {
 	q.Add("q", query)
 	pkghub.RawQuery = q.Encode()
 
-	req, err := http.NewRequest(http.MethodGet, pkghub.String(), nil)
+	req, err := http.NewRequest(http.MethodGet, pkghub.String(), nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return nil, fmt.Errorf("ops search request: %w", err)
 	}

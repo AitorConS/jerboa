@@ -107,7 +107,7 @@ func (s *Store) Download(pkg Package) error {
 
 	slog.Info("downloading package", "name", pkg.Name, "version", pkg.Version)
 
-	req, err := http.NewRequest(http.MethodGet, pkg.URL, nil)
+	req, err := http.NewRequest(http.MethodGet, pkg.URL, nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return fmt.Errorf("package download request: %w", err)
 	}
@@ -339,7 +339,7 @@ func (s *Store) SaveMeta(pkg Package) error {
 
 // FetchIndex downloads and parses the remote package index.
 func FetchIndex() (*Index, error) {
-	req, err := http.NewRequest(http.MethodGet, IndexURL, nil)
+	req, err := http.NewRequest(http.MethodGet, IndexURL, nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return nil, fmt.Errorf("package index request: %w", err)
 	}

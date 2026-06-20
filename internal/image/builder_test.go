@@ -130,7 +130,7 @@ func TestBuildManifest_WithEnv(t *testing.T) {
 	// Keys must be sorted alphabetically within environment:(...)
 	homeIdx := strings.Index(got, "HOME:/")
 	pathIdx := strings.Index(got, "PYTHONPATH:")
-	require.True(t, homeIdx < pathIdx, "env keys must be sorted: HOME before PYTHONPATH")
+	require.Less(t, homeIdx, pathIdx, "env keys must be sorted: HOME before PYTHONPATH")
 }
 
 func TestBuildManifest_WithPort(t *testing.T) {
@@ -255,7 +255,7 @@ func TestBuild_Success(t *testing.T) {
 	require.Equal(t, "v1", m.Tag)
 	require.Equal(t, "512M", m.Config.Memory)
 	require.Equal(t, 2, m.Config.CPUs)
-	require.True(t, m.DiskSize > 0)
+	require.Positive(t, m.DiskSize)
 	require.True(t, strings.HasPrefix(m.DiskDigest, "sha256:"))
 }
 

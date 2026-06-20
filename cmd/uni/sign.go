@@ -26,10 +26,7 @@ func newSignCmd(storePath *string) *cobra.Command {
 			}
 			_ = diskPath
 
-			home, err := signingStorePath()
-			if err != nil {
-				return fmt.Errorf("sign: %w", err)
-			}
+			home := signingStorePath()
 			sigStore, err := signing.NewStore(home)
 			if err != nil {
 				return fmt.Errorf("sign: open signing store: %w", err)
@@ -69,10 +66,7 @@ func newVerifyCmd(storePath *string) *cobra.Command {
 				return fmt.Errorf("verify: %w", err)
 			}
 
-			home, err := signingStorePath()
-			if err != nil {
-				return fmt.Errorf("verify: %w", err)
-			}
+			home := signingStorePath()
 			sigStore, err := signing.NewStore(home)
 			if err != nil {
 				return fmt.Errorf("verify: open signing store: %w", err)
@@ -94,12 +88,12 @@ func newVerifyCmd(storePath *string) *cobra.Command {
 	return cmd
 }
 
-func signingStorePath() (string, error) {
+func signingStorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni", nil
+		return ".uni"
 	}
-	return home + "/.uni", nil
+	return home + "/.uni"
 }
 
 func imageDirFromDigest(uniHome, diskDigest string) string {

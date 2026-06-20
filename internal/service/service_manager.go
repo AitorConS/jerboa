@@ -161,7 +161,7 @@ func (m *Manager) scaleUp(ctx context.Context, svc *Service, currentCount, desir
 	return nil
 }
 
-func (m *Manager) scaleDown(ctx context.Context, svc *Service, currentReplicas []*vm.VM, desiredReplicas int) error {
+func (m *Manager) scaleDown(ctx context.Context, svc *Service, currentReplicas []*vm.VM, desiredReplicas int) error { //nolint:unparam // error kept for future scale-down failure propagation
 	for i := len(currentReplicas) - 1; i >= desiredReplicas; i-- {
 		v := currentReplicas[i]
 		if err := m.mgr.Stop(ctx, v.ID); err != nil {

@@ -96,7 +96,7 @@ func TestManifest_Ref(t *testing.T) {
 
 func TestDigestSHA256(t *testing.T) {
 	d := DigestSHA256([]byte("hello"))
-	require.True(t, len(d) > 7)
+	require.Greater(t, len(d), 7)
 	require.Equal(t, "sha256:", d[:7])
 }
 
@@ -162,7 +162,7 @@ func TestParse_diskDigestShort(t *testing.T) {
 
 func TestConfig_zeroValues(t *testing.T) {
 	var c Config
-	require.Equal(t, "", c.Memory)
+	require.Empty(t, c.Memory)
 	require.Equal(t, 0, c.CPUs)
 	require.Nil(t, c.Env)
 }

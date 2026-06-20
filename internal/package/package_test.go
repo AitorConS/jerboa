@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -49,7 +50,7 @@ func TestStore_Remove(t *testing.T) {
 
 	pkgs, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, pkgs, 0)
+	require.Empty(t, pkgs)
 }
 
 func TestStore_Remove_NotFound(t *testing.T) {
@@ -108,7 +109,7 @@ func TestIndex_Search(t *testing.T) {
 	require.Equal(t, "redis", results[0].Name)
 
 	results = idx.Search("nonexistent")
-	require.Len(t, results, 0)
+	require.Empty(t, results)
 }
 
 func TestIndex_Latest(t *testing.T) {
@@ -162,7 +163,7 @@ func TestStore_RemoveAll(t *testing.T) {
 
 	pkgs, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, pkgs, 0)
+	require.Empty(t, pkgs)
 }
 
 func TestStore_RemoveAll_NotFound(t *testing.T) {
@@ -354,7 +355,7 @@ func TestStore_Create(t *testing.T) {
 	require.Equal(t, "myapp", pkgs[0].Name)
 	require.Equal(t, "1.0.0", pkgs[0].Version)
 	require.NotEmpty(t, pkgs[0].SHA256)
-	require.Greater(t, pkgs[0].Size, int64(0))
+	require.Positive(t, pkgs[0].Size)
 	require.Equal(t, "My test app", pkgs[0].Description)
 	require.Equal(t, "custom", pkgs[0].Runtime)
 }
@@ -475,7 +476,7 @@ func TestPushMultipart(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, contentType)
 	require.Contains(t, contentType, "multipart/form-data")
-	require.True(t, body.Len() > 0)
+	require.Positive(t, body.Len())
 }
 
 func TestFetchIndex_HTTP(t *testing.T) {
@@ -697,7 +698,7 @@ func TestStore_Create_WithDescriptionAndRuntime(t *testing.T) {
 	require.Equal(t, "My description", meta.Description)
 	require.Equal(t, "go", meta.Runtime)
 	require.NotEmpty(t, meta.SHA256)
-	require.Greater(t, meta.Size, int64(0))
+	require.Positive(t, meta.Size)
 	require.Equal(t, "myapp", meta.Name)
 	require.Equal(t, "1.0.0", meta.Version)
 }
@@ -767,7 +768,7 @@ func TestStore_List_Empty(t *testing.T) {
 
 	pkgs, err := store.List()
 	require.NoError(t, err)
-	require.Len(t, pkgs, 0)
+	require.Empty(t, pkgs)
 }
 
 func TestStore_List_MultiplePackagesVersions(t *testing.T) {
@@ -801,8 +802,14 @@ func TestStore_Push_Success(t *testing.T) {
 	require.NoError(t, store.Create("pushapp", "1.0.0", binaryPath, nil, "push test", "go"))
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodPost, r.Method)
-		require.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
+		if r.Method != http.MethodPost {
+			http.Error(w, "expected POST", http.StatusMethodNotAllowed)
+			return
+		}
+		if !strings.Contains(r.Header.Get("Content-Type"), "multipart/form-data") {
+			http.Error(w, "expected multipart", http.StatusBadRequest)
+			return
+		}
 		w.WriteHeader(http.StatusCreated)
 	}))
 	t.Cleanup(ts.Close)
@@ -833,7 +840,7 @@ func TestStore_Push_ServerError(t *testing.T) {
 func TestIndex_Search_Empty(t *testing.T) {
 	idx := &Index{Packages: map[string][]Package{}}
 	results := idx.Search("anything")
-	require.Len(t, results, 0)
+	require.Empty(t, results)
 }
 
 func TestIndex_Search_CaseInsensitive(t *testing.T) {

@@ -21,7 +21,7 @@ type Client struct {
 
 // Dial connects to the unid server at socketPath.
 func Dial(socketPath string) (*Client, error) {
-	conn, err := net.Dial("unix", socketPath)
+	conn, err := net.Dial("unix", socketPath) //nolint:noctx // persistent daemon connection; no request context
 	if err != nil {
 		return nil, fmt.Errorf("api client dial %s: %w", socketPath, err)
 	}

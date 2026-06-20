@@ -174,7 +174,7 @@ func TestServiceRemove(t *testing.T) {
 	require.Error(t, err)
 
 	replicas := svcMgr.Replicas("web")
-	require.Len(t, replicas, 0)
+	require.Empty(t, replicas)
 }
 
 func TestServiceRemoveNotFound(t *testing.T) {

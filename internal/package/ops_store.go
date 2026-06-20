@@ -105,7 +105,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 
 	slog.Info("downloading ops package", "namespace", namespace, "name", name, "version", version)
 
-	req, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+	req, err := http.NewRequest(http.MethodGet, downloadURL, nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return fmt.Errorf("ops download request: %w", err)
 	}
@@ -371,7 +371,7 @@ func ManifestNeedsUpdate(localPath string) bool {
 		return true
 	}
 
-	resp, err := http.Head(OpsPackageManifestURL)
+	resp, err := http.Head(OpsPackageManifestURL) //nolint:noctx // manifest check has no caller context
 	if err != nil {
 		return true
 	}
@@ -395,7 +395,7 @@ func (s *OpsStore) FetchManifestCached() (*OpsPackageList, error) {
 		}
 	}
 
-	req, err := http.NewRequest(http.MethodGet, OpsPackageManifestURL, nil)
+	req, err := http.NewRequest(http.MethodGet, OpsPackageManifestURL, nil) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return nil, fmt.Errorf("ops manifest request: %w", err)
 	}

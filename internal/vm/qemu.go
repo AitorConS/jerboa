@@ -70,7 +70,7 @@ func (m *QEMUManager) Create(_ context.Context, cfg Config) (*VM, error) {
 }
 
 // Start launches the QEMU process for the VM identified by id.
-// The ctx parameter controls the command lifecycle; cancelling ctx will kill
+// The ctx parameter controls the command lifecycle; canceling ctx will kill
 // the QEMU process via exec.CommandContext.
 func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	v, err := m.store.Resolve(id)
@@ -107,7 +107,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	cmd.Stderr = stdout
 	if err := cmd.Start(); err != nil {
 		if tErr := v.transition(StateStopped); tErr != nil {
-			return fmt.Errorf("qemu start %s: launch: %w; also failed to stop: %v", id, err, tErr)
+			return fmt.Errorf("qemu start %s: launch: %w; also failed to stop: %w", id, err, tErr)
 		}
 		return fmt.Errorf("qemu start %s: launch: %w", id, err)
 	}

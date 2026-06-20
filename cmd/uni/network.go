@@ -18,7 +18,7 @@ func newNetworkCmd(socketPath *string, outputFmt *string) *cobra.Command {
 	cmd.AddCommand(
 		newNetworkCreateCmd(socketPath, outputFmt),
 		newNetworkListCmd(socketPath, outputFmt),
-		newNetworkInspectCmd(socketPath, outputFmt),
+		newNetworkInspectCmd(socketPath),
 		newNetworkRemoveCmd(socketPath),
 	)
 	return cmd
@@ -84,7 +84,7 @@ func newNetworkListCmd(socketPath *string, outputFmt *string) *cobra.Command {
 	return cmd
 }
 
-func newNetworkInspectCmd(socketPath *string, outputFmt *string) *cobra.Command {
+func newNetworkInspectCmd(socketPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "inspect <name>",
 		Short: "Show network details",

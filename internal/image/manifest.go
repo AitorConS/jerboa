@@ -55,7 +55,7 @@ func Parse(data []byte) (Manifest, error) {
 	return m, nil
 }
 
-// Marshal serialises m to JSON.
+// Marshal serializes m to JSON.
 func Marshal(m Manifest) ([]byte, error) {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

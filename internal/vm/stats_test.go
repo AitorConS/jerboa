@@ -48,7 +48,7 @@ func TestVM_Stats_WithProvider(t *testing.T) {
 	})
 
 	stats := v.Stats()
-	require.Equal(t, expected.CPUPct, stats.CPUPct)
+	require.InDelta(t, expected.CPUPct, stats.CPUPct, 1e-9)
 	require.Equal(t, expected.MemBytes, stats.MemBytes)
 	require.Equal(t, expected.NetRxBytes, stats.NetRxBytes)
 	require.Equal(t, expected.NetTxBytes, stats.NetTxBytes)
@@ -61,6 +61,6 @@ func TestProcStatsCollector_FallbackOnNonLinux(t *testing.T) {
 	require.Equal(t, "vm1", stats.ID)
 	require.Equal(t, "stopped", stats.State)
 	require.Equal(t, "fallback", stats.Source)
-	require.Equal(t, 0.0, stats.CPUPct)
+	require.InDelta(t, 0.0, stats.CPUPct, 1e-9)
 	require.Equal(t, int64(0), stats.MemBytes)
 }

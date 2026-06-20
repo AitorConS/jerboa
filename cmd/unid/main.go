@@ -141,7 +141,7 @@ func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, met
 		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0)
 		mux := http.NewServeMux()
 		cluster.RegisterGossipHandler(mux, swimCluster)
-		clusterSrv := &http.Server{Addr: clusterAddr, Handler: mux}
+		clusterSrv := &http.Server{Addr: clusterAddr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
 		go func() {
 			slog.Info("cluster gossip listening", "addr", clusterAddr)
 			if err := clusterSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -215,7 +215,7 @@ func newVMStore(storeType, dir string) (vm.Store, error) {
 	}
 }
 
-func vmsDir(storePath string) string {
+func vmsDir(_ string) string { //nolint:unparam // storePath reserved for configurable store locations
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".uni/vms"

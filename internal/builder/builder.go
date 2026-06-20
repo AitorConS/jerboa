@@ -251,14 +251,14 @@ func nodeEntrypoint(dir string, override string) (string, error) {
 
 	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
-		return "index.js", nil
+		return "index.js", nil //nolint:nilerr // missing file → use default entrypoint
 	}
 
 	var pkg struct {
 		Main string `json:"main"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		return "index.js", nil
+		return "index.js", nil //nolint:nilerr // malformed file → use default entrypoint
 	}
 	if pkg.Main != "" {
 		return pkg.Main, nil
@@ -268,10 +268,10 @@ func nodeEntrypoint(dir string, override string) (string, error) {
 
 // nodeVersionFromPackageJSON reads the "engines.node" field from package.json
 // and returns the major version. Defaults to "20" if not specified.
-func nodeVersionFromPackageJSON(dir string) (string, error) {
+func nodeVersionFromPackageJSON(dir string) (string, error) { //nolint:unparam // error kept for API consistency; callers check it
 	data, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
-		return "20", nil
+		return "20", nil //nolint:nilerr // missing file → use default node version
 	}
 
 	var pkg struct {
@@ -280,7 +280,7 @@ func nodeVersionFromPackageJSON(dir string) (string, error) {
 		} `json:"engines"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		return "20", nil
+		return "20", nil //nolint:nilerr // malformed file → use default node version
 	}
 	if pkg.Engines.Node == "" {
 		return "20", nil
@@ -364,7 +364,7 @@ func pythonEntrypoint(dir string, override string) (string, error) {
 
 	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
 	if err != nil {
-		return "main.py", nil
+		return "main.py", nil //nolint:nilerr // missing file → use default entrypoint
 	}
 
 	var cfg struct {
@@ -373,7 +373,7 @@ func pythonEntrypoint(dir string, override string) (string, error) {
 		} `toml:"project"`
 	}
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return "main.py", nil
+		return "main.py", nil //nolint:nilerr // malformed file → use default entrypoint
 	}
 	if len(cfg.Project.Scripts) > 0 {
 		for _, script := range cfg.Project.Scripts {
@@ -385,10 +385,10 @@ func pythonEntrypoint(dir string, override string) (string, error) {
 
 // pythonVersionFromConfig reads requires-python from pyproject.toml
 // and returns the major.minor version. Defaults to "3.12" if not specified.
-func pythonVersionFromConfig(dir string) (string, error) {
+func pythonVersionFromConfig(dir string) (string, error) { //nolint:unparam // error kept for API consistency; callers check it
 	data, err := os.ReadFile(filepath.Join(dir, "pyproject.toml"))
 	if err != nil {
-		return "3.12", nil
+		return "3.12", nil //nolint:nilerr // missing file → use default python version
 	}
 
 	var cfg struct {
@@ -397,7 +397,7 @@ func pythonVersionFromConfig(dir string) (string, error) {
 		} `toml:"project"`
 	}
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return "3.12", nil
+		return "3.12", nil //nolint:nilerr // malformed file → use default python version
 	}
 	if cfg.Project.RequiresPython == "" {
 		return "3.12", nil

@@ -25,7 +25,7 @@ func NewVMStateUpdater(collectors *Collectors, mgr vm.Manager, interval time.Dur
 	}
 }
 
-// Run starts the polling loop. It blocks until ctx is cancelled.
+// Run starts the polling loop. It blocks until ctx is canceled.
 func (u *VMStateUpdater) Run(ctx context.Context) {
 	u.update()
 	ticker := time.NewTicker(u.interval)

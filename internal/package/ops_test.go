@@ -107,7 +107,7 @@ func TestOpsPackageList_Search(t *testing.T) {
 	require.Len(t, results, 2)
 
 	results = list.Search("nonexistent")
-	require.Len(t, results, 0)
+	require.Empty(t, results)
 }
 
 func TestOpsPackageList_Lookup(t *testing.T) {
@@ -326,7 +326,7 @@ func TestSplitOpsDirName(t *testing.T) {
 
 	name, ver = splitOpsDirName("node")
 	require.Equal(t, "node", name)
-	require.Equal(t, "", ver)
+	require.Empty(t, ver)
 }
 
 func TestOpsStore_LoadPackageManifest(t *testing.T) {

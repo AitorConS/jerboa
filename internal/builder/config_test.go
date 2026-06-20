@@ -73,7 +73,7 @@ lang = "python"
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, "python", cfg.Build.Lang)
-	require.Equal(t, "", cfg.Build.Entrypoint)
+	require.Empty(t, cfg.Build.Entrypoint)
 	require.Equal(t, 0, cfg.Run.CPUs)
 }
 

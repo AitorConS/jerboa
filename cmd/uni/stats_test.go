@@ -10,7 +10,7 @@ import (
 func TestStatsCmd_Draft(t *testing.T) {
 	cmd := newStatsCmd(ptrStr("/tmp/test.sock"), ptrStr("table"))
 	require.Equal(t, "stats <id>", cmd.Use)
-	require.Equal(t, true, cmd.HasFlags())
+	require.True(t, cmd.HasFlags())
 }
 
 func TestFormatBytes(t *testing.T) {
@@ -58,6 +58,6 @@ func TestVMStatsResponse_Fields(t *testing.T) {
 	}
 	require.Equal(t, "abc123", s.ID)
 	require.Equal(t, "running", s.State)
-	require.Equal(t, 12.5, s.CPUPct)
+	require.InDelta(t, 12.5, s.CPUPct, 1e-9)
 	require.Equal(t, int64(268435456), s.MemBytes)
 }

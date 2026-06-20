@@ -6,7 +6,7 @@ import (
 	"io"
 )
 
-// printJSON serialises v as indented JSON to w.
+// printJSON serializes v as indented JSON to w.
 func printJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

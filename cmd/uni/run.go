@@ -437,7 +437,7 @@ func parseRestartPolicy(spec string) (api.RestartSpec, error) {
 	return rs, nil
 }
 
-func verifyImageSignature(cmd *cobra.Command, imgArg, storePath, diskPath, verifyFlag string) error {
+func verifyImageSignature(_ *cobra.Command, imgArg, storePath, diskPath, verifyFlag string) error {
 	policy, err := signing.ParseVerifyPolicy(verifyFlag)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)

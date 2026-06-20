@@ -83,7 +83,7 @@ func TestHealthChecker_ProbeTarget(t *testing.T) {
 		v := &VM{Cfg: Config{}}
 		cfg := &HealthCheckConfig{Type: "tcp"}
 		got := probeTarget(v, cfg)
-		require.Equal(t, "", got)
+		require.Empty(t, got)
 	})
 }
 
