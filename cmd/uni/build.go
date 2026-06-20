@@ -171,7 +171,7 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().BoolVarP(&updateYes, "update-kernel", "U", false, "auto-approve kernel update if one is available")
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
 	cmd.Flags().StringVar(&pkgSource, "pkg-source", "uni", "package source: \"uni\" (default) or \"ops\" (nanovms/ops ecosystem)")
-	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust)")
+	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust, raw)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	return cmd

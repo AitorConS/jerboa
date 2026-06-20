@@ -22,10 +22,7 @@ func Parse(data []byte) (File, error) {
 }
 
 func validate(f File) error {
-	if f.Version == "" {
-		return fmt.Errorf("compose: missing version field")
-	}
-	if f.Version != "1" {
+	if f.Version != "" && f.Version != "1" {
 		return fmt.Errorf("compose: unsupported version %q (expected \"1\")", f.Version)
 	}
 	if len(f.Services) == 0 {

@@ -161,7 +161,10 @@ func (s *Store) Download(pkg Package) error {
 // Remove deletes a specific version of a locally cached package.
 func (s *Store) Remove(name, version string) error {
 	dir := s.PackageDir(name, version)
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("package %s:%s not found locally", name, version)
+	}
+	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("package remove %s: %w", name, err)
 	}
 	return nil
@@ -170,7 +173,10 @@ func (s *Store) Remove(name, version string) error {
 // RemoveAll deletes all locally cached versions of a package.
 func (s *Store) RemoveAll(name string) error {
 	dir := filepath.Join(s.root, name)
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		return fmt.Errorf("package %s not found locally", name)
+	}
+	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("package remove all %s: %w", name, err)
 	}
 	return nil

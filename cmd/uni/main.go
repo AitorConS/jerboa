@@ -40,7 +40,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(
 		newRunCmd(&socketPath, &storePath),
 		newBuildCmd(&storePath),
-		newImagesCmd(&storePath),
+		newImagesCmd(&storePath, &outputFmt),
 		newRmiCmd(&storePath),
 		newSignCmd(&storePath),
 		newVerifyCmd(&storePath),
@@ -52,7 +52,7 @@ func newRootCmd() *cobra.Command {
 		newInspectCmd(&socketPath),
 		newExecCmd(&socketPath),
 		newComposeCmd(&socketPath, &storePath, &outputFmt),
-		newVolumeCmd(&storePath),
+		newVolumeCmd(&storePath, &outputFmt),
 		newKernelCmd(),
 		newPkgCmd(),
 		newUpgradeCmd(&socketPath),

@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newImagesCmd(storePath *string) *cobra.Command {
+func newImagesCmd(storePath *string, outputFmt *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "images",
 		Short: "List locally stored unikernel images",
@@ -21,6 +21,9 @@ func newImagesCmd(storePath *string) *cobra.Command {
 			list, err := store.List()
 			if err != nil {
 				return fmt.Errorf("images: list: %w", err)
+			}
+			if *outputFmt == "json" {
+				return printJSON(cmd.OutOrStdout(), list)
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "DIGEST\tNAME\tTAG\tCREATED\tSIZE")

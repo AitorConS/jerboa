@@ -405,6 +405,8 @@ func toDetail(v *vm.VM) VMDetail {
 		Health:          string(v.GetHealthStatus()),
 		RestartCount:    v.GetRestartCount(),
 		RestartPolicy:   string(v.Cfg.Restart.Policy),
+		DiskIOPS:        v.Cfg.DiskIOPS,
+		DiskBPS:         v.Cfg.DiskBPS,
 	}
 	startedAt, stoppedAt := v.GetTimes()
 	if startedAt != nil {
@@ -730,6 +732,7 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 		ReadyReplicas:   svcInfo.ReadyReplicas,
 		Strategy:        svcInfo.Strategy,
 		Health:          svcInfo.Health,
+		Env:             svcInfo.Env,
 		CreatedAt:       svcInfo.CreatedAt,
 		UpdatedAt:       svcInfo.UpdatedAt,
 		ReplicaIDs:      svcInfo.ReplicaIDs,
@@ -756,6 +759,7 @@ func (s *Server) handleServiceScale(ctx context.Context, params json.RawMessage)
 		ReadyReplicas:   svcInfo.ReadyReplicas,
 		Strategy:        svcInfo.Strategy,
 		Health:          svcInfo.Health,
+		Env:             svcInfo.Env,
 		CreatedAt:       svcInfo.CreatedAt,
 		UpdatedAt:       svcInfo.UpdatedAt,
 		ReplicaIDs:      svcInfo.ReplicaIDs,
@@ -782,6 +786,7 @@ func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage
 		ReadyReplicas:   svcInfo.ReadyReplicas,
 		Strategy:        svcInfo.Strategy,
 		Health:          svcInfo.Health,
+		Env:             svcInfo.Env,
 		CreatedAt:       svcInfo.CreatedAt,
 		UpdatedAt:       svcInfo.UpdatedAt,
 		ReplicaIDs:      svcInfo.ReplicaIDs,
@@ -806,6 +811,7 @@ func (s *Server) handleServiceList() (any, *RPCError) {
 			ReadyReplicas:   svcInfo.ReadyReplicas,
 			Strategy:        svcInfo.Strategy,
 			Health:          svcInfo.Health,
+			Env:             svcInfo.Env,
 			CreatedAt:       svcInfo.CreatedAt,
 			UpdatedAt:       svcInfo.UpdatedAt,
 			ReplicaIDs:      svcInfo.ReplicaIDs,
@@ -836,6 +842,7 @@ func (s *Server) handleServiceGet(params json.RawMessage) (any, *RPCError) {
 		ReadyReplicas:   svcInfo.ReadyReplicas,
 		Strategy:        svcInfo.Strategy,
 		Health:          svcInfo.Health,
+		Env:             svcInfo.Env,
 		CreatedAt:       svcInfo.CreatedAt,
 		UpdatedAt:       svcInfo.UpdatedAt,
 		ReplicaIDs:      svcInfo.ReplicaIDs,

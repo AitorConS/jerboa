@@ -123,6 +123,8 @@ type VMDetail struct {
 	Health          string            `json:"health,omitempty"`
 	RestartCount    int               `json:"restart_count,omitempty"`
 	RestartPolicy   string            `json:"restart_policy,omitempty"`
+	DiskIOPS        uint64            `json:"disk_iops,omitempty"`
+	DiskBPS         int64             `json:"disk_bps,omitempty"`
 }
 
 // LogsResponse carries the captured serial console output for a VM.
@@ -240,6 +242,7 @@ type ServiceInfoResult struct {
 	ReadyReplicas   int      `json:"ready_replicas"`
 	Strategy        string   `json:"strategy"`
 	Health          string   `json:"health"`
+	Env             []string `json:"env,omitempty"`
 	CreatedAt       string   `json:"created_at"`
 	UpdatedAt       string   `json:"updated_at"`
 	ReplicaIDs      []string `json:"replica_ids"`

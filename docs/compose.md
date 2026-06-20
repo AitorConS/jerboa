@@ -60,7 +60,7 @@ volumes:
 
 | Field | Required | Description |
 |---|---|---|
-| `version` | Yes | Must be `"1"` |
+| `version` | No | Must be `"1"` if present. Omitting it is allowed — the parser treats any missing version as `"1"` |
 | `services` | Yes | Map of service definitions (at least one) |
 | `networks` | No | Map of network definitions |
 | `volumes` | No | Map of volume definitions (auto-created on `compose up`) |
@@ -216,8 +216,8 @@ You can also manage a scaled service directly once it's running:
 ```bash
 uni service ls
 uni service inspect api
-uni service scale api --replicas 5
-uni service update api --image myapi:v1.1 --strategy RollingUpdate
+uni service scale api 5
+uni service update api myapi:v1.1
 ```
 
 See [Service Commands]({% link cli-reference.md %}#service-commands) for the full reference.
@@ -299,7 +299,7 @@ Do not delete `.uni-compose-state.json` manually while the stack is running. If 
 
 ## Minimal Example
 
-The simplest possible compose file — one service, no networks.
+The simplest possible compose file — one service, no networks. The `version` field is optional and can be omitted.
 
 Build the image first, then reference it by name:
 
@@ -308,7 +308,6 @@ uni build ./hello-linux --name hello
 ```
 
 ```yaml
-version: "1"
 services:
   hello:
     image: hello:latest

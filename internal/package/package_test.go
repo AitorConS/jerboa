@@ -57,7 +57,9 @@ func TestStore_Remove_NotFound(t *testing.T) {
 	store, err := NewStore(dir)
 	require.NoError(t, err)
 
-	require.NoError(t, store.Remove("nonexistent", "1.0.0"))
+	err = store.Remove("nonexistent", "1.0.0")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found locally")
 }
 
 func TestStore_PackageDir(t *testing.T) {
@@ -168,7 +170,9 @@ func TestStore_RemoveAll_NotFound(t *testing.T) {
 	store, err := NewStore(dir)
 	require.NoError(t, err)
 
-	require.NoError(t, store.RemoveAll("nonexistent"))
+	err = store.RemoveAll("nonexistent")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found locally")
 }
 
 func TestStore_ExtractAndFiles(t *testing.T) {

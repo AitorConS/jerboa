@@ -9,14 +9,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newVolumeCmd(storePath *string) *cobra.Command {
+func newVolumeCmd(storePath *string, outputFmt *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "volume",
 		Short: "Manage persistent volumes",
 	}
 	cmd.AddCommand(
 		newVolumeCreateCmd(storePath),
-		newVolumeLsCmd(storePath),
+		newVolumeLsCmd(storePath, outputFmt),
 		newVolumeRmCmd(storePath),
 		newVolumeInspectCmd(storePath),
 	)
@@ -51,9 +51,8 @@ func newVolumeCreateCmd(storePath *string) *cobra.Command {
 	return cmd
 }
 
-func newVolumeLsCmd(storePath *string) *cobra.Command {
-	var outputFmt string
-	cmd := &cobra.Command{
+func newVolumeLsCmd(storePath *string, outputFmt *string) *cobra.Command {
+	return &cobra.Command{
 		Use:     "ls",
 		Aliases: []string{"list"},
 		Short:   "List volumes",
@@ -66,7 +65,7 @@ func newVolumeLsCmd(storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("volume ls: %w", err)
 			}
-			if outputFmt == "json" {
+			if *outputFmt == "json" {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(vols)
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
@@ -81,8 +80,6 @@ func newVolumeLsCmd(storePath *string) *cobra.Command {
 			return w.Flush()
 		},
 	}
-	cmd.Flags().StringVar(&outputFmt, "output", "", "output format: json")
-	return cmd
 }
 
 func newVolumeRmCmd(storePath *string) *cobra.Command {

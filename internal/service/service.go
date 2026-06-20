@@ -47,6 +47,7 @@ type Info struct {
 	ReadyReplicas   int      `json:"ready_replicas"`
 	Strategy        string   `json:"strategy"`
 	Health          string   `json:"health"`
+	Env             []string `json:"env,omitempty"`
 	CreatedAt       string   `json:"created_at"`
 	UpdatedAt       string   `json:"updated_at"`
 	ReplicaIDs      []string `json:"replica_ids"`

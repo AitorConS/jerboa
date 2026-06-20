@@ -38,8 +38,9 @@ func TestParse_Valid(t *testing.T) {
 }
 
 func TestParse_MissingVersion(t *testing.T) {
-	_, err := compose.Parse([]byte(`services: {a: {image: x}}`))
-	require.ErrorContains(t, err, "missing version")
+	f, err := compose.Parse([]byte(`services: {a: {image: x}}`))
+	require.NoError(t, err)
+	require.Len(t, f.Services, 1)
 }
 
 func TestParse_UnsupportedVersion(t *testing.T) {

@@ -370,6 +370,7 @@ func (m *Manager) ServiceInfo(svc *Service) Info {
 		ReadyReplicas:   ready,
 		Strategy:        strategy,
 		Health:          string(health),
+		Env:             svc.Config.Env,
 		CreatedAt:       svc.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:       svc.UpdatedAt.Format(time.RFC3339),
 		ReplicaIDs:      replicaIDs,

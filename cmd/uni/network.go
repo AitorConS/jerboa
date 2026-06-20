@@ -36,7 +36,7 @@ func newNetworkCreateCmd(socketPath *string, outputFmt *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("network create: %w", err)
+				return fmt.Errorf("network create: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			info, err := client.NetworkCreate(context.Background(), args[0], subnet, driver)
@@ -63,7 +63,7 @@ func newNetworkListCmd(socketPath *string, outputFmt *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("network ls: %w", err)
+				return fmt.Errorf("network ls: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			nets, err := client.NetworkList(context.Background())
@@ -92,7 +92,7 @@ func newNetworkInspectCmd(socketPath *string, outputFmt *string) *cobra.Command 
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("network inspect: %w", err)
+				return fmt.Errorf("network inspect: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			info, err := client.NetworkGet(context.Background(), args[0])
@@ -114,7 +114,7 @@ func newNetworkRemoveCmd(socketPath *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("network rm: %w", err)
+				return fmt.Errorf("network rm: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			if err := client.NetworkRemove(context.Background(), args[0]); err != nil {

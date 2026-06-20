@@ -319,23 +319,6 @@ uni volume ls
 uni volume rm mydata
 ```
 
-### 7. Copy files to and from a stopped VM
-
-`uni cp` copies files between the host and a stopped VM's disk image, in either direction. The `dump` and `mkfs` tools are downloaded automatically on first use.
-
-```bash
-# Copy a file from a stopped VM to the host
-uni cp myvm:/etc/config.json ./config.json
-# copied myvm:/etc/config.json → ./config.json
-
-# Copy a file from the host into a stopped VM (rebuilds the disk image)
-uni cp ./local.conf myvm:/etc/config.json
-# copied ./local.conf → myvm:/etc/config.json
-```
-
-{: .note }
-The VM must be in `stopped` state for either direction. Run `uni stop <id>` first.
-
 ---
 
 ## Running as a Service

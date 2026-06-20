@@ -43,7 +43,7 @@ func newServiceRunCmd(socketPath *string, outputFmt *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("service run: %w", err)
+				return fmt.Errorf("service run: connect to daemon: %w", err)
 			}
 			defer client.Close()
 
@@ -91,7 +91,7 @@ func newServiceScaleCmd(socketPath *string, outputFmt *string) *cobra.Command {
 			}
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("service scale: %w", err)
+				return fmt.Errorf("service scale: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			info, err := client.ServiceScale(context.Background(), args[0], replicas)
@@ -117,7 +117,7 @@ func newServiceUpdateCmd(socketPath *string, outputFmt *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("service update: %w", err)
+				return fmt.Errorf("service update: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			info, err := client.ServiceUpdate(context.Background(), args[0], args[1], healthTimeout)
@@ -143,7 +143,7 @@ func newServiceListCmd(socketPath *string, outputFmt *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, _ []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("service ls: %w", err)
+				return fmt.Errorf("service ls: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			services, err := client.ServiceList(context.Background())
@@ -172,7 +172,7 @@ func newServiceInspectCmd(socketPath *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("service inspect: %w", err)
+				return fmt.Errorf("service inspect: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			info, err := client.ServiceGet(context.Background(), args[0])
@@ -194,7 +194,7 @@ func newServiceRemoveCmd(socketPath *string) *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("service rm: %w", err)
+				return fmt.Errorf("service rm: connect to daemon: %w", err)
 			}
 			defer client.Close()
 			if err := client.ServiceRemove(context.Background(), args[0]); err != nil {

@@ -299,9 +299,24 @@ uni inspect a3f8c2d1
     {"disk_path": "/home/user/.uni/volumes/data/disk.img", "guest_path": "/var/data", "read_only": false}
   ],
   "created_at": "2026-04-19T10:00:00Z",
-  "started_at": "2026-04-19T10:00:01Z"
+  "started_at": "2026-04-19T10:00:01Z",
+  "health": "healthy",
+  "restart_policy": "on-failure",
+  "restart_count": 0,
+  "disk_iops": 1000,
+  "disk_bps": 10485760
 }
 ```
+
+Fields only present when non-zero:
+
+| Field | Description |
+|---|---|
+| `disk_iops` | Max I/O operations per second for the boot disk (set via `--disk-iops`) |
+| `disk_bps` | Max bytes per second for the boot disk in bytes (set via `--disk-bps`) |
+| `restart_policy` | Active restart policy (`never`, `on-failure`, `always`) |
+| `restart_count` | Number of times this VM has been automatically restarted |
+| `daemon_recovered` | `true` when the VM was recovered after a daemon restart |
 
 ---
 
@@ -799,10 +814,11 @@ uni pkg get eyberg/node:v11.5.0 --source ops
 
 ### `uni pkg remove`
 
-Remove locally cached package(s). Without a version suffix, all versions of the package are removed.
+Remove locally cached package(s). Without a version suffix, all versions of the package are removed. Errors if the package is not found locally.
 
 ```
-uni pkg remove <name>[:version] [--source uni|ops]
+uni pkg remove <name>[:<version>] [--source uni|ops]
+uni pkg rm    <name>[:<version>] [--source uni|ops]   # alias
 ```
 
 | Flag | Default | Description |
@@ -967,18 +983,19 @@ uni volume create config --size 512M
 List all volumes.
 
 ```
-uni volume ls [--output json]
+uni volume ls
 ```
 
-| Flag | Default | Description |
-|---|---|---|
-| `--output` | *(table)* | Output format: omit for table, `json` for JSON |
+Uses the global `--output` flag for format selection.
 
 ```bash
 uni volume ls
 # NAME     SIZE   CREATED
 # mydata   2.0G   2026-04-25 18:00:00
 # config   512.0M 2026-04-25 18:01:00
+
+# JSON output
+uni --output json volume ls
 ```
 
 ---
@@ -1238,7 +1255,7 @@ uni --output json service ls
 
 ### `uni service inspect`
 
-Show full details for a service as JSON, including the IDs of its replica VMs.
+Show full details for a service as JSON, including environment variables and the IDs of its replica VMs.
 
 ```
 uni service inspect <name>
@@ -1248,7 +1265,26 @@ uni service inspect <name>
 uni service inspect backend
 ```
 
-The table output equivalent (used internally after `run`/`scale`/`update`) shows:
+```json
+{
+  "name": "backend",
+  "image": "api:latest",
+  "desired_replicas": 3,
+  "ready_replicas": 3,
+  "strategy": "RollingUpdate",
+  "health": "healthy",
+  "env": ["PORT=8080", "LOG_LEVEL=info"],
+  "created_at": "2026-04-19T10:00:00Z",
+  "updated_at": "2026-04-19T10:05:00Z",
+  "replica_ids": [
+    "a3f8c2d1-7b4e-4a1f-8c2d-1a2b3c4d5e6f",
+    "b4e9d3e2-8c5f-5b2g-9d3e-2b3c4d5e6f7a",
+    "c5f0a4b3-9d6e-4c2f-a1b3-5d6e7f8a9b0c"
+  ]
+}
+```
+
+The same data is displayed as a table after `service run`, `service scale`, and `service update`:
 
 ```
 Service:     backend
