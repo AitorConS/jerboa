@@ -234,9 +234,9 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 				if err := os.Symlink(hdr.Linkname, target); err != nil {
 					slog.Warn("ops extract: symlink failed", "target", target, "error", err)
 				}
-			} else {
-				slog.Warn("ops extract: symlink skipped on non-linux", "target", target, "linkname", hdr.Linkname)
 			}
+			// Symlinks are silently skipped on non-Linux hosts; the unikernel
+			// builder resolves them at image assembly time on the Linux side.
 		}
 	}
 	return nil
