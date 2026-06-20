@@ -104,7 +104,7 @@ project markers (go.mod, package.json, etc.).`,
 					return fmt.Errorf("build: %w", err)
 				}
 				pkgFiles = resolved
-				sp.Done(fmt.Sprintf("Resolved %d package(s)  ·  %d files", len(pkgs), len(pkgFiles)))
+				sp.Done(fmt.Sprintf("Resolved %s", strings.Join(pkgs, ", ")))
 			}
 
 			// Seed image env vars from ops package manifests (e.g. HOME, PYTHONPATH set by eyberg/python).
