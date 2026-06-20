@@ -47,20 +47,35 @@ func (s *SQLiteStore) Close() error {
 	return nil
 }
 
+const sqlCreateSchema = `
+	CREATE TABLE IF NOT EXISTS vms (
+		id              TEXT PRIMARY KEY,
+		config          TEXT NOT NULL,
+		state           TEXT NOT NULL,
+		created_at      TEXT NOT NULL,
+		started_at      TEXT,
+		stopped_at      TEXT,
+		daemon_recovered INTEGER DEFAULT 0,
+		health_status   TEXT DEFAULT '',
+		restart_count   INTEGER DEFAULT 0
+	)
+`
+
+const sqlUpsertVM = `
+	INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	ON CONFLICT(id) DO UPDATE SET
+		config = excluded.config,
+		state = excluded.state,
+		started_at = excluded.started_at,
+		stopped_at = excluded.stopped_at,
+		daemon_recovered = excluded.daemon_recovered,
+		health_status = excluded.health_status,
+		restart_count = excluded.restart_count
+`
+
 func (s *SQLiteStore) createSchema() error {
-	_, err := s.db.Exec(`
-		CREATE TABLE IF NOT EXISTS vms (
-			id              TEXT PRIMARY KEY,
-			config          TEXT NOT NULL,
-			state           TEXT NOT NULL,
-			created_at      TEXT NOT NULL,
-			started_at      TEXT,
-			stopped_at      TEXT,
-			daemon_recovered INTEGER DEFAULT 0,
-			health_status   TEXT DEFAULT '',
-			restart_count   INTEGER DEFAULT 0
-		)
-	`)
+	_, err := s.db.Exec(sqlCreateSchema) //nolint:noctx // schema creation at startup; no per-request context
 	if err != nil {
 		return fmt.Errorf("create table: %w", err)
 	}
@@ -83,7 +98,7 @@ func (s *SQLiteStore) Remove(id string) error {
 	if err := s.MemoryStore.Remove(id); err != nil {
 		return err
 	}
-	_, err := s.db.Exec("DELETE FROM vms WHERE id = ?", id)
+	_, err := s.db.Exec("DELETE FROM vms WHERE id = ?", id) //nolint:noctx // store Remove has no context parameter
 	if err != nil {
 		return fmt.Errorf("delete vm %s: %w", id, err)
 	}
@@ -98,7 +113,7 @@ func (s *SQLiteStore) Restore() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	rows, err := s.db.Query("SELECT id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count FROM vms")
+	rows, err := s.db.Query("SELECT id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count FROM vms") //nolint:noctx // RestoreAll is called at daemon startup with no context
 	if err != nil {
 		return fmt.Errorf("restore: query: %w", err)
 	}
@@ -199,18 +214,8 @@ func (s *SQLiteStore) writeVM(v *VM) error {
 	}
 	v.mu.RUnlock()
 
-	_, dbErr := s.db.Exec(`
-		INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			config = excluded.config,
-			state = excluded.state,
-			started_at = excluded.started_at,
-			stopped_at = excluded.stopped_at,
-			daemon_recovered = excluded.daemon_recovered,
-			health_status = excluded.health_status,
-			restart_count = excluded.restart_count
-	`, st.ID, string(cfg), string(st.State), st.CreatedAt.Format(time.RFC3339Nano),
+	_, dbErr := s.db.Exec(sqlUpsertVM, //nolint:noctx // writeVM is called from the VM state machine with no context
+		st.ID, string(cfg), string(st.State), st.CreatedAt.Format(time.RFC3339Nano),
 		nullTime(st.StartedAt), nullTime(st.StoppedAt), boolToInt(st.DaemonRecovered), string(v.GetHealthStatus()), st.RestartCount)
 
 	if dbErr != nil {

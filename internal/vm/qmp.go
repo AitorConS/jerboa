@@ -11,7 +11,7 @@ import (
 // negotiates capabilities, and executes the given QMP command.
 // Using TCP makes this work identically on Linux, macOS, and Windows.
 func qmpDo(addr, command string) error {
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second) //nolint:noctx // QMP dial has a built-in 3s timeout; no caller context available
 	if err != nil {
 		return fmt.Errorf("qmp dial %s: %w", addr, err)
 	}
@@ -60,7 +60,7 @@ func qmpDo(addr, command string) error {
 // freePort returns an available TCP port on the loopback interface.
 // There is a small race between Close and QEMU binding; acceptable in practice.
 func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // ephemeral port probe; no request context
 	if err != nil {
 		return 0, fmt.Errorf("find free port: %w", err)
 	}

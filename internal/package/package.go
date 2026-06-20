@@ -532,7 +532,7 @@ func (s *Store) Push(name, version string, indexURL string) error {
 		return fmt.Errorf("pkg push: build multipart: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, indexURL+"/packages", body)
+	req, err := http.NewRequest(http.MethodPost, indexURL+"/packages", body) //nolint:noctx // callers don't thread ctx yet
 	if err != nil {
 		return fmt.Errorf("pkg push: request: %w", err)
 	}
@@ -609,7 +609,7 @@ func FromDocker(image, containerPath string, extraLibs []string) ([]string, erro
 // Ldd analyses a binary with ldd and returns its shared library dependencies.
 // Returns the library paths as reported by ldd.
 func Ldd(binaryPath string) ([]string, error) {
-	cmd := exec.Command("ldd", binaryPath)
+	cmd := exec.Command("ldd", binaryPath) //nolint:noctx // ldd is a static utility call with no meaningful context
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("ldd %s: %w", binaryPath, err)
@@ -678,7 +678,7 @@ func trimLddAddress(s string) string {
 // symlinks automatically inside the container, so no filesystem symlinks are
 // created on the host — making this work on Windows without admin privileges.
 func dockerReadFile(image, containerPath, localPath string) error {
-	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image,
+	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, //nolint:noctx // callers don't thread ctx yet
 		"-c", "cat "+shellescape(containerPath))
 	out, err := cmd.Output()
 	if err != nil {
@@ -696,7 +696,7 @@ func shellescape(s string) string {
 }
 
 func dockerLdd(image, containerPath string) ([]string, error) {
-	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, "-c",
+	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, "-c", //nolint:noctx // callers don't thread ctx yet
 		fmt.Sprintf("ldd %s", containerPath))
 	output, err := cmd.Output()
 	if err != nil {
