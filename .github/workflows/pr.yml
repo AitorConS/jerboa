@@ -115,15 +115,19 @@ jobs:
       - name: Build kernel and tools
         run: make kernel && make -C kernel tools
 
+      - name: Stage kernel artifacts
+        run: |
+          mkdir -p dist
+          cp kernel/output/platform/pc/bin/kernel.img dist/kernel.img
+          cp kernel/output/platform/pc/boot/boot.img  dist/boot.img
+          cp kernel/output/tools/bin/mkfs             dist/mkfs
+          cp kernel/output/tools/bin/dump             dist/dump
+
       - name: Upload kernel artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kernel-artifacts
-          path: |
-            kernel/output/platform/pc/bin/kernel.img
-            kernel/output/platform/pc/boot/boot.img
-            kernel/output/tools/bin/mkfs
-            kernel/output/tools/bin/dump
+          path: dist/
           retention-days: 1
 
   integration-tests:
@@ -148,15 +152,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: kernel-artifacts
-          path: kernel-artifacts
+          path: dist
 
       - name: Stage kernel artifacts for integration tests
         run: |
           mkdir -p kernel/output/tools/bin
-          cp kernel-artifacts/kernel/output/platform/pc/bin/kernel.img kernel/output/tools/bin/
-          cp kernel-artifacts/kernel/output/platform/pc/boot/boot.img   kernel/output/tools/bin/
-          cp kernel-artifacts/kernel/output/tools/bin/mkfs               kernel/output/tools/bin/
-          cp kernel-artifacts/kernel/output/tools/bin/dump               kernel/output/tools/bin/
+          cp dist/kernel.img dist/boot.img dist/mkfs dist/dump kernel/output/tools/bin/
           chmod +x kernel/output/tools/bin/mkfs kernel/output/tools/bin/dump
           ls -la kernel/output/tools/bin/
 
