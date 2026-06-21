@@ -33,10 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cross-compiler toolchain
+      - name: Verify toolchain
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y gcc-multilib nasm qemu-system-x86
+          for tool in gcc nasm qemu-system-x86_64; do
+            command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86"; exit 1; }
+          done
 
       - name: Check KVM
         run: |
@@ -111,10 +112,11 @@ jobs:
           test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
           test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
 
-      - name: Install toolchain
+      - name: Verify toolchain
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y gcc-multilib nasm qemu-system-x86
+          for tool in gcc nasm qemu-system-x86_64; do
+            command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86"; exit 1; }
+          done
 
       - name: Build kernel and tools
         run: make kernel && make -C kernel tools
