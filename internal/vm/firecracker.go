@@ -432,24 +432,39 @@ func parseMiB(mem string) (int, error) {
 	suffix := mem[len(mem)-1]
 	switch suffix {
 	case 'M', 'm':
-		return strconv.Atoi(mem[:len(mem)-1])
+		n, err := strconv.Atoi(mem[:len(mem)-1])
+		if err != nil {
+			return 0, fmt.Errorf("parseMiB: %w", err)
+		}
+		return n, nil
 	case 'G', 'g':
 		n, err := strconv.Atoi(mem[:len(mem)-1])
-		return n * 1024, err
+		if err != nil {
+			return 0, fmt.Errorf("parseMiB: %w", err)
+		}
+		return n * 1024, nil
 	case 'K', 'k':
 		n, err := strconv.Atoi(mem[:len(mem)-1])
-		return n / 1024, err
+		if err != nil {
+			return 0, fmt.Errorf("parseMiB: %w", err)
+		}
+		return n / 1024, nil
 	default:
-		return strconv.Atoi(mem)
+		n, err := strconv.Atoi(mem)
+		if err != nil {
+			return 0, fmt.Errorf("parseMiB: %w", err)
+		}
+		return n, nil
 	}
 }
 
 // fcSendCtrlAltDel sends a graceful shutdown request to the Firecracker REST API.
 func fcSendCtrlAltDel(sockPath string) error {
+	dialer := &net.Dialer{}
 	client := &http.Client{
 		Transport: &http.Transport{
-			DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
-				return net.Dial("unix", sockPath)
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return dialer.DialContext(ctx, "unix", sockPath)
 			},
 		},
 		Timeout: 5 * time.Second,
@@ -457,12 +472,12 @@ func fcSendCtrlAltDel(sockPath string) error {
 	body := bytes.NewReader([]byte(`{"action_type":"SendCtrlAltDel"}`))
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, "http://localhost/actions", body)
 	if err != nil {
-		return err
+		return fmt.Errorf("fc shutdown request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("fc shutdown: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
