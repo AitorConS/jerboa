@@ -417,7 +417,10 @@ func buildFCBootArgs(cfg Config) string {
 		if mask == "" {
 			mask = "24"
 		}
-		args += fmt.Sprintf(" netdev=eth0 ip=%s/%s gateway=%s", cfg.IPAddress, mask, cfg.GatewayIP)
+		args += fmt.Sprintf(" netdev=eth0 ip=%s/%s", cfg.IPAddress, mask)
+		if cfg.GatewayIP != "" {
+			args += fmt.Sprintf(" gateway=%s", cfg.GatewayIP)
+		}
 	}
 
 	return args
@@ -447,6 +450,9 @@ func parseMiB(mem string) (int, error) {
 		n, err := strconv.Atoi(mem[:len(mem)-1])
 		if err != nil {
 			return 0, fmt.Errorf("parseMiB: %w", err)
+		}
+		if n < 1024 {
+			return 0, fmt.Errorf("parseMiB: %q is less than 1 MiB", mem)
 		}
 		return n / 1024, nil
 	default:

@@ -129,8 +129,10 @@ func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, met
 		}
 		slog.Info("unid: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore))
-	default:
+	case "qemu":
 		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore))
+	default:
+		return fmt.Errorf("unid: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
 
 	netStore, err := network.NewStore(networksDir())

@@ -17,7 +17,7 @@ type Config struct {
 func DefaultPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "config.toml")
+		return filepath.Join(os.TempDir(), ".uni", "config.toml")
 	}
 	return filepath.Join(home, ".uni", "config.toml")
 }
