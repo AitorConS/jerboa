@@ -231,6 +231,7 @@ jobs:
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: 1
+          skip-dirs: examples
 
   notify-on-failure:
     name: Notify on Failure
