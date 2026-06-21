@@ -115,7 +115,7 @@ jobs:
       - name: Verify toolchain
         run: |
           for tool in gcc nasm qemu-system-x86_64 firecracker; do
-            command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86 && snap install firecracker --classic"; exit 1; }
+            command -v "$tool" || { echo "ERROR: $tool not found — see runner setup docs (apt for gcc/nasm/qemu, GitHub releases for firecracker)"; exit 1; }
           done
 
       - name: Build kernel and tools
