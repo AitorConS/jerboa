@@ -112,8 +112,23 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y gcc-multilib nasm qemu-utils
 
-      - name: Build kernel
-        run: make kernel
+      - name: Build kernel and tools
+        run: make kernel && make -C kernel tools
+
+      - name: Stage kernel artifacts
+        run: |
+          mkdir -p dist
+          cp kernel/output/platform/pc/bin/kernel.img dist/kernel.img
+          cp kernel/output/platform/pc/boot/boot.img  dist/boot.img
+          cp kernel/output/tools/bin/mkfs             dist/mkfs
+          cp kernel/output/tools/bin/dump             dist/dump
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-artifacts
+          path: dist/
+          retention-days: 1
 
   integration-tests:
     name: Integration Tests
@@ -133,16 +148,17 @@ jobs:
           test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
           test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
 
-      - name: Build kernel and tools
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y gcc-multilib nasm qemu-utils
-          make kernel && make -C kernel tools
+      - name: Download kernel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel-artifacts
+          path: dist
 
       - name: Stage kernel artifacts for integration tests
         run: |
-          cp kernel/output/platform/pc/bin/kernel.img kernel/output/tools/bin/
-          cp kernel/output/platform/pc/boot/boot.img   kernel/output/tools/bin/
+          mkdir -p kernel/output/tools/bin
+          cp dist/kernel.img dist/boot.img dist/mkfs dist/dump kernel/output/tools/bin/
+          chmod +x kernel/output/tools/bin/mkfs kernel/output/tools/bin/dump
           ls -la kernel/output/tools/bin/
 
       - name: Build CLI binaries

@@ -15,10 +15,12 @@ import (
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/cluster"
+	"github.com/AitorConS/unikernel-engine/internal/config"
 	"github.com/AitorConS/unikernel-engine/internal/metrics"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/service"
 	"github.com/AitorConS/unikernel-engine/internal/slogformat"
+	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/AitorConS/unikernel-engine/internal/tracing"
 	"github.com/AitorConS/unikernel-engine/internal/ui"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
@@ -36,29 +38,38 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath  string
-		qemuBin     string
-		storePath   string
-		vmStoreType string
-		metricsAddr string
-		uiAddr      string
-		logFormat   string
-		traceAddr   string
-		clusterAddr string
-		joinAddrs   string
+		socketPath   string
+		qemuBin      string
+		storePath    string
+		vmStoreType  string
+		metricsAddr  string
+		uiAddr       string
+		logFormat    string
+		traceAddr    string
+		clusterAddr  string
+		joinAddrs    string
+		hypervisor   string
+		fcBin        string
+		fcKernelPath string
 	)
 	root := &cobra.Command{
 		Use:     "unid",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs)
+			return serve(cmd.Context(), socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
 		},
 	}
 	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
 		"Unix socket path for VM management API")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
+	root.Flags().StringVar(&hypervisor, "hypervisor", "",
+		"Hypervisor backend: qemu or firecracker (overrides ~/.uni/config.toml)")
+	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
+		"Firecracker binary to use (only with --hypervisor=firecracker)")
+	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
+		"Path to Firecracker-compatible kernel (auto-downloaded if omitted)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
 	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
@@ -78,14 +89,51 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs string) error {
+func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath string) error {
 	setupLogger(logFormat)
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
 	if err != nil {
 		return fmt.Errorf("unid: vm store: %w", err)
 	}
-	mgr := vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore))
+
+	// Resolve hypervisor: flag > config file > default "qemu".
+	if hypervisor == "" {
+		cfg, err := config.Load(config.DefaultPath())
+		if err != nil {
+			slog.Warn("unid: could not read config, defaulting to qemu", "err", err)
+		} else {
+			hypervisor = cfg.Hypervisor
+		}
+	}
+	if hypervisor == "" {
+		hypervisor = "qemu"
+	}
+
+	var mgr interface {
+		vm.Manager
+		Store() vm.Store
+	}
+	switch hypervisor {
+	case "firecracker":
+		if fcKernelPath == "" {
+			toolsDir := defaultToolsPath()
+			slog.Info("unid: ensuring Firecracker kernel is available", "dir", toolsDir)
+			dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
+			defer dlCancel()
+			var err error
+			fcKernelPath, err = tools.EnsureFCKernel(dlCtx, toolsDir)
+			if err != nil {
+				return fmt.Errorf("unid: download Firecracker kernel: %w", err)
+			}
+		}
+		slog.Info("unid: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
+		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore))
+	case "qemu":
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore))
+	default:
+		return fmt.Errorf("unid: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
+	}
 
 	netStore, err := network.NewStore(networksDir())
 	if err != nil {
@@ -186,6 +234,14 @@ func defaultSocketPath() string {
 		return filepath.Join(os.TempDir(), "unid.sock")
 	}
 	return "/var/run/unid.sock"
+}
+
+func defaultToolsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".uni", "tools")
+	}
+	return filepath.Join(home, ".uni", "tools")
 }
 
 func defaultStorePath() string {

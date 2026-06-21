@@ -27,6 +27,9 @@ var (
 // artifactNames are the files that make up the kernel toolset.
 var artifactNames = []string{"mkfs-linux-amd64", "kernel.img", "boot.img", "dump-linux-amd64"}
 
+const fcKernelArtifact = "kernel-fc.img"
+const fcKernelLocalName = "kernel-fc.img"
+
 // LocalVersion returns the semver string (e.g. "v0.1.0") cached in toolsDir.
 // Returns "(unknown)" if the file is absent or unreadable.
 func LocalVersion(toolsDir string) string {
@@ -166,6 +169,34 @@ func DownloadVersion(ctx context.Context, toolsDir, version string) error {
 		}
 	}
 	return SaveLocalVersion(toolsDir, resolved)
+}
+
+// FCKernelPath returns the path where the Firecracker-compatible kernel is cached.
+func FCKernelPath(toolsDir string) string {
+	return filepath.Join(toolsDir, fcKernelLocalName)
+}
+
+// FCKernelExists returns true when the Firecracker kernel is present in toolsDir.
+func FCKernelExists(toolsDir string) bool {
+	_, err := os.Stat(FCKernelPath(toolsDir))
+	return err == nil
+}
+
+// EnsureFCKernel downloads kernel-fc.img from the latest release into toolsDir
+// if it is not already present. Returns the local path to the kernel.
+func EnsureFCKernel(ctx context.Context, toolsDir string) (string, error) {
+	dest := FCKernelPath(toolsDir)
+	if _, err := os.Stat(dest); err == nil {
+		return dest, nil
+	}
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		return "", fmt.Errorf("tools: create tools dir: %w", err)
+	}
+	url := ArtifactURL("latest", fcKernelArtifact)
+	if err := downloadArtifact(ctx, url, dest); err != nil {
+		return "", fmt.Errorf("tools: download %s: %w", fcKernelArtifact, err)
+	}
+	return dest, nil
 }
 
 // semverGT returns true when a is strictly greater than b.
