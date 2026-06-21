@@ -21,7 +21,7 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		err := serve(ctx, socketPath, "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "")
+		err := serve(ctx, socketPath, "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "", "qemu", "", "")
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Logf("serve returned: %v", err)
 		}
@@ -65,6 +65,9 @@ func TestNewRootCmd_Flags(t *testing.T) {
 	require.NotNil(t, cmd.Flag("trace-addr"))
 	require.NotNil(t, cmd.Flag("cluster-addr"))
 	require.NotNil(t, cmd.Flag("join"))
+	require.NotNil(t, cmd.Flag("hypervisor"))
+	require.NotNil(t, cmd.Flag("fc-bin"))
+	require.NotNil(t, cmd.Flag("fc-kernel"))
 }
 
 func TestServe_VersionQuery(t *testing.T) {
@@ -75,7 +78,7 @@ func TestServe_VersionQuery(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "")
+		_ = serve(ctx, socketPath, "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "", "qemu", "", "")
 	}()
 
 	require.Eventually(t, func() bool {
