@@ -170,7 +170,7 @@ jobs:
     name: Image Build & Boot Benchmarks
     needs: [lint, unit-tests]
     runs-on: [self-hosted, linux, kvm]
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -186,8 +186,8 @@ jobs:
 
       - name: Verify toolchain
         run: |
-          for tool in gcc nasm qemu-system-x86_64; do
-            command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86"; exit 1; }
+          for tool in gcc nasm qemu-system-x86_64 firecracker; do
+            command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86 && snap install firecracker --classic"; exit 1; }
           done
 
       - name: Build kernel and tools
@@ -196,21 +196,23 @@ jobs:
       - name: Build CLI
         run: make build
 
-      - name: Start unid daemon
+      # ── QEMU phase ────────────────────────────────────────────────────────────
+
+      - name: Start QEMU daemon
         run: |
-          BENCH_SOCK=/tmp/bench-unid.sock
+          QEMU_SOCK=/tmp/bench-qemu.sock
           BENCH_STORE=$(mktemp -d)
-          echo "BENCH_SOCK=${BENCH_SOCK}" >> "$GITHUB_ENV"
+          echo "QEMU_SOCK=${QEMU_SOCK}" >> "$GITHUB_ENV"
           echo "BENCH_STORE=${BENCH_STORE}" >> "$GITHUB_ENV"
-          ./dist/unid --socket "${BENCH_SOCK}" &
-          echo "UNID_PID=$!" >> "$GITHUB_ENV"
-          for i in $(seq 1 20); do [ -S "${BENCH_SOCK}" ] && break; sleep 0.5; done
-          [ -S "${BENCH_SOCK}" ] || { echo "unid failed to start"; exit 1; }
+          ./dist/unid --socket "${QEMU_SOCK}" &
+          echo "QEMU_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 20); do [ -S "${QEMU_SOCK}" ] && break; sleep 0.5; done
+          [ -S "${QEMU_SOCK}" ] || { echo "QEMU unid failed to start"; exit 1; }
 
       - name: Benchmark — build hello
         id: build-bench
         run: |
-          BUILD_OUT=$(./dist/uni --socket "${BENCH_SOCK}" --store "${BENCH_STORE}" \
+          BUILD_OUT=$(./dist/uni --socket "${QEMU_SOCK}" --store "${BENCH_STORE}" \
             build examples/hello --name bench-hello --lang go \
             --mkfs kernel/output/tools/bin/mkfs)
           echo "${BUILD_OUT}"
@@ -219,28 +221,69 @@ jobs:
           echo "build_time=${BUILD_TIME}" >> "$GITHUB_OUTPUT"
           echo "image_size=${IMAGE_SIZE}" >> "$GITHUB_OUTPUT"
 
-      - name: Benchmark — boot hello (3 runs)
-        id: boot-bench
+      - name: Benchmark — QEMU boot hello (3 runs)
+        id: qemu-bench
         run: |
           TOTAL=0
           MIN=999999
           for i in 1 2 3; do
             T0=$(date +%s%N)
-            ./dist/uni --socket "${BENCH_SOCK}" --store "${BENCH_STORE}" \
+            ./dist/uni --socket "${QEMU_SOCK}" --store "${BENCH_STORE}" \
               run bench-hello:latest --attach --rm > /dev/null
             T1=$(date +%s%N)
             MS=$(( (T1 - T0) / 1000000 ))
-            echo "Run ${i}: ${MS}ms"
+            echo "QEMU run ${i}: ${MS}ms"
             TOTAL=$(( TOTAL + MS ))
             [ "${MS}" -lt "${MIN}" ] && MIN=${MS}
           done
           AVG=$(( TOTAL / 3 ))
-          echo "boot_avg_ms=${AVG}" >> "$GITHUB_OUTPUT"
-          echo "boot_min_ms=${MIN}" >> "$GITHUB_OUTPUT"
+          echo "avg_ms=${AVG}" >> "$GITHUB_OUTPUT"
+          echo "min_ms=${MIN}" >> "$GITHUB_OUTPUT"
 
-      - name: Stop daemon
+      - name: Stop QEMU daemon
         if: always()
-        run: kill "${UNID_PID}" 2>/dev/null || true
+        run: |
+          [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
+          rm -f /tmp/bench-qemu.sock
+
+      # ── Firecracker phase ─────────────────────────────────────────────────────
+
+      - name: Start Firecracker daemon
+        run: |
+          FC_SOCK=/tmp/bench-fc.sock
+          echo "FC_SOCK=${FC_SOCK}" >> "$GITHUB_ENV"
+          ./dist/unid --socket "${FC_SOCK}" --hypervisor firecracker &
+          echo "FC_PID=$!" >> "$GITHUB_ENV"
+          # longer wait — first run downloads kernel-fc.img from releases
+          for i in $(seq 1 60); do [ -S "${FC_SOCK}" ] && break; sleep 1; done
+          [ -S "${FC_SOCK}" ] || { echo "Firecracker unid failed to start"; exit 1; }
+
+      - name: Benchmark — Firecracker boot hello (3 runs)
+        id: fc-bench
+        run: |
+          TOTAL=0
+          MIN=999999
+          for i in 1 2 3; do
+            T0=$(date +%s%N)
+            ./dist/uni --socket "${FC_SOCK}" --store "${BENCH_STORE}" \
+              run bench-hello:latest --attach --rm > /dev/null
+            T1=$(date +%s%N)
+            MS=$(( (T1 - T0) / 1000000 ))
+            echo "FC run ${i}: ${MS}ms"
+            TOTAL=$(( TOTAL + MS ))
+            [ "${MS}" -lt "${MIN}" ] && MIN=${MS}
+          done
+          AVG=$(( TOTAL / 3 ))
+          echo "avg_ms=${AVG}" >> "$GITHUB_OUTPUT"
+          echo "min_ms=${MIN}" >> "$GITHUB_OUTPUT"
+
+      - name: Stop Firecracker daemon
+        if: always()
+        run: |
+          [ -n "${FC_PID}" ] && kill "${FC_PID}" 2>/dev/null || true
+          rm -f /tmp/bench-fc.sock
+
+      # ── Results ───────────────────────────────────────────────────────────────
 
       - name: Write job summary
         if: always()
@@ -250,12 +293,12 @@ jobs:
             echo ""
             echo "App: \`examples/hello\` (Go, prints and exits)"
             echo ""
-            echo "| Metric | Value |"
-            echo "|--------|-------|"
-            echo "| Build time | ${{ steps.build-bench.outputs.build_time }} |"
-            echo "| Image size | ${{ steps.build-bench.outputs.image_size }} |"
-            echo "| Boot time avg (3 runs) | ${{ steps.boot-bench.outputs.boot_avg_ms }}ms |"
-            echo "| Boot time min (3 runs) | ${{ steps.boot-bench.outputs.boot_min_ms }}ms |"
+            echo "| Metric | QEMU | Firecracker |"
+            echo "|--------|------|-------------|"
+            echo "| Build time | ${{ steps.build-bench.outputs.build_time }} | — |"
+            echo "| Image size | ${{ steps.build-bench.outputs.image_size }} | — |"
+            echo "| Boot avg (3 runs) | ${{ steps.qemu-bench.outputs.avg_ms }}ms | ${{ steps.fc-bench.outputs.avg_ms }}ms |"
+            echo "| Boot min (3 runs) | ${{ steps.qemu-bench.outputs.min_ms }}ms | ${{ steps.fc-bench.outputs.min_ms }}ms |"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save results as JSON
@@ -268,8 +311,10 @@ jobs:
             "date": "${DATE}",
             "hello_build_time": "${{ steps.build-bench.outputs.build_time }}",
             "hello_image_size": "${{ steps.build-bench.outputs.image_size }}",
-            "hello_boot_avg_ms": ${{ steps.boot-bench.outputs.boot_avg_ms }},
-            "hello_boot_min_ms": ${{ steps.boot-bench.outputs.boot_min_ms }}
+            "qemu_boot_avg_ms": ${{ steps.qemu-bench.outputs.avg_ms }},
+            "qemu_boot_min_ms": ${{ steps.qemu-bench.outputs.min_ms }},
+            "fc_boot_avg_ms": ${{ steps.fc-bench.outputs.avg_ms }},
+            "fc_boot_min_ms": ${{ steps.fc-bench.outputs.min_ms }}
           }
           EOF
 
