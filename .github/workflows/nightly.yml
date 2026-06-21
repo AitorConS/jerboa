@@ -94,6 +94,117 @@ jobs:
           name: benchmark-results-${{ github.run_id }}
           path: benchmark-results.txt
 
+  image-benchmarks:
+    name: Image Build & Boot Benchmarks
+    runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Check KVM
+        run: |
+          test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+          test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y gcc-multilib nasm qemu-system-x86
+
+      - name: Build kernel and tools
+        run: make kernel && make -C kernel tools
+
+      - name: Build CLI
+        run: make build
+
+      - name: Start unid daemon
+        run: |
+          BENCH_SOCK=/tmp/bench-unid.sock
+          BENCH_STORE=$(mktemp -d)
+          echo "BENCH_SOCK=${BENCH_SOCK}" >> "$GITHUB_ENV"
+          echo "BENCH_STORE=${BENCH_STORE}" >> "$GITHUB_ENV"
+          ./dist/unid --socket "${BENCH_SOCK}" &
+          echo "UNID_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 20); do [ -S "${BENCH_SOCK}" ] && break; sleep 0.5; done
+          [ -S "${BENCH_SOCK}" ] || { echo "unid failed to start"; exit 1; }
+
+      - name: Benchmark — build hello
+        id: build-bench
+        run: |
+          BUILD_OUT=$(./dist/uni --socket "${BENCH_SOCK}" --store "${BENCH_STORE}" \
+            build examples/hello --name bench-hello \
+            --mkfs kernel/output/tools/bin/mkfs)
+          echo "${BUILD_OUT}"
+          BUILD_TIME=$(echo "${BUILD_OUT}" | grep -oP 'built in \K\S+')
+          IMAGE_SIZE=$(echo "${BUILD_OUT}" | grep -oP '\d+(\.\d+)?[KMGT]?B' | head -1)
+          echo "build_time=${BUILD_TIME}" >> "$GITHUB_OUTPUT"
+          echo "image_size=${IMAGE_SIZE}" >> "$GITHUB_OUTPUT"
+
+      - name: Benchmark — boot hello (3 runs)
+        id: boot-bench
+        run: |
+          TOTAL=0
+          MIN=999999
+          for i in 1 2 3; do
+            T0=$(date +%s%N)
+            ./dist/uni --socket "${BENCH_SOCK}" --store "${BENCH_STORE}" \
+              run bench-hello:latest --attach --rm > /dev/null
+            T1=$(date +%s%N)
+            MS=$(( (T1 - T0) / 1000000 ))
+            echo "Run ${i}: ${MS}ms"
+            TOTAL=$(( TOTAL + MS ))
+            [ "${MS}" -lt "${MIN}" ] && MIN=${MS}
+          done
+          AVG=$(( TOTAL / 3 ))
+          echo "boot_avg_ms=${AVG}" >> "$GITHUB_OUTPUT"
+          echo "boot_min_ms=${MIN}" >> "$GITHUB_OUTPUT"
+
+      - name: Stop daemon
+        if: always()
+        run: kill "${UNID_PID}" 2>/dev/null || true
+
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo "## Image Build & Boot Benchmarks"
+            echo ""
+            echo "App: \`examples/hello\` (Go, prints and exits)"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|--------|-------|"
+            echo "| Build time | ${{ steps.build-bench.outputs.build_time }} |"
+            echo "| Image size | ${{ steps.build-bench.outputs.image_size }} |"
+            echo "| Boot time avg (3 runs) | ${{ steps.boot-bench.outputs.boot_avg_ms }}ms |"
+            echo "| Boot time min (3 runs) | ${{ steps.boot-bench.outputs.boot_min_ms }}ms |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save results as JSON
+        run: |
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          cat > bench-image.json <<EOF
+          {
+            "commit": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}",
+            "date": "${DATE}",
+            "hello_build_time": "${{ steps.build-bench.outputs.build_time }}",
+            "hello_image_size": "${{ steps.build-bench.outputs.image_size }}",
+            "hello_boot_avg_ms": ${{ steps.boot-bench.outputs.boot_avg_ms }},
+            "hello_boot_min_ms": ${{ steps.boot-bench.outputs.boot_min_ms }}
+          }
+          EOF
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-benchmarks-${{ github.run_id }}
+          path: bench-image.json
+
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -122,7 +233,7 @@ jobs:
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
-    needs: [unit-tests, kernel-tests, integration-tests, benchmarks, security-scan]
+    needs: [unit-tests, kernel-tests, integration-tests, benchmarks, security-scan, image-benchmarks]
     if: failure()
     steps:
       - name: Notify
