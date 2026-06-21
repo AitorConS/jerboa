@@ -139,7 +139,7 @@ jobs:
         id: build-bench
         run: |
           BUILD_OUT=$(./dist/uni --socket "${BENCH_SOCK}" --store "${BENCH_STORE}" \
-            build examples/hello --name bench-hello \
+            build examples/hello --name bench-hello --lang go \
             --mkfs kernel/output/tools/bin/mkfs)
           echo "${BUILD_OUT}"
           BUILD_TIME=$(echo "${BUILD_OUT}" | grep -oP 'built in \K\S+')
