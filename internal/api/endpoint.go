@@ -2,6 +2,8 @@ package api
 
 import (
 	"fmt"
+	"net"
+	"os"
 	"strings"
 )
 
@@ -36,6 +38,25 @@ func parseEndpoint(endpoint string) (network, address string, err error) {
 	default:
 		return "", "", fmt.Errorf("api: unsupported endpoint scheme %q (use unix:// or tcp://)", scheme)
 	}
+}
+
+// Listen binds a net.Listener for the given endpoint, clearing a stale Unix
+// socket file first. Used by the server to accept connections.
+func Listen(endpoint string) (net.Listener, error) {
+	network, address, err := parseEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if network == "unix" {
+		if err := os.Remove(address); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("api server remove stale socket: %w", err)
+		}
+	}
+	l, err := net.Listen(network, address) //nolint:noctx // server setup; lifecycle managed by Serve's ctx
+	if err != nil {
+		return nil, fmt.Errorf("api server listen %s: %w", endpoint, err)
+	}
+	return l, nil
 }
 
 // dialArgs splits an already-validated endpoint into net.Dial arguments. Used

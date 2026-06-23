@@ -1,4 +1,4 @@
-package api
+package apiserver
 
 import (
 	"bufio"
@@ -9,12 +9,12 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/scheduler"
@@ -68,30 +68,11 @@ func (s *Server) SetAuthToken(token string) {
 // pass nil to disable remote shutdown.
 // version is returned by Daemon.Version RPC; pass "" if unknown.
 func NewServer(mgr vm.Manager, netStore *network.Store, svcMgr *service.Manager, endpoint string, shutdownFn func(), version string, clusterLister ClusterMemberLister) (*Server, error) {
-	l, err := listen(endpoint)
+	l, err := api.Listen(endpoint)
 	if err != nil {
 		return nil, err
 	}
 	return &Server{mgr: mgr, netStore: netStore, svcMgr: svcMgr, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
-}
-
-// listen binds a net.Listener for the given endpoint, clearing stale Unix
-// sockets first.
-func listen(endpoint string) (net.Listener, error) {
-	network, address, err := parseEndpoint(endpoint)
-	if err != nil {
-		return nil, err
-	}
-	if network == "unix" {
-		if err := os.Remove(address); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("api server remove stale socket: %w", err)
-		}
-	}
-	l, err := net.Listen(network, address) //nolint:noctx // server setup; lifecycle managed by Serve's ctx
-	if err != nil {
-		return nil, fmt.Errorf("api server listen %s: %w", endpoint, err)
-	}
-	return l, nil
 }
 
 // Serve accepts connections and handles them until ctx is canceled.
@@ -124,7 +105,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	enc := json.NewEncoder(conn)
 	authed := s.authToken == ""
 	for dec.More() {
-		var req Request
+		var req api.Request
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
@@ -132,18 +113,18 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			// Until authenticated, only Auth.Hello is accepted. Any failure
 			// closes the connection.
 			if req.Method != "Auth.Hello" || !s.checkAuth(req.Params) {
-				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32001, Message: "authentication required"}})
+				_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32001, Message: "authentication required"}})
 				return
 			}
 			authed = true
-			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Result: okResult()})
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: okResult()})
 			continue
 		}
 		result, rpcErr := s.dispatch(ctx, &req, conn, dec)
 		if result == attachHandled {
 			return
 		}
-		resp := Response{JSONRPC: "2.0", ID: req.ID}
+		resp := api.Response{JSONRPC: "2.0", ID: req.ID}
 		if rpcErr != nil {
 			resp.Error = rpcErr
 		} else {
@@ -164,7 +145,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 // checkAuth reports whether params carries the configured auth token, using a
 // constant-time comparison.
 func (s *Server) checkAuth(params json.RawMessage) bool {
-	var p AuthParams
+	var p api.AuthParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return false
 	}
@@ -180,7 +161,7 @@ func okResult() json.RawMessage {
 // has taken over the connection and no response should be sent.
 var attachHandled = struct{}{}
 
-func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn, dec *json.Decoder) (any, *RPCError) {
+func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, dec *json.Decoder) (any, *api.RPCError) {
 	switch req.Method {
 	case "Image.Build":
 		// Build streams its context after the request. Read the decoder's
@@ -189,7 +170,7 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn, dec 
 		// so skip any leading whitespace before the binary frame stream.
 		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
 		skipLeadingWhitespace(br)
-		s.handleBuild(ctx, req.Params, newFrameReader(br), conn, req.ID)
+		s.handleBuild(ctx, req.Params, api.NewFrameReader(br), conn, req.ID)
 		return attachHandled, nil
 	case "Image.List":
 		return s.handleImageList()
@@ -255,7 +236,7 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn, dec 
 	case "DNS.ResolveAll":
 		return s.handleDNSResolveAll(req.Params)
 	default:
-		return nil, &RPCError{Code: -32601, Message: "method not found: " + req.Method}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
 }
 
@@ -286,16 +267,16 @@ func looksLikePath(s string) bool {
 	return strings.ContainsAny(s, "/\\") || (len(s) >= 2 && s[1] == ':')
 }
 
-func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *RPCError) {
-	var p RunParams
+func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	var p api.RunParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	imagePath := p.ImagePath
 	if p.Image != "" {
 		resolved, rerr := s.resolveImageRef(p.Image)
 		if rerr != nil {
-			return nil, &RPCError{Code: -32000, Message: rerr.Error()}
+			return nil, &api.RPCError{Code: -32000, Message: rerr.Error()}
 		}
 		imagePath = resolved
 	}
@@ -336,10 +317,10 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	if err := s.mgr.Start(ctx, v.ID); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	if p.AutoRemove {
 		go s.autoRemove(ctx, v)
@@ -354,10 +335,10 @@ func (s *Server) autoRemove(ctx context.Context, v *vm.VM) {
 	}
 }
 
-func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *RPCError) {
-	var p StopParams
+func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	var p api.StopParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	var err error
 	if p.Force {
@@ -366,115 +347,115 @@ func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *
 		err = s.mgr.Stop(ctx, p.ID)
 	}
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleKill(ctx context.Context, params json.RawMessage) (any, *RPCError) {
-	var p IDParams
+func (s *Server) handleKill(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.mgr.Kill(ctx, p.ID); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleSignal(ctx context.Context, params json.RawMessage) (any, *RPCError) {
-	var p SignalParams
+func (s *Server) handleSignal(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	var p api.SignalParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	sig, err := parseSig(p.Signal)
 	if err != nil {
-		return nil, &RPCError{Code: -32602, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: err.Error()}
 	}
 	if err := s.mgr.Signal(ctx, p.ID, sig); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleRemove(ctx context.Context, params json.RawMessage) (any, *RPCError) {
-	var p IDParams
+func (s *Server) handleRemove(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.mgr.Remove(ctx, p.ID); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleList(_ context.Context) (any, *RPCError) {
+func (s *Server) handleList(_ context.Context) (any, *api.RPCError) {
 	vms := s.mgr.List()
-	infos := make([]VMInfo, len(vms))
+	infos := make([]api.VMInfo, len(vms))
 	for i, v := range vms {
 		infos[i] = toInfo(v)
 	}
 	return infos, nil
 }
 
-func (s *Server) handleGet(params json.RawMessage) (any, *RPCError) {
-	var p IDParams
+func (s *Server) handleGet(params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	v, err := s.mgr.Get(p.ID)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return toInfo(v), nil
 }
 
-func (s *Server) handleLogs(params json.RawMessage) (any, *RPCError) {
-	var p IDParams
+func (s *Server) handleLogs(params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	v, err := s.mgr.Get(p.ID)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
-	return LogsResponse{ID: v.ID, Logs: string(v.Logs())}, nil
+	return api.LogsResponse{ID: v.ID, Logs: string(v.Logs())}, nil
 }
 
-func (s *Server) handleDaemonShutdown() (any, *RPCError) {
+func (s *Server) handleDaemonShutdown() (any, *api.RPCError) {
 	if s.shutdownFn != nil {
 		go s.shutdownFn()
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleDaemonVersion() (any, *RPCError) {
+func (s *Server) handleDaemonVersion() (any, *api.RPCError) {
 	return map[string]string{"version": s.version}, nil
 }
 
-func (s *Server) handleInspect(params json.RawMessage) (any, *RPCError) {
-	var p IDParams
+func (s *Server) handleInspect(params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	v, err := s.mgr.Get(p.ID)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return toDetail(v), nil
 }
 
-func (s *Server) handleStats(params json.RawMessage) (any, *RPCError) {
-	var p IDParams
+func (s *Server) handleStats(params json.RawMessage) (any, *api.RPCError) {
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	v, err := s.mgr.Get(p.ID)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	stats := v.Stats()
-	return VMStatsResponse{
+	return api.VMStatsResponse{
 		ID:         stats.ID,
 		State:      stats.State,
 		CPUPct:     stats.CPUPct,
@@ -487,8 +468,8 @@ func (s *Server) handleStats(params json.RawMessage) (any, *RPCError) {
 	}, nil
 }
 
-func toInfo(v *vm.VM) VMInfo {
-	return VMInfo{
+func toInfo(v *vm.VM) api.VMInfo {
+	return api.VMInfo{
 		ID:     v.ID,
 		State:  string(v.GetState()),
 		Image:  v.Cfg.ImagePath,
@@ -497,8 +478,8 @@ func toInfo(v *vm.VM) VMInfo {
 	}
 }
 
-func toDetail(v *vm.VM) VMDetail {
-	d := VMDetail{
+func toDetail(v *vm.VM) api.VMDetail {
+	d := api.VMDetail{
 		ID:              v.ID,
 		State:           string(v.GetState()),
 		Image:           v.Cfg.ImagePath,
@@ -531,7 +512,7 @@ func toDetail(v *vm.VM) VMDetail {
 }
 
 // portMapsFromSpec converts API wire types to vm domain types.
-func portMapsFromSpec(specs []PortMapSpec) []vm.PortMap {
+func portMapsFromSpec(specs []api.PortMapSpec) []vm.PortMap {
 	out := make([]vm.PortMap, len(specs))
 	for i, s := range specs {
 		out[i] = vm.PortMap{
@@ -544,7 +525,7 @@ func portMapsFromSpec(specs []PortMapSpec) []vm.PortMap {
 }
 
 // volumeMountsFromSpec converts API wire types to vm domain types.
-func volumeMountsFromSpec(specs []VolumeMountSpec) []vm.VolumeMount {
+func volumeMountsFromSpec(specs []api.VolumeMountSpec) []vm.VolumeMount {
 	out := make([]vm.VolumeMount, len(specs))
 	for i, s := range specs {
 		out[i] = vm.VolumeMount{
@@ -557,13 +538,13 @@ func volumeMountsFromSpec(specs []VolumeMountSpec) []vm.VolumeMount {
 }
 
 // volumeMountsToSpec converts vm domain types to API wire types.
-func volumeMountsToSpec(vols []vm.VolumeMount) []VolumeMountSpec {
+func volumeMountsToSpec(vols []vm.VolumeMount) []api.VolumeMountSpec {
 	if len(vols) == 0 {
 		return nil
 	}
-	out := make([]VolumeMountSpec, len(vols))
+	out := make([]api.VolumeMountSpec, len(vols))
 	for i, v := range vols {
-		out[i] = VolumeMountSpec{
+		out[i] = api.VolumeMountSpec{
 			DiskPath:  v.DiskPath,
 			GuestPath: v.GuestPath,
 			ReadOnly:  v.ReadOnly,
@@ -573,13 +554,13 @@ func volumeMountsToSpec(vols []vm.VolumeMount) []VolumeMountSpec {
 }
 
 // portMapsToSpec converts vm domain types to API wire types.
-func portMapsToSpec(pms []vm.PortMap) []PortMapSpec {
+func portMapsToSpec(pms []vm.PortMap) []api.PortMapSpec {
 	if len(pms) == 0 {
 		return nil
 	}
-	out := make([]PortMapSpec, len(pms))
+	out := make([]api.PortMapSpec, len(pms))
 	for i, pm := range pms {
-		out[i] = PortMapSpec{
+		out[i] = api.PortMapSpec{
 			HostPort:  pm.HostPort,
 			GuestPort: pm.GuestPort,
 			Protocol:  string(pm.Protocol),
@@ -610,25 +591,25 @@ func parseSig(s string) (syscall.Signal, error) {
 }
 
 func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn net.Conn, reqID int64) {
-	var p IDParams
+	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
 	}
 	v, err := s.mgr.Get(p.ID)
 	if err != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
 		return
 	}
 
 	reader := v.AttachReader()
 	if reader == nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "vm not started in attach mode"})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "vm not started in attach mode"})
 		return
 	}
 
 	// Send success response before streaming raw console data.
-	resp := Response{JSONRPC: "2.0", ID: reqID}
+	resp := api.Response{JSONRPC: "2.0", ID: reqID}
 	if err := json.NewEncoder(conn).Encode(resp); err != nil {
 		return
 	}
@@ -652,87 +633,87 @@ func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn 
 	}
 }
 
-func (s *Server) handleNetworkCreate(params json.RawMessage) (any, *RPCError) {
-	var p NetworkCreateParams
+func (s *Server) handleNetworkCreate(params json.RawMessage) (any, *api.RPCError) {
+	var p api.NetworkCreateParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	n, err := s.netStore.Create(p.Name, p.Subnet, p.Driver)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return networkToInfo(n), nil
 }
 
-func (s *Server) handleNetworkList() (any, *RPCError) {
+func (s *Server) handleNetworkList() (any, *api.RPCError) {
 	nets, err := s.netStore.List()
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
-	infos := make([]NetworkInfo, len(nets))
+	infos := make([]api.NetworkInfo, len(nets))
 	for i, n := range nets {
 		infos[i] = networkToInfo(n)
 	}
 	return infos, nil
 }
 
-func (s *Server) handleNetworkGet(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleNetworkGet(params json.RawMessage) (any, *api.RPCError) {
 	var p struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	n, err := s.netStore.Get(p.Name)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return networkToInfo(n), nil
 }
 
-func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *api.RPCError) {
 	var p struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.netStore.Remove(p.Name); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleNetworkAllocateIP(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleNetworkAllocateIP(params json.RawMessage) (any, *api.RPCError) {
 	var p struct {
 		Network string `json:"network"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	ip, err := s.netStore.AllocateIP(p.Network)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"ip": ip.String()}, nil
 }
 
-func (s *Server) handleNetworkReleaseIP(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleNetworkReleaseIP(params json.RawMessage) (any, *api.RPCError) {
 	var p struct {
 		Network string `json:"network"`
 		IP      string `json:"ip"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.netStore.ReleaseIP(p.Network, p.IP); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func networkToInfo(n *network.Network) NetworkInfo {
-	return NetworkInfo{
+func networkToInfo(n *network.Network) api.NetworkInfo {
+	return api.NetworkInfo{
 		Name:      n.Name,
 		Driver:    n.Driver,
 		Subnet:    n.Subnet,
@@ -742,43 +723,43 @@ func networkToInfo(n *network.Network) NetworkInfo {
 	}
 }
 
-func (s *Server) handleDNSResolve(params json.RawMessage) (any, *RPCError) {
-	var p DNSResolveParams
+func (s *Server) handleDNSResolve(params json.RawMessage) (any, *api.RPCError) {
+	var p api.DNSResolveParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	rec, err := s.resolver.Resolve(p.Name, p.Network)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
-	return DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}, nil
+	return api.DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}, nil
 }
 
-func (s *Server) handleDNSList(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleDNSList(params json.RawMessage) (any, *api.RPCError) {
 	var p struct {
 		Network string `json:"network,omitempty"`
 	}
 	if len(params) > 0 {
 		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+			return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 		}
 	}
 	recs := s.resolver.List(p.Network)
-	out := make([]DNSRecord, len(recs))
+	out := make([]api.DNSRecord, len(recs))
 	for i, rec := range recs {
-		out[i] = DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
+		out[i] = api.DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
 	}
 	return out, nil
 }
 
-func (s *Server) handleNodeList() (any, *RPCError) {
+func (s *Server) handleNodeList() (any, *api.RPCError) {
 	if s.cluster == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Node.List (cluster disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Node.List (cluster disabled)"}
 	}
 	members := s.cluster.Members()
-	rows := make([]NodeRow, len(members))
+	rows := make([]api.NodeRow, len(members))
 	for i, m := range members {
-		rows[i] = NodeRow{
+		rows[i] = api.NodeRow{
 			ID:       m.ID,
 			Addr:     m.Addr,
 			Status:   m.Status,
@@ -788,16 +769,16 @@ func (s *Server) handleNodeList() (any, *RPCError) {
 			LastSeen: m.LastSeen.Format(time.RFC3339),
 		}
 	}
-	return NodeListResponse{Nodes: rows}, nil
+	return api.NodeListResponse{Nodes: rows}, nil
 }
 
-func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
 	if s.svcMgr == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Run (service manager disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Service.Run (service manager disabled)"}
 	}
-	var p ServiceRunParams
+	var p api.ServiceRunParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	opts := service.Options{
 		Memory:      p.Memory,
@@ -832,14 +813,14 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 	}
 	imagePath, rerr := s.resolveImageRef(p.Image)
 	if rerr != nil {
-		return nil, &RPCError{Code: -32000, Message: rerr.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: rerr.Error()}
 	}
 	svc, err := s.svcMgr.Run(ctx, p.Name, imagePath, p.Replicas, opts)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
-	return ServiceInfoResult{
+	return api.ServiceInfoResult{
 		Name:            svcInfo.Name,
 		Image:           svcInfo.Image,
 		DesiredReplicas: svcInfo.DesiredReplicas,
@@ -853,20 +834,20 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 	}, nil
 }
 
-func (s *Server) handleServiceScale(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleServiceScale(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
 	if s.svcMgr == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Scale (service manager disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Service.Scale (service manager disabled)"}
 	}
-	var p ServiceScaleParams
+	var p api.ServiceScaleParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	svc, err := s.svcMgr.Scale(ctx, p.Name, p.DesiredReplicas)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
-	return ServiceInfoResult{
+	return api.ServiceInfoResult{
 		Name:            svcInfo.Name,
 		Image:           svcInfo.Image,
 		DesiredReplicas: svcInfo.DesiredReplicas,
@@ -880,24 +861,24 @@ func (s *Server) handleServiceScale(ctx context.Context, params json.RawMessage)
 	}, nil
 }
 
-func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
 	if s.svcMgr == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Update (service manager disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Service.Update (service manager disabled)"}
 	}
-	var p ServiceUpdateParams
+	var p api.ServiceUpdateParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	imagePath, rerr := s.resolveImageRef(p.Image)
 	if rerr != nil {
-		return nil, &RPCError{Code: -32000, Message: rerr.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: rerr.Error()}
 	}
 	svc, err := s.svcMgr.Update(ctx, p.Name, imagePath, time.Duration(p.HealthTimeout)*time.Second)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
-	return ServiceInfoResult{
+	return api.ServiceInfoResult{
 		Name:            svcInfo.Name,
 		Image:           svcInfo.Image,
 		DesiredReplicas: svcInfo.DesiredReplicas,
@@ -911,18 +892,18 @@ func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage
 	}, nil
 }
 
-func (s *Server) handleServiceList() (any, *RPCError) {
+func (s *Server) handleServiceList() (any, *api.RPCError) {
 	if s.svcMgr == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Service.List (service manager disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Service.List (service manager disabled)"}
 	}
 	services, err := s.svcMgr.List()
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
-	out := make([]ServiceInfoResult, len(services))
+	out := make([]api.ServiceInfoResult, len(services))
 	for i, svc := range services {
 		svcInfo := s.svcMgr.ServiceInfo(svc)
-		out[i] = ServiceInfoResult{
+		out[i] = api.ServiceInfoResult{
 			Name:            svcInfo.Name,
 			Image:           svcInfo.Image,
 			DesiredReplicas: svcInfo.DesiredReplicas,
@@ -938,22 +919,22 @@ func (s *Server) handleServiceList() (any, *RPCError) {
 	return out, nil
 }
 
-func (s *Server) handleServiceGet(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleServiceGet(params json.RawMessage) (any, *api.RPCError) {
 	if s.svcMgr == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Get (service manager disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Service.Get (service manager disabled)"}
 	}
 	var p struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	svc, err := s.svcMgr.Get(p.Name)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	svcInfo := s.svcMgr.ServiceInfo(svc)
-	return ServiceInfoResult{
+	return api.ServiceInfoResult{
 		Name:            svcInfo.Name,
 		Image:           svcInfo.Image,
 		DesiredReplicas: svcInfo.DesiredReplicas,
@@ -967,39 +948,39 @@ func (s *Server) handleServiceGet(params json.RawMessage) (any, *RPCError) {
 	}, nil
 }
 
-func (s *Server) handleServiceRemove(ctx context.Context, params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleServiceRemove(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
 	if s.svcMgr == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Service.Remove (service manager disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Service.Remove (service manager disabled)"}
 	}
 	var p struct {
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.svcMgr.Remove(ctx, p.Name); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
-func (s *Server) handleDNSResolveAll(params json.RawMessage) (any, *RPCError) {
-	var p DNSResolveParams
+func (s *Server) handleDNSResolveAll(params json.RawMessage) (any, *api.RPCError) {
+	var p api.DNSResolveParams
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	recs, err := s.resolver.ResolveAll(p.Name, p.Network)
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
-	out := make([]DNSRecord, len(recs))
+	out := make([]api.DNSRecord, len(recs))
 	for i, rec := range recs {
-		out[i] = DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
+		out[i] = api.DNSRecord{Name: rec.Name, Network: rec.Network, IP: rec.IP, VMID: rec.VMID}
 	}
 	return out, nil
 }
 
-func (s *Server) writeError(conn net.Conn, id int64, rpcErr *RPCError) {
-	resp := Response{JSONRPC: "2.0", ID: id, Error: rpcErr}
+func (s *Server) writeError(conn net.Conn, id int64, rpcErr *api.RPCError) {
+	resp := api.Response{JSONRPC: "2.0", ID: id, Error: rpcErr}
 	_ = json.NewEncoder(conn).Encode(resp)
 }

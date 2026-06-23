@@ -428,7 +428,7 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 		return ImageManifestResult{}, fmt.Errorf("encode build request: %w", err)
 	}
 
-	fw := newFrameWriter(conn)
+	fw := NewFrameWriter(conn)
 	if _, err := io.Copy(fw, contextTar); err != nil {
 		return ImageManifestResult{}, fmt.Errorf("stream build context: %w", err)
 	}

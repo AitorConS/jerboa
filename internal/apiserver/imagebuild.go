@@ -1,4 +1,4 @@
-package api
+package apiserver
 
 import (
 	"archive/tar"
@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 )
@@ -68,15 +69,15 @@ func (s *Server) resolveMkfs(ctx context.Context) (image.MkfsFunc, error) {
 }
 
 // handleImageList returns the manifests held in the daemon's image store.
-func (s *Server) handleImageList() (any, *RPCError) {
+func (s *Server) handleImageList() (any, *api.RPCError) {
 	if s.imgStore == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Image.List (image store disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Image.List (image store disabled)"}
 	}
 	manifests, err := s.imgStore.List()
 	if err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
-	out := make([]ImageManifestResult, len(manifests))
+	out := make([]api.ImageManifestResult, len(manifests))
 	for i, m := range manifests {
 		out[i] = imageManifestResult(m)
 	}
@@ -84,25 +85,25 @@ func (s *Server) handleImageList() (any, *RPCError) {
 }
 
 // handleImageRemove deletes a name:tag (or sha) reference from the store.
-func (s *Server) handleImageRemove(params json.RawMessage) (any, *RPCError) {
+func (s *Server) handleImageRemove(params json.RawMessage) (any, *api.RPCError) {
 	if s.imgStore == nil {
-		return nil, &RPCError{Code: -32601, Message: "method not found: Image.Remove (image store disabled)"}
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Image.Remove (image store disabled)"}
 	}
 	var p struct {
 		Ref string `json:"ref"`
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.imgStore.Remove(p.Ref); err != nil {
-		return nil, &RPCError{Code: -32000, Message: err.Error()}
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
 }
 
 // imageManifestResult converts a stored manifest to its wire representation.
-func imageManifestResult(m image.Manifest) ImageManifestResult {
-	return ImageManifestResult{
+func imageManifestResult(m image.Manifest) api.ImageManifestResult {
+	return api.ImageManifestResult{
 		Name:       m.Name,
 		Tag:        m.Tag,
 		DiskDigest: m.DiskDigest,
@@ -115,42 +116,42 @@ func imageManifestResult(m image.Manifest) ImageManifestResult {
 // on the local filesystem, and stores it. The response (or error) is written
 // directly to conn; the connection is consumed and not reused afterwards.
 func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream io.Reader, conn net.Conn, reqID int64) {
-	var p BuildParams
+	var p api.BuildParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		drain(stream)
-		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
 	}
 	if s.imgStore == nil || !s.imageBuildEnabled() {
 		drain(stream)
-		s.writeError(conn, reqID, &RPCError{Code: -32601, Message: "method not found: Image.Build (image build disabled)"})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32601, Message: "method not found: Image.Build (image build disabled)"})
 		return
 	}
 
 	tmpDir, err := os.MkdirTemp("", "uni-build-ctx-*")
 	if err != nil {
 		drain(stream)
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "create build context dir: " + err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "create build context dir: " + err.Error()})
 		return
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	files, err := extractBuildContext(stream, tmpDir)
 	if err != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "extract build context: " + err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "extract build context: " + err.Error()})
 		return
 	}
 
 	binaryPath, pkgFiles, err := splitProgram(files, p.Program)
 	if err != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: err.Error()})
 		return
 	}
 
 	// Resolve mkfs lazily — the first build may download the kernel toolchain.
 	mkfs, err := s.resolveMkfs(ctx)
 	if err != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "resolve mkfs toolchain: " + err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "resolve mkfs toolchain: " + err.Error()})
 		return
 	}
 
@@ -169,14 +170,14 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Output:     io.Discard,
 	})
 	if err != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: err.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
 		return
 	}
 
-	resp := Response{JSONRPC: "2.0", ID: reqID}
+	resp := api.Response{JSONRPC: "2.0", ID: reqID}
 	raw, mErr := json.Marshal(imageManifestResult(m))
 	if mErr != nil {
-		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
 		return
 	}
 	resp.Result = raw

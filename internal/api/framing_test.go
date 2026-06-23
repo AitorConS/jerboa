@@ -16,7 +16,7 @@ func TestFraming_RoundTrip(t *testing.T) {
 		}
 
 		var wire bytes.Buffer
-		fw := newFrameWriter(&wire)
+		fw := NewFrameWriter(&wire)
 		if _, err := io.Copy(fw, bytes.NewReader(payload)); err != nil {
 			t.Fatalf("write frames: %v", err)
 		}
@@ -27,7 +27,7 @@ func TestFraming_RoundTrip(t *testing.T) {
 		// A trailing sentinel proves the reader stops exactly at the terminator.
 		wire.WriteString("SENTINEL")
 
-		fr := newFrameReader(&wire)
+		fr := NewFrameReader(&wire)
 		got, err := io.ReadAll(fr)
 		if err != nil {
 			t.Fatalf("read frames (size %d): %v", size, err)

@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/apiserver"
 	"github.com/AitorConS/unikernel-engine/internal/cluster"
 	"github.com/AitorConS/unikernel-engine/internal/config"
 	"github.com/AitorConS/unikernel-engine/internal/image"
@@ -201,7 +201,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		slog.Warn("unid: failed to restore VMs from disk", "err", err)
 	}
 
-	var clusterLister api.ClusterMemberLister
+	var clusterLister apiserver.ClusterMemberLister
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {
 		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0)
@@ -233,7 +233,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		clusterLister = &clusterMemberAdapter{cluster: swimCluster}
 	}
 
-	vmSrv, err := api.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
+	vmSrv, err := apiserver.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
@@ -358,11 +358,11 @@ type clusterMemberAdapter struct {
 	cluster *cluster.SwimCluster
 }
 
-func (a *clusterMemberAdapter) Members() []api.ClusterMember {
+func (a *clusterMemberAdapter) Members() []apiserver.ClusterMember {
 	members := a.cluster.Members()
-	out := make([]api.ClusterMember, len(members))
+	out := make([]apiserver.ClusterMember, len(members))
 	for i, m := range members {
-		out[i] = api.ClusterMember{
+		out[i] = apiserver.ClusterMember{
 			ID:       m.ID,
 			Addr:     m.Addr,
 			Status:   string(m.Status),

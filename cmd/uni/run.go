@@ -13,7 +13,6 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/signing"
-	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/spf13/cobra"
 )
@@ -57,7 +56,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				return err
 			}
 
-			portMaps, err := vm.ParsePortMaps(ports)
+			portMaps, err := api.ParsePortMaps(ports)
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
 			}
@@ -178,13 +177,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 				params.Restart = &rp
 			}
-			for _, pm := range portMaps {
-				params.PortMaps = append(params.PortMaps, api.PortMapSpec{
-					HostPort:  pm.HostPort,
-					GuestPort: pm.GuestPort,
-					Protocol:  string(pm.Protocol),
-				})
-			}
+			params.PortMaps = portMaps
 
 			startTime := time.Now()
 			info, err := client.Run(cmd.Context(), params)
@@ -341,10 +334,10 @@ func parseVolumeSpec(spec string, store *volume.Store) (api.VolumeMountSpec, err
 	}, nil
 }
 
-// parseVolumePortString parses a port spec string reusing vm.ParsePortMap.
-// Exported to share with compose.go within the same package.
-func parseVolumePortString(s string) (vm.PortMap, error) {
-	return vm.ParsePortMap(s)
+// parseVolumePortString parses a port spec string into a wire port map.
+// Shared with compose.go within the same package.
+func parseVolumePortString(s string) (api.PortMapSpec, error) {
+	return api.ParsePortMap(s)
 }
 
 func volumeStorePath(storePath string) string {
@@ -412,7 +405,7 @@ func parseHealthCheck(spec string) (api.HealthCheckSpec, error) {
 func parseRestartPolicy(spec string) (api.RestartSpec, error) {
 	parts := strings.SplitN(spec, ":", 2)
 	policy := strings.ToLower(parts[0])
-	if policy != string(vm.RestartNever) && policy != string(vm.RestartOnFailure) && policy != string(vm.RestartAlways) {
+	if policy != "never" && policy != "on-failure" && policy != "always" {
 		return api.RestartSpec{}, fmt.Errorf("restart policy must be never, on-failure, or always, got %q", policy)
 	}
 	rs := api.RestartSpec{Policy: policy}

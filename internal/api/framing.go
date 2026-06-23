@@ -22,7 +22,7 @@ type frameWriter struct {
 	w io.Writer
 }
 
-func newFrameWriter(w io.Writer) *frameWriter { return &frameWriter{w: w} }
+func NewFrameWriter(w io.Writer) *frameWriter { return &frameWriter{w: w} }
 
 func (fw *frameWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
@@ -58,7 +58,7 @@ type frameReader struct {
 	done      bool
 }
 
-func newFrameReader(r io.Reader) *frameReader { return &frameReader{r: r} }
+func NewFrameReader(r io.Reader) *frameReader { return &frameReader{r: r} }
 
 func (fr *frameReader) Read(p []byte) (int, error) {
 	if fr.done {

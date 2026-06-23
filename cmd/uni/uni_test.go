@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/apiserver"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
@@ -50,7 +51,7 @@ func startDaemonWithStore(t *testing.T, storePath string) (*api.Client, string) 
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
 	imgStore, err := image.NewStore(storePath)
 	require.NoError(t, err)

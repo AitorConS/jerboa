@@ -1,4 +1,4 @@
-package api_test
+package apiserver_test
 
 import (
 	"archive/tar"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/apiserver"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
@@ -57,7 +58,7 @@ func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
 	srv.SetImageStore(store)
 	srv.EnableImageBuild(fakeMkfs(t))
@@ -198,7 +199,7 @@ func TestImageBuild_Disabled(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
 	// EnableImageBuild intentionally not called.
 

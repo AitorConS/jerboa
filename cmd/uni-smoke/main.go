@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/apiserver"
 	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/service"
@@ -90,7 +91,7 @@ func run() int {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	svcMgr := service.NewManager(mgr, svcStore)
 	clusterLister := staticClusterLister{}
-	srv, err := api.NewServer(mgr, netStore, svcMgr, socketPath, nil, "smoke", clusterLister)
+	srv, err := apiserver.NewServer(mgr, netStore, svcMgr, socketPath, nil, "smoke", clusterLister)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (start api server): %v\n", err)
 		return 2
@@ -304,8 +305,8 @@ func trim(parts ...string) string {
 
 type staticClusterLister struct{}
 
-func (staticClusterLister) Members() []api.ClusterMember {
-	return []api.ClusterMember{{
+func (staticClusterLister) Members() []apiserver.ClusterMember {
+	return []apiserver.ClusterMember{{
 		ID:       "smoke-node-1",
 		Addr:     "127.0.0.1:7946",
 		Status:   "alive",

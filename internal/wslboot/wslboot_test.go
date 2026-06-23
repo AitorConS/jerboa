@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/apiserver"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
@@ -57,7 +57,7 @@ func TestHealthy(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "test", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "test", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

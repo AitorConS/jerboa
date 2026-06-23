@@ -1,4 +1,4 @@
-package api_test
+package apiserver_test
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/apiserver"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
@@ -37,7 +38,7 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -143,7 +144,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -183,7 +184,7 @@ func TestServer_UnknownMethod(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -412,7 +413,7 @@ func TestServer_DaemonVersion(t *testing.T) {
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
 
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "test-v1.2.3", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "test-v1.2.3", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -441,7 +442,7 @@ func TestServer_DaemonShutdown(t *testing.T) {
 	var shutdownCalled atomic.Bool
 	shutdownFn := func() { shutdownCalled.Store(true) }
 
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, shutdownFn, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, shutdownFn, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -620,10 +621,10 @@ func TestServer_StatsNotFound(t *testing.T) {
 }
 
 type fakeClusterLister struct {
-	members []api.ClusterMember
+	members []apiserver.ClusterMember
 }
 
-func (f *fakeClusterLister) Members() []api.ClusterMember {
+func (f *fakeClusterLister) Members() []apiserver.ClusterMember {
 	return f.members
 }
 
@@ -643,13 +644,13 @@ func TestServer_NodeList_WithCluster(t *testing.T) {
 	require.NoError(t, err)
 
 	lister := &fakeClusterLister{
-		members: []api.ClusterMember{
+		members: []apiserver.ClusterMember{
 			{ID: "node-1", Addr: "10.0.0.1:7946", Status: "alive", VMCount: 3, CPUCap: 8, MemCap: 16 * 1024 * 1024 * 1024, LastSeen: time.Now()},
 			{ID: "node-2", Addr: "10.0.0.2:7946", Status: "suspect", VMCount: 1, CPUCap: 4, MemCap: 8 * 1024 * 1024 * 1024, LastSeen: time.Now()},
 		},
 	}
 
-	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", lister)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", lister)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
