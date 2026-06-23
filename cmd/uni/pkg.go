@@ -6,13 +6,12 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
-	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/spf13/cobra"
 )
 
-func newPkgCmd() *cobra.Command {
+func newPkgCmd(endpoint *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pkg",
 		Short: "Manage runtime packages for unikernel images",
@@ -25,7 +24,7 @@ func newPkgCmd() *cobra.Command {
 		newPkgCreateCmd(),
 		newPkgFromDockerCmd(),
 		newPkgPushCmd(),
-		newPkgLoadCmd(),
+		newPkgLoadCmd(endpoint),
 	)
 	return cmd
 }
@@ -543,7 +542,7 @@ Example:
 	return cmd
 }
 
-func newPkgLoadCmd() *cobra.Command {
+func newPkgLoadCmd(endpoint *string) *cobra.Command {
 	var source string
 	var detach bool
 	cmd := &cobra.Command{
@@ -599,36 +598,26 @@ Examples:
 				binaryPath = files[0]
 			}
 
-			home, homeErr := os.UserHomeDir()
-			if homeErr != nil {
-				return fmt.Errorf("pkg load: home dir: %w", homeErr)
-			}
-			imgStorePath := filepath.Join(home, ".uni", "images")
-			imgStore, err := image.NewStore(imgStorePath)
+			// Stream the package to the daemon, which assembles the image with
+			// mkfs on its own filesystem and stores it.
+			client, err := api.Dial(*endpoint)
 			if err != nil {
-				return fmt.Errorf("pkg load: open image store: %w", err)
+				return fmt.Errorf("pkg load: connect to daemon: %w", err)
 			}
+			defer func() { _ = client.Close() }()
 
-			toolsDir := defaultToolsPath()
-			mkfsPath := os.Getenv("UNI_MKFS")
-			mkfsRun, err := tools.ResolveMkfs(cmd.Context(), toolsDir, mkfsPath)
-			if err != nil {
-				return fmt.Errorf("pkg load: resolve mkfs: %w", err)
-			}
-
-			imageName := "pkg-load"
-			m, err := image.NewBuilder(imgStore).Build(cmd.Context(), image.BuildConfig{
-				Name:       imageName,
-				BinaryPath: binaryPath,
-				MkfsRun:    mkfsRun,
-				Memory:     "256M",
-				PkgFiles:   pkgFiles,
-			})
+			pr := buildContextReader(binaryPath, pkgFiles)
+			defer func() { _ = pr.Close() }()
+			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
+				Name:    "pkg-load",
+				Program: buildProgramPath,
+				Memory:  "256M",
+			}, pr)
 			if err != nil {
 				return fmt.Errorf("pkg load build: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Built image %s:%s (%s)\n", m.Name, m.Tag, m.DiskDigest)
+			fmt.Fprintf(cmd.OutOrStdout(), "Built image %s:%s (%s)\n", res.Name, res.Tag, res.DiskDigest)
 
 			if detach {
 				return nil

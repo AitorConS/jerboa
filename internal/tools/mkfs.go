@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/AitorConS/unikernel-engine/internal/httpclient"
@@ -21,7 +20,7 @@ import (
 //
 // Downloads the latest kernel artifacts to toolsDir on first use and caches them.
 // If override is non-empty it is used as the mkfs binary path; kernel/boot still
-// come from toolsDir. On Windows all three binaries are invoked through WSL2.
+// come from toolsDir.
 func ResolveMkfs(ctx context.Context, toolsDir, override string) (image.MkfsFunc, error) {
 	if !Exist(toolsDir) {
 		if err := DownloadVersion(ctx, toolsDir, "latest"); err != nil {
@@ -36,9 +35,8 @@ func ResolveMkfs(ctx context.Context, toolsDir, override string) (image.MkfsFunc
 	bootImg := filepath.Join(toolsDir, "boot.img")
 	kernelImg := filepath.Join(toolsDir, "kernel.img")
 
-	if runtime.GOOS == "windows" {
-		return wslFunc(mkfsPath, bootImg, kernelImg)
-	}
+	// mkfs always runs on the daemon's Linux filesystem; on Windows the daemon
+	// lives in WSL2 (see internal/wslboot), so no host-side WSL tunneling.
 	return directFunc(mkfsPath, bootImg, kernelImg), nil
 }
 
