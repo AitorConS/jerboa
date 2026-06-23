@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"github.com/AitorConS/unikernel-engine/internal/config"
+	"github.com/AitorConS/unikernel-engine/internal/wslboot"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +38,7 @@ func newRootCmd() *cobra.Command {
 		Version: version,
 		// Resolve the daemon endpoint before any subcommand runs:
 		// --host > --socket > UNI_HOST > config file > platform default.
-		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			override := hostFlag
 			if override == "" {
 				override = socketFlag
@@ -43,6 +48,13 @@ func newRootCmd() *cobra.Command {
 			// (which reads UNI_AUTH_TOKEN) authenticates transparently.
 			if tok := config.ResolveToken(); tok != "" {
 				_ = os.Setenv("UNI_AUTH_TOKEN", tok)
+			}
+			// On Windows the daemon lives in WSL2: auto-start it for any
+			// daemon-backed command, like Docker Desktop.
+			if runtime.GOOS == "windows" && strings.HasPrefix(endpoint, "tcp://") && needsDaemon(cmd) {
+				if err := ensureDaemon(cmd.Context(), endpoint); err != nil {
+					return err
+				}
 			}
 			return nil
 		},
@@ -86,6 +98,59 @@ func newRootCmd() *cobra.Command {
 		newConfigCmd(),
 	)
 	return root
+}
+
+// needsDaemon reports whether the command (or any ancestor) talks to the
+// daemon. Local-only command groups and the bare root are excluded so that
+// e.g. `uni config` or `uni kernel` never spin up WSL.
+func needsDaemon(cmd *cobra.Command) bool {
+	localGroups := map[string]bool{
+		"config": true, "kernel": true, "pkg": true, "volume": true,
+		"sign": true, "verify": true, "completion": true, "help": true,
+	}
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "uni" && c.Parent() == nil {
+			break // reached root
+		}
+		if localGroups[c.Name()] {
+			return false
+		}
+	}
+	return cmd.Name() != "uni"
+}
+
+// ensureDaemon resolves (or generates) the auth token and makes sure the WSL2
+// daemon is running before a command connects.
+func ensureDaemon(ctx context.Context, endpoint string) error {
+	token := config.ResolveToken()
+	if token == "" {
+		t, err := wslboot.LoadOrCreateToken(daemonJSONPath())
+		if err != nil {
+			return fmt.Errorf("daemon token: %w", err)
+		}
+		token = t
+		_ = os.Setenv("UNI_AUTH_TOKEN", token)
+	}
+	var distro, unidPath string
+	if cfg, err := config.Load(config.DefaultPath()); err == nil {
+		distro = cfg.Daemon.Distro
+		unidPath = cfg.Daemon.UnidPath
+	}
+	return wslboot.EnsureDaemon(ctx, wslboot.Config{
+		Endpoint: endpoint,
+		Distro:   distro,
+		Token:    token,
+		UnidPath: unidPath,
+	})
+}
+
+// daemonJSONPath returns the path to the client-owned daemon secret file.
+func daemonJSONPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".uni", "daemon.json")
+	}
+	return filepath.Join(home, ".uni", "daemon.json")
 }
 
 func defaultStorePath() string {

@@ -30,6 +30,8 @@ The endpoint is resolved in priority order: `--host` flag → `UNI_HOST` environ
 
 **Authentication.** When the daemon is started with a token (`unid --auth-token` or `UNI_AUTH_TOKEN`), every connection must complete an `Auth.Hello` handshake first. The client reads its token from `UNI_AUTH_TOKEN` or `[daemon] token` in `~/.uni/config.toml`. A token is mandatory for any `tcp://` endpoint (loopback included), since a TCP port is reachable by any local process; `unix://` sockets can rely on filesystem permissions instead.
 
+**Windows (WSL2).** On Windows the daemon runs inside a WSL2 distribution and `uni.exe` is a thin client that talks to it over loopback TCP (`tcp://127.0.0.1:7890`). The first daemon-backed command auto-starts `unid` inside WSL2 (like Docker Desktop): the client generates a token, persists it to `%USERPROFILE%\.uni\daemon.json`, and launches the daemon with the token passed through the environment (never the command line). Configure the distro and daemon binary via `[daemon] distro` and `[daemon] unid_path` in `~/.uni/config.toml`; `unid` must be installed inside the distro. The daemon's image store lives on the distro's ext4 filesystem.
+
 ---
 
 ## VM Commands
