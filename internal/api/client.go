@@ -19,11 +19,16 @@ type Client struct {
 	seq  atomic.Int64
 }
 
-// Dial connects to the unid server at socketPath.
-func Dial(socketPath string) (*Client, error) {
-	conn, err := net.Dial("unix", socketPath) //nolint:noctx // persistent daemon connection; no request context
+// Dial connects to the unid server at endpoint. The endpoint may carry a
+// scheme (unix:// or tcp://); a bare value is treated as a Unix socket path.
+func Dial(endpoint string) (*Client, error) {
+	network, address, err := parseEndpoint(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("api client dial %s: %w", socketPath, err)
+		return nil, err
+	}
+	conn, err := net.Dial(network, address) //nolint:noctx // persistent daemon connection; no request context
+	if err != nil {
+		return nil, fmt.Errorf("api client dial %s: %w", endpoint, err)
 	}
 	return &Client{
 		conn: conn,

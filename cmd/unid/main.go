@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -38,7 +37,8 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath   string
+		hostFlag     string
+		socketFlag   string
 		qemuBin      string
 		storePath    string
 		vmStoreType  string
@@ -57,11 +57,21 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return serve(cmd.Context(), socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
+			endpoint := hostFlag
+			if endpoint == "" {
+				endpoint = socketFlag
+			}
+			if endpoint == "" {
+				endpoint = config.DefaultEndpoint()
+			}
+			return serve(cmd.Context(), endpoint, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
 		},
 	}
-	root.Flags().StringVar(&socketPath, "socket", defaultSocketPath(),
-		"Unix socket path for VM management API")
+	root.Flags().StringVarP(&hostFlag, "host", "H", "",
+		"daemon listen endpoint (unix:///path or tcp://host:port)")
+	root.Flags().StringVar(&socketFlag, "socket", "",
+		"Unix socket path for VM management API (deprecated: use --host)")
+	_ = root.Flags().MarkDeprecated("socket", "use --host instead")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
@@ -89,7 +99,7 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath string) error {
+func serve(ctx context.Context, endpoint, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath string) error {
 	setupLogger(logFormat)
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
@@ -215,25 +225,18 @@ func serve(ctx context.Context, socketPath, qemuBin, storePath, vmStoreType, met
 		clusterLister = &clusterMemberAdapter{cluster: swimCluster}
 	}
 
-	vmSrv, err := api.NewServer(mgr, netStore, svcMgr, socketPath, stop, version, clusterLister)
+	vmSrv, err := api.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
 	}
 
-	slog.Info("unid listening", "socket", socketPath, "qemu", qemuBin)
+	slog.Info("unid listening", "endpoint", endpoint, "qemu", qemuBin)
 
 	if err := vmSrv.Serve(ctx); err != nil {
 		return fmt.Errorf("unid serve: %w", err)
 	}
 	slog.Info("unid shutdown complete")
 	return nil
-}
-
-func defaultSocketPath() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.TempDir(), "unid.sock")
-	}
-	return "/var/run/unid.sock"
 }
 
 func defaultToolsPath() string {

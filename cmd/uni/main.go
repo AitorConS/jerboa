@@ -3,9 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
-	"runtime"
 
+	"github.com/AitorConS/unikernel-engine/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +19,9 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		socketPath string
+		endpoint   string // resolved daemon endpoint passed to subcommands
+		hostFlag   string
+		socketFlag string
 		storePath  string
 		outputFmt  string
 		verbose    bool
@@ -30,9 +31,22 @@ func newRootCmd() *cobra.Command {
 		Use:     "uni",
 		Short:   "Unikernel engine CLI",
 		Version: version,
+		// Resolve the daemon endpoint before any subcommand runs:
+		// --host > --socket > UNI_HOST > config file > platform default.
+		PersistentPreRunE: func(_ *cobra.Command, _ []string) error {
+			override := hostFlag
+			if override == "" {
+				override = socketFlag
+			}
+			endpoint = config.ResolveEndpoint(override)
+			return nil
+		},
 	}
-	root.PersistentFlags().StringVar(&socketPath, "socket", defaultSocketPath(),
-		"unid daemon socket path")
+	root.PersistentFlags().StringVarP(&hostFlag, "host", "H", "",
+		"unid daemon endpoint (unix:///path or tcp://host:port)")
+	root.PersistentFlags().StringVar(&socketFlag, "socket", "",
+		"unid daemon socket path (deprecated: use --host)")
+	_ = root.PersistentFlags().MarkDeprecated("socket", "use --host instead")
 	root.PersistentFlags().StringVar(&storePath, "store",
 		defaultStorePath(), "local image store path")
 	root.PersistentFlags().StringVar(&outputFmt, "output", "table",
@@ -41,39 +55,32 @@ func newRootCmd() *cobra.Command {
 		"show raw build and download output (useful for debugging)")
 
 	root.AddCommand(
-		newRunCmd(&socketPath, &storePath),
+		newRunCmd(&endpoint, &storePath),
 		newBuildCmd(&storePath, &verbose),
 		newImagesCmd(&storePath, &outputFmt),
 		newRmiCmd(&storePath),
 		newSignCmd(&storePath),
 		newVerifyCmd(&storePath),
-		newPsCmd(&socketPath, &outputFmt),
-		newStatusCmd(&socketPath, &outputFmt),
-		newLogsCmd(&socketPath),
-		newStopCmd(&socketPath),
-		newRmCmd(&socketPath),
-		newInspectCmd(&socketPath),
-		newExecCmd(&socketPath),
-		newComposeCmd(&socketPath, &storePath, &outputFmt),
+		newPsCmd(&endpoint, &outputFmt),
+		newStatusCmd(&endpoint, &outputFmt),
+		newLogsCmd(&endpoint),
+		newStopCmd(&endpoint),
+		newRmCmd(&endpoint),
+		newInspectCmd(&endpoint),
+		newExecCmd(&endpoint),
+		newComposeCmd(&endpoint, &storePath, &outputFmt),
 		newVolumeCmd(&storePath, &outputFmt),
 		newKernelCmd(&verbose),
 		newPkgCmd(),
-		newUpgradeCmd(&socketPath, &verbose),
-		newNetworkCmd(&socketPath, &outputFmt),
-		newDNSCmd(&socketPath, &outputFmt),
-		newStatsCmd(&socketPath, &outputFmt),
-		newNodeCmd(&socketPath, &outputFmt),
-		newServiceCmd(&socketPath, &outputFmt),
+		newUpgradeCmd(&endpoint, &verbose),
+		newNetworkCmd(&endpoint, &outputFmt),
+		newDNSCmd(&endpoint, &outputFmt),
+		newStatsCmd(&endpoint, &outputFmt),
+		newNodeCmd(&endpoint, &outputFmt),
+		newServiceCmd(&endpoint, &outputFmt),
 		newConfigCmd(),
 	)
 	return root
-}
-
-func defaultSocketPath() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(os.TempDir(), "unid.sock")
-	}
-	return "/var/run/unid.sock"
 }
 
 func defaultStorePath() string {

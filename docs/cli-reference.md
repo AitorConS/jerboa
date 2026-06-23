@@ -21,9 +21,12 @@ Every `uni` command accepts these flags:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--socket` | `/var/run/unid.sock` (Linux) / `%TEMP%\unid.sock` (Windows) | Path to the `unid` Unix socket |
+| `--host`, `-H` | `unix:///var/run/unid.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | `unid` daemon endpoint (`unix:///path` or `tcp://host:port`) |
+| `--socket` | — | Deprecated alias for `--host` (treated as a Unix socket path) |
 | `--store` | `~/.uni/images` | Local image store directory |
 | `--output` | `table` | Output format: `table` or `json` |
+
+The endpoint is resolved in priority order: `--host` flag → `UNI_HOST` environment variable → `[daemon] endpoint` in `~/.uni/config.toml` → per-platform default.
 
 ---
 
@@ -1587,7 +1590,8 @@ When using `uni run --attach`, the command blocks until the VM reaches the `stop
 
 | Flag | Default | Description |
 |---|---|---|
-| `--socket` | `/var/run/unid.sock` (Linux) / `%TEMP%\unid.sock` (Windows) | Unix socket path for VM management API |
+| `--host`, `-H` | `unix:///var/run/unid.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | Listen endpoint (`unix:///path` or `tcp://host:port`) |
+| `--socket` | — | Deprecated alias for `--host` (treated as a Unix socket path) |
 | `--qemu` | `qemu-system-x86_64` | QEMU binary to use |
 | `--store` | `~/.uni/images` | Image store root directory |
 | `--vm-store` | `file` | VM state backend: `file` (per-VM JSON files) or `sqlite` (single database) |

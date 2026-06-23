@@ -43,20 +43,37 @@ type Server struct {
 	cluster    ClusterMemberLister
 }
 
-// NewServer creates a Server that will listen on socketPath.
+// NewServer creates a Server that will listen on endpoint. The endpoint may
+// carry a scheme (unix:// or tcp://); a bare value is treated as a Unix socket
+// path. For unix endpoints any stale socket file is removed before binding.
 // shutdownFn is called (in a goroutine) when a Daemon.Shutdown RPC is received;
 // pass nil to disable remote shutdown.
 // version is returned by Daemon.Version RPC; pass "" if unknown.
-// Any existing socket file at socketPath is removed before binding.
-func NewServer(mgr vm.Manager, netStore *network.Store, svcMgr *service.Manager, socketPath string, shutdownFn func(), version string, clusterLister ClusterMemberLister) (*Server, error) {
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("api server remove stale socket: %w", err)
-	}
-	l, err := net.Listen("unix", socketPath) //nolint:noctx // server setup; lifecycle managed by Serve's ctx
+func NewServer(mgr vm.Manager, netStore *network.Store, svcMgr *service.Manager, endpoint string, shutdownFn func(), version string, clusterLister ClusterMemberLister) (*Server, error) {
+	l, err := listen(endpoint)
 	if err != nil {
-		return nil, fmt.Errorf("api server listen %s: %w", socketPath, err)
+		return nil, err
 	}
 	return &Server{mgr: mgr, netStore: netStore, svcMgr: svcMgr, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
+}
+
+// listen binds a net.Listener for the given endpoint, clearing stale Unix
+// sockets first.
+func listen(endpoint string) (net.Listener, error) {
+	network, address, err := parseEndpoint(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if network == "unix" {
+		if err := os.Remove(address); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("api server remove stale socket: %w", err)
+		}
+	}
+	l, err := net.Listen(network, address) //nolint:noctx // server setup; lifecycle managed by Serve's ctx
+	if err != nil {
+		return nil, fmt.Errorf("api server listen %s: %w", endpoint, err)
+	}
+	return l, nil
 }
 
 // Serve accepts connections and handles them until ctx is canceled.

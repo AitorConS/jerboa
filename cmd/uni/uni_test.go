@@ -66,7 +66,7 @@ func execRoot(t *testing.T, socketPath, storePath string, args ...string) string
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	allArgs := []string{"--socket", socketPath, "--store", storePath}
+	allArgs := []string{"--host", socketPath, "--store", storePath}
 	allArgs = append(allArgs, args...)
 	root.SetArgs(allArgs)
 	err := root.Execute()
@@ -297,7 +297,7 @@ func execRootExpectError(t *testing.T, socketPath, storePath string, args ...str
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)
-	allArgs := []string{"--socket", socketPath, "--store", storePath}
+	allArgs := []string{"--host", socketPath, "--store", storePath}
 	allArgs = append(allArgs, args...)
 	root.SetArgs(allArgs)
 	err := root.Execute()

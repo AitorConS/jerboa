@@ -4,13 +4,50 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/pelletier/go-toml/v2"
 )
 
 // Config holds global UniCli configuration stored at ~/.uni/config.toml.
 type Config struct {
-	Hypervisor string `toml:"hypervisor"`
+	Hypervisor string       `toml:"hypervisor"`
+	Daemon     DaemonConfig `toml:"daemon"`
+}
+
+// DaemonConfig holds client-side daemon connection settings.
+type DaemonConfig struct {
+	// Endpoint is the daemon address (e.g. unix:///var/run/unid.sock or
+	// tcp://127.0.0.1:7890). Empty falls back to the per-platform default.
+	Endpoint string `toml:"endpoint"`
+	// Distro is the WSL2 distribution to host the daemon on Windows.
+	Distro string `toml:"distro"`
+}
+
+// DefaultEndpoint returns the per-platform default daemon endpoint. Windows
+// talks to a daemon running inside WSL2 over loopback TCP; other platforms use
+// a local Unix socket.
+func DefaultEndpoint() string {
+	if runtime.GOOS == "windows" {
+		return "tcp://127.0.0.1:7890"
+	}
+	return "unix:///var/run/unid.sock"
+}
+
+// ResolveEndpoint determines the daemon endpoint using the precedence:
+// explicit override > UNI_HOST env var > config file > platform default.
+// override carries the value of an explicit CLI flag (empty if unset).
+func ResolveEndpoint(override string) string {
+	if override != "" {
+		return override
+	}
+	if v := os.Getenv("UNI_HOST"); v != "" {
+		return v
+	}
+	if cfg, err := Load(DefaultPath()); err == nil && cfg.Daemon.Endpoint != "" {
+		return cfg.Daemon.Endpoint
+	}
+	return DefaultEndpoint()
 }
 
 // DefaultPath returns the default config file location (~/.uni/config.toml).

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/unikernel-engine/internal/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,12 +40,12 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	cancel()
 }
 
-func TestDefaultSocketPath(t *testing.T) {
-	p := defaultSocketPath()
+func TestDefaultEndpoint(t *testing.T) {
+	ep := config.DefaultEndpoint()
 	if runtime.GOOS == "windows" {
-		require.Contains(t, p, "unid.sock")
+		require.Equal(t, "tcp://127.0.0.1:7890", ep)
 	} else {
-		require.Contains(t, p, "/var/run/unid.sock")
+		require.Equal(t, "unix:///var/run/unid.sock", ep)
 	}
 }
 
@@ -55,6 +56,7 @@ func TestDefaultStorePath(t *testing.T) {
 
 func TestNewRootCmd_Flags(t *testing.T) {
 	cmd := newRootCmd()
+	require.NotNil(t, cmd.Flag("host"))
 	require.NotNil(t, cmd.Flag("socket"))
 	require.NotNil(t, cmd.Flag("qemu"))
 	require.NotNil(t, cmd.Flag("store"))
