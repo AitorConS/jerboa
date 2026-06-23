@@ -137,15 +137,11 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					continue
 				}
 
-				diskPath, resolveErr := resolveImage(svc.Image, *storePath, svc.Memory, svc.CPUs)
-				if resolveErr != nil {
-					return fmt.Errorf("compose up: service %q: %w", name, resolveErr)
-				}
 				mem := svc.Memory
 				if mem == "" {
 					mem = "256M"
 				}
-				params, buildErr := buildServiceRunParams(svc, diskPath, mem, *storePath)
+				params, buildErr := buildServiceRunParams(svc, mem, *storePath)
 				if buildErr != nil {
 					return fmt.Errorf("compose up: service %q: %w", name, buildErr)
 				}
@@ -456,11 +452,7 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 		if mem == "" {
 			mem = "256M"
 		}
-		diskPath, err := resolveImage(svc.Image, storePath, mem, svc.CPUs)
-		if err != nil {
-			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
-		}
-		params, err := buildServiceRunParams(svc, diskPath, mem, storePath)
+		params, err := buildServiceRunParams(svc, mem, storePath)
 		if err != nil {
 			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
 		}
@@ -474,10 +466,17 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 	return state, nil
 }
 
-// buildServiceRunParams converts a compose.Service into an api.RunParams.
-func buildServiceRunParams(svc compose.Service, diskPath, mem, storePath string) (api.RunParams, error) {
+// buildServiceRunParams converts a compose.Service into an api.RunParams. The
+// service image is sent as a reference (resolved by the daemon) or a direct
+// path, mirroring the run command.
+func buildServiceRunParams(svc compose.Service, mem, storePath string) (api.RunParams, error) {
+	imageRef, imagePath, err := splitImageArg(svc.Image)
+	if err != nil {
+		return api.RunParams{}, fmt.Errorf("image: %w", err)
+	}
 	params := api.RunParams{
-		ImagePath: diskPath,
+		Image:     imageRef,
+		ImagePath: imagePath,
 		Memory:    mem,
 		CPUs:      svc.CPUs,
 		Env:       svc.Environment,

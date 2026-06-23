@@ -46,12 +46,14 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			imgArg := args[0]
-			diskPath, err := resolveImage(imgArg, *storePath, memory, cpus)
+			// A file path is sent to the daemon as a direct image path; a
+			// name:tag reference is resolved by the daemon against its store.
+			imageRef, imagePath, err := splitImageArg(imgArg)
 			if err != nil {
-				return fmt.Errorf("run: resolve image: %w", err)
+				return fmt.Errorf("run: %w", err)
 			}
 
-			if err := verifyImageSignature(cmd, imgArg, *storePath, diskPath, verify); err != nil {
+			if err := verifyImageSignature(cmd, imgArg, *storePath, imagePath, verify); err != nil {
 				return err
 			}
 
@@ -127,7 +129,8 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			}
 
 			params := api.RunParams{
-				ImagePath:   diskPath,
+				Image:       imageRef,
+				ImagePath:   imagePath,
 				Memory:      memory,
 				CPUs:        cpus,
 				NetworkName: network,
@@ -224,32 +227,17 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	return cmd
 }
 
-// resolveImage returns the disk path for imgArg.
-// If imgArg looks like a file path it is returned as-is; otherwise it is
-// treated as a name:tag reference and looked up in the local image store.
-func resolveImage(imgArg, storePath, memory string, cpus int) (string, error) {
+// splitImageArg classifies an image argument. A filesystem path is returned as
+// imagePath (validated not to be a raw ELF binary); a name:tag reference is
+// returned as imageRef for the daemon to resolve against its store.
+func splitImageArg(imgArg string) (imageRef, imagePath string, err error) {
 	if isFilePath(imgArg) {
 		if err := rejectELF(imgArg); err != nil {
-			return "", err
+			return "", "", err
 		}
-		return imgArg, nil
+		return "", imgArg, nil
 	}
-	store, err := image.NewStore(storePath)
-	if err != nil {
-		return "", fmt.Errorf("open image store: %w", err)
-	}
-	m, diskPath, err := store.Get(imgArg)
-	if err != nil {
-		return "", fmt.Errorf("image %s not found (use 'uni pull' or provide a file path): %w", imgArg, err)
-	}
-	// Use image defaults when caller did not override.
-	if memory == "256M" && m.Config.Memory != "" {
-		_ = memory // caller value takes precedence
-	}
-	if cpus == 1 && m.Config.CPUs > 0 {
-		_ = cpus
-	}
-	return diskPath, nil
+	return imgArg, "", nil
 }
 
 // rejectELF returns an error if path is an ELF binary instead of a disk image.

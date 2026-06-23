@@ -427,20 +427,18 @@ When `<path>` is a directory, `uni build` detects the language from project mark
 | `--tag` | `latest` | Image tag |
 | `--memory` | `256M` | Default VM memory baked into the image |
 | `--cpus` | `1` | Default CPU count baked into the image |
-| `--mkfs` | *(auto-downloaded to `~/.uni/tools/mkfs`)* | Path to Nanos mkfs binary — overrides auto-download (env: `UNI_MKFS`) |
-| `-U`, `--update-kernel` | `false` | Auto-approve kernel update if one is available (skips the `[y/N]` prompt) |
 | `--pkg` | — | Include package in the image (repeatable), e.g. `node:20`. Downloads, extracts, and includes the package files |
 | `--pkg-source` | `uni` | Source to resolve `--pkg` (and language-driver auto-detected runtime packages) from: `uni` or `ops` |
 | `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`, `raw`) |
 | `--platform` | *(native)* | Target platform for cross-compilation (e.g. `linux/amd64`, `linux/arm64`) |
 | `--port` | `0` | Declared service port; enables the `network` section in the image manifest (required for any HTTP server to bind — see [Networking & Environment in the Image Manifest](#networking-environment-in-the-image-manifest)) |
 
-If the kernel tools are already cached and a newer kernel version is available, `uni build` will prompt before proceeding:
-
-```
-⚠  New kernel version available: v0.1.1 (installed: v0.1.0)
-Update kernel before building? [y/N]
-```
+`uni build` requires a running `unid` daemon. The client compiles the project
+(and resolves `--pkg` packages) locally, then streams the build context to the
+daemon, which runs `mkfs` on its own filesystem and stores the resulting image.
+The image lives in the daemon's store — list it with `uni images` and run it by
+`name:tag`. The kernel toolchain is managed by the daemon (see `uni kernel`),
+not by the build command.
 
 **Examples:**
 

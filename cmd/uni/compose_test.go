@@ -262,7 +262,7 @@ func TestBuildServiceRunParams_HealthCheckAndRestart(t *testing.T) {
 		Restart:     "always:3",
 	}
 
-	params, err := buildServiceRunParams(svc, "disk.img", "256M", storePath)
+	params, err := buildServiceRunParams(svc, "256M", storePath)
 	require.NoError(t, err)
 	require.NotNil(t, params.HealthCheck)
 	require.Equal(t, "http", params.HealthCheck.Type)
@@ -277,7 +277,7 @@ func TestBuildServiceRunParams_InvalidHealthCheck(t *testing.T) {
 	storePath := t.TempDir()
 	svc := compose.Service{Image: "disk.img", HealthCheck: "udp:53"}
 
-	_, err := buildServiceRunParams(svc, "disk.img", "256M", storePath)
+	_, err := buildServiceRunParams(svc, "256M", storePath)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "health_check")
 }
@@ -286,7 +286,7 @@ func TestBuildServiceRunParams_InvalidRestart(t *testing.T) {
 	storePath := t.TempDir()
 	svc := compose.Service{Image: "disk.img", Restart: "sometimes"}
 
-	_, err := buildServiceRunParams(svc, "disk.img", "256M", storePath)
+	_, err := buildServiceRunParams(svc, "256M", storePath)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "restart")
 }

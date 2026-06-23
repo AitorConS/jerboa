@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -45,6 +47,7 @@ type Server struct {
 	resolver   *scheduler.Resolver
 	cluster    ClusterMemberLister
 	imgStore   *image.Store
+	mkfsMu     sync.RWMutex
 	mkfs       image.MkfsFunc
 }
 
@@ -219,6 +222,33 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn, dec 
 	}
 }
 
+// resolveImageRef turns an image reference into a bootable disk path. A value
+// that looks like a filesystem path is returned unchanged; otherwise it is
+// resolved against the daemon image store.
+func (s *Server) resolveImageRef(image string) (string, error) {
+	if image == "" {
+		return "", fmt.Errorf("image is required")
+	}
+	if looksLikePath(image) {
+		return image, nil
+	}
+	if s.imgStore == nil {
+		return "", fmt.Errorf("image store disabled: cannot resolve image reference %q", image)
+	}
+	_, diskPath, err := s.imgStore.Get(image)
+	if err != nil {
+		return "", fmt.Errorf("image %q not found: %w", image, err)
+	}
+	return diskPath, nil
+}
+
+// looksLikePath reports whether s is a filesystem path rather than a name:tag
+// image reference. name:tag values contain a ':' but no path separators and no
+// Windows drive prefix.
+func looksLikePath(s string) bool {
+	return strings.ContainsAny(s, "/\\") || (len(s) >= 2 && s[1] == ':')
+}
+
 func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *RPCError) {
 	var p RunParams
 	if err := json.Unmarshal(params, &p); err != nil {
@@ -226,14 +256,11 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 	}
 	imagePath := p.ImagePath
 	if p.Image != "" {
-		if s.imgStore == nil {
-			return nil, &RPCError{Code: -32000, Message: "image store disabled: cannot resolve image reference " + p.Image}
+		resolved, rerr := s.resolveImageRef(p.Image)
+		if rerr != nil {
+			return nil, &RPCError{Code: -32000, Message: rerr.Error()}
 		}
-		_, diskPath, err := s.imgStore.Get(p.Image)
-		if err != nil {
-			return nil, &RPCError{Code: -32000, Message: fmt.Sprintf("image %q not found: %v", p.Image, err)}
-		}
-		imagePath = diskPath
+		imagePath = resolved
 	}
 	cfg := vm.Config{
 		ImagePath:   imagePath,
@@ -766,7 +793,11 @@ func (s *Server) handleServiceRun(ctx context.Context, params json.RawMessage) (
 	if p.Strategy != "" {
 		opts.Strategy = service.Strategy(p.Strategy)
 	}
-	svc, err := s.svcMgr.Run(ctx, p.Name, p.Image, p.Replicas, opts)
+	imagePath, rerr := s.resolveImageRef(p.Image)
+	if rerr != nil {
+		return nil, &RPCError{Code: -32000, Message: rerr.Error()}
+	}
+	svc, err := s.svcMgr.Run(ctx, p.Name, imagePath, p.Replicas, opts)
 	if err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}
@@ -820,7 +851,11 @@ func (s *Server) handleServiceUpdate(ctx context.Context, params json.RawMessage
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
-	svc, err := s.svcMgr.Update(ctx, p.Name, p.Image, time.Duration(p.HealthTimeout)*time.Second)
+	imagePath, rerr := s.resolveImageRef(p.Image)
+	if rerr != nil {
+		return nil, &RPCError{Code: -32000, Message: rerr.Error()}
+	}
+	svc, err := s.svcMgr.Update(ctx, p.Name, imagePath, time.Duration(p.HealthTimeout)*time.Second)
 	if err != nil {
 		return nil, &RPCError{Code: -32000, Message: err.Error()}
 	}

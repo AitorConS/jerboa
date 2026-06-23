@@ -3,24 +3,25 @@ package main
 import (
 	"fmt"
 	"text/tabwriter"
-	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/spf13/cobra"
 )
 
-func newImagesCmd(storePath *string, outputFmt *string) *cobra.Command {
+func newImagesCmd(endpoint *string, outputFmt *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "images",
-		Short: "List locally stored unikernel images",
+		Short: "List unikernel images stored by the daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, err := image.NewStore(*storePath)
+			client, err := api.Dial(*endpoint)
 			if err != nil {
-				return fmt.Errorf("images: open store: %w", err)
+				return fmt.Errorf("images: connect to daemon: %w", err)
 			}
-			list, err := store.List()
+			defer func() { _ = client.Close() }()
+
+			list, err := client.ImageList(cmd.Context())
 			if err != nil {
-				return fmt.Errorf("images: list: %w", err)
+				return fmt.Errorf("images: %w", err)
 			}
 			if *outputFmt == "json" {
 				return printJSON(cmd.OutOrStdout(), list)
@@ -32,7 +33,7 @@ func newImagesCmd(storePath *string, outputFmt *string) *cobra.Command {
 					shortDigest(m.DiskDigest),
 					m.Name,
 					m.Tag,
-					m.Created.Format(time.RFC3339),
+					m.Created,
 					formatSize(m.DiskSize),
 				)
 			}
@@ -41,17 +42,19 @@ func newImagesCmd(storePath *string, outputFmt *string) *cobra.Command {
 	}
 }
 
-func newRmiCmd(storePath *string) *cobra.Command {
+func newRmiCmd(endpoint *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "rmi <ref>",
-		Short: "Remove a locally stored unikernel image",
+		Short: "Remove a unikernel image from the daemon store",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := image.NewStore(*storePath)
+			client, err := api.Dial(*endpoint)
 			if err != nil {
-				return fmt.Errorf("rmi: open store: %w", err)
+				return fmt.Errorf("rmi: connect to daemon: %w", err)
 			}
-			if err := store.Remove(args[0]); err != nil {
+			defer func() { _ = client.Close() }()
+
+			if err := client.ImageRemove(cmd.Context(), args[0]); err != nil {
 				return fmt.Errorf("rmi: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), args[0])

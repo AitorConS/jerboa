@@ -35,8 +35,16 @@ const (
 	dialPoll    = 10 * time.Millisecond
 )
 
-// startDaemon launches an in-process daemon and returns a connected client.
+// startDaemon launches an in-process daemon (with a fresh empty image store)
+// and returns a connected client.
 func startDaemon(t *testing.T) (*api.Client, string) {
+	t.Helper()
+	return startDaemonWithStore(t, t.TempDir())
+}
+
+// startDaemonWithStore launches an in-process daemon whose image store is
+// rooted at storePath, so Image.List/Remove and run-by-ref operate on it.
+func startDaemonWithStore(t *testing.T, storePath string) (*api.Client, string) {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
@@ -44,6 +52,9 @@ func startDaemon(t *testing.T) (*api.Client, string) {
 	require.NoError(t, err)
 	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
+	imgStore, err := image.NewStore(storePath)
+	require.NoError(t, err)
+	srv.SetImageStore(imgStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx) }()
@@ -270,8 +281,8 @@ func TestImages_Empty(t *testing.T) {
 }
 
 func TestImages_WithEntry(t *testing.T) {
-	_, socketPath := startDaemon(t)
 	storePath, _ := makeStore(t)
+	_, socketPath := startDaemonWithStore(t, storePath)
 
 	out := execRoot(t, socketPath, storePath, "images")
 	require.Contains(t, out, "hello")
@@ -281,8 +292,8 @@ func TestImages_WithEntry(t *testing.T) {
 // --- rmi ---
 
 func TestRmi(t *testing.T) {
-	_, socketPath := startDaemon(t)
 	storePath, _ := makeStore(t)
+	_, socketPath := startDaemonWithStore(t, storePath)
 
 	out := execRoot(t, socketPath, storePath, "rmi", "hello:latest")
 	require.Contains(t, out, "hello:latest")
@@ -305,16 +316,17 @@ func execRootExpectError(t *testing.T, socketPath, storePath string, args ...str
 	return err.Error()
 }
 
-func TestBuild_MissingMkfs(t *testing.T) {
+func TestBuild_DaemonBuildDisabled(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
 	binaryPath := filepath.Join(t.TempDir(), "app")
 	require.NoError(t, os.WriteFile(binaryPath, []byte("\x7fELF"), 0o755))
 
-	// mkfs doesn't exist → Build() fails, covers error path in newBuildCmd
+	// The test daemon has no mkfs toolchain, so Image.Build is disabled and the
+	// build streams to the daemon and fails with a method-not-found error.
 	msg := execRootExpectError(t, socketPath, storePath,
-		"build", "--name", "myapp", "--mkfs", "/nonexistent/mkfs", binaryPath)
+		"build", "--name", "myapp", binaryPath)
 	require.Contains(t, msg, "build")
 }
 
@@ -339,27 +351,21 @@ func TestRm_RunningVM(t *testing.T) {
 	require.Contains(t, msg, "rm")
 }
 
-// --- resolveImage ---
+// --- splitImageArg ---
 
-func TestResolveImage_FilePath(t *testing.T) {
+func TestSplitImageArg_FilePath(t *testing.T) {
 	p := "/some/path/disk.img"
-	got, err := resolveImage(p, t.TempDir(), "256M", 1)
+	ref, path, err := splitImageArg(p)
 	require.NoError(t, err)
-	require.Equal(t, p, got)
+	require.Empty(t, ref)
+	require.Equal(t, p, path)
 }
 
-func TestResolveImage_NameTag(t *testing.T) {
-	storePath, _ := makeStore(t)
-	got, err := resolveImage("hello:latest", storePath, "256M", 1)
+func TestSplitImageArg_NameTag(t *testing.T) {
+	ref, path, err := splitImageArg("hello:latest")
 	require.NoError(t, err)
-	require.NotEmpty(t, got)
-	_, statErr := os.Stat(got)
-	require.NoError(t, statErr)
-}
-
-func TestResolveImage_NotFound(t *testing.T) {
-	_, err := resolveImage("missing:tag", t.TempDir(), "256M", 1)
-	require.Error(t, err)
+	require.Equal(t, "hello:latest", ref)
+	require.Empty(t, path)
 }
 
 // --- helpers ---

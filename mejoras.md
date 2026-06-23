@@ -1,0 +1,242 @@
+# Arquitectura Windows: daemon en WSL2 (modelo cliente/servidor real)
+
+> Documento de diseño. Objetivo: eliminar la capa de puentes por-operación
+> entre Windows y WSL2 y sustituirla por un modelo cliente/servidor limpio,
+> donde `unid` corre íntegramente en Linux (WSL2) y `uni.exe` es un cliente
+> fino que habla con él por red. La decisión se toma pensando en escalar a
+> daemons remotos, no solo en resolver el caso Windows.
+
+---
+
+## 1. Problema actual
+
+Hoy en Windows `unid` corre **nativo** y reenvía operaciones sueltas a WSL2:
+
+- `internal/vm/firecracker_windows.go` — `platformInitFC` reescribe cada hook
+  del manager (comando, socket, shutdown, logs, paths) para tunelar a `wsl --`.
+- `internal/tools/mkfs_windows.go` — `wslFunc` invoca `mkfs` vía `wsl --` y
+  reescribe paths Windows a `/mnt/c/...`.
+- `internal/network/*_stub.go`, `internal/vm/cgroup_stub.go` — TAP, bridge,
+  cgroups, port-forward **no existen** en Windows: son stubs que devuelven
+  error. El daemon nativo de Windows no puede hacer networking ni aislamiento
+  reales.
+
+**Consecuencia:** cada capacidad nueva del daemon necesita su propio puente
+Windows→WSL2 (reescritura de paths, `curl` al socket interno, quoting de bash).
+Es frágil por diseño y no escala.
+
+## 2. Arquitectura objetivo
+
+El daemon **siempre corre en Linux**. Windows deja de ser un caso especial del
+daemon y pasa a ser solo un caso especial del *bootstrap* del cliente.
+
+```
+Windows                              WSL2 (distro Linux)
+──────────────────────────────      ──────────────────────────────────
+uni.exe  (cliente fino)   ──TCP──▶   unid (daemon Linux nativo)
+  ├── parseo de comandos               ├── QEMU / Firecracker  (nativo)
+  ├── resolución de endpoint           ├── TAP / bridge        (nativo)
+  ├── bootstrap del daemon             ├── cgroups / KVM       (nativo)
+  └── formateo de salida               ├── builder + mkfs      (nativo)
+                                       └── image store (ext4 WSL2)
+```
+
+En Linux y macOS-con-VM el modelo es idéntico: el cliente habla con un daemon
+Linux. Cambia únicamente *dónde* vive el daemon y *cómo* se arranca, no el
+protocolo. **Un solo modelo mental para todas las plataformas.**
+
+### Principio rector
+
+> `uni` es multiplataforma y solo contiene lógica de cliente.
+> `unid` se compila **solo para Linux** y contiene toda la lógica de
+> hipervisor, red y aislamiento.
+
+Esto hace que desaparezcan por construcción los ficheros `*_windows.go` y los
+stubs: el daemon nunca se compila para Windows, así que no necesita stubs para
+Windows.
+
+---
+
+## 3. Decisiones técnicas
+
+### D1 — Transporte por endpoint con esquema URL (no "TCP a secas")
+
+El protocolo ya es JSON-RPC 2.0 sobre `net.Conn` (`internal/api/client.go`,
+`server.go`). En vez de hardcodear TCP, introducimos un **endpoint con esquema**
+estilo `DOCKER_HOST`, que es lo que escala a futuro:
+
+```
+unix:///var/run/unid.sock      # Linux/macOS local (por defecto)
+tcp://127.0.0.1:7890           # WSL2 desde Windows / local TCP
+tcps://host:7890               # remoto con TLS (futuro, sin cambiar protocolo)
+```
+
+- `api.Dial(endpoint string)` parsea el esquema y elige `net.Dial("unix"|"tcp")`.
+- `api.Listen(endpoint string)` simétrico en el servidor
+  (`NewServer` deja de recibir `socketPath` y recibe `endpoint`).
+- El payload JSON-RPC **no cambia**: streaming de `VM.Attach` incluido funciona
+  igual sobre TCP.
+
+> Por qué así y no solo TCP: el día que se quiera un daemon remoto (CI, host de
+> build compartido, cluster), solo se añade el esquema `tcps://` y una capa TLS;
+> ni el cliente ni los comandos cambian. Es la misma puerta por la que entró
+> Docker con `DOCKER_HOST`.
+
+### D2 — Resolución de endpoint y configuración
+
+Prioridad de resolución (de mayor a menor), igual patrón que Docker:
+
+1. Flag `--host` / `-H` (renombra el actual `--socket`, que queda como alias
+   deprecado).
+2. Variable de entorno `UNI_HOST`.
+3. `~/.uni/config.toml`, nueva sección `[daemon]`.
+4. Valor por defecto por plataforma.
+
+```toml
+# ~/.uni/config.toml
+hypervisor = "firecracker"
+
+[daemon]
+endpoint = "tcp://127.0.0.1:7890"   # default en Windows
+distro   = "unicli"                  # distro WSL2 a usar (ver D5)
+```
+
+Defaults por plataforma (sustituye a `defaultSocketPath()` en
+`cmd/uni/main.go:72` y `cmd/unid/main.go:232`):
+
+| Plataforma | Endpoint por defecto         |
+|------------|------------------------------|
+| Linux/macOS| `unix:///var/run/unid.sock`  |
+| Windows    | `tcp://127.0.0.1:7890`       |
+
+### D3 — Seguridad: loopback + token bearer (camino a TLS)
+
+El socket Unix tenía permisos de filesystem; un TCP los pierde. Reglas:
+
+- **Bind a `127.0.0.1`, nunca `0.0.0.0`.** WSL2 hace localhost-forwarding, así
+  que `uni.exe` llega por `127.0.0.1` sin exponer el daemon a la LAN.
+- **Token bearer obligatorio en cualquier endpoint TCP** (en `unix://` es
+  opcional porque ya hay permisos de fichero).
+- **El cliente es el dueño del secreto**, no el daemon: `uni.exe` genera un
+  token aleatorio en el bootstrap, lo persiste en `%USERPROFILE%\.uni\daemon.json`
+  (permisos solo-usuario) y lo pasa al daemon **por stdin/env al lanzarlo**
+  (nunca por `argv`, que es visible en la lista de procesos).
+- **Handshake de autenticación**: primer frame tras conectar es un método
+  `Auth.Hello{token}`. El servidor valida antes de despachar cualquier otra
+  cosa. Encaja en el JSON-RPC actual sin tocar el resto de llamadas.
+
+> Esto deja la puerta abierta a `tcps://` + mTLS para remoto sin rediseñar:
+> el handshake pasa de "token" a "certificado" y el resto del protocolo no se
+> entera.
+
+### D4 — El build se mueve dentro del daemon (adiós reescritura de paths)
+
+Hoy `uni build` compila en el host y luego invoca `mkfs` (vía WSL en Windows,
+reescribiendo paths). Esto es la otra mitad de la fragilidad. Decisión:
+
+- El daemon expone `Image.Build`. El cliente **empaqueta el contexto de build**
+  (binario ya compilado o fuente + manifiesto) y lo **streamea** al daemon.
+- compile (si aplica) + `mkfs` ocurren **dentro de Linux**, contra el store de
+  WSL2. Cero reescritura de paths `/mnt/c/...`, cero quoting de bash.
+- **Beneficio transversal:** el build pasa a ser idéntico en toda plataforma —
+  siempre en Linux — lo que elimina divergencias de comportamiento Windows vs
+  Linux y es el modelo que usa BuildKit (build remoto/compartible) si algún día
+  se quiere.
+
+`internal/tools/mkfs.go` deja de tener rama `runtime.GOOS == "windows"`:
+solo existe `directFunc`, porque siempre se ejecuta en Linux.
+
+### D5 — Image store en ext4 de WSL2, nunca en `/mnt/c`
+
+El store del daemon vive en el filesystem ext4 de la distro WSL2
+(p.ej. `~/.uni/images` *dentro* de la distro), **no** en `/mnt/c/...` (9p es
+lento). El cliente no accede al store por filesystem: lo consulta por RPC
+(`Image.List`, etc.) y transfiere bytes por la conexión. Frontera limpia y
+única: todo lo que cruza Windows↔WSL2 va por el endpoint, nada por paths
+compartidos.
+
+### D6 — Gestión del daemon y de la distro (modelo Docker Desktop)
+
+`uni.exe` gestiona el ciclo de vida como hace `docker.exe`:
+
+1. **Health check**: ¿responde el endpoint? Si sí, conecta.
+2. **Auto-arranque**: si no, lanza `wsl -d <distro> -- unid --host tcp://127.0.0.1:7890 ...`
+   con el token por stdin, espera a que el health check pase.
+3. **Distro dedicada (estado final, recomendado):** UniCli aprovisiona su propia
+   distro vía `wsl --import unicli <ruta> <rootfs.tar>`, igual que Docker usa
+   `docker-desktop`. Ventaja: entorno reproducible (kernel con KVM, binarios,
+   versiones) sin depender de lo que el usuario tenga instalado.
+   - **Interino aceptable:** usar la distro por defecto del usuario validando
+     prerequisitos (`/dev/kvm`, virtualización anidada para Firecracker) y
+     fallando con un mensaje accionable si faltan.
+
+> La distro dedicada es la decisión "limpia y escalable": versionas el rootfs
+> junto al release, garantizas KVM/nested-virt, y desinstalar UniCli es borrar
+> la distro. Se deja para una fase posterior por coste, pero es el objetivo.
+
+### D7 — Separación de módulos: cliente multiplataforma, daemon solo-Linux
+
+Reorganización para que la separación sea estructural, no por `if GOOS`:
+
+- `uni` (cliente): depende de `internal/api` (cliente), `internal/config`,
+  formato de salida y `internal/wslboot` (bootstrap, build-tag `windows`).
+  No importa `internal/vm`, `internal/network`, etc.
+- `unid` (daemon): **build target `linux` únicamente**. Concentra `internal/vm`,
+  `internal/network`, `internal/builder`, hipervisores.
+
+Ficheros que **se eliminan** al completar la migración:
+
+- `internal/vm/firecracker_windows.go` y el hook `platformInitFC`
+- `internal/tools/mkfs_windows.go` (+ su test)
+- `internal/network/tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`,
+  `internal/vm/cgroup_stub.go` (el daemon es Linux, no necesita stubs)
+- `internal/vm/firecracker_notwindows.go` → se renombra a `firecracker_linux.go`
+  (ya no hay "not windows", solo Linux).
+
+---
+
+## 4. Plan de migración por fases
+
+Cada fase es entregable y deja el sistema funcionando.
+
+### Fase 1 — Transporte por endpoint (barata, alto valor)
+- [ ] `api.Dial(endpoint)` y `api.Listen(endpoint)` con parseo de esquema
+      (`unix://`, `tcp://`).
+- [ ] `unid` escucha en el endpoint resuelto; `--host` con alias `--socket`.
+- [ ] `uni` resuelve endpoint (flag → `UNI_HOST` → config → default plataforma).
+- [ ] Validación end-to-end: `unid` arrancado a mano en WSL2, `uni.exe`
+      conecta por `tcp://127.0.0.1:7890`.
+- [ ] **Borra** `firecracker_windows.go` (el daemon ya es Linux).
+
+### Fase 2 — Build y store dentro del daemon
+- [ ] RPC `Image.Build` con streaming del contexto de build.
+- [ ] Store del daemon en ext4 de WSL2; cliente solo por RPC.
+- [ ] `tools/mkfs.go` sin rama Windows; **borra** `mkfs_windows.go`.
+
+### Fase 3 — Seguridad y bootstrap
+- [ ] Token bearer + handshake `Auth.Hello`; bind a `127.0.0.1`.
+- [ ] `internal/wslboot`: health check + auto-arranque de `unid` en WSL2,
+      token por stdin, persistencia en `%USERPROFILE%\.uni\daemon.json`.
+
+### Fase 4 — Distro dedicada y limpieza final
+- [ ] Aprovisionamiento de distro `unicli` vía `wsl --import` (rootfs versionado).
+- [ ] **Borra** stubs de red/cgroup; `firecracker_notwindows.go` → `_linux.go`.
+- [ ] Separación de módulos D7 consolidada.
+
+---
+
+## 5. Qué NO cambia
+
+- El protocolo JSON-RPC y todos los métodos existentes (`VM.*`, `Network.*`,
+  `Service.*`, `DNS.*`). Solo se añade `Auth.Hello` e `Image.Build`.
+- La experiencia en Linux/macOS: sigue siendo `unix://` por defecto.
+- El modelo de comandos del CLI.
+
+## 6. Riesgos y mitigaciones
+
+| Riesgo | Mitigación |
+|--------|------------|
+| Localhost-forwarding de WSL2 falla (modo *mirrored* en WSL nuevo) | Health check con timeout y mensaje accionable; detectar modo de red de WSL |
+| `/dev/kvm` o virtualización anidada no disponibles | Validación en bootstrap; Firecracker degrada a QEMU si falta KVM |
+| Token filtrado | Solo loopback + permisos solo-usuario en `daemon.json`; nunca en `argv` |
+| Coste de la distro dedicada | Fase 4 opcional; interino usa distro existente del usuario |

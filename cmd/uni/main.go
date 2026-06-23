@@ -56,9 +56,9 @@ func newRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newRunCmd(&endpoint, &storePath),
-		newBuildCmd(&storePath, &verbose),
-		newImagesCmd(&storePath, &outputFmt),
-		newRmiCmd(&storePath),
+		newBuildCmd(&endpoint, &verbose),
+		newImagesCmd(&endpoint, &outputFmt),
+		newRmiCmd(&endpoint),
 		newSignCmd(&storePath),
 		newVerifyCmd(&storePath),
 		newPsCmd(&endpoint, &outputFmt),

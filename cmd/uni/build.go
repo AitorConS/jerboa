@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
 	"io"
@@ -11,12 +12,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/builder"
-	"github.com/AitorConS/unikernel-engine/internal/image"
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
-	"github.com/AitorConS/unikernel-engine/internal/tools"
 	"github.com/spf13/cobra"
 )
+
+// buildProgramPath is the reserved tar path under which the compiled program
+// binary is streamed in a build context. The daemon splits it out and places
+// it at /program in the image, so it must not collide with real guest paths.
+const buildProgramPath = ".uni-program"
 
 // absPath resolves p to an absolute path, returning p unchanged on error.
 func absPath(p string) string {
@@ -27,15 +32,13 @@ func absPath(p string) string {
 	return abs
 }
 
-func newBuildCmd(storePath *string, verbose *bool) *cobra.Command {
+func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
 		name       string
 		tag        string
 		memory     string
 		cpus       int
 		port       int
-		mkfs       string
-		updateYes  bool
 		pkgs       []string
 		pkgSource  string
 		lang       string
@@ -57,43 +60,11 @@ project markers (go.mod, package.json, etc.).`,
 			buildStart := time.Now()
 			sp := newSpinner(cmd.ErrOrStderr(), *verbose)
 
-			store, err := image.NewStore(*storePath)
-			if err != nil {
-				return fmt.Errorf("build: open store: %w", err)
-			}
-
-			toolsDir := defaultToolsPath()
-
-			// Kernel update check may prompt the user — run before the spinner.
-			if mkfs == "" && os.Getenv("UNI_MKFS") == "" && tools.Exist(toolsDir) {
-				if err := checkKernelUpdateForBuild(cmd, toolsDir, updateYes); err != nil {
-					return err
-				}
-			}
-
-			if mkfs == "" {
-				mkfs = os.Getenv("UNI_MKFS")
-			}
-
-			needsKernelDL := mkfs == "" && !tools.Exist(toolsDir)
-			if needsKernelDL {
-				sp.Start("Downloading kernel tools")
-			}
-			mkfsRun, err := tools.ResolveMkfs(cmd.Context(), toolsDir, mkfs)
-			if err != nil {
-				if needsKernelDL {
-					sp.Fail("Kernel tools unavailable")
-				}
-				return fmt.Errorf("build: %w", err)
-			}
-			if needsKernelDL {
-				sp.Done("Kernel tools ready")
-			}
-
 			var pkgFiles []pkg.File
 			if len(pkgs) > 0 {
 				sp.Start("Resolving packages")
 				var resolved []pkg.File
+				var err error
 				if pkgSource == "ops" {
 					resolved, err = resolveOpsPackages(cmd.Context(), pkgs)
 				} else {
@@ -175,32 +146,38 @@ project markers (go.mod, package.json, etc.).`,
 				name = filepath.Base(filepath.Clean(args[0]))
 			}
 
-			sp.Start("Assembling image")
-			m, err := image.NewBuilder(store).Build(cmd.Context(), image.BuildConfig{
+			sp.Start("Assembling image on daemon")
+			client, err := api.Dial(*endpoint)
+			if err != nil {
+				sp.Fail("Image assembly failed")
+				return fmt.Errorf("build: connect to daemon: %w", err)
+			}
+			defer func() { _ = client.Close() }()
+
+			pr := buildContextReader(binaryPath, pkgFiles)
+			defer func() { _ = pr.Close() }()
+			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
 				Name:       name,
 				Tag:        tag,
-				BinaryPath: binaryPath,
-				MkfsRun:    mkfsRun,
+				Program:    buildProgramPath,
 				Memory:     memory,
 				CPUs:       cpus,
-				PkgFiles:   pkgFiles,
 				Entrypoint: entrypoint,
 				Args:       programArgs,
 				Env:        pkgEnv,
 				Port:       port,
-				Output:     subW,
-			})
+			}, pr)
 			if err != nil {
 				sp.Fail("Image assembly failed")
 				return fmt.Errorf("build: %w", err)
 			}
 
 			elapsed := time.Since(buildStart)
-			sizeStr := formatSize(m.DiskSize)
-			sp.Done(fmt.Sprintf("%s:%s  ·  %s  ·  built in %s", m.Name, m.Tag, sizeStr, formatDuration(elapsed)))
+			sizeStr := formatSize(res.DiskSize)
+			sp.Done(fmt.Sprintf("%s:%s  ·  %s  ·  built in %s", res.Name, res.Tag, sizeStr, formatDuration(elapsed)))
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s  ·  %s  ·  built in %s\n",
-				m.DiskDigest, m.Name, m.Tag, sizeStr, formatDuration(elapsed))
+				res.DiskDigest, res.Name, res.Tag, sizeStr, formatDuration(elapsed))
 			return nil
 		},
 	}
@@ -208,8 +185,6 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&tag, "tag", "latest", "image tag")
 	cmd.Flags().StringVar(&memory, "memory", "256M", "default VM memory")
 	cmd.Flags().IntVar(&cpus, "cpus", 1, "default VM CPU count")
-	cmd.Flags().StringVar(&mkfs, "mkfs", "", "path to mkfs binary — skip auto-download (env: UNI_MKFS)")
-	cmd.Flags().BoolVarP(&updateYes, "update-kernel", "U", false, "auto-approve kernel update if one is available")
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
 	cmd.Flags().StringVar(&pkgSource, "pkg-source", "uni", "package source: \"uni\" (default) or \"ops\" (nanovms/ops ecosystem)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust, raw)")
@@ -635,41 +610,57 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, erro
 	return files, nil
 }
 
-// checkKernelUpdateForBuild fetches the remote kernel version and, if it differs
-// from the local one, asks the user whether to update before building.
-func checkKernelUpdateForBuild(cmd *cobra.Command, toolsDir string, autoYes bool) error {
-	ctx, cancel := context.WithTimeout(cmd.Context(), 8*time.Second)
-	defer cancel()
+// buildContextReader returns a streaming tar archive of the build context: the
+// program binary at buildProgramPath plus each package/source file at its guest
+// path. Files are streamed via a pipe, so the archive is never fully buffered.
+// The caller must Close the returned reader to release the writer goroutine.
+func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
+	pr, pw := io.Pipe()
+	go func() {
+		tw := tar.NewWriter(pw)
+		err := func() error {
+			if err := addFileToTar(tw, binaryPath, buildProgramPath); err != nil {
+				return err
+			}
+			for _, f := range pkgFiles {
+				guestPath := f.GuestPath
+				if guestPath == "" {
+					guestPath = filepath.Base(f.HostPath)
+				}
+				if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
+					return err
+				}
+			}
+			return tw.Close()
+		}()
+		_ = pw.CloseWithError(err)
+	}()
+	return pr
+}
 
-	remote, err := tools.RemoteVersion(ctx)
+// addFileToTar writes hostPath into tw under the slash-separated guestPath.
+func addFileToTar(tw *tar.Writer, hostPath, guestPath string) error {
+	f, err := os.Open(hostPath)
 	if err != nil {
-		// Network unreachable: silently continue, don't block the build.
-		return nil
+		return fmt.Errorf("open %s: %w", hostPath, err)
 	}
-	local := tools.LocalVersion(toolsDir)
-	if !tools.IsNewer(local, remote) {
-		return nil
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", hostPath, err)
 	}
-
-	fmt.Fprintf(cmd.ErrOrStderr(),
-		"⚠  New kernel version available: %s (installed: %s)\n", remote, local)
-
-	if !autoYes && !confirmPrompt("Update kernel before building? [y/N] ") {
-		return nil
+	hdr := &tar.Header{
+		Name:     filepath.ToSlash(guestPath),
+		Mode:     int64(info.Mode().Perm()),
+		Size:     info.Size(),
+		Typeflag: tar.TypeReg,
 	}
-
-	if err := tools.ClearCachedTools(toolsDir); err != nil {
-		return fmt.Errorf("build: clear kernel cache: %w", err)
+	if err := tw.WriteHeader(hdr); err != nil {
+		return fmt.Errorf("tar header %s: %w", guestPath, err)
 	}
-	dlCtx, dlCancel := context.WithTimeout(cmd.Context(), 5*time.Minute)
-	defer dlCancel()
-	if _, err := tools.ResolveMkfs(dlCtx, toolsDir, ""); err != nil {
-		return fmt.Errorf("build: download new kernel: %w", err)
+	if _, err := io.Copy(tw, f); err != nil {
+		return fmt.Errorf("tar copy %s: %w", guestPath, err)
 	}
-	if err := tools.SaveLocalVersion(toolsDir, remote); err != nil {
-		return fmt.Errorf("build: save kernel version: %w", err)
-	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "Kernel updated to %s.\n", remote)
 	return nil
 }
 

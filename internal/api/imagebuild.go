@@ -26,9 +26,20 @@ func (s *Server) SetImageStore(store *image.Store) {
 // EnableImageBuild turns on the Image.Build RPC by supplying the mkfs function
 // that assembles disk images on the daemon's (Linux) filesystem. It requires an
 // image store (see SetImageStore); until both are set, Image.Build reports
-// "method not found".
+// "method not found". Safe to call from a goroutine after Serve has started
+// (e.g. once mkfs resolution finishes).
 func (s *Server) EnableImageBuild(mkfs image.MkfsFunc) {
+	s.mkfsMu.Lock()
 	s.mkfs = mkfs
+	s.mkfsMu.Unlock()
+}
+
+// buildFunc returns the configured mkfs function, or nil if image build is not
+// enabled.
+func (s *Server) buildFunc() image.MkfsFunc {
+	s.mkfsMu.RLock()
+	defer s.mkfsMu.RUnlock()
+	return s.mkfs
 }
 
 // handleImageList returns the manifests held in the daemon's image store.
@@ -85,7 +96,8 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
 	}
-	if s.imgStore == nil || s.mkfs == nil {
+	mkfs := s.buildFunc()
+	if s.imgStore == nil || mkfs == nil {
 		drain(stream)
 		s.writeError(conn, reqID, &RPCError{Code: -32601, Message: "method not found: Image.Build (image build disabled)"})
 		return
@@ -115,7 +127,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Name:       p.Name,
 		Tag:        p.Tag,
 		BinaryPath: binaryPath,
-		MkfsRun:    s.mkfs,
+		MkfsRun:    mkfs,
 		Memory:     p.Memory,
 		CPUs:       p.CPUs,
 		PkgFiles:   pkgFiles,
