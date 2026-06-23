@@ -40,7 +40,7 @@ func WithFCCommandFunc(fn CommandFunc) FCOption {
 //   - TAP networking only; SLIRP (user-mode) is not supported by Firecracker.
 //     Port maps without a NetworkName are silently ignored.
 //   - DiskIOPS / DiskBPS throttling is not available (no Firecracker equivalent).
-//   - Linux/KVM only; will not work on Windows or macOS without WSL2.
+//   - On Windows, Firecracker runs inside WSL2; KVM must be available in WSL2.
 //   - The kernel image must be a flat ELF vmlinux compatible with Firecracker
 //     (different from the BIOS-bootable kernel.img used by QEMU).
 type FirecrackerManager struct {
@@ -49,6 +49,13 @@ type FirecrackerManager struct {
 	kernelImage string
 	mkCmd       CommandFunc
 	hchecker    *HealthChecker
+	// platform hooks — overridden on Windows to route through WSL2
+	vmSockPath         func(id string) string               // socket path as seen by the firecracker process
+	cfgPathForProcess  func(path string) string             // translates config file path for the FC process
+	shutdownAPI        func(sockPath string) error          // calls Firecracker's SendCtrlAltDel API
+	rewriteConfigPaths func(cfg *fcVMConfig)                // rewrites paths inside the FC JSON config
+	vmmLogPath         func(id string) string               // path for Firecracker's --log-path arg
+	readVMMLog         func(path string) ([]byte, error)    // reads VMM log (may use wsl on Windows)
 }
 
 // NewFirecrackerManager returns a FirecrackerManager.
@@ -56,12 +63,19 @@ type FirecrackerManager struct {
 // kernelImage is the path to a Firecracker-compatible vmlinux ELF kernel.
 func NewFirecrackerManager(fcBin, kernelImage string, opts ...FCOption) *FirecrackerManager {
 	m := &FirecrackerManager{
-		store:       NewMemoryStore(),
-		fcBin:       fcBin,
-		kernelImage: kernelImage,
-		mkCmd:       defaultCommandFunc,
-		hchecker:    NewHealthChecker(),
+		store:              NewMemoryStore(),
+		fcBin:              fcBin,
+		kernelImage:        kernelImage,
+		mkCmd:              defaultCommandFunc,
+		hchecker:           NewHealthChecker(),
+		vmSockPath:         fcSocketPath,
+		cfgPathForProcess:  func(p string) string { return p },
+		shutdownAPI:        fcSendCtrlAltDel,
+		rewriteConfigPaths: func(*fcVMConfig) {},
+		vmmLogPath:         func(id string) string { return filepath.Join(os.TempDir(), "fc-"+id+"-vmm.log") },
+		readVMMLog:         os.ReadFile,
 	}
+	platformInitFC(m)
 	for _, o := range opts {
 		o(m)
 	}
@@ -91,14 +105,18 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 
-	sockPath := fcSocketPath(id)
+	sockPath := m.vmSockPath(id)
 	cfgPath, err := m.writeFCConfig(id, v.Cfg)
 	if err != nil {
 		_ = v.transition(StateStopped)
 		return fmt.Errorf("firecracker start %s: write config: %w", id, err)
 	}
 
-	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", cfgPath)
+	// --log-path separates Firecracker's VMM log lines from stdout so only the
+	// VM serial console reaches logBuf. If the VM crashes with empty logs,
+	// monitor appends the VMM log so `uni logs` surfaces the error.
+	vmmLog := m.vmmLogPath(id)
+	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", m.cfgPathForProcess(cfgPath), "--log-path", vmmLog)
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
@@ -110,7 +128,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		stdout = io.MultiWriter(&v.logBuf, pw)
 	}
 	cmd.Stdout = stdout
-	cmd.Stderr = stdout
+	cmd.Stderr = io.Discard
 
 	if err := cmd.Start(); err != nil {
 		_ = v.transition(StateStopped)
@@ -130,7 +148,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	}
 	_ = m.store.Save(v)
 
-	go m.monitor(v, cmd, sockPath, cfgPath)
+	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog)
 	m.hchecker.Start(ctx, v)
 	return nil
 }
@@ -156,7 +174,7 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 
-	if err := fcSendCtrlAltDel(fcSocketPath(id)); err != nil {
+	if err := m.shutdownAPI(m.vmSockPath(id)); err != nil {
 		slog.Debug("firecracker stop: SendCtrlAltDel failed, falling back to SIGTERM", "vm_id", id, "err", err)
 		if sigErr := proc.signal(syscall.SIGTERM); sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
 			_ = proc.kill()
@@ -220,7 +238,7 @@ func (m *FirecrackerManager) Signal(_ context.Context, id string, sig os.Signal)
 		}
 		return nil
 	}
-	if err := fcSendCtrlAltDel(fcSocketPath(id)); err != nil {
+	if err := m.shutdownAPI(m.vmSockPath(id)); err != nil {
 		slog.Debug("firecracker signal: SendCtrlAltDel failed, falling back to OS signal", "vm_id", id)
 		if err := proc.signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return fmt.Errorf("firecracker signal %s: %w", id, err)
@@ -259,7 +277,7 @@ func (m *FirecrackerManager) List() []*VM {
 	return m.store.List()
 }
 
-func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath string) {
+func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog string) {
 	exitErr := cmd.Wait()
 	now := time.Now()
 	v.mu.Lock()
@@ -270,8 +288,18 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath str
 	explicitStop := v.explicitStop
 	v.mu.Unlock()
 
+	// If the VM died with no serial output (e.g. Firecracker couldn't start the
+	// microVM), surface the VMM log so `uni logs` shows the actual error.
+	if exitErr != nil && len(v.logBuf.Bytes()) == 0 {
+		if data, err := m.readVMMLog(vmmLog); err == nil && len(data) > 0 {
+			_, _ = v.logBuf.Write([]byte("[firecracker error]\n"))
+			_, _ = v.logBuf.Write(data)
+		}
+	}
+
 	_ = os.Remove(sockPath)
 	_ = os.Remove(cfgPath)
+	_ = os.Remove(vmmLog)
 
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("firecracker monitor: transition to stopped", "vm_id", v.ID, "err", err)
@@ -388,6 +416,7 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config) (string, error
 		slog.Warn("firecracker: port maps require a TAP interface (--network); SLIRP is not supported — port maps ignored", "vm_id", id)
 	}
 
+	m.rewriteConfigPaths(&fcCfg)
 	data, err := json.MarshalIndent(fcCfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal firecracker config: %w", err)

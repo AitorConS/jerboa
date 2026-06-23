@@ -563,11 +563,17 @@ func (g *GoDriver) Detect(dir string) bool {
 func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildResult, error) {
 	platform := opts.Platform
 	if platform.OS == "" {
-		platform = DefaultPlatform()
+		// Unikernel images always run on Linux; default to Linux regardless of
+		// the host OS. Preserve host architecture when it's a supported target.
+		arch := runtime.GOARCH
+		if arch != "amd64" && arch != "arm64" {
+			arch = "amd64"
+		}
+		platform = Platform{OS: "linux", Arch: arch}
 	}
 
 	output := filepath.Join(dir, ".uni-build-binary")
-	if runtime.GOOS == "windows" || platform.OS == "windows" {
+	if platform.OS == "windows" {
 		output += ".exe"
 	}
 
