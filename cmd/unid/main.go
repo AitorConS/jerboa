@@ -15,6 +15,7 @@ import (
 	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/cluster"
 	"github.com/AitorConS/unikernel-engine/internal/config"
+	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/metrics"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/service"
@@ -228,6 +229,26 @@ func serve(ctx context.Context, endpoint, qemuBin, storePath, vmStoreType, metri
 	vmSrv, err := api.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
+	}
+
+	// Enable server-side image builds (Image.Build): assemble disk images with
+	// mkfs on the daemon's own filesystem, eliminating host path rewriting.
+	// Only enable when the kernel toolchain is already present so daemon startup
+	// never blocks on a download; otherwise builds stay client-side and the RPC
+	// reports "method not found".
+	toolsDir := defaultToolsPath()
+	switch {
+	case !tools.Exist(toolsDir):
+		slog.Info("unid: image build disabled (kernel tools not present)", "tools_dir", toolsDir)
+	default:
+		if imgStore, err := image.NewStore(storePath); err != nil {
+			slog.Warn("unid: image build disabled (store unavailable)", "err", err)
+		} else if mkfsRun, err := tools.ResolveMkfs(ctx, toolsDir, ""); err != nil {
+			slog.Warn("unid: image build disabled (mkfs unavailable)", "err", err)
+		} else {
+			vmSrv.EnableImageBuild(imgStore, mkfsRun)
+			slog.Info("unid: image build enabled", "store", storePath)
+		}
 	}
 
 	slog.Info("unid listening", "endpoint", endpoint, "qemu", qemuBin)

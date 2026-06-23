@@ -1,15 +1,18 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/network"
 	"github.com/AitorConS/unikernel-engine/internal/scheduler"
 	"github.com/AitorConS/unikernel-engine/internal/service"
@@ -41,6 +44,8 @@ type Server struct {
 	version    string
 	resolver   *scheduler.Resolver
 	cluster    ClusterMemberLister
+	imgStore   *image.Store
+	mkfs       image.MkfsFunc
 }
 
 // NewServer creates a Server that will listen on endpoint. The endpoint may
@@ -109,7 +114,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
-		result, rpcErr := s.dispatch(ctx, &req, conn)
+		result, rpcErr := s.dispatch(ctx, &req, conn, dec)
 		if result == attachHandled {
 			return
 		}
@@ -135,8 +140,17 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 // has taken over the connection and no response should be sent.
 var attachHandled = struct{}{}
 
-func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn) (any, *RPCError) {
+func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn, dec *json.Decoder) (any, *RPCError) {
 	switch req.Method {
+	case "Image.Build":
+		// Build streams its context after the request. Read the decoder's
+		// leftover buffer first, then the raw connection. json.Encoder writes a
+		// trailing newline after the request that the decoder leaves buffered,
+		// so skip any leading whitespace before the binary frame stream.
+		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
+		skipLeadingWhitespace(br)
+		s.handleBuild(ctx, req.Params, newFrameReader(br), conn, req.ID)
+		return attachHandled, nil
 	case "VM.Run":
 		return s.handleRun(ctx, req.Params)
 	case "VM.Stop":

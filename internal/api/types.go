@@ -234,6 +234,34 @@ type ServiceUpdateParams struct {
 	HealthTimeout int    `json:"health_timeout,omitempty"`
 }
 
+// BuildParams are the parameters for Image.Build. Immediately after sending
+// this request the client streams the build context — a tar archive of the
+// program binary plus any package/source files — as length-prefixed frames
+// terminated by a zero-length frame. The daemon unpacks it into its own Linux
+// filesystem, runs mkfs there, and stores the resulting image in its store.
+type BuildParams struct {
+	Name string `json:"name"`
+	Tag  string `json:"tag,omitempty"`
+	// Program is the guest path (within the context tar) of the main ELF
+	// binary. All other tar entries are treated as additional image files.
+	Program    string            `json:"program"`
+	Memory     string            `json:"memory,omitempty"`
+	CPUs       int               `json:"cpus,omitempty"`
+	Entrypoint string            `json:"entrypoint,omitempty"`
+	Args       []string          `json:"args,omitempty"`
+	Env        map[string]string `json:"env,omitempty"`
+	Port       int               `json:"port,omitempty"`
+}
+
+// ImageManifestResult is the wire representation of a built image manifest.
+type ImageManifestResult struct {
+	Name       string `json:"name"`
+	Tag        string `json:"tag"`
+	DiskDigest string `json:"disk_digest"`
+	DiskSize   int64  `json:"disk_size"`
+	Created    string `json:"created"`
+}
+
 // ServiceInfoResult is the result for Service.Get and Service.List.
 type ServiceInfoResult struct {
 	Name            string   `json:"name"`

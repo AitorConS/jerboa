@@ -356,6 +356,49 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 	}
 }
 
+// ImageBuild sends an Image.Build request and streams the build context to the
+// daemon, which assembles the disk image with mkfs on its own filesystem and
+// stores it. contextTar is an uncompressed tar archive containing the program
+// binary (at p.Program) plus any package or source files. This method takes
+// over the connection for streaming; do not issue other calls concurrently.
+func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Reader) (ImageManifestResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	reqID := c.seq.Add(1)
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return ImageManifestResult{}, fmt.Errorf("marshal build params: %w", err)
+	}
+	req := Request{JSONRPC: "2.0", ID: reqID, Method: "Image.Build", Params: json.RawMessage(raw)}
+	if err := c.enc.Encode(req); err != nil {
+		return ImageManifestResult{}, fmt.Errorf("encode build request: %w", err)
+	}
+
+	fw := newFrameWriter(c.conn)
+	if _, err := io.Copy(fw, contextTar); err != nil {
+		return ImageManifestResult{}, fmt.Errorf("stream build context: %w", err)
+	}
+	if err := fw.Close(); err != nil {
+		return ImageManifestResult{}, fmt.Errorf("finish build context: %w", err)
+	}
+
+	var resp Response
+	if err := c.dec.Decode(&resp); err != nil {
+		return ImageManifestResult{}, fmt.Errorf("decode build response: %w", err)
+	}
+	if resp.Error != nil {
+		return ImageManifestResult{}, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	var out ImageManifestResult
+	if resp.Result != nil {
+		if err := json.Unmarshal(resp.Result, &out); err != nil {
+			return ImageManifestResult{}, fmt.Errorf("unmarshal build result: %w", err)
+		}
+	}
+	return out, nil
+}
+
 func (c *Client) call(method string, params any, out any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
