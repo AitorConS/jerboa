@@ -47,10 +47,11 @@ type Server struct {
 	version    string
 	resolver   *scheduler.Resolver
 	cluster    ClusterMemberLister
-	imgStore   *image.Store
-	mkfsMu     sync.RWMutex
-	mkfs       image.MkfsFunc
-	authToken  string
+	imgStore     *image.Store
+	mkfsMu       sync.Mutex
+	mkfsResolver func(context.Context) (image.MkfsFunc, error)
+	mkfsCached   image.MkfsFunc
+	authToken    string
 }
 
 // SetAuthToken requires every connection to authenticate via an Auth.Hello

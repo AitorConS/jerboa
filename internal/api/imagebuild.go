@@ -23,23 +23,48 @@ func (s *Server) SetImageStore(store *image.Store) {
 	s.imgStore = store
 }
 
-// EnableImageBuild turns on the Image.Build RPC by supplying the mkfs function
-// that assembles disk images on the daemon's (Linux) filesystem. It requires an
-// image store (see SetImageStore); until both are set, Image.Build reports
-// "method not found". Safe to call from a goroutine after Serve has started
-// (e.g. once mkfs resolution finishes).
+// EnableImageBuild turns on the Image.Build RPC with a fixed mkfs function. It
+// requires an image store (see SetImageStore). Mostly used in tests; the daemon
+// uses EnableImageBuildResolver to resolve mkfs lazily.
 func (s *Server) EnableImageBuild(mkfs image.MkfsFunc) {
+	s.EnableImageBuildResolver(func(context.Context) (image.MkfsFunc, error) { return mkfs, nil })
+}
+
+// EnableImageBuildResolver turns on the Image.Build RPC with a resolver that
+// produces the mkfs function on first use. This lets the daemon download the
+// kernel toolchain on the first build instead of blocking startup. A successful
+// result is cached; errors are not, so a failed download can be retried.
+func (s *Server) EnableImageBuildResolver(resolver func(context.Context) (image.MkfsFunc, error)) {
 	s.mkfsMu.Lock()
-	s.mkfs = mkfs
+	s.mkfsResolver = resolver
+	s.mkfsCached = nil
 	s.mkfsMu.Unlock()
 }
 
-// buildFunc returns the configured mkfs function, or nil if image build is not
-// enabled.
-func (s *Server) buildFunc() image.MkfsFunc {
-	s.mkfsMu.RLock()
-	defer s.mkfsMu.RUnlock()
-	return s.mkfs
+// imageBuildEnabled reports whether an mkfs resolver is configured.
+func (s *Server) imageBuildEnabled() bool {
+	s.mkfsMu.Lock()
+	defer s.mkfsMu.Unlock()
+	return s.mkfsResolver != nil
+}
+
+// resolveMkfs returns the mkfs function, invoking the resolver once and caching
+// the result. Errors are returned without caching so a retry can succeed.
+func (s *Server) resolveMkfs(ctx context.Context) (image.MkfsFunc, error) {
+	s.mkfsMu.Lock()
+	defer s.mkfsMu.Unlock()
+	if s.mkfsResolver == nil {
+		return nil, nil
+	}
+	if s.mkfsCached != nil {
+		return s.mkfsCached, nil
+	}
+	f, err := s.mkfsResolver(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.mkfsCached = f
+	return f, nil
 }
 
 // handleImageList returns the manifests held in the daemon's image store.
@@ -96,8 +121,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
 	}
-	mkfs := s.buildFunc()
-	if s.imgStore == nil || mkfs == nil {
+	if s.imgStore == nil || !s.imageBuildEnabled() {
 		drain(stream)
 		s.writeError(conn, reqID, &RPCError{Code: -32601, Message: "method not found: Image.Build (image build disabled)"})
 		return
@@ -120,6 +144,13 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	binaryPath, pkgFiles, err := splitProgram(files, p.Program)
 	if err != nil {
 		s.writeError(conn, reqID, &RPCError{Code: -32602, Message: err.Error()})
+		return
+	}
+
+	// Resolve mkfs lazily — the first build may download the kernel toolchain.
+	mkfs, err := s.resolveMkfs(ctx)
+	if err != nil {
+		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "resolve mkfs toolchain: " + err.Error()})
 		return
 	}
 

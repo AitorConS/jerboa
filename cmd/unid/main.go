@@ -253,23 +253,15 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		slog.Warn("unid: image store unavailable", "err", err)
 	} else {
 		vmSrv.SetImageStore(imgStore)
-		// Enable server-side image builds (Image.Build) once the kernel
-		// toolchain is resolved. Done asynchronously so resolving mkfs (which
-		// may probe WSL on Windows) never delays the daemon from serving.
+		// Enable server-side image builds (Image.Build) with a lazy mkfs
+		// resolver: the kernel toolchain is downloaded (and cached) on the first
+		// build instead of blocking startup.
 		toolsDir := defaultToolsPath()
-		if !tools.Exist(toolsDir) {
-			slog.Info("unid: image build disabled (kernel tools not present)", "tools_dir", toolsDir)
-		} else {
-			go func() {
-				mkfsRun, err := tools.ResolveMkfs(ctx, toolsDir, "")
-				if err != nil {
-					slog.Warn("unid: image build disabled (mkfs unavailable)", "err", err)
-					return
-				}
-				vmSrv.EnableImageBuild(mkfsRun)
-				slog.Info("unid: image build enabled", "store", storePath)
-			}()
-		}
+		vmSrv.EnableImageBuildResolver(func(rctx context.Context) (image.MkfsFunc, error) {
+			slog.Info("unid: resolving mkfs toolchain for image build", "tools_dir", toolsDir)
+			return tools.ResolveMkfs(rctx, toolsDir, "")
+		})
+		slog.Info("unid: image build enabled", "store", storePath)
 	}
 
 	slog.Info("unid listening", "endpoint", endpoint, "qemu", qemuBin)
