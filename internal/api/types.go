@@ -143,6 +143,13 @@ type IDParams struct {
 	ID string `json:"id"`
 }
 
+// AuthParams is the payload of the Auth.Hello handshake. When the daemon is
+// configured with a token, the first request on every connection must be
+// Auth.Hello carrying the matching token before any other method is accepted.
+type AuthParams struct {
+	Token string `json:"token"`
+}
+
 // NetworkCreateParams are the parameters for Network.Create.
 type NetworkCreateParams struct {
 	Name   string `json:"name"`

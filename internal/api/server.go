@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,6 +50,14 @@ type Server struct {
 	imgStore   *image.Store
 	mkfsMu     sync.RWMutex
 	mkfs       image.MkfsFunc
+	authToken  string
+}
+
+// SetAuthToken requires every connection to authenticate via an Auth.Hello
+// handshake carrying token before any other method is dispatched. An empty
+// token (the default) disables authentication. Call once before Serve.
+func (s *Server) SetAuthToken(token string) {
+	s.authToken = token
 }
 
 // NewServer creates a Server that will listen on endpoint. The endpoint may
@@ -112,10 +121,22 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}()
 	dec := json.NewDecoder(conn)
 	enc := json.NewEncoder(conn)
+	authed := s.authToken == ""
 	for dec.More() {
 		var req Request
 		if err := dec.Decode(&req); err != nil {
 			return
+		}
+		if !authed {
+			// Until authenticated, only Auth.Hello is accepted. Any failure
+			// closes the connection.
+			if req.Method != "Auth.Hello" || !s.checkAuth(req.Params) {
+				_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32001, Message: "authentication required"}})
+				return
+			}
+			authed = true
+			_ = enc.Encode(Response{JSONRPC: "2.0", ID: req.ID, Result: okResult()})
+			continue
 		}
 		result, rpcErr := s.dispatch(ctx, &req, conn, dec)
 		if result == attachHandled {
@@ -137,6 +158,21 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+}
+
+// checkAuth reports whether params carries the configured auth token, using a
+// constant-time comparison.
+func (s *Server) checkAuth(params json.RawMessage) bool {
+	var p AuthParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(p.Token), []byte(s.authToken)) == 1
+}
+
+// okResult is the JSON-encoded {"status":"ok"} acknowledgement.
+func okResult() json.RawMessage {
+	return json.RawMessage(`{"status":"ok"}`)
 }
 
 // attachHandled is a sentinel value returned by dispatch when VM.Attach

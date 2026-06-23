@@ -28,6 +28,8 @@ Every `uni` command accepts these flags:
 
 The endpoint is resolved in priority order: `--host` flag → `UNI_HOST` environment variable → `[daemon] endpoint` in `~/.uni/config.toml` → per-platform default.
 
+**Authentication.** When the daemon is started with a token (`unid --auth-token` or `UNI_AUTH_TOKEN`), every connection must complete an `Auth.Hello` handshake first. The client reads its token from `UNI_AUTH_TOKEN` or `[daemon] token` in `~/.uni/config.toml`. A token is mandatory for any `tcp://` endpoint (loopback included), since a TCP port is reachable by any local process; `unix://` sockets can rely on filesystem permissions instead.
+
 ---
 
 ## VM Commands
@@ -1590,6 +1592,7 @@ When using `uni run --attach`, the command blocks until the VM reaches the `stop
 |---|---|---|
 | `--host`, `-H` | `unix:///var/run/unid.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | Listen endpoint (`unix:///path` or `tcp://host:port`) |
 | `--socket` | — | Deprecated alias for `--host` (treated as a Unix socket path) |
+| `--auth-token` | — | Shared secret required from clients via `Auth.Hello` (env: `UNI_AUTH_TOKEN`); empty disables auth |
 | `--qemu` | `qemu-system-x86_64` | QEMU binary to use |
 | `--store` | `~/.uni/images` | Image store root directory |
 | `--vm-store` | `file` | VM state backend: `file` (per-VM JSON files) or `sqlite` (single database) |

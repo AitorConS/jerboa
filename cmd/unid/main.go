@@ -38,9 +38,10 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		hostFlag     string
-		socketFlag   string
-		qemuBin      string
+		hostFlag      string
+		socketFlag    string
+		authTokenFlag string
+		qemuBin       string
 		storePath    string
 		vmStoreType  string
 		metricsAddr  string
@@ -65,7 +66,11 @@ func newRootCmd() *cobra.Command {
 			if endpoint == "" {
 				endpoint = config.DefaultEndpoint()
 			}
-			return serve(cmd.Context(), endpoint, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
+			authToken := authTokenFlag
+			if authToken == "" {
+				authToken = os.Getenv("UNI_AUTH_TOKEN")
+			}
+			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
 		},
 	}
 	root.Flags().StringVarP(&hostFlag, "host", "H", "",
@@ -73,6 +78,8 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&socketFlag, "socket", "",
 		"Unix socket path for VM management API (deprecated: use --host)")
 	_ = root.Flags().MarkDeprecated("socket", "use --host instead")
+	root.Flags().StringVar(&authTokenFlag, "auth-token", "",
+		"shared secret required from clients via Auth.Hello (env: UNI_AUTH_TOKEN); empty disables auth")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
@@ -100,7 +107,7 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, endpoint, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath string) error {
+func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath string) error {
 	setupLogger(logFormat)
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
@@ -229,6 +236,15 @@ func serve(ctx context.Context, endpoint, qemuBin, storePath, vmStoreType, metri
 	vmSrv, err := api.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("unid: vm server: %w", err)
+	}
+
+	// Require a token on every connection when one is configured. A TCP
+	// endpoint without a token is reachable by any local process, so warn.
+	if authToken != "" {
+		vmSrv.SetAuthToken(authToken)
+		slog.Info("unid: client authentication enabled")
+	} else if strings.HasPrefix(endpoint, "tcp://") {
+		slog.Warn("unid: TCP endpoint without --auth-token is reachable by any local process; set a token")
 	}
 
 	// Attach the daemon's image store so it can resolve image references for

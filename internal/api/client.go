@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 )
@@ -13,6 +14,7 @@ import (
 // Client connects to a unid server over a Unix socket or TCP.
 type Client struct {
 	endpoint string
+	token    string
 	conn     net.Conn
 	mu       sync.Mutex
 	enc      *json.Encoder
@@ -22,7 +24,15 @@ type Client struct {
 
 // Dial connects to the unid server at endpoint. The endpoint may carry a
 // scheme (unix:// or tcp://); a bare value is treated as a Unix socket path.
+// The auth token is read from the UNI_AUTH_TOKEN environment variable.
 func Dial(endpoint string) (*Client, error) {
+	return DialWithToken(endpoint, os.Getenv("UNI_AUTH_TOKEN"))
+}
+
+// DialWithToken connects like Dial and, when token is non-empty, performs the
+// Auth.Hello handshake before returning. The same token is reused for any
+// secondary connection the client opens (e.g. ImageBuild).
+func DialWithToken(endpoint, token string) (*Client, error) {
 	network, address, err := parseEndpoint(endpoint)
 	if err != nil {
 		return nil, err
@@ -31,12 +41,40 @@ func Dial(endpoint string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("api client dial %s: %w", endpoint, err)
 	}
-	return &Client{
+	c := &Client{
 		endpoint: endpoint,
+		token:    token,
 		conn:     conn,
 		enc:      json.NewEncoder(conn),
 		dec:      json.NewDecoder(conn),
-	}, nil
+	}
+	if token != "" {
+		if err := sendAuth(c.enc, c.dec, token); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
+	return c, nil
+}
+
+// sendAuth performs the Auth.Hello handshake on a connection's encoder/decoder.
+func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
+	raw, err := json.Marshal(AuthParams{Token: token})
+	if err != nil {
+		return fmt.Errorf("marshal auth: %w", err)
+	}
+	req := Request{JSONRPC: "2.0", ID: 1, Method: "Auth.Hello", Params: json.RawMessage(raw)}
+	if err := enc.Encode(req); err != nil {
+		return fmt.Errorf("send auth: %w", err)
+	}
+	var resp Response
+	if err := dec.Decode(&resp); err != nil {
+		return fmt.Errorf("auth response: %w", err)
+	}
+	if resp.Error != nil {
+		return fmt.Errorf("authentication failed: %s", resp.Error.Message)
+	}
+	return nil
 }
 
 // Close closes the underlying connection.
@@ -373,12 +411,20 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 	}
 	defer func() { _ = conn.Close() }()
 
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
+	if c.token != "" {
+		if err := sendAuth(enc, dec, c.token); err != nil {
+			return ImageManifestResult{}, err
+		}
+	}
+
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return ImageManifestResult{}, fmt.Errorf("marshal build params: %w", err)
 	}
 	req := Request{JSONRPC: "2.0", ID: 1, Method: "Image.Build", Params: json.RawMessage(raw)}
-	if err := json.NewEncoder(conn).Encode(req); err != nil {
+	if err := enc.Encode(req); err != nil {
 		return ImageManifestResult{}, fmt.Errorf("encode build request: %w", err)
 	}
 
@@ -391,7 +437,7 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 	}
 
 	var resp Response
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+	if err := dec.Decode(&resp); err != nil {
 		return ImageManifestResult{}, fmt.Errorf("decode build response: %w", err)
 	}
 	if resp.Error != nil {

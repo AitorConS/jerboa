@@ -22,6 +22,9 @@ type DaemonConfig struct {
 	Endpoint string `toml:"endpoint"`
 	// Distro is the WSL2 distribution to host the daemon on Windows.
 	Distro string `toml:"distro"`
+	// Token is the shared secret sent to the daemon via the Auth.Hello
+	// handshake. Overridden by the UNI_AUTH_TOKEN environment variable.
+	Token string `toml:"token"`
 }
 
 // DefaultEndpoint returns the per-platform default daemon endpoint. Windows
@@ -48,6 +51,19 @@ func ResolveEndpoint(override string) string {
 		return cfg.Daemon.Endpoint
 	}
 	return DefaultEndpoint()
+}
+
+// ResolveToken returns the client auth token: the UNI_AUTH_TOKEN environment
+// variable takes precedence over the config file's [daemon] token. Empty means
+// no authentication.
+func ResolveToken() string {
+	if v := os.Getenv("UNI_AUTH_TOKEN"); v != "" {
+		return v
+	}
+	if cfg, err := Load(DefaultPath()); err == nil {
+		return cfg.Daemon.Token
+	}
+	return ""
 }
 
 // DefaultPath returns the default config file location (~/.uni/config.toml).

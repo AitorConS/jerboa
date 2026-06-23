@@ -39,6 +39,11 @@ func newRootCmd() *cobra.Command {
 				override = socketFlag
 			}
 			endpoint = config.ResolveEndpoint(override)
+			// Surface a config-file token through the environment so api.Dial
+			// (which reads UNI_AUTH_TOKEN) authenticates transparently.
+			if tok := config.ResolveToken(); tok != "" {
+				_ = os.Setenv("UNI_AUTH_TOKEN", tok)
+			}
 			return nil
 		},
 	}
