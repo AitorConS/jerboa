@@ -40,6 +40,11 @@ type VolumeMountSpec struct {
 
 // RunParams are the parameters for the VM.Run method.
 type RunParams struct {
+	// Image is a name:tag (or sha) reference resolved against the daemon's
+	// image store. When set it takes precedence over ImagePath.
+	Image string `json:"image,omitempty"`
+	// ImagePath is a direct path to a bootable disk image on the daemon's
+	// filesystem. Used for file-based runs when Image is empty.
 	ImagePath   string            `json:"image_path"`
 	Memory      string            `json:"memory"`
 	CPUs        int               `json:"cpus"`

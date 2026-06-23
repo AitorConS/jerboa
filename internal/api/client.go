@@ -10,13 +10,14 @@ import (
 	"sync/atomic"
 )
 
-// Client connects to a unid server over a Unix socket.
+// Client connects to a unid server over a Unix socket or TCP.
 type Client struct {
-	conn net.Conn
-	mu   sync.Mutex
-	enc  *json.Encoder
-	dec  *json.Decoder
-	seq  atomic.Int64
+	endpoint string
+	conn     net.Conn
+	mu       sync.Mutex
+	enc      *json.Encoder
+	dec      *json.Decoder
+	seq      atomic.Int64
 }
 
 // Dial connects to the unid server at endpoint. The endpoint may carry a
@@ -31,9 +32,10 @@ func Dial(endpoint string) (*Client, error) {
 		return nil, fmt.Errorf("api client dial %s: %w", endpoint, err)
 	}
 	return &Client{
-		conn: conn,
-		enc:  json.NewEncoder(conn),
-		dec:  json.NewDecoder(conn),
+		endpoint: endpoint,
+		conn:     conn,
+		enc:      json.NewEncoder(conn),
+		dec:      json.NewDecoder(conn),
 	}, nil
 }
 
@@ -359,23 +361,28 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 // ImageBuild sends an Image.Build request and streams the build context to the
 // daemon, which assembles the disk image with mkfs on its own filesystem and
 // stores it. contextTar is an uncompressed tar archive containing the program
-// binary (at p.Program) plus any package or source files. This method takes
-// over the connection for streaming; do not issue other calls concurrently.
+// binary (at p.Program) plus any package or source files.
+//
+// Build uses a dedicated connection (the daemon consumes the streamed context
+// and closes that connection), leaving the client's persistent connection free
+// for concurrent calls.
 func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Reader) (ImageManifestResult, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	conn, err := net.Dial(dialArgs(c.endpoint)) //nolint:noctx // dedicated build connection
+	if err != nil {
+		return ImageManifestResult{}, fmt.Errorf("dial build connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
 
-	reqID := c.seq.Add(1)
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return ImageManifestResult{}, fmt.Errorf("marshal build params: %w", err)
 	}
-	req := Request{JSONRPC: "2.0", ID: reqID, Method: "Image.Build", Params: json.RawMessage(raw)}
-	if err := c.enc.Encode(req); err != nil {
+	req := Request{JSONRPC: "2.0", ID: 1, Method: "Image.Build", Params: json.RawMessage(raw)}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
 		return ImageManifestResult{}, fmt.Errorf("encode build request: %w", err)
 	}
 
-	fw := newFrameWriter(c.conn)
+	fw := newFrameWriter(conn)
 	if _, err := io.Copy(fw, contextTar); err != nil {
 		return ImageManifestResult{}, fmt.Errorf("stream build context: %w", err)
 	}
@@ -384,7 +391,7 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 	}
 
 	var resp Response
-	if err := c.dec.Decode(&resp); err != nil {
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
 		return ImageManifestResult{}, fmt.Errorf("decode build response: %w", err)
 	}
 	if resp.Error != nil {
@@ -397,6 +404,26 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 		}
 	}
 	return out, nil
+}
+
+// ImageList returns the images held in the daemon's store.
+func (c *Client) ImageList(_ context.Context) ([]ImageManifestResult, error) {
+	var out []ImageManifestResult
+	if err := c.call("Image.List", nil, &out); err != nil {
+		return nil, fmt.Errorf("client image list: %w", err)
+	}
+	return out, nil
+}
+
+// ImageRemove deletes a name:tag (or sha) reference from the daemon's store.
+func (c *Client) ImageRemove(_ context.Context, ref string) error {
+	p := struct {
+		Ref string `json:"ref"`
+	}{Ref: ref}
+	if err := c.call("Image.Remove", p, nil); err != nil {
+		return fmt.Errorf("client image remove: %w", err)
+	}
+	return nil
 }
 
 func (c *Client) call(method string, params any, out any) error {

@@ -16,12 +16,63 @@ import (
 	pkg "github.com/AitorConS/unikernel-engine/internal/package"
 )
 
-// EnableImageBuild turns on the Image.Build RPC. store receives built images
-// and mkfs assembles disk images on the daemon's (Linux) filesystem. Until this
-// is called, Image.Build reports "method not found". Call once after NewServer.
-func (s *Server) EnableImageBuild(store *image.Store, mkfs image.MkfsFunc) {
+// SetImageStore attaches the daemon's image store, enabling image resolution
+// for VM.Run as well as the Image.List and Image.Remove RPCs. Call once after
+// NewServer, before Serve.
+func (s *Server) SetImageStore(store *image.Store) {
 	s.imgStore = store
+}
+
+// EnableImageBuild turns on the Image.Build RPC by supplying the mkfs function
+// that assembles disk images on the daemon's (Linux) filesystem. It requires an
+// image store (see SetImageStore); until both are set, Image.Build reports
+// "method not found".
+func (s *Server) EnableImageBuild(mkfs image.MkfsFunc) {
 	s.mkfs = mkfs
+}
+
+// handleImageList returns the manifests held in the daemon's image store.
+func (s *Server) handleImageList() (any, *RPCError) {
+	if s.imgStore == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Image.List (image store disabled)"}
+	}
+	manifests, err := s.imgStore.List()
+	if err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	out := make([]ImageManifestResult, len(manifests))
+	for i, m := range manifests {
+		out[i] = imageManifestResult(m)
+	}
+	return out, nil
+}
+
+// handleImageRemove deletes a name:tag (or sha) reference from the store.
+func (s *Server) handleImageRemove(params json.RawMessage) (any, *RPCError) {
+	if s.imgStore == nil {
+		return nil, &RPCError{Code: -32601, Message: "method not found: Image.Remove (image store disabled)"}
+	}
+	var p struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	if err := s.imgStore.Remove(p.Ref); err != nil {
+		return nil, &RPCError{Code: -32000, Message: err.Error()}
+	}
+	return map[string]string{"status": "ok"}, nil
+}
+
+// imageManifestResult converts a stored manifest to its wire representation.
+func imageManifestResult(m image.Manifest) ImageManifestResult {
+	return ImageManifestResult{
+		Name:       m.Name,
+		Tag:        m.Tag,
+		DiskDigest: m.DiskDigest,
+		DiskSize:   m.DiskSize,
+		Created:    m.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
+	}
 }
 
 // handleBuild reads a streamed build context, assembles a disk image with mkfs
@@ -80,13 +131,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	}
 
 	resp := Response{JSONRPC: "2.0", ID: reqID}
-	raw, mErr := json.Marshal(ImageManifestResult{
-		Name:       m.Name,
-		Tag:        m.Tag,
-		DiskDigest: m.DiskDigest,
-		DiskSize:   m.DiskSize,
-		Created:    m.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
-	})
+	raw, mErr := json.Marshal(imageManifestResult(m))
 	if mErr != nil {
 		s.writeError(conn, reqID, &RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
 		return

@@ -151,6 +151,10 @@ func (s *Server) dispatch(ctx context.Context, req *Request, conn net.Conn, dec 
 		skipLeadingWhitespace(br)
 		s.handleBuild(ctx, req.Params, newFrameReader(br), conn, req.ID)
 		return attachHandled, nil
+	case "Image.List":
+		return s.handleImageList()
+	case "Image.Remove":
+		return s.handleImageRemove(req.Params)
 	case "VM.Run":
 		return s.handleRun(ctx, req.Params)
 	case "VM.Stop":
@@ -220,8 +224,19 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *R
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
+	imagePath := p.ImagePath
+	if p.Image != "" {
+		if s.imgStore == nil {
+			return nil, &RPCError{Code: -32000, Message: "image store disabled: cannot resolve image reference " + p.Image}
+		}
+		_, diskPath, err := s.imgStore.Get(p.Image)
+		if err != nil {
+			return nil, &RPCError{Code: -32000, Message: fmt.Sprintf("image %q not found: %v", p.Image, err)}
+		}
+		imagePath = diskPath
+	}
 	cfg := vm.Config{
-		ImagePath:   p.ImagePath,
+		ImagePath:   imagePath,
 		Memory:      p.Memory,
 		CPUs:        p.CPUs,
 		NetworkName: p.NetworkName,

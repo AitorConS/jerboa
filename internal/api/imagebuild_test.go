@@ -54,12 +54,13 @@ func buildContextTar(t *testing.T, files map[string][]byte) *bytes.Buffer {
 func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "unid.sock")
-	mgr := vm.NewQEMUManager("fake-qemu")
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
 	srv, err := api.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
 	require.NoError(t, err)
-	srv.EnableImageBuild(store, fakeMkfs(t))
+	srv.SetImageStore(store)
+	srv.EnableImageBuild(fakeMkfs(t))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -114,6 +115,67 @@ func TestImageBuild_RoundTrip(t *testing.T) {
 	require.Equal(t, res.DiskDigest, m.DiskDigest)
 	require.FileExists(t, diskPath)
 	require.Equal(t, 2, m.Config.CPUs)
+}
+
+func buildImage(t *testing.T, client *api.Client, name, tag string) {
+	t.Helper()
+	ctxTar := buildContextTar(t, map[string][]byte{"app": {0x7f, 'E', 'L', 'F', 0, 1}})
+	_, err := client.ImageBuild(context.Background(), api.BuildParams{
+		Name: name, Tag: tag, Program: "app",
+	}, ctxTar)
+	require.NoError(t, err)
+}
+
+func TestImage_ListAndRemove(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+
+	buildImage(t, client, "alpha", "v1")
+	buildImage(t, client, "beta", "v2")
+
+	list, err := client.ImageList(context.Background())
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, m := range list {
+		names[m.Name+":"+m.Tag] = true
+	}
+	require.True(t, names["alpha:v1"])
+	require.True(t, names["beta:v2"])
+
+	require.NoError(t, client.ImageRemove(context.Background(), "alpha:v1"))
+
+	list, err = client.ImageList(context.Background())
+	require.NoError(t, err)
+	for _, m := range list {
+		require.NotEqual(t, "alpha", m.Name)
+	}
+}
+
+func TestVMRun_ByRef(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+
+	buildImage(t, client, "web", "latest")
+
+	info, err := client.Run(context.Background(), api.RunParams{
+		Image:  "web:latest",
+		Memory: "256M",
+		CPUs:   1,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+}
+
+func TestVMRun_ByRef_NotFound(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+
+	_, err = client.Run(context.Background(), api.RunParams{Image: "ghost:latest", Memory: "256M", CPUs: 1})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not found")
 }
 
 func TestImageBuild_MissingProgram(t *testing.T) {

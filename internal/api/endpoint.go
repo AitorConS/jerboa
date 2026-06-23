@@ -37,3 +37,14 @@ func parseEndpoint(endpoint string) (network, address string, err error) {
 		return "", "", fmt.Errorf("api: unsupported endpoint scheme %q (use unix:// or tcp://)", scheme)
 	}
 }
+
+// dialArgs splits an already-validated endpoint into net.Dial arguments. Used
+// for opening secondary connections from a live Client, where the endpoint was
+// validated at Dial time; a parse failure falls back to a Unix socket path.
+func dialArgs(endpoint string) (network, address string) {
+	n, a, err := parseEndpoint(endpoint)
+	if err != nil {
+		return "unix", endpoint
+	}
+	return n, a
+}
