@@ -42,17 +42,17 @@ func newRootCmd() *cobra.Command {
 		socketFlag    string
 		authTokenFlag string
 		qemuBin       string
-		storePath    string
-		vmStoreType  string
-		metricsAddr  string
-		uiAddr       string
-		logFormat    string
-		traceAddr    string
-		clusterAddr  string
-		joinAddrs    string
-		hypervisor   string
-		fcBin        string
-		fcKernelPath string
+		storePath     string
+		vmStoreType   string
+		metricsAddr   string
+		uiAddr        string
+		logFormat     string
+		traceAddr     string
+		clusterAddr   string
+		joinAddrs     string
+		hypervisor    string
+		fcBin         string
+		fcKernelPath  string
 	)
 	root := &cobra.Command{
 		Use:     "unid",

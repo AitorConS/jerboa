@@ -50,12 +50,12 @@ type FirecrackerManager struct {
 	mkCmd       CommandFunc
 	hchecker    *HealthChecker
 	// platform hooks — overridden on Windows to route through WSL2
-	vmSockPath         func(id string) string               // socket path as seen by the firecracker process
-	cfgPathForProcess  func(path string) string             // translates config file path for the FC process
-	shutdownAPI        func(sockPath string) error          // calls Firecracker's SendCtrlAltDel API
-	rewriteConfigPaths func(cfg *fcVMConfig)                // rewrites paths inside the FC JSON config
-	vmmLogPath         func(id string) string               // path for Firecracker's --log-path arg
-	readVMMLog         func(path string) ([]byte, error)    // reads VMM log (may use wsl on Windows)
+	vmSockPath         func(id string) string            // socket path as seen by the firecracker process
+	cfgPathForProcess  func(path string) string          // translates config file path for the FC process
+	shutdownAPI        func(sockPath string) error       // calls Firecracker's SendCtrlAltDel API
+	rewriteConfigPaths func(cfg *fcVMConfig)             // rewrites paths inside the FC JSON config
+	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
+	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
 }
 
 // NewFirecrackerManager returns a FirecrackerManager.

@@ -39,14 +39,14 @@ type ClusterMember struct {
 // Server listens on a Unix socket and dispatches JSON-RPC requests to a
 // vm.Manager.
 type Server struct {
-	mgr        vm.Manager
-	netStore   *network.Store
-	svcMgr     *service.Manager
-	listener   net.Listener
-	shutdownFn func()
-	version    string
-	resolver   *scheduler.Resolver
-	cluster    ClusterMemberLister
+	mgr          vm.Manager
+	netStore     *network.Store
+	svcMgr       *service.Manager
+	listener     net.Listener
+	shutdownFn   func()
+	version      string
+	resolver     *scheduler.Resolver
+	cluster      ClusterMemberLister
 	imgStore     *image.Store
 	mkfsMu       sync.Mutex
 	mkfsResolver func(context.Context) (image.MkfsFunc, error)

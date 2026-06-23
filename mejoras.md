@@ -198,30 +198,37 @@ Ficheros que **se eliminan** al completar la migración:
 ## 4. Plan de migración por fases
 
 Cada fase es entregable y deja el sistema funcionando.
+**Estado: Fases 1-3 completas y validadas end-to-end en WSL2 real.**
 
-### Fase 1 — Transporte por endpoint (barata, alto valor)
-- [ ] `api.Dial(endpoint)` y `api.Listen(endpoint)` con parseo de esquema
-      (`unix://`, `tcp://`).
-- [ ] `unid` escucha en el endpoint resuelto; `--host` con alias `--socket`.
-- [ ] `uni` resuelve endpoint (flag → `UNI_HOST` → config → default plataforma).
-- [ ] Validación end-to-end: `unid` arrancado a mano en WSL2, `uni.exe`
-      conecta por `tcp://127.0.0.1:7890`.
-- [ ] **Borra** `firecracker_windows.go` (el daemon ya es Linux).
+### Fase 1 — Transporte por endpoint (barata, alto valor) ✅
+- [x] `api.Dial(endpoint)`/`api.listen(endpoint)` con parseo de esquema
+      (`unix://`, `tcp://`; valor desnudo = unix por compatibilidad).
+- [x] `unid` escucha en el endpoint resuelto; `--host` con alias `--socket`.
+- [x] `uni` resuelve endpoint (flag → `UNI_HOST` → config → default plataforma).
+- [x] Validación end-to-end por TCP loopback Windows↔WSL2.
+- [x] **Borrado** `firecracker_windows.go` (`platformInitFC` ahora no-op universal).
 
-### Fase 2 — Build y store dentro del daemon
-- [ ] RPC `Image.Build` con streaming del contexto de build.
-- [ ] Store del daemon en ext4 de WSL2; cliente solo por RPC.
+### Fase 2 — Build y store dentro del daemon ✅
+- [x] RPC `Image.Build` con streaming del contexto (frames length-prefixed).
+- [x] Store del daemon en ext4 de WSL2; cliente por RPC (`Image.List/Remove`,
+      run/build por ref `name:tag`). mkfs corre en Linux (resolución lazy).
 - [ ] `tools/mkfs.go` sin rama Windows; **borra** `mkfs_windows.go`.
+      *(Pendiente: `uni pkg`/`uni kernel` aún usan `ResolveMkfs` client-side;
+      requiere Fase 4 / D7.)*
 
-### Fase 3 — Seguridad y bootstrap
-- [ ] Token bearer + handshake `Auth.Hello`; bind a `127.0.0.1`.
-- [ ] `internal/wslboot`: health check + auto-arranque de `unid` en WSL2,
-      token por stdin, persistencia en `%USERPROFILE%\.uni\daemon.json`.
+### Fase 3 — Seguridad y bootstrap ✅
+- [x] Token bearer + handshake `Auth.Hello` (comparación constante); bind
+      loopback; aviso si TCP sin token.
+- [x] `internal/wslboot`: health check + auto-arranque de `unid` en WSL2,
+      token por entorno (`WSLENV`, nunca `argv`), persistencia en
+      `%USERPROFILE%\.uni\daemon.json` (0600).
 
-### Fase 4 — Distro dedicada y limpieza final
+### Fase 4 — Distro dedicada y limpieza final (pendiente)
 - [ ] Aprovisionamiento de distro `unicli` vía `wsl --import` (rootfs versionado).
-- [ ] **Borra** stubs de red/cgroup; `firecracker_notwindows.go` → `_linux.go`.
-- [ ] Separación de módulos D7 consolidada.
+- [ ] **Borra** stubs de red/cgroup; `mkfs_windows.go`.
+- [ ] Separación de módulos D7 consolidada (cliente sin importar `vm`/`network`).
+      *Nota: hacer el daemon linux-only quita la capacidad de testear el lado
+      servidor en Windows; decisión a tomar explícitamente.*
 
 ---
 
@@ -236,7 +243,7 @@ Cada fase es entregable y deja el sistema funcionando.
 
 | Riesgo | Mitigación |
 |--------|------------|
-| Localhost-forwarding de WSL2 falla (modo *mirrored* en WSL nuevo) | Health check con timeout y mensaje accionable; detectar modo de red de WSL |
+| Localhost-forwarding de WSL2 falla (modo *mirrored* en WSL nuevo) | Health check con timeout y mensaje accionable. **Validado**: en modo NAT el relay de WSL sirve un servicio WSL bound a `127.0.0.1` a Windows sin problemas |
 | `/dev/kvm` o virtualización anidada no disponibles | Validación en bootstrap; Firecracker degrada a QEMU si falta KVM |
 | Token filtrado | Solo loopback + permisos solo-usuario en `daemon.json`; nunca en `argv` |
 | Coste de la distro dedicada | Fase 4 opcional; interino usa distro existente del usuario |
