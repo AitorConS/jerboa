@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	pkg "github.com/AitorConS/unikernel-engine/internal/package"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 )
 
 // MkfsFunc creates an exec.Cmd that runs mkfs to package binaryPath into imgPath.

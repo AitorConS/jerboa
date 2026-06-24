@@ -1,4 +1,4 @@
-module github.com/AitorConS/unikernel-engine
+module github.com/AitorConS/jerboa
 
 go 1.25.0
 

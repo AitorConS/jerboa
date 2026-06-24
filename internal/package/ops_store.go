@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 )
 
 // OpsStore manages locally cached ops packages under a root directory.

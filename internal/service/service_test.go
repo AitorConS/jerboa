@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/compose"
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/compose"
+	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/stretchr/testify/require"
 )
 

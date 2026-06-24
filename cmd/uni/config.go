@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/config"
+	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/spf13/cobra"
 )
 
 func newConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
-		Short: "Manage UniCli configuration",
+		Short: "Manage jerboa configuration",
 	}
 	cmd.AddCommand(
 		newConfigSetCmd(),

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/volume"
+	"github.com/AitorConS/jerboa/internal/volume"
 	"gopkg.in/yaml.v3"
 )
 

@@ -14,7 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 type mockManager struct {

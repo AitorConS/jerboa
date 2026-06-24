@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/signing"
-	"github.com/AitorConS/unikernel-engine/internal/volume"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/signing"
+	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
 

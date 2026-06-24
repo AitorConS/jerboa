@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 type DashboardData struct {

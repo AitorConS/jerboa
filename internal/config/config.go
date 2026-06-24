@@ -9,7 +9,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Config holds global UniCli configuration stored at ~/.uni/config.toml.
+// Config holds global jerboa configuration stored at ~/.uni/config.toml.
 type Config struct {
 	Hypervisor string       `toml:"hypervisor"`
 	Daemon     DaemonConfig `toml:"daemon"`

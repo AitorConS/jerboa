@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 )
 
 // OpsPackageBaseURL is the base URL for downloading ops packages.

@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/network"
+	"github.com/AitorConS/jerboa/internal/network"
 )
 
 var defaultCommandFunc CommandFunc = exec.CommandContext

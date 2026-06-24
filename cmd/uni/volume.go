@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"text/tabwriter"
 
-	"github.com/AitorConS/unikernel-engine/internal/volume"
+	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
 

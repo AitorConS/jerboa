@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/builder"
-	pkg "github.com/AitorConS/unikernel-engine/internal/package"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/builder"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/spf13/cobra"
 )
 

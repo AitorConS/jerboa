@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/apiserver"
-	"github.com/AitorConS/unikernel-engine/internal/compose"
-	"github.com/AitorConS/unikernel-engine/internal/network"
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/apiserver"
+	"github.com/AitorConS/jerboa/internal/compose"
+	"github.com/AitorConS/jerboa/internal/network"
+	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/stretchr/testify/require"
 )
 

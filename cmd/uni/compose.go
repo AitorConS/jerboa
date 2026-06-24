@@ -9,9 +9,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/compose"
-	"github.com/AitorConS/unikernel-engine/internal/volume"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/compose"
+	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
 

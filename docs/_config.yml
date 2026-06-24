@@ -1,6 +1,6 @@
 title: Uni — Unikernel Engine
 description: A Docker-like engine for building, running, and orchestrating unikernel VMs
-baseurl: "/UniCli"
+baseurl: "/jerboa"
 url: "https://aitorcons.github.io"
 
 remote_theme: just-the-docs/just-the-docs@v0.10.0
@@ -9,7 +9,7 @@ color_scheme: dark
 
 aux_links:
   "GitHub":
-    - "https://github.com/AitorConS/UniCli"
+    - "https://github.com/AitorConS/jerboa"
 
 aux_links_new_tab: true
 

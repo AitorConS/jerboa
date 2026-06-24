@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 // VMSource provides access to VMs for DNS-like name resolution.

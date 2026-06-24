@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 // Strategy determines how updates are applied to a service's replicas.

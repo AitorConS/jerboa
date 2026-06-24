@@ -3,7 +3,7 @@ package compose_test
 import (
 	"testing"
 
-	"github.com/AitorConS/unikernel-engine/internal/compose"
+	"github.com/AitorConS/jerboa/internal/compose"
 	"github.com/stretchr/testify/require"
 )
 

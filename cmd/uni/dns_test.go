@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/stretchr/testify/require"
 )
 

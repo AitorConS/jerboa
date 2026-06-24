@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
-	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/jerboa/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/image"
 )
 
 // ResolveMkfs returns an image.MkfsFunc ready to invoke.

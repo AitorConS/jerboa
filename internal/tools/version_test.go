@@ -83,13 +83,13 @@ func TestArtifactURL(t *testing.T) {
 			"specific version",
 			"v0.1.2",
 			"kernel.img",
-			"https://github.com/AitorConS/UniCLi/releases/download/kernel-v0.1.2/kernel.img",
+			"https://github.com/AitorConS/jerboa/releases/download/kernel-v0.1.2/kernel.img",
 		},
 		{
 			"latest version",
 			"latest",
 			"mkfs-linux-amd64",
-			"https://github.com/AitorConS/UniCLi/releases/download/latest/mkfs-linux-amd64",
+			"https://github.com/AitorConS/jerboa/releases/download/latest/mkfs-linux-amd64",
 		},
 	}
 
@@ -185,7 +185,7 @@ func TestListRemoteVersions(t *testing.T) {
 	defer srv.Close()
 
 	origAPI := githubAPIBase
-	githubAPIBase = srv.URL + "/repos/AitorConS/UniCLi"
+	githubAPIBase = srv.URL + "/repos/AitorConS/jerboa"
 	defer func() { githubAPIBase = origAPI }()
 
 	vers, err := ListRemoteVersions(context.Background())
@@ -200,7 +200,7 @@ func TestListRemoteVersions_APIError(t *testing.T) {
 	defer srv.Close()
 
 	origAPI := githubAPIBase
-	githubAPIBase = srv.URL + "/repos/AitorConS/UniCLi"
+	githubAPIBase = srv.URL + "/repos/AitorConS/jerboa"
 	defer func() { githubAPIBase = origAPI }()
 
 	_, err := ListRemoteVersions(context.Background())
@@ -223,7 +223,7 @@ func TestRemoteVersion(t *testing.T) {
 	defer srv.Close()
 
 	origAPI := githubAPIBase
-	githubAPIBase = srv.URL + "/repos/AitorConS/UniCLi"
+	githubAPIBase = srv.URL + "/repos/AitorConS/jerboa"
 	defer func() { githubAPIBase = origAPI }()
 
 	ver, err := RemoteVersion(context.Background())
@@ -239,7 +239,7 @@ func TestRemoteVersion_NoReleases(t *testing.T) {
 	defer srv.Close()
 
 	origAPI := githubAPIBase
-	githubAPIBase = srv.URL + "/repos/AitorConS/UniCLi"
+	githubAPIBase = srv.URL + "/repos/AitorConS/jerboa"
 	defer func() { githubAPIBase = origAPI }()
 
 	_, err := RemoteVersion(context.Background())
@@ -262,7 +262,7 @@ func TestDownloadVersion(t *testing.T) {
 	defer func() { releaseBase = origRelease }()
 
 	origAPI := githubAPIBase
-	githubAPIBase = fmt.Sprintf("%s/repos/AitorConS/UniCLi", srv.URL)
+	githubAPIBase = fmt.Sprintf("%s/repos/AitorConS/jerboa", srv.URL)
 	defer func() { githubAPIBase = origAPI }()
 
 	dir := t.TempDir()

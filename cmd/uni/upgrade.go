@@ -18,14 +18,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/spf13/cobra"
 )
 
 const (
-	cliGithubAPIBase = "https://api.github.com/repos/AitorConS/UniCLi"
-	cliReleaseBase   = "https://github.com/AitorConS/UniCLi/releases/download"
+	cliGithubAPIBase = "https://api.github.com/repos/AitorConS/jerboa"
+	cliReleaseBase   = "https://github.com/AitorConS/jerboa/releases/download"
 
 	daemonReadyTimeout = 15 * time.Second
 	daemonStopTimeout  = 10 * time.Second

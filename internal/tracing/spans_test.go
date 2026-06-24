@@ -11,7 +11,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 func setupTestTP(t *testing.T) (*sdktrace.TracerProvider, *tracetest.InMemoryExporter) {

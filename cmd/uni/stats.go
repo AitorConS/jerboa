@@ -5,7 +5,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/spf13/cobra"
 )
 

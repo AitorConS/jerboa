@@ -6,9 +6,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/compose"
-	"github.com/AitorConS/unikernel-engine/internal/volume"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/compose"
+	"github.com/AitorConS/jerboa/internal/volume"
 )
 
 // composeUpWithCtx mirrors the `compose up` RunE logic with an injectable

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/stretchr/testify/require"
 )
 

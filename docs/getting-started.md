@@ -73,7 +73,7 @@ sudo usermod -aG kvm $USER
 
 ### Download pre-built binaries
 
-Download the latest release from [GitHub Releases](https://github.com/AitorConS/UniCli/releases/tag/latest):
+Download the latest release from [GitHub Releases](https://github.com/AitorConS/jerboa/releases/tag/latest):
 
 | Platform | Binary |
 |---|---|
@@ -83,16 +83,16 @@ Download the latest release from [GitHub Releases](https://github.com/AitorConS/
 
 ```bash
 # Linux — download and install
-curl -Lo /usr/local/bin/uni   https://github.com/AitorConS/UniCli/releases/latest/download/uni-linux-amd64
-curl -Lo /usr/local/bin/unid  https://github.com/AitorConS/UniCli/releases/latest/download/unid-linux-amd64
+curl -Lo /usr/local/bin/uni   https://github.com/AitorConS/jerboa/releases/latest/download/uni-linux-amd64
+curl -Lo /usr/local/bin/unid  https://github.com/AitorConS/jerboa/releases/latest/download/unid-linux-amd64
 chmod +x /usr/local/bin/uni /usr/local/bin/unid
 ```
 
 ### Build from source
 
 ```bash
-git clone https://github.com/AitorConS/UniCli.git
-cd UniCli
+git clone https://github.com/AitorConS/jerboa.git
+cd jerboa
 make build
 # Produces: dist/uni  dist/unid
 ```

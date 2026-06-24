@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/config"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/stretchr/testify/require"
 )
 

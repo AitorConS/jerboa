@@ -18,7 +18,7 @@ import (
 
 // Tracer returns the global tracer for the unikernel engine.
 func Tracer() trace.Tracer {
-	return otel.Tracer("github.com/AitorConS/unikernel-engine")
+	return otel.Tracer("github.com/AitorConS/jerboa")
 }
 
 // Provider wraps an OpenTelemetry TracerProvider with shutdown capability.

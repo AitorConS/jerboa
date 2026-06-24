@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 // Run creates a service with the desired number of replicas and starts them.

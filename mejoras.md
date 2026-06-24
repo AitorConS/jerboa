@@ -98,7 +98,7 @@ hypervisor = "firecracker"
 
 [daemon]
 endpoint = "tcp://127.0.0.1:7890"   # default en Windows
-distro   = "unicli"                  # distro WSL2 a usar (ver D5)
+distro   = "jerboa"                  # distro WSL2 a usar (ver D5)
 ```
 
 Defaults por plataforma (sustituye a `defaultSocketPath()` en
@@ -162,8 +162,8 @@ compartidos.
 1. **Health check**: ¿responde el endpoint? Si sí, conecta.
 2. **Auto-arranque**: si no, lanza `wsl -d <distro> -- unid --host tcp://127.0.0.1:7890 ...`
    con el token por stdin, espera a que el health check pase.
-3. **Distro dedicada (estado final, recomendado):** UniCli aprovisiona su propia
-   distro vía `wsl --import unicli <ruta> <rootfs.tar>`, igual que Docker usa
+3. **Distro dedicada (estado final, recomendado):** jerboa aprovisiona su propia
+   distro vía `wsl --import jerboa <ruta> <rootfs.tar>`, igual que Docker usa
    `docker-desktop`. Ventaja: entorno reproducible (kernel con KVM, binarios,
    versiones) sin depender de lo que el usuario tenga instalado.
    - **Interino aceptable:** usar la distro por defecto del usuario validando
@@ -171,7 +171,7 @@ compartidos.
      fallando con un mensaje accionable si faltan.
 
 > La distro dedicada es la decisión "limpia y escalable": versionas el rootfs
-> junto al release, garantizas KVM/nested-virt, y desinstalar UniCli es borrar
+> junto al release, garantizas KVM/nested-virt, y desinstalar jerboa es borrar
 > la distro. Se deja para una fase posterior por coste, pero es el objetivo.
 
 ### D7 — Separación de módulos: cliente multiplataforma, daemon solo-Linux
@@ -238,7 +238,7 @@ Cada fase es entregable y deja el sistema funcionando.
       `%USERPROFILE%\.uni\daemon.json` (0600).
 
 ### Fase 4 — Distro dedicada y limpieza final (parcial)
-- [ ] Aprovisionamiento de distro `unicli` vía `wsl --import` (rootfs versionado).
+- [ ] Aprovisionamiento de distro `jerboa` vía `wsl --import` (rootfs versionado).
 - [x] Separación de módulos D7 consolidada (D7-A/B/C). Cliente multiplataforma;
       daemon `//go:build linux`. Stubs de red/cgroup **borrados** (ver D7-B).
 

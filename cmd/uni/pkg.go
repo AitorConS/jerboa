@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"text/tabwriter"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	pkg "github.com/AitorConS/unikernel-engine/internal/package"
+	"github.com/AitorConS/jerboa/internal/api"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/spf13/cobra"
 )
 

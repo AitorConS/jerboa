@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 // VMStateUpdater periodically polls a vm.Manager and updates Prometheus gauges

@@ -31,7 +31,7 @@ linters:
             - checkPrivateReceivers
     wrapcheck:
       ignore-package-globs:
-        - github.com/AitorConS/unikernel-engine/*
+        - github.com/AitorConS/jerboa/*
     gosec:
       excludes:
         - G304  # file path from variable — expected in a CLI tool

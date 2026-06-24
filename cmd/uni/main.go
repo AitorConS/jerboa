@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/config"
-	"github.com/AitorConS/unikernel-engine/internal/wslboot"
+	"github.com/AitorConS/jerboa/internal/config"
+	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/spf13/cobra"
 )
 

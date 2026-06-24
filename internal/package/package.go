@@ -28,12 +28,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 )
 
 // IndexURL is the base URL for the package index.
 // Can be overridden in tests to point to a local server.
-var IndexURL = "https://github.com/AitorConS/UniCli/releases/download/pkg-index/packages.json"
+var IndexURL = "https://github.com/AitorConS/jerboa/releases/download/pkg-index/packages.json"
 
 // Package describes a downloadable runtime package.
 type Package struct {

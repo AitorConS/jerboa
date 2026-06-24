@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/signing"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/signing"
 	"github.com/spf13/cobra"
 )
 

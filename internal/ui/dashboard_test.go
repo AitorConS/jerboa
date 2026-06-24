@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/AitorConS/unikernel-engine/internal/vm"
+	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/stretchr/testify/require"
 )
 

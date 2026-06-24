@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 )
 
 const (
@@ -20,8 +20,8 @@ const (
 )
 
 var (
-	githubAPIBase = "https://api.github.com/repos/AitorConS/UniCLi"
-	releaseBase   = "https://github.com/AitorConS/UniCLi/releases/download"
+	githubAPIBase = "https://api.github.com/repos/AitorConS/jerboa"
+	releaseBase   = "https://github.com/AitorConS/jerboa/releases/download"
 )
 
 // artifactNames are the files that make up the kernel toolset.

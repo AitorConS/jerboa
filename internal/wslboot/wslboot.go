@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
+	"github.com/AitorConS/jerboa/internal/api"
 )
 
 // Config describes how to reach and, if needed, launch the daemon.

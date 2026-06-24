@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/image"
-	pkg "github.com/AitorConS/unikernel-engine/internal/package"
+	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/image"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 )
 
 // SetImageStore attaches the daemon's image store, enabling image resolution

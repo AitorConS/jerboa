@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	pkg "github.com/AitorConS/unikernel-engine/internal/package"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/stretchr/testify/require"
 )
 
