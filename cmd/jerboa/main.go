@@ -50,12 +50,15 @@ func newRootCmd() *cobra.Command {
 			if tok := config.ResolveToken(); tok != "" {
 				_ = os.Setenv("JERBOA_AUTH_TOKEN", tok)
 			}
-			// On Windows the daemon lives in WSL2: auto-start it for any
-			// daemon-backed command, like Docker Desktop.
+			// On Windows the daemon lives in the dedicated WSL2 distro: auto-start
+			// it for any daemon-backed command, like Docker Desktop, and dial the
+			// distro's VM IP (loopback does not reach a secondary distro).
 			if runtime.GOOS == "windows" && strings.HasPrefix(endpoint, "tcp://") && needsDaemon(cmd) {
-				if err := ensureDaemon(cmd.Context(), endpoint); err != nil {
+				dial, err := ensureDaemon(cmd.Context(), override)
+				if err != nil {
 					return err
 				}
+				endpoint = dial
 			}
 			return nil
 		},
@@ -122,14 +125,15 @@ func needsDaemon(cmd *cobra.Command) bool {
 	return cmd.Name() != "jerboa"
 }
 
-// ensureDaemon resolves (or generates) the auth token and makes sure the WSL2
-// daemon is running before a command connects.
-func ensureDaemon(ctx context.Context, endpoint string) error {
+// ensureDaemon makes sure the WSL2 daemon is running and returns the address the
+// client should dial. override, when non-empty, is an explicit --host that wins
+// over the distro's auto-discovered VM IP.
+func ensureDaemon(ctx context.Context, override string) (string, error) {
 	token := config.ResolveToken()
 	if token == "" {
 		t, err := wslboot.LoadOrCreateToken(daemonJSONPath())
 		if err != nil {
-			return fmt.Errorf("daemon token: %w", err)
+			return "", fmt.Errorf("daemon token: %w", err)
 		}
 		token = t
 		_ = os.Setenv("JERBOA_AUTH_TOKEN", token)
@@ -137,29 +141,39 @@ func ensureDaemon(ctx context.Context, endpoint string) error {
 	// The daemon lives in the dedicated jerboa distro; auto-boot requires it.
 	installed, err := wsldistro.Exists()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !installed {
-		return fmt.Errorf("the %q WSL2 distro is not installed — run: jerboa daemon install", wsldistro.Name)
+		return "", fmt.Errorf("the %q WSL2 distro is not installed — run: jerboa daemon install", wsldistro.Name)
 	}
+
+	dial := override
+	if dial == "" {
+		d, derr := distroDialEndpoint()
+		if derr != nil {
+			return "", derr
+		}
+		dial = d
+	}
+
 	var hypervisor string
-	if cfg, err := config.Load(config.DefaultPath()); err == nil {
+	if cfg, cerr := config.Load(config.DefaultPath()); cerr == nil {
 		hypervisor = cfg.Hypervisor
 	}
 	if err := wslboot.EnsureDaemon(ctx, wslboot.Config{
-		Endpoint:       endpoint,
-		ListenEndpoint: listenEndpointFor(endpoint),
+		Endpoint:       dial,
+		ListenEndpoint: distroListenEndpoint(),
 		Distro:         wsldistro.Name,
 		User:           daemonLaunchUser,
 		Token:          token,
 		Hypervisor:     hypervisor,
 	}); err != nil {
-		return err
+		return "", err
 	}
 	// Record the rendezvous so later runs and `jerboa daemon` reach the same
 	// daemon with the same secret.
-	_ = wslboot.SaveDaemonFile(daemonJSONPath(), token, endpoint)
-	return nil
+	_ = wslboot.SaveDaemonFile(daemonJSONPath(), token, dial)
+	return dial, nil
 }
 
 // daemonJSONPath returns the path to the client-owned daemon secret file.

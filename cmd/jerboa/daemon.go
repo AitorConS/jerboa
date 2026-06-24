@@ -77,10 +77,13 @@ func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 		}
 	}
 
-	endpoint := config.ResolveEndpoint("")
+	dial, err := distroDialEndpoint()
+	if err != nil {
+		return wslboot.Config{}, "", err
+	}
 	return wslboot.Config{
-		Endpoint:       endpoint,
-		ListenEndpoint: listenEndpointFor(endpoint),
+		Endpoint:       dial,
+		ListenEndpoint: distroListenEndpoint(),
 		Distro:         wsldistro.Name,
 		User:           daemonLaunchUser,
 		Token:          token,
@@ -252,13 +255,21 @@ func newDaemonStatusCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
+			endpoint := config.ResolveEndpoint("")
 			if runtime.GOOS == "windows" {
-				if installed, err := wsldistro.Exists(); err == nil && !installed {
+				installed, err := wsldistro.Exists()
+				if err != nil {
+					return err
+				}
+				if !installed {
 					fmt.Fprintf(out, "distro:   not installed (run: jerboa daemon install)\n")
 					return nil
 				}
+				// Dial the distro's VM IP; loopback does not reach it.
+				if dial, derr := distroDialEndpoint(); derr == nil {
+					endpoint = dial
+				}
 			}
-			endpoint := config.ResolveEndpoint("")
 			token := config.ResolveToken()
 			if token == "" {
 				if t, _, err := wslboot.LoadDaemonFile(daemonJSONPath()); err == nil {
@@ -377,18 +388,30 @@ func requireDistro() error {
 	return nil
 }
 
-// listenEndpointFor maps the client dial endpoint to the address the daemon
-// binds: tcp://127.0.0.1:PORT -> tcp://0.0.0.0:PORT, so the daemon accepts the
-// Windows host across the WSL2 boundary regardless of which distro forwards.
-func listenEndpointFor(dial string) string {
-	rest, ok := strings.CutPrefix(dial, "tcp://")
-	if !ok {
-		return dial
+// daemonPort returns the TCP port the daemon uses, taken from the configured
+// endpoint or the 7890 default.
+func daemonPort() string {
+	if rest, ok := strings.CutPrefix(config.ResolveEndpoint(""), "tcp://"); ok {
+		if _, port, found := strings.Cut(rest, ":"); found && port != "" {
+			return port
+		}
 	}
-	if _, port, found := strings.Cut(rest, ":"); found {
-		return "tcp://0.0.0.0:" + port
+	return "7890"
+}
+
+// distroListenEndpoint is the --host the daemon binds inside the distro: 0.0.0.0
+// so it accepts the Windows host across the WSL2 boundary.
+func distroListenEndpoint() string { return "tcp://0.0.0.0:" + daemonPort() }
+
+// distroDialEndpoint is the address the Windows client dials. WSL2 loopback
+// forwarding does not reach a secondary distro, so we target its VM IP directly.
+// Resolving the IP starts the distro if it is stopped.
+func distroDialEndpoint() (string, error) {
+	ip, err := wsldistro.IP()
+	if err != nil {
+		return "", err
 	}
-	return dial
+	return "tcp://" + ip + ":" + daemonPort(), nil
 }
 
 // waitPortReleased blocks until the old daemon stops answering or d elapses, so a

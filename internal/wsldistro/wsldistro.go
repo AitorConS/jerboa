@@ -71,6 +71,21 @@ func Import(installDir, rootfsTar string) error {
 	return nil
 }
 
+// IP returns the IPv4 address of the running distro's primary interface. WSL2
+// loopback forwarding does not reach a secondary distro, so the Windows client
+// dials this address directly. Querying it starts the distro if it is stopped.
+func IP() (string, error) {
+	out, err := exec.Command("wsl", "-d", Name, "-u", "root", "--", "hostname", "-I").CombinedOutput() //nolint:gosec,noctx // fixed args
+	if err != nil {
+		return "", fmt.Errorf("wsldistro: distro ip: %w (%s)", err, strings.TrimSpace(decodeWSLOutput(out)))
+	}
+	fields := strings.Fields(decodeWSLOutput(out))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("wsldistro: %s has no IP yet", Name)
+	}
+	return fields[0], nil
+}
+
 // Unregister removes the distro and all of its data.
 func Unregister() error {
 	out, err := exec.Command("wsl", "--unregister", Name).CombinedOutput() //nolint:gosec,noctx // fixed args
