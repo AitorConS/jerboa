@@ -21,7 +21,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # Self-hosted runner: the module cache persists on disk between runs,
+          # so setup-go's tarball restore would extract over existing read-only
+          # files and fail ("tar: Cannot open: File exists").
+          cache: false
 
       - name: Run unit tests
         run: go test ./cmd/... ./internal/... ./pkg/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
@@ -61,7 +64,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # Self-hosted runner: the module cache persists on disk between runs,
+          # so setup-go's tarball restore would extract over existing read-only
+          # files and fail ("tar: Cannot open: File exists").
+          cache: false
 
       - name: Check KVM
         run: |
@@ -84,7 +90,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # Self-hosted runner: the module cache persists on disk between runs,
+          # so setup-go's tarball restore would extract over existing read-only
+          # files and fail ("tar: Cannot open: File exists").
+          cache: false
 
       - name: Run benchmarks
         run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
@@ -105,7 +114,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # Self-hosted runner: the module cache persists on disk between runs,
+          # so setup-go's tarball restore would extract over existing read-only
+          # files and fail ("tar: Cannot open: File exists").
+          cache: false
 
       - name: Check KVM
         run: |
@@ -139,7 +151,7 @@ jobs:
           cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
           echo "QEMU_SOCK=${QEMU_SOCK}" >> "$GITHUB_ENV"
           echo "BENCH_STORE=${BENCH_STORE}" >> "$GITHUB_ENV"
-          ./dist/jerboad --socket "${QEMU_SOCK}" --tools-dir "${BENCH_TOOLS}" &
+          ./dist/jerboad --host "unix://${QEMU_SOCK}" --tools-dir "${BENCH_TOOLS}" &
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
           for i in $(seq 1 20); do [ -S "${QEMU_SOCK}" ] && break; sleep 0.5; done
           [ -S "${QEMU_SOCK}" ] || { echo "QEMU jerboad failed to start"; exit 1; }
@@ -147,7 +159,7 @@ jobs:
       - name: Benchmark — build hello
         id: build-bench
         run: |
-          BUILD_OUT=$(./dist/jerboa --socket "${QEMU_SOCK}" --store "${BENCH_STORE}" \
+          BUILD_OUT=$(./dist/jerboa --host "unix://${QEMU_SOCK}" --store "${BENCH_STORE}" \
             build examples/hello --name bench-hello --lang go)
           echo "${BUILD_OUT}"
           BUILD_TIME=$(echo "${BUILD_OUT}" | grep -oP 'built in \K\S+')
@@ -162,7 +174,7 @@ jobs:
           MIN=999999
           for i in 1 2 3; do
             T0=$(date +%s%N)
-            ./dist/jerboa --socket "${QEMU_SOCK}" --store "${BENCH_STORE}" \
+            ./dist/jerboa --host "unix://${QEMU_SOCK}" --store "${BENCH_STORE}" \
               run bench-hello:latest --attach --rm > /dev/null
             T1=$(date +%s%N)
             MS=$(( (T1 - T0) / 1000000 ))
@@ -186,7 +198,7 @@ jobs:
         run: |
           FC_SOCK=/tmp/bench-fc.sock
           echo "FC_SOCK=${FC_SOCK}" >> "$GITHUB_ENV"
-          ./dist/jerboad --socket "${FC_SOCK}" --hypervisor firecracker &
+          ./dist/jerboad --host "unix://${FC_SOCK}" --hypervisor firecracker &
           echo "FC_PID=$!" >> "$GITHUB_ENV"
           # longer wait — first run downloads kernel-fc.img from releases
           for i in $(seq 1 60); do [ -S "${FC_SOCK}" ] && break; sleep 1; done
@@ -199,7 +211,7 @@ jobs:
           MIN=999999
           for i in 1 2 3; do
             T0=$(date +%s%N)
-            ./dist/jerboa --socket "${FC_SOCK}" --store "${BENCH_STORE}" \
+            ./dist/jerboa --host "unix://${FC_SOCK}" --store "${BENCH_STORE}" \
               run bench-hello:latest --attach --rm > /dev/null
             T1=$(date +%s%N)
             MS=$(( (T1 - T0) / 1000000 ))

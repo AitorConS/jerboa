@@ -141,7 +141,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          cache: true
+          # Self-hosted runner: the module cache persists on disk between runs,
+          # so setup-go's tarball restore would extract over existing read-only
+          # files and fail ("tar: Cannot open: File exists").
+          cache: false
 
       - name: Check KVM
         run: |
