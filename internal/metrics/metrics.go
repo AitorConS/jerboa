@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package metrics provides Prometheus metrics collection for the unikernel engine daemon.
 package metrics
 

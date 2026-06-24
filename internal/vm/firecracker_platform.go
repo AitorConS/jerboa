@@ -1,3 +1,5 @@
+//go:build linux
+
 package vm
 
 // platformInitFC is a no-op on every platform. Firecracker only runs where the

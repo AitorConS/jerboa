@@ -194,11 +194,19 @@ Reorganización para que la separación sea estructural, no por `if GOOS`:
   sin rama Windows; `mkfs_windows.go`/`mkfs_unix.go` (+ tests) borrados;
   `firecracker_windows.go`/`_notwindows.go` unificados en `platformInitFC`
   no-op universal.
-- **D7-B (mantenido a propósito)** — Se conservan los stubs de plataforma
-  (`tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`, `cgroup_stub.go`).
-  Hacer el daemon `//go:build linux` puro rompe toda la suite del daemon
-  in-process en Windows; el coste de DX supera la ganancia. Los stubs ya
-  garantizan que `apiserver` compile en cualquier OS sin enlazar lógica real.
+- **D7-B ✅** — Daemon solo-Linux por restricción de build. Borrados los stubs
+  (`tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`, `cgroup_stub.go`,
+  `stats_stub.go`). Marcadas `//go:build linux` todas las fuentes del lado
+  daemon: `internal/{vm,network,apiserver,metrics,scheduler,service,tracing,ui}`,
+  `cmd/unid`, `cmd/uni-smoke`, y los tests de `cmd/uni` que arrancan el daemon
+  in-process. El cliente (`uni`) y sus paquetes portables compilan y testean en
+  cualquier OS; el lado daemon compila/testea solo en Linux (validado con
+  `GOOS=windows` y `GOOS=linux` build+vet). El test de salud de `wslboot` que
+  necesita un daemon real vive en `health_linux_test.go`.
+
+  *Coste asumido a propósito:* los tests de la CLI que dependen del daemon
+  in-process (≈10 ficheros) y todo el lado servidor ya no se ejecutan en
+  Windows; el desarrollo del daemon se hace en WSL2/Linux.
 
 ---
 
@@ -231,9 +239,8 @@ Cada fase es entregable y deja el sistema funcionando.
 
 ### Fase 4 — Distro dedicada y limpieza final (parcial)
 - [ ] Aprovisionamiento de distro `unicli` vía `wsl --import` (rootfs versionado).
-- [x] Separación de módulos D7 consolidada (cliente sin importar `vm`/`network`).
-      Stubs de red/cgroup **mantenidos a propósito** (ver D7-B) para no romper
-      la suite del daemon in-process en Windows.
+- [x] Separación de módulos D7 consolidada (D7-A/B/C). Cliente multiplataforma;
+      daemon `//go:build linux`. Stubs de red/cgroup **borrados** (ver D7-B).
 
 ### Firma de imágenes — re-cableada al store del daemon ✅
 - [x] `uni sign`/`uni verify` resuelven el *disk digest* de la imagen vía

@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -8,7 +10,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -52,21 +53,11 @@ func TestCliIsNewer(t *testing.T) {
 }
 
 func TestBinaryName(t *testing.T) {
-	got := binaryName("uni")
-	if runtime.GOOS == "windows" {
-		require.Equal(t, "uni.exe", got)
-	} else {
-		require.Equal(t, "uni", got)
-	}
+	require.Equal(t, "uni", binaryName("uni"))
 }
 
 func TestBinaryExt(t *testing.T) {
-	got := binaryExt()
-	if runtime.GOOS == "windows" {
-		require.Equal(t, ".exe", got)
-	} else {
-		require.Empty(t, got)
-	}
+	require.Empty(t, binaryExt())
 }
 
 func TestCleanupBackups(t *testing.T) {

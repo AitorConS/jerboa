@@ -1,3 +1,5 @@
+//go:build linux
+
 // Package tracing provides OpenTelemetry tracing for the unikernel engine daemon.
 package tracing
 

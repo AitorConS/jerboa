@@ -1,3 +1,5 @@
+//go:build linux
+
 package apiserver_test
 
 import (

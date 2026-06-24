@@ -1,17 +1,12 @@
 package wslboot
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/AitorConS/unikernel-engine/internal/apiserver"
-	"github.com/AitorConS/unikernel-engine/internal/network"
-	"github.com/AitorConS/unikernel-engine/internal/vm"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,26 +45,6 @@ func TestBuildLaunchArgs_NoTokenNoDistro(t *testing.T) {
 		require.False(t, strings.HasPrefix(e, "UNI_AUTH_TOKEN="), "token must not be set when empty")
 		require.False(t, strings.HasPrefix(e, "WSLENV="))
 	}
-}
-
-func TestHealthy(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
-	mgr := vm.NewQEMUManager("fake-qemu")
-	netStore, err := network.NewStore(t.TempDir())
-	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "test", nil)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go func() { _ = srv.Serve(ctx) }()
-
-	require.Eventually(t, func() bool {
-		return healthy(ctx, socketPath, "")
-	}, 2*time.Second, 20*time.Millisecond)
-
-	// A bogus endpoint is never healthy.
-	require.False(t, healthy(ctx, filepath.Join(t.TempDir(), "absent.sock"), ""))
 }
 
 func TestLoadOrCreateToken_FileModeUnix(t *testing.T) {

@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -6,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,12 +22,8 @@ import (
 )
 
 // fakeQEMUCmd returns a vm.CommandFunc that spawns a fake QEMU process.
-// Cross-platform: uses sleep on Unix and PowerShell on Windows.
 func fakeQEMUCmd() vm.CommandFunc {
 	return func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-		if runtime.GOOS == "windows" {
-			return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
-		}
 		return exec.Command("sleep", "3600")
 	}
 }
@@ -244,9 +241,6 @@ func TestRm_StoppedVM(t *testing.T) {
 // --- exec ---
 
 func TestExec_Signal(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("signal delivery not supported on Windows")
-	}
 	client, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
