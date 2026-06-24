@@ -335,18 +335,16 @@ func newDaemonLogsCmd() *cobra.Command {
 // fetchRootfs downloads the dedicated-distro rootfs for the latest release into a
 // temp file and returns its path. The caller removes it after import.
 func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
-	ver, err := latestCLIVersion(ctx)
-	if err != nil {
-		return "", fmt.Errorf("daemon install: resolve latest version: %w", err)
-	}
-	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, wsldistro.RootfsArtifact)
+	// Pull from the rolling "latest" release, the same tag the kernel toolchain
+	// downloads from (internal/tools), so all artifacts track one source.
+	url := fmt.Sprintf("%s/latest/%s", cliReleaseBase, wsldistro.RootfsArtifact)
 
 	tmp, err := os.CreateTemp("", "jerboa-rootfs-*.tar.gz")
 	if err != nil {
 		return "", fmt.Errorf("daemon install: temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (%s) ...\n", wsldistro.RootfsArtifact, ver)
+	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (latest) ...\n", wsldistro.RootfsArtifact)
 	if err := downloadToVerified(ctx, url, tmp); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
