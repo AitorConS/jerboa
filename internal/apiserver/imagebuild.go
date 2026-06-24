@@ -165,6 +165,10 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 
 	binaryPath, pkgFiles, err := splitProgram(files, p.Program)
 	if err != nil {
+		// extractBuildContext stops at the tar's EOF, leaving the frame
+		// terminator unread; drain it so the client's stream close does not race
+		// the connection closing (broken pipe) before it reads this error.
+		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: err.Error()})
 		return
 	}
@@ -172,6 +176,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	// Resolve mkfs lazily — the first build may download the kernel toolchain.
 	mkfs, err := s.resolveMkfs(ctx)
 	if err != nil {
+		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "resolve mkfs toolchain: " + err.Error()})
 		return
 	}
@@ -191,6 +196,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Output:     io.Discard,
 	})
 	if err != nil {
+		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
 		return
 	}
@@ -198,6 +204,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	resp := api.Response{JSONRPC: "2.0", ID: reqID}
 	raw, mErr := json.Marshal(imageManifestResult(m))
 	if mErr != nil {
+		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
 		return
 	}
