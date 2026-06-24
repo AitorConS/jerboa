@@ -45,6 +45,44 @@ func TestBuildLaunchArgs_NoTokenNoDistro(t *testing.T) {
 	require.Equal(t, os.Environ(), env)
 }
 
+func TestBuildLaunchArgs_HypervisorAndSudo(t *testing.T) {
+	args, env := buildLaunchArgs(Config{
+		Endpoint:   "tcp://127.0.0.1:7890",
+		Token:      "secret",
+		Hypervisor: "firecracker",
+		Sudo:       true,
+	})
+
+	require.Equal(t, []string{
+		"--", "sudo", "--preserve-env=JERBOA_AUTH_TOKEN",
+		"jerboad", "--host", "tcp://127.0.0.1:7890", "--hypervisor", "firecracker",
+	}, args)
+	require.True(t, slices.Contains(env, "JERBOA_AUTH_TOKEN=secret"))
+}
+
+func TestBuildLaunchArgs_SudoNoToken(t *testing.T) {
+	args, _ := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", Sudo: true})
+	// Without a token there is nothing to preserve across sudo.
+	require.Equal(t, []string{"--", "sudo", "jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
+}
+
+func TestSaveLoadDaemonFile_RoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "daemon.json")
+	require.NoError(t, SaveDaemonFile(path, "tok", "tcp://127.0.0.1:7890"))
+
+	tok, ep, err := LoadDaemonFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "tok", tok)
+	require.Equal(t, "tcp://127.0.0.1:7890", ep)
+}
+
+func TestLoadDaemonFile_Missing(t *testing.T) {
+	tok, ep, err := LoadDaemonFile(filepath.Join(t.TempDir(), "absent.json"))
+	require.NoError(t, err)
+	require.Empty(t, tok)
+	require.Empty(t, ep)
+}
+
 func TestLoadOrCreateToken_FileModeUnix(t *testing.T) {
 	if os.Getenv("SKIP_PERM") != "" {
 		t.Skip()

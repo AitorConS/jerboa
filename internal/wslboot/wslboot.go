@@ -9,14 +9,19 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
 )
+
+// ErrNoDaemon reports that no running daemon was found to act on (e.g. by Stop).
+var ErrNoDaemon = errors.New("no running daemon found")
 
 // Config describes how to reach and, if needed, launch the daemon.
 type Config struct {
@@ -30,6 +35,13 @@ type Config struct {
 	// JerboadPath is the jerboad binary path inside WSL. Empty resolves "jerboad"
 	// on the distro's PATH.
 	JerboadPath string
+	// Hypervisor, when non-empty, is passed to jerboad as --hypervisor (e.g.
+	// "firecracker"). Empty leaves the daemon's own default.
+	Hypervisor string
+	// Sudo runs jerboad under sudo inside the distro. Required for hypervisors
+	// that need privileges (firecracker networking). The token is forwarded with
+	// sudo --preserve-env so it never appears on the command line.
+	Sudo bool
 	// HealthTimeout bounds how long to wait for a freshly launched daemon to
 	// answer. Zero defaults to 20s.
 	HealthTimeout time.Duration
@@ -45,6 +57,82 @@ func EnsureDaemon(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("wslboot: start daemon: %w", err)
 	}
 	return waitHealthy(ctx, cfg)
+}
+
+// Launch starts jerboad inside WSL2 detached, per cfg, without first checking
+// whether one is already running. Exposed for `jerboa daemon start`; EnsureDaemon
+// uses the same machinery for auto-boot.
+func Launch(cfg Config) error {
+	if err := launchInWSL(cfg); err != nil {
+		return fmt.Errorf("wslboot: start daemon: %w", err)
+	}
+	return nil
+}
+
+// WaitHealthy polls cfg.Endpoint until the daemon answers or the timeout fires.
+func WaitHealthy(ctx context.Context, cfg Config) error { return waitHealthy(ctx, cfg) }
+
+// Healthy reports whether a daemon answers (and authenticates) at endpoint.
+func Healthy(ctx context.Context, endpoint, token string) bool {
+	return healthy(ctx, endpoint, token)
+}
+
+// Stop terminates the jerboad daemon running inside the WSL2 distro. distro
+// empty targets the default distro; sudo is required to signal a daemon that was
+// itself started under sudo. Returns ErrNoDaemon when nothing matched.
+func Stop(distro string, sudo bool) error {
+	var args []string
+	if distro != "" {
+		args = append(args, "-d", distro)
+	}
+	kill := "pkill -f 'jerboad --host'"
+	if sudo {
+		kill = "sudo " + kill
+	}
+	args = append(args, "--", "bash", "-lc", kill)
+	out, err := exec.Command("wsl", args...).CombinedOutput() //nolint:gosec,noctx // fixed program, controlled args
+	if err != nil {
+		// pkill exits 1 when no process matched: treat as "already stopped".
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return ErrNoDaemon
+		}
+		return fmt.Errorf("wslboot: stop daemon: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// LoadDaemonFile reads the token and endpoint persisted at path. A missing file
+// returns empty strings and a nil error.
+func LoadDaemonFile(path string) (token, endpoint string, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("wslboot: read %s: %w", path, err)
+	}
+	var f daemonFile
+	if uerr := json.Unmarshal(data, &f); uerr != nil {
+		return "", "", fmt.Errorf("wslboot: parse %s: %w", path, uerr)
+	}
+	return f.Token, f.Endpoint, nil
+}
+
+// SaveDaemonFile persists the daemon's token and endpoint to path (mode 0600) so
+// every client run reaches the same daemon with the same secret.
+func SaveDaemonFile(path, token, endpoint string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("wslboot: create dir: %w", err)
+	}
+	out, err := json.MarshalIndent(daemonFile{Token: token, Endpoint: endpoint}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("wslboot: marshal daemon file: %w", err)
+	}
+	if err := os.WriteFile(path, out, 0o600); err != nil {
+		return fmt.Errorf("wslboot: write %s: %w", path, err)
+	}
+	return nil
 }
 
 // healthy reports whether a daemon answers (and authenticates) at endpoint.
@@ -114,7 +202,19 @@ func buildLaunchArgs(cfg Config) (args, env []string) {
 	if cfg.Distro != "" {
 		args = append(args, "-d", cfg.Distro)
 	}
-	args = append(args, "--", jerboad, "--host", cfg.Endpoint)
+	args = append(args, "--")
+	if cfg.Sudo {
+		// sudo resets the environment, so WSLENV alone would drop the token;
+		// --preserve-env forwards just that one var without putting it on argv.
+		args = append(args, "sudo")
+		if cfg.Token != "" {
+			args = append(args, "--preserve-env=JERBOA_AUTH_TOKEN")
+		}
+	}
+	args = append(args, jerboad, "--host", cfg.Endpoint)
+	if cfg.Hypervisor != "" {
+		args = append(args, "--hypervisor", cfg.Hypervisor)
+	}
 
 	env = append(env, os.Environ()...)
 	if cfg.Token != "" {

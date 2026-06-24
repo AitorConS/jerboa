@@ -96,6 +96,7 @@ func newRootCmd() *cobra.Command {
 		newNodeCmd(&endpoint, &outputFmt),
 		newServiceCmd(&endpoint, &outputFmt),
 		newConfigCmd(),
+		newDaemonCmd(),
 	)
 	return root
 }
@@ -107,6 +108,7 @@ func needsDaemon(cmd *cobra.Command) bool {
 	localGroups := map[string]bool{
 		"config": true, "kernel": true, "pkg": true, "volume": true,
 		"sign": true, "verify": true, "completion": true, "help": true,
+		"daemon": true,
 	}
 	for c := cmd; c != nil; c = c.Parent() {
 		if c.Name() == "jerboa" && c.Parent() == nil {
@@ -131,17 +133,25 @@ func ensureDaemon(ctx context.Context, endpoint string) error {
 		token = t
 		_ = os.Setenv("JERBOA_AUTH_TOKEN", token)
 	}
-	var distro, jerboadPath string
+	var distro, jerboadPath, hypervisor string
 	if cfg, err := config.Load(config.DefaultPath()); err == nil {
 		distro = cfg.Daemon.Distro
 		jerboadPath = cfg.Daemon.JerboadPath
+		hypervisor = cfg.Hypervisor
 	}
-	return wslboot.EnsureDaemon(ctx, wslboot.Config{
+	if err := wslboot.EnsureDaemon(ctx, wslboot.Config{
 		Endpoint:    endpoint,
 		Distro:      distro,
 		Token:       token,
 		JerboadPath: jerboadPath,
-	})
+		Hypervisor:  hypervisor,
+	}); err != nil {
+		return err
+	}
+	// Record the rendezvous so later runs and `jerboa daemon` reach the same
+	// daemon with the same secret.
+	_ = wslboot.SaveDaemonFile(daemonJSONPath(), token, endpoint)
+	return nil
 }
 
 // daemonJSONPath returns the path to the client-owned daemon secret file.
