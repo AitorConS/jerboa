@@ -1,6 +1,7 @@
 package wsldistro
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,9 @@ func TestParseDistroList_Empty(t *testing.T) {
 }
 
 func TestDefaultInstallDir_UsesLocalAppData(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", `C:\Users\test\AppData\Local`)
-	require.Equal(t, `C:\Users\test\AppData\Local\jerboa\distro`, DefaultInstallDir())
+	base := `C:\Users\test\AppData\Local`
+	t.Setenv("LOCALAPPDATA", base)
+	// filepath.Join uses the host separator, so build the expectation the same
+	// way to keep the test portable across the Linux CI and Windows.
+	require.Equal(t, filepath.Join(base, "jerboa", "distro"), DefaultInstallDir())
 }
