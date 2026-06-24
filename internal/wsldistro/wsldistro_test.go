@@ -27,6 +27,16 @@ func TestParseDistroList_Empty(t *testing.T) {
 	require.Empty(t, parseDistroList(nil))
 }
 
+func TestDecodeWSLOutput_StripsNUL(t *testing.T) {
+	// UTF-16LE "hi" plus a CR is decoded back to ASCII.
+	require.Equal(t, "hi\r", decodeWSLOutput([]byte{'h', 0, 'i', 0, '\r', 0}))
+}
+
+func TestDefaultInstallDir_FallbackHome(t *testing.T) {
+	t.Setenv("LOCALAPPDATA", "")
+	require.Contains(t, DefaultInstallDir(), filepath.Join(".jerboa", "distro"))
+}
+
 func TestDefaultInstallDir_UsesLocalAppData(t *testing.T) {
 	base := `C:\Users\test\AppData\Local`
 	t.Setenv("LOCALAPPDATA", base)
