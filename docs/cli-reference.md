@@ -1588,37 +1588,35 @@ When using `jerboa run --attach`, the command blocks until the VM reaches the `s
 
 ## Daemon Commands
 
-On Windows the `jerboad` daemon runs inside WSL2 and the client talks to it over loopback TCP. Most commands auto-start the daemon (Docker-Desktop style); the `jerboa daemon` group manages it explicitly. It is also the supported way to run a **firecracker** daemon, which auto-boot cannot start because firecracker networking needs root.
+On Windows the `jerboad` daemon runs inside a **dedicated jerboa WSL2 distro** — a self-contained Linux environment (jerboad + qemu + firecracker + kernel toolchain) imported with `wsl --import`, the same model Docker Desktop uses for its `docker-desktop` distro. Nothing depends on your WSL setup, on `jerboad` being on PATH, or on host `sudo`: the daemon runs as `root` inside the isolated distro.
 
-start, stop, and restart reuse the client-owned token and endpoint from `~/.jerboa/daemon.json`, so the daemon and every client run match by construction — no manual token juggling.
+`install` provisions the distro (downloading the release rootfs, or `--rootfs` for a local build). start/stop/restart reuse the client-owned token and endpoint from `~/.jerboa/daemon.json`, so the daemon and every client run match by construction. The daemon binds `tcp://0.0.0.0:7890` inside the distro; the client dials `tcp://127.0.0.1:7890` across the WSL2 boundary.
 
 | Command | Description |
 |---|---|
-| `jerboa daemon start` | Start the daemon in WSL2 (no-op if already healthy) |
-| `jerboa daemon stop` | Stop the daemon running in WSL2 |
+| `jerboa daemon install` | Provision the jerboa WSL2 distro (`--rootfs <tar>` for a local build, `--force` to reimport) |
+| `jerboa daemon uninstall` | Remove the distro and all its data (`wsl --unregister`) |
+| `jerboa daemon start` | Start the daemon in the distro as root (no-op if already healthy) |
+| `jerboa daemon stop` | Stop the daemon |
 | `jerboa daemon restart` | Stop then start, waiting for the port to free |
-| `jerboa daemon status` | Report whether the daemon is reachable, plus its endpoint and version |
-| `jerboa daemon logs [-f]` | Print (or `-f` follow) the WSL launch log at `~/.jerboa/jerboad-wsl.log` |
+| `jerboa daemon status` | Report distro/daemon state, endpoint, and version |
+| `jerboa daemon logs [-f]` | Print (or `-f` follow) the launch log at `~/.jerboa/jerboad-wsl.log` |
 
-| Flag (start/restart) | Default | Description |
-|---|---|---|
-| `--hypervisor` | config `[hypervisor]` (`qemu`) | Hypervisor to run: `qemu` or `firecracker` |
-| `--sudo` | `false` | Run `jerboad` under sudo (required for firecracker networking); the token is forwarded with `sudo --preserve-env`, never on argv |
-| `--distro` | config `[daemon] distro` / WSL default | WSL2 distro to host the daemon |
+`start` and `restart` take `--hypervisor qemu|firecracker` (defaults to config `[hypervisor]`).
 
 ```bash
-# Start a firecracker daemon in WSL2 (privileged) and check it
-jerboa daemon start --hypervisor firecracker --sudo
+jerboa daemon install                         # one-time: import the distro
+jerboa daemon start --hypervisor firecracker  # runs as root inside the distro, no sudo prompt
 jerboa daemon status
-jerboa images          # talks to the daemon you just started
+jerboa images                                 # talks to the daemon
 
-jerboa daemon logs -f  # tail the launch log if it fails to come up
-jerboa daemon restart  # bounce it
+jerboa daemon logs -f                          # tail the launch log if it fails to come up
+jerboa daemon restart
 jerboa daemon stop
 ```
 
 {: .note }
-`jerboa daemon start/stop/restart` only run on Windows. On Linux, run `jerboad` directly.
+`jerboa daemon` (except `status`/`logs`) only runs on Windows. On Linux, run `jerboad` directly. Build the rootfs locally with `distro/build.sh` (see `distro/README.md`).
 
 ---
 

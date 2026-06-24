@@ -14,22 +14,30 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/wslboot"
+	"github.com/AitorConS/jerboa/internal/wsldistro"
 	"github.com/spf13/cobra"
 )
 
+// daemonLaunchUser is the Linux user jerboad runs as inside the dedicated distro.
+// root runs privileged (firecracker networking) without any host sudo prompt,
+// because the distro is isolated and contains nothing but jerboa.
+const daemonLaunchUser = "root"
+
 // newDaemonCmd builds the `jerboa daemon` command group, which manages the
-// jerboad daemon that runs inside WSL2 on Windows. start/stop/restart go through
-// the same token + endpoint as the client's auto-boot, so they always agree.
+// jerboad daemon hosted in the dedicated jerboa WSL2 distro.
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Manage the jerboad daemon running in WSL2",
-		Long: "Manage the jerboad daemon hosted inside WSL2.\n\n" +
-			"start/stop/restart reuse the client-owned token and loopback TCP endpoint\n" +
-			"(~/.jerboa/daemon.json), so the daemon and every client run match by\n" +
-			"construction. Use --hypervisor firecracker --sudo for the privileged path.",
+		Short: "Manage the jerboad daemon running in the dedicated WSL2 distro",
+		Long: "Manage the jerboad daemon hosted inside the dedicated jerboa WSL2 distro.\n\n" +
+			"`install` provisions a self-contained Linux environment (jerboad + qemu +\n" +
+			"firecracker + kernel toolchain) via `wsl --import`, the way Docker Desktop\n" +
+			"ships its own distro — so nothing depends on your WSL setup, jerboad being on\n" +
+			"PATH, or host sudo. start/stop/restart run the daemon as root inside it.",
 	}
 	cmd.AddCommand(
+		newDaemonInstallCmd(),
+		newDaemonUninstallCmd(),
 		newDaemonStartCmd(),
 		newDaemonStopCmd(),
 		newDaemonRestartCmd(),
@@ -42,22 +50,16 @@ func newDaemonCmd() *cobra.Command {
 // daemonOpts are the launch flags shared by start and restart.
 type daemonOpts struct {
 	hypervisor string
-	sudo       bool
-	distro     string
 }
 
 func (o *daemonOpts) bind(c *cobra.Command) {
 	c.Flags().StringVar(&o.hypervisor, "hypervisor", "",
 		"hypervisor to run (qemu or firecracker); defaults to config")
-	c.Flags().BoolVar(&o.sudo, "sudo", false,
-		"run jerboad under sudo (needed for firecracker networking)")
-	c.Flags().StringVar(&o.distro, "distro", "",
-		"WSL2 distro to host the daemon (defaults to config or the WSL default)")
 }
 
-// resolveDaemonConfig assembles the wslboot launch config from flags, config
-// file, and the client-owned token (created on first use). It returns the token
-// separately for the daemon-file rendezvous.
+// resolveDaemonConfig assembles the wslboot launch config: the dedicated distro,
+// run as root, binding 0.0.0.0 while the client dials loopback. It returns the
+// token separately for the daemon-file rendezvous.
 func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 	token := config.ResolveToken()
 	if token == "" {
@@ -68,42 +70,117 @@ func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 		token = t
 	}
 
-	hyp, distro, jerboadPath := o.hypervisor, o.distro, ""
-	if cfg, err := config.Load(config.DefaultPath()); err == nil {
-		if hyp == "" {
+	hyp := o.hypervisor
+	if hyp == "" {
+		if cfg, err := config.Load(config.DefaultPath()); err == nil {
 			hyp = cfg.Hypervisor
 		}
-		if distro == "" {
-			distro = cfg.Daemon.Distro
-		}
-		jerboadPath = cfg.Daemon.JerboadPath
 	}
 
+	endpoint := config.ResolveEndpoint("")
 	return wslboot.Config{
-		Endpoint:    config.ResolveEndpoint(""),
-		Distro:      distro,
-		Token:       token,
-		JerboadPath: jerboadPath,
-		Hypervisor:  hyp,
-		Sudo:        o.sudo,
+		Endpoint:       endpoint,
+		ListenEndpoint: listenEndpointFor(endpoint),
+		Distro:         wsldistro.Name,
+		User:           daemonLaunchUser,
+		Token:          token,
+		Hypervisor:     hyp,
 	}, token, nil
+}
+
+func newDaemonInstallCmd() *cobra.Command {
+	var (
+		rootfs string
+		force  bool
+	)
+	c := &cobra.Command{
+		Use:   "install",
+		Short: "Provision the dedicated jerboa WSL2 distro",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS != "windows" {
+				return errNotWindows("install")
+			}
+			exists, err := wsldistro.Exists()
+			if err != nil {
+				return err
+			}
+			if exists {
+				if !force {
+					fmt.Fprintf(cmd.OutOrStdout(), "distro %q already installed (use --force to reimport)\n", wsldistro.Name)
+					return nil
+				}
+				if uerr := wsldistro.Unregister(); uerr != nil {
+					return uerr
+				}
+			}
+
+			tarPath := rootfs
+			if tarPath == "" {
+				p, ferr := fetchRootfs(cmd.Context(), cmd)
+				if ferr != nil {
+					return ferr
+				}
+				tarPath = p
+				defer func() { _ = os.Remove(p) }()
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "importing %q from %s ...\n", wsldistro.Name, tarPath)
+			if err := wsldistro.Import(wsldistro.DefaultInstallDir(), tarPath); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "installed. start it with: jerboa daemon start\n")
+			return nil
+		},
+	}
+	c.Flags().StringVar(&rootfs, "rootfs", "",
+		"path to a jerboa rootfs tarball (default: download the release artifact)")
+	c.Flags().BoolVar(&force, "force", false,
+		"reimport even if the distro already exists (destroys its data)")
+	return c
+}
+
+func newDaemonUninstallCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove the jerboa WSL2 distro and all its data",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS != "windows" {
+				return errNotWindows("uninstall")
+			}
+			exists, err := wsldistro.Exists()
+			if err != nil {
+				return err
+			}
+			if !exists {
+				fmt.Fprintf(cmd.OutOrStdout(), "distro %q not installed\n", wsldistro.Name)
+				return nil
+			}
+			if err := wsldistro.Unregister(); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "uninstalled")
+			return nil
+		},
+	}
 }
 
 func newDaemonStartCmd() *cobra.Command {
 	var o daemonOpts
 	c := &cobra.Command{
 		Use:   "start",
-		Short: "Start the jerboad daemon in WSL2",
+		Short: "Start the jerboad daemon in the jerboa WSL2 distro",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS != "windows" {
 				return errNotWindows("start")
 			}
-			wcfg, token, err := resolveDaemonConfig(o)
-			if err != nil {
+			if err := requireDistro(); err != nil {
 				return err
 			}
-			if err := requireTCPEndpoint(wcfg.Endpoint); err != nil {
+			wcfg, token, err := resolveDaemonConfig(o)
+			if err != nil {
 				return err
 			}
 			if wslboot.Healthy(cmd.Context(), wcfg.Endpoint, token) {
@@ -121,20 +198,20 @@ func newDaemonRestartCmd() *cobra.Command {
 	var o daemonOpts
 	c := &cobra.Command{
 		Use:   "restart",
-		Short: "Restart the jerboad daemon in WSL2",
+		Short: "Restart the jerboad daemon in the jerboa WSL2 distro",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS != "windows" {
 				return errNotWindows("restart")
 			}
+			if err := requireDistro(); err != nil {
+				return err
+			}
 			wcfg, token, err := resolveDaemonConfig(o)
 			if err != nil {
 				return err
 			}
-			if err := requireTCPEndpoint(wcfg.Endpoint); err != nil {
-				return err
-			}
-			if err := wslboot.Stop(wcfg.Distro, wcfg.Sudo); err != nil && !errors.Is(err, wslboot.ErrNoDaemon) {
+			if err := wslboot.Stop(wcfg.Distro, wcfg.User); err != nil && !errors.Is(err, wslboot.ErrNoDaemon) {
 				return err
 			}
 			waitPortReleased(cmd.Context(), wcfg.Endpoint, token, 5*time.Second)
@@ -146,24 +223,15 @@ func newDaemonRestartCmd() *cobra.Command {
 }
 
 func newDaemonStopCmd() *cobra.Command {
-	var (
-		sudo   bool
-		distro string
-	)
-	c := &cobra.Command{
+	return &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the jerboad daemon in WSL2",
+		Short: "Stop the jerboad daemon in the jerboa WSL2 distro",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if runtime.GOOS != "windows" {
 				return errNotWindows("stop")
 			}
-			if distro == "" {
-				if cfg, err := config.Load(config.DefaultPath()); err == nil {
-					distro = cfg.Daemon.Distro
-				}
-			}
-			err := wslboot.Stop(distro, sudo)
+			err := wslboot.Stop(wsldistro.Name, daemonLaunchUser)
 			if errors.Is(err, wslboot.ErrNoDaemon) {
 				fmt.Fprintln(cmd.OutOrStdout(), "no running daemon")
 				return nil
@@ -175,9 +243,6 @@ func newDaemonStopCmd() *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().BoolVar(&sudo, "sudo", false, "use sudo to signal a daemon started under sudo")
-	c.Flags().StringVar(&distro, "distro", "", "WSL2 distro hosting the daemon")
-	return c
 }
 
 func newDaemonStatusCmd() *cobra.Command {
@@ -186,6 +251,13 @@ func newDaemonStatusCmd() *cobra.Command {
 		Short: "Show whether the jerboad daemon is reachable",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+			if runtime.GOOS == "windows" {
+				if installed, err := wsldistro.Exists(); err == nil && !installed {
+					fmt.Fprintf(out, "distro:   not installed (run: jerboa daemon install)\n")
+					return nil
+				}
+			}
 			endpoint := config.ResolveEndpoint("")
 			token := config.ResolveToken()
 			if token == "" {
@@ -193,7 +265,6 @@ func newDaemonStatusCmd() *cobra.Command {
 					token = t
 				}
 			}
-			out := cmd.OutOrStdout()
 			client, err := api.DialWithToken(endpoint, token)
 			if err != nil {
 				fmt.Fprintf(out, "daemon: not running (%s)\n", endpoint)
@@ -250,6 +321,34 @@ func newDaemonLogsCmd() *cobra.Command {
 	return c
 }
 
+// fetchRootfs downloads the dedicated-distro rootfs for the latest release into a
+// temp file and returns its path. The caller removes it after import.
+func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
+	ver, err := latestCLIVersion(ctx)
+	if err != nil {
+		return "", fmt.Errorf("daemon install: resolve latest version: %w", err)
+	}
+	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, wsldistro.RootfsArtifact)
+
+	tmp, err := os.CreateTemp("", "jerboa-rootfs-*.tar.gz")
+	if err != nil {
+		return "", fmt.Errorf("daemon install: temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	fmt.Fprintf(cmd.OutOrStdout(), "downloading %s (%s) ...\n", wsldistro.RootfsArtifact, ver)
+	if err := downloadToVerified(ctx, url, tmp); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("daemon install: download rootfs: %w "+
+			"(if no release is published, build it with distro/build.sh and pass --rootfs)", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("daemon install: close temp: %w", err)
+	}
+	return tmpPath, nil
+}
+
 // launchAndWait starts the daemon, waits for it to answer, then records the
 // rendezvous file so later runs reach the same daemon.
 func launchAndWait(cmd *cobra.Command, wcfg wslboot.Config, token string) error {
@@ -266,14 +365,30 @@ func launchAndWait(cmd *cobra.Command, wcfg wslboot.Config, token string) error 
 	return nil
 }
 
-// requireTCPEndpoint rejects non-TCP endpoints: the WSL2 daemon must listen on
-// loopback TCP so the Windows client can reach it across the VM boundary.
-func requireTCPEndpoint(ep string) error {
-	if !strings.HasPrefix(ep, "tcp://") {
-		return fmt.Errorf("daemon: endpoint %q is not tcp:// — the WSL2 daemon must listen on loopback TCP "+
-			"so the Windows client can reach it (set [daemon] endpoint or pass --host)", ep)
+// requireDistro errors with an install hint when the dedicated distro is absent.
+func requireDistro() error {
+	exists, err := wsldistro.Exists()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("the %q WSL2 distro is not installed — run: jerboa daemon install", wsldistro.Name)
 	}
 	return nil
+}
+
+// listenEndpointFor maps the client dial endpoint to the address the daemon
+// binds: tcp://127.0.0.1:PORT -> tcp://0.0.0.0:PORT, so the daemon accepts the
+// Windows host across the WSL2 boundary regardless of which distro forwards.
+func listenEndpointFor(dial string) string {
+	rest, ok := strings.CutPrefix(dial, "tcp://")
+	if !ok {
+		return dial
+	}
+	if _, port, found := strings.Cut(rest, ":"); found {
+		return "tcp://0.0.0.0:" + port
+	}
+	return dial
 }
 
 // waitPortReleased blocks until the old daemon stops answering or d elapses, so a
@@ -289,7 +404,7 @@ func waitPortReleased(ctx context.Context, endpoint, token string, d time.Durati
 }
 
 func errNotWindows(action string) error {
-	return fmt.Errorf("daemon %s manages a WSL2 daemon and only runs on Windows; "+
+	return fmt.Errorf("daemon %s manages a WSL2 distro and only runs on Windows; "+
 		"on Linux run jerboad directly", action)
 }
 

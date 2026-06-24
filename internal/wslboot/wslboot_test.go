@@ -66,6 +66,23 @@ func TestBuildLaunchArgs_SudoNoToken(t *testing.T) {
 	require.Equal(t, []string{"--", "sudo", "jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
 }
 
+func TestBuildLaunchArgs_DedicatedDistro(t *testing.T) {
+	args, _ := buildLaunchArgs(Config{
+		Endpoint:       "tcp://127.0.0.1:7890",
+		ListenEndpoint: "tcp://0.0.0.0:7890",
+		Distro:         "jerboa",
+		User:           "root",
+		Hypervisor:     "firecracker",
+	})
+
+	// -u selects the user, and the daemon binds the listen endpoint (0.0.0.0)
+	// while the client keeps dialing loopback.
+	require.Equal(t, []string{
+		"-d", "jerboa", "-u", "root", "--",
+		"jerboad", "--host", "tcp://0.0.0.0:7890", "--hypervisor", "firecracker",
+	}, args)
+}
+
 func TestSaveLoadDaemonFile_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "daemon.json")
 	require.NoError(t, SaveDaemonFile(path, "tok", "tcp://127.0.0.1:7890"))

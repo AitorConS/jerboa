@@ -25,10 +25,17 @@ var ErrNoDaemon = errors.New("no running daemon found")
 
 // Config describes how to reach and, if needed, launch the daemon.
 type Config struct {
-	// Endpoint is the daemon address, e.g. tcp://127.0.0.1:7890.
+	// Endpoint is the address the client dials, e.g. tcp://127.0.0.1:7890.
 	Endpoint string
+	// ListenEndpoint is the --host value the daemon binds. Empty reuses Endpoint.
+	// Used to bind 0.0.0.0 inside a dedicated distro while the client dials
+	// loopback across the WSL2 boundary.
+	ListenEndpoint string
 	// Distro is the WSL2 distribution name. Empty uses the WSL default distro.
 	Distro string
+	// User is the Linux user to run jerboad as inside the distro (wsl -u). Empty
+	// uses the distro's default user. "root" runs privileged without host sudo.
+	User string
 	// Token is the shared secret passed to the daemon (via the environment, not
 	// argv) and used by the client handshake. Empty disables authentication.
 	Token string
@@ -78,18 +85,17 @@ func Healthy(ctx context.Context, endpoint, token string) bool {
 }
 
 // Stop terminates the jerboad daemon running inside the WSL2 distro. distro
-// empty targets the default distro; sudo is required to signal a daemon that was
-// itself started under sudo. Returns ErrNoDaemon when nothing matched.
-func Stop(distro string, sudo bool) error {
+// empty targets the default distro; user (e.g. "root") selects the wsl user that
+// can signal it. Returns ErrNoDaemon when nothing matched.
+func Stop(distro, user string) error {
 	var args []string
 	if distro != "" {
 		args = append(args, "-d", distro)
 	}
-	kill := "pkill -f 'jerboad --host'"
-	if sudo {
-		kill = "sudo " + kill
+	if user != "" {
+		args = append(args, "-u", user)
 	}
-	args = append(args, "--", "bash", "-lc", kill)
+	args = append(args, "--", "bash", "-lc", "pkill -f 'jerboad --host'")
 	out, err := exec.Command("wsl", args...).CombinedOutput() //nolint:gosec,noctx // fixed program, controlled args
 	if err != nil {
 		// pkill exits 1 when no process matched: treat as "already stopped".
@@ -202,6 +208,9 @@ func buildLaunchArgs(cfg Config) (args, env []string) {
 	if cfg.Distro != "" {
 		args = append(args, "-d", cfg.Distro)
 	}
+	if cfg.User != "" {
+		args = append(args, "-u", cfg.User)
+	}
 	args = append(args, "--")
 	if cfg.Sudo {
 		// sudo resets the environment, so WSLENV alone would drop the token;
@@ -211,7 +220,11 @@ func buildLaunchArgs(cfg Config) (args, env []string) {
 			args = append(args, "--preserve-env=JERBOA_AUTH_TOKEN")
 		}
 	}
-	args = append(args, jerboad, "--host", cfg.Endpoint)
+	listen := cfg.ListenEndpoint
+	if listen == "" {
+		listen = cfg.Endpoint
+	}
+	args = append(args, jerboad, "--host", listen)
 	if cfg.Hypervisor != "" {
 		args = append(args, "--hypervisor", cfg.Hypervisor)
 	}

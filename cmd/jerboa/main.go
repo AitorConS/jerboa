@@ -10,6 +10,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/wslboot"
+	"github.com/AitorConS/jerboa/internal/wsldistro"
 	"github.com/spf13/cobra"
 )
 
@@ -133,18 +134,25 @@ func ensureDaemon(ctx context.Context, endpoint string) error {
 		token = t
 		_ = os.Setenv("JERBOA_AUTH_TOKEN", token)
 	}
-	var distro, jerboadPath, hypervisor string
+	// The daemon lives in the dedicated jerboa distro; auto-boot requires it.
+	installed, err := wsldistro.Exists()
+	if err != nil {
+		return err
+	}
+	if !installed {
+		return fmt.Errorf("the %q WSL2 distro is not installed — run: jerboa daemon install", wsldistro.Name)
+	}
+	var hypervisor string
 	if cfg, err := config.Load(config.DefaultPath()); err == nil {
-		distro = cfg.Daemon.Distro
-		jerboadPath = cfg.Daemon.JerboadPath
 		hypervisor = cfg.Hypervisor
 	}
 	if err := wslboot.EnsureDaemon(ctx, wslboot.Config{
-		Endpoint:    endpoint,
-		Distro:      distro,
-		Token:       token,
-		JerboadPath: jerboadPath,
-		Hypervisor:  hypervisor,
+		Endpoint:       endpoint,
+		ListenEndpoint: listenEndpointFor(endpoint),
+		Distro:         wsldistro.Name,
+		User:           daemonLaunchUser,
+		Token:          token,
+		Hypervisor:     hypervisor,
 	}); err != nil {
 		return err
 	}
