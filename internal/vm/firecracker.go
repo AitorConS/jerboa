@@ -118,6 +118,14 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// VM serial console reaches logBuf. If the VM crashes with empty logs,
 	// monitor appends the VMM log so `jerboa logs` surfaces the error.
 	vmmLog := m.vmmLogPath(id)
+	// Firecracker opens --log-path without O_CREAT and aborts if the file is
+	// missing ("Could not initialize logger: ... No such file or directory"),
+	// so create it (and its directory) before launching.
+	if err := ensureFile(vmmLog); err != nil {
+		_ = v.transition(StateStopped)
+		_ = os.Remove(cfgPath)
+		return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
+	}
 	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", m.cfgPathForProcess(cfgPath), "--log-path", vmmLog)
 
 	var stdout io.Writer = &v.logBuf
@@ -521,6 +529,19 @@ func fcSendCtrlAltDel(sockPath string) error {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// ensureFile creates an empty file at path (and any missing parent dirs) if it
+// does not already exist.
+func ensureFile(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create dir for %s: %w", path, err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // daemon-owned runtime log path
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	return f.Close()
 }
 
 func fcSocketPath(id string) string {
