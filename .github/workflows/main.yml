@@ -383,7 +383,9 @@ jobs:
             -o dist/jerboa-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
             ./cmd/jerboa
 
+      # The daemon is linux-only (//go:build linux); skip it for other targets.
       - name: Build jerboad
+        if: matrix.goos == 'linux'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
