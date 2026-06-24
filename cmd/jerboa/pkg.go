@@ -38,9 +38,9 @@ func pkgStorePath() string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "packages")
+		return filepath.Join(".jerboa", "packages")
 	}
-	return filepath.Join(home, ".uni", "packages")
+	return filepath.Join(home, ".jerboa", "packages")
 }
 
 func opsStorePath() string {
@@ -49,9 +49,9 @@ func opsStorePath() string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "packages-ops")
+		return filepath.Join(".jerboa", "packages-ops")
 	}
-	return filepath.Join(home, ".uni", "packages-ops")
+	return filepath.Join(home, ".jerboa", "packages-ops")
 }
 
 func openOpsStore() (*pkg.OpsStore, error) {
@@ -78,7 +78,7 @@ func newPkgListCmd() *cobra.Command {
 				return fmt.Errorf("pkg list: %w", err)
 			}
 			if len(pkgs) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No packages installed. Use 'uni pkg search <term>' to find packages.")
+				fmt.Fprintln(cmd.OutOrStdout(), "No packages installed. Use 'jerboa pkg search <term>' to find packages.")
 				return nil
 			}
 			if outputJSON {
@@ -93,7 +93,7 @@ func newPkgListCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&outputJSON, "output-json", false, "output as JSON")
-	cmd.Flags().StringVar(&source, "source", "uni", "package source: \"uni\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
 	return cmd
 }
 
@@ -107,7 +107,7 @@ func pkgListOps(cmd *cobra.Command, outputJSON bool) error {
 		return fmt.Errorf("pkg list ops: %w", err)
 	}
 	if len(pkgs) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No ops packages installed. Use 'uni pkg get <namespace>/<name>:<version> --source ops' to download.")
+		fmt.Fprintln(cmd.OutOrStdout(), "No ops packages installed. Use 'jerboa pkg get <namespace>/<name>:<version> --source ops' to download.")
 		return nil
 	}
 	if outputJSON {
@@ -156,7 +156,7 @@ func newPkgSearchCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&outputJSON, "output-json", false, "output as JSON")
-	cmd.Flags().StringVar(&source, "source", "uni", "package source: \"uni\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
 	return cmd
 }
 
@@ -247,7 +247,7 @@ func newPkgGetCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "uni", "package source: \"uni\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
 	return cmd
 }
 
@@ -320,7 +320,7 @@ func newPkgRemoveCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "uni", "package source: \"uni\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
 	return cmd
 }
 
@@ -454,7 +454,7 @@ and create a local package. Uses 'docker create' + 'docker cp' to extract
 the binary, then runs 'ldd' inside the container to discover shared libraries.
 
 Example:
-  uni pkg from-docker node:20 node:20 --file /usr/local/bin/node --runtime node`,
+  jerboa pkg from-docker node:20 node:20 --file /usr/local/bin/node --runtime node`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, version := parsePkgRef(args[0])
@@ -513,7 +513,7 @@ func newPkgPushCmd() *cobra.Command {
 The index server must support POST /packages with multipart form data.
 
 Example:
-  uni pkg push node:20 https://packages.example.com`,
+  jerboa pkg push node:20 https://packages.example.com`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name, version := parsePkgRef(args[0])
@@ -552,8 +552,8 @@ func newPkgLoadCmd(endpoint *string) *cobra.Command {
 For ops packages, this replicates the 'ops pkg load' workflow.
 
 Examples:
-  uni pkg load eyberg/node:v16.5.0 --source ops
-  uni pkg load myruntime:1.0.0`,
+  jerboa pkg load eyberg/node:v16.5.0 --source ops
+  jerboa pkg load myruntime:1.0.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var pkgFiles []pkg.File
@@ -623,11 +623,11 @@ Examples:
 				return nil
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Run with: uni run pkg-load:latest")
+			fmt.Fprintln(cmd.OutOrStdout(), "Run with: jerboa run pkg-load:latest")
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&source, "source", "uni", "package source: \"uni\" (default) or \"ops\"")
+	cmd.Flags().StringVar(&source, "source", "jerboa", "package source: \"jerboa\" (default) or \"ops\"")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "build only, don't print run instructions")
 	return cmd
 }

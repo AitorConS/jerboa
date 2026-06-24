@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const stateFileName = ".uni-compose-state.json"
+const stateFileName = ".jerboa-compose-state.json"
 
 func newComposeCmd(socketPath, storePath, outputFmt *string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -386,7 +386,7 @@ func writeState(composeFile string, state compose.State) error {
 func readState(composeFile string) (compose.State, error) {
 	data, err := os.ReadFile(stateFilePath(composeFile))
 	if err != nil {
-		return compose.State{}, fmt.Errorf("read state (run 'uni compose up' first): %w", err)
+		return compose.State{}, fmt.Errorf("read state (run 'jerboa compose up' first): %w", err)
 	}
 	var state compose.State
 	if err := json.Unmarshal(data, &state); err != nil {

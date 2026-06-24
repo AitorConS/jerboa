@@ -20,9 +20,9 @@ const (
 
 // TAPConfig holds the parameters for a TAP device.
 type TAPConfig struct {
-	// Name is the interface name (e.g. "uni-tap0"). Truncated to 15 chars.
+	// Name is the interface name (e.g. "jerboa-tap0"). Truncated to 15 chars.
 	Name string
-	// Bridge is the Linux bridge to attach to (e.g. "uni-br0").
+	// Bridge is the Linux bridge to attach to (e.g. "jerboa-br0").
 	Bridge string
 }
 

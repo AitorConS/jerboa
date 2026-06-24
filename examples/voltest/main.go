@@ -8,14 +8,14 @@
 //
 // Mount a volume at /data to verify persistence across VM restarts:
 //
-//	uni volume create testdata
-//	uni build ./voltest --name voltest
-//	uni run voltest:latest -v testdata:/data -p 8080:8080 --name v1
+//	jerboa volume create testdata
+//	jerboa build ./voltest --name voltest
+//	jerboa run voltest:latest -v testdata:/data -p 8080:8080 --name v1
 //	curl -X POST "http://localhost:8080/write?msg=hello"
 //	curl -X POST "http://localhost:8080/write?msg=world"
 //	curl http://localhost:8080/
-//	uni stop v1 && uni rm v1
-//	uni run voltest:latest -v testdata:/data -p 8080:8080 --name v2
+//	jerboa stop v1 && jerboa rm v1
+//	jerboa run voltest:latest -v testdata:/data -p 8080:8080 --name v2
 //	curl http://localhost:8080/   ← still shows "hello" and "world"
 package main
 

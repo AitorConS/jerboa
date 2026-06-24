@@ -111,7 +111,7 @@ type Store struct {
 	root string
 }
 
-// NewStore creates a Store rooted at root (typically ~/.uni).
+// NewStore creates a Store rooted at root (typically ~/.jerboa).
 func NewStore(root string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(root, keyDirName), 0o700); err != nil {
 		return nil, fmt.Errorf("signing store mkdir: %w", err)
@@ -119,13 +119,13 @@ func NewStore(root string) (*Store, error) {
 	return &Store{root: root}, nil
 }
 
-// DefaultStorePath returns the default store path (~/.uni).
+// DefaultStorePath returns the default store path (~/.jerboa).
 func DefaultStorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni"
+		return ".jerboa"
 	}
-	return home + "/.uni"
+	return home + "/.jerboa"
 }
 
 // GenerateAndSave creates a new key pair and saves it to disk.

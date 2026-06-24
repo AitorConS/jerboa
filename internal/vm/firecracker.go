@@ -116,7 +116,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 
 	// --log-path separates Firecracker's VMM log lines from stdout so only the
 	// VM serial console reaches logBuf. If the VM crashes with empty logs,
-	// monitor appends the VMM log so `uni logs` surfaces the error.
+	// monitor appends the VMM log so `jerboa logs` surfaces the error.
 	vmmLog := m.vmmLogPath(id)
 	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", m.cfgPathForProcess(cfgPath), "--log-path", vmmLog)
 
@@ -291,7 +291,7 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 	v.mu.Unlock()
 
 	// If the VM died with no serial output (e.g. Firecracker couldn't start the
-	// microVM), surface the VMM log so `uni logs` shows the actual error.
+	// microVM), surface the VMM log so `jerboa logs` shows the actual error.
 	if exitErr != nil && len(v.logBuf.Bytes()) == 0 {
 		if data, err := m.readVMMLog(vmmLog); err == nil && len(data) > 0 {
 			_, _ = v.logBuf.Write([]byte("[firecracker error]\n"))

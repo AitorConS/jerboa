@@ -26,7 +26,7 @@ func newKernelCmd(verbose *bool) *cobra.Command {
 	return cmd
 }
 
-// newKernelCheckCmd implements `uni kernel check`.
+// newKernelCheckCmd implements `jerboa kernel check`.
 func newKernelCheckCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "check",
@@ -48,7 +48,7 @@ func newKernelCheckCmd() *cobra.Command {
 
 			if tools.IsNewer(local, remote) {
 				fmt.Fprintf(cmd.OutOrStdout(),
-					"Update available. Run `uni kernel update` to install %s.\n", remote)
+					"Update available. Run `jerboa kernel update` to install %s.\n", remote)
 			} else {
 				fmt.Fprintln(cmd.OutOrStdout(), "Kernel is up to date.")
 			}
@@ -57,7 +57,7 @@ func newKernelCheckCmd() *cobra.Command {
 	}
 }
 
-// newKernelListCmd implements `uni kernel list`.
+// newKernelListCmd implements `jerboa kernel list`.
 func newKernelListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -88,7 +88,7 @@ func newKernelListCmd() *cobra.Command {
 	}
 }
 
-// newKernelUseCmd implements `uni kernel use <version>`.
+// newKernelUseCmd implements `jerboa kernel use <version>`.
 func newKernelUseCmd(verbose *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
@@ -136,7 +136,7 @@ func newKernelUseCmd(verbose *bool) *cobra.Command {
 	return cmd
 }
 
-// newKernelUpdateCmd implements `uni kernel update`.
+// newKernelUpdateCmd implements `jerboa kernel update`.
 func newKernelUpdateCmd(verbose *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{

@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	defaultSocket  = "/tmp/unid-integration-test.sock"
+	defaultSocket  = "/tmp/jerboad-integration-test.sock"
 	defaultQEMU    = "qemu-system-x86_64"
 	defaultTimeout = 2 * time.Minute
 )

@@ -1,7 +1,7 @@
 // Package volume manages persistent virtio-blk disk volumes for unikernel VMs.
 // A volume is a raw disk image file in the volume root directory, identified by
 // a human-readable name. Volumes survive VM restarts; they are only deleted
-// when the user explicitly runs "uni volume rm".
+// when the user explicitly runs "jerboa volume rm".
 package volume
 
 import (

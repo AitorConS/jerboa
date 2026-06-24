@@ -48,7 +48,7 @@ func TestKernelUse_AlreadyOnVersion(t *testing.T) {
 	home := t.TempDir()
 	setHomeForTest(t, home)
 
-	toolsDir := filepath.Join(home, ".uni", "tools")
+	toolsDir := filepath.Join(home, ".jerboa", "tools")
 	require.NoError(t, os.MkdirAll(toolsDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(toolsDir, "kernel-version.txt"), []byte("v1.2.3\n"), 0o644))
 

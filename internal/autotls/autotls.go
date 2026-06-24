@@ -50,7 +50,7 @@ func EnsureCert(certPath, keyPath string) (tls.Certificate, error) {
 		SerialNumber: serialNumber,
 		Subject: pkix.Name{
 			Organization: []string{"UniKernel Engine"},
-			CommonName:   "uni-registry",
+			CommonName:   "jerboa-registry",
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
@@ -91,7 +91,7 @@ func EnsureCert(certPath, keyPath string) (tls.Certificate, error) {
 func DefaultCertDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni/registry/tls"
+		return ".jerboa/registry/tls"
 	}
-	return filepath.Join(home, ".uni", "registry", "tls")
+	return filepath.Join(home, ".jerboa", "registry", "tls")
 }

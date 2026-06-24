@@ -94,7 +94,7 @@ volumes:
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `driver` | No | `bridge` | Network driver. Only `bridge` is supported |
-| `subnet` | No | auto-allocated | CIDR block for the network (e.g. `10.100.0.0/24`). If omitted, Uni auto-allocates a `/24` from its internal range |
+| `subnet` | No | auto-allocated | CIDR block for the network (e.g. `10.100.0.0/24`). If omitted, Jerboa auto-allocates a `/24` from its internal range |
 
 ### Volume fields
 
@@ -226,7 +226,7 @@ See [Service Commands]({% link cli-reference.md %}#service-commands) for the ful
 
 ## How Dependency Ordering Works
 
-Uni uses **Kahn's topological sort** algorithm to determine startup order:
+Jerboa uses **Kahn's topological sort** algorithm to determine startup order:
 
 1. Build a dependency graph from all `depends_on` declarations
 2. Start services with no dependencies first
@@ -246,7 +246,7 @@ When you run `jerboa compose up stack.yaml`, a state file is created in the same
 
 ```
 stack.yaml
-.uni-compose-state.json   ← automatically created
+.jerboa-compose-state.json   ← automatically created
 ```
 
 Content:
@@ -293,7 +293,7 @@ Content:
 Commands `down`, `ps`, and `logs` read this file to know which VM IDs (or services) belong to the stack.
 
 {: .warning }
-Do not delete `.uni-compose-state.json` manually while the stack is running. If it gets lost, use `jerboa ps` to find the VM IDs and stop them individually with `jerboa stop`.
+Do not delete `.jerboa-compose-state.json` manually while the stack is running. If it gets lost, use `jerboa ps` to find the VM IDs and stop them individually with `jerboa stop`.
 
 ---
 

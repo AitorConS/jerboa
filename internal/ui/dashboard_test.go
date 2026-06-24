@@ -40,7 +40,7 @@ func TestHandler_Dashboard(t *testing.T) {
 	h.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	require.Contains(t, w.Body.String(), "Uni Dashboard")
+	require.Contains(t, w.Body.String(), "Jerboa Dashboard")
 	require.Contains(t, w.Body.String(), "No VMs registered")
 }
 

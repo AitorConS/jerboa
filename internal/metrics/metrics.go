@@ -65,75 +65,75 @@ func NewCollectors(version string) *Collectors {
 	c := &Collectors{
 		registry: reg,
 		VMCreated: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_vms_created_total",
+			Name: "jerboa_vms_created_total",
 			Help: "Number of VMs in created state",
 		}),
 		VMStarting: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_vms_starting_total",
+			Name: "jerboa_vms_starting_total",
 			Help: "Number of VMs in starting state",
 		}),
 		VMRunning: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_vms_running_total",
+			Name: "jerboa_vms_running_total",
 			Help: "Number of VMs in running state",
 		}),
 		VMStopping: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_vms_stopping_total",
+			Name: "jerboa_vms_stopping_total",
 			Help: "Number of VMs in stopping state",
 		}),
 		VMStopped: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_vms_stopped_total",
+			Name: "jerboa_vms_stopped_total",
 			Help: "Number of VMs in stopped state",
 		}),
 		VMStartsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_vm_starts_total",
+			Name: "jerboa_vm_starts_total",
 			Help: "Total number of VM start operations",
 		}),
 		VMStopsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_vm_stops_total",
+			Name: "jerboa_vm_stops_total",
 			Help: "Total number of VM stop operations",
 		}),
 		VMRestartsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_vm_restarts_total",
+			Name: "jerboa_vm_restarts_total",
 			Help: "Total number of VM restart operations",
 		}),
 		VMErrorsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_vm_errors_total",
+			Name: "jerboa_vm_errors_total",
 			Help: "Total number of VM errors",
 		}),
 		BuildInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "uni_build_info",
+			Name: "jerboa_build_info",
 			Help: "Build information for the unikernel engine daemon",
 		}, []string{"version"}),
 		ImagesTotal: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_images_total",
+			Name: "jerboa_images_total",
 			Help: "Number of locally stored images",
 		}),
 		PushTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_push_total",
+			Name: "jerboa_push_total",
 			Help: "Total number of image push operations",
 		}),
 		PullTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_pull_total",
+			Name: "jerboa_pull_total",
 			Help: "Total number of image pull operations",
 		}),
 		PushErrorsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_push_errors_total",
+			Name: "jerboa_push_errors_total",
 			Help: "Total number of image push errors",
 		}),
 		PullErrorsTotal: prometheus.NewCounter(prometheus.CounterOpts{
-			Name: "uni_pull_errors_total",
+			Name: "jerboa_pull_errors_total",
 			Help: "Total number of image pull errors",
 		}),
 		PortForwardsActive: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_port_forwards_active",
+			Name: "jerboa_port_forwards_active",
 			Help: "Number of active port forwarding rules",
 		}),
 		BridgeCount: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_bridge_count",
+			Name: "jerboa_bridge_count",
 			Help: "Number of active network bridges",
 		}),
 		StartTime: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "uni_start_time_seconds",
+			Name: "jerboa_start_time_seconds",
 			Help: "Unix timestamp of daemon start time",
 		}),
 	}

@@ -36,7 +36,7 @@ type BuildConfig struct {
 	CPUs int
 	// PkgFiles is a list of package files to include in the image.
 	// Each entry carries both the host path (on the build machine) and the
-	// guest path (inside the Nanos image). For uni packages, GuestPath is
+	// guest path (inside the Nanos image). For jerboa packages, GuestPath is
 	// typically filepath.Base(HostPath). For ops packages, GuestPath
 	// preserves the sysroot/ hierarchy (e.g. "lib/x86_64-linux-gnu/libc.so").
 	PkgFiles []pkg.File
@@ -87,7 +87,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
-	tmp, err := os.CreateTemp("", "uni-build-*.img")
+	tmp, err := os.CreateTemp("", "jerboa-build-*.img")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build: create temp image: %w", err)
 	}

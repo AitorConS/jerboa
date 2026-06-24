@@ -106,14 +106,14 @@ make build
 The daemon (`jerboad`) must run in the background before you can use the `jerboa` CLI.
 
 ```bash
-# Linux (listens on /var/run/unid.sock)
+# Linux (listens on /var/run/jerboad.sock)
 sudo jerboad --qemu qemu-system-x86_64
 
 # Without sudo (custom socket path)
-jerboad --socket /tmp/unid.sock --qemu qemu-system-x86_64
+jerboad --socket /tmp/jerboad.sock --qemu qemu-system-x86_64
 
 # With observability enabled — Prometheus metrics + web dashboard
-jerboad --socket /tmp/unid.sock --metrics-addr :9090 --ui-addr :8080
+jerboad --socket /tmp/jerboad.sock --metrics-addr :9090 --ui-addr :8080
 ```
 
 {: .note }
@@ -163,7 +163,7 @@ jerboa build ./hello --name hello
 # sha256:abc123...  hello:latest
 ```
 
-On first run, `jerboa build` automatically downloads `mkfs`, `kernel.img`, and `boot.img` from the latest release into `~/.uni/tools/` (or `%USERPROFILE%\.uni\tools\` on Windows). On Windows, the build step runs through WSL2.
+On first run, `jerboa build` automatically downloads `mkfs`, `kernel.img`, and `boot.img` from the latest release into `~/.jerboa/tools/` (or `%USERPROFILE%\.jerboa\tools\` on Windows). On Windows, the build step runs through WSL2.
 
 If a newer kernel version is available, `jerboa build` will prompt before building:
 
@@ -277,7 +277,7 @@ jerboa run hello:latest --rm
 
 ### 5. Managed networks and static IPs
 
-Uni manages its own Linux bridge networks. Create one with `jerboa network create`, then attach VMs to it with `jerboa run --network` — Uni wires up a TAP interface per VM, attaches it to the bridge, and either auto-allocates an IP or uses the one you specify with `--ip`.
+Jerboa manages its own Linux bridge networks. Create one with `jerboa network create`, then attach VMs to it with `jerboa run --network` — Jerboa wires up a TAP interface per VM, attaches it to the bridge, and either auto-allocates an IP or uses the one you specify with `--ip`.
 
 ```bash
 # Create a managed network — auto-allocates a /24 from 10.100.0.0/16
@@ -295,7 +295,7 @@ jerboa dns resolve web --network app
 jerboa dns list --network app
 ```
 
-When you publish ports with `-p` on a managed network, Uni configures the iptables DNAT rules automatically so traffic reaches the VM through its bridge interface. See [Architecture → Networking]({% link architecture.md %}) for how this fits together, and [`jerboa network` / `jerboa dns`]({% link cli-reference.md %}#network-and-dns-commands) for the full command reference.
+When you publish ports with `-p` on a managed network, Jerboa configures the iptables DNAT rules automatically so traffic reaches the VM through its bridge interface. See [Architecture → Networking]({% link architecture.md %}) for how this fits together, and [`jerboa network` / `jerboa dns`]({% link cli-reference.md %}#network-and-dns-commands) for the full command reference.
 
 {: .note }
 Managed networks, static IPs, and DNAT port forwarding require Linux with `CAP_NET_ADMIN`/root and `iptables` (the relevant code is built only on Linux — see `internal/network/bridge_linux.go` and `tap.go`). On Windows and macOS, `jerboa run -p` still works through QEMU's user-mode SLIRP networking, but `--network` and `--ip` are not available.
@@ -329,11 +329,11 @@ Create `/etc/systemd/system/jerboad.service`:
 
 ```ini
 [Unit]
-Description=Uni Unikernel Daemon
+Description=Jerboa Unikernel Daemon
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/jerboad --socket /var/run/unid.sock --qemu /usr/bin/qemu-system-x86_64
+ExecStart=/usr/local/bin/jerboad --socket /var/run/jerboad.sock --qemu /usr/bin/qemu-system-x86_64
 Restart=on-failure
 User=root
 
@@ -372,7 +372,7 @@ jerboa upgrade --yes
 
 ### Updating the kernel tools
 
-The kernel tools (`kernel.img`, `boot.img`, `mkfs`) are cached in `~/.uni/tools/` independently of the CLI.
+The kernel tools (`kernel.img`, `boot.img`, `mkfs`) are cached in `~/.jerboa/tools/` independently of the CLI.
 
 ```bash
 # Check current and latest kernel version

@@ -13,7 +13,7 @@ const UnignoreFile = ".unignore"
 // DefaultIgnorePatterns are the patterns always excluded from the build context.
 var DefaultIgnorePatterns = []string{
 	".git",
-	".uni-build",
+	".jerboa-build",
 	"node_modules",
 	"__pycache__",
 	".tox",

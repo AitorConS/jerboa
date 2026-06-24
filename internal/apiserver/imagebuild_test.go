@@ -56,7 +56,7 @@ func buildContextTar(t *testing.T, files map[string][]byte) *bytes.Buffer {
 
 func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -197,7 +197,7 @@ func TestImageBuild_MissingProgram(t *testing.T) {
 }
 
 func TestImageBuild_Disabled(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)

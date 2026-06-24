@@ -483,7 +483,7 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 		return BuildResult{}, fmt.Errorf("rust driver: binary not found at %s: %w", binPath, err)
 	}
 
-	tmpBin, err := os.CreateTemp("", "uni-rust-build-*")
+	tmpBin, err := os.CreateTemp("", "jerboa-rust-build-*")
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("rust driver: create temp: %w", err)
 	}
@@ -572,7 +572,7 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 		platform = Platform{OS: "linux", Arch: arch}
 	}
 
-	output := filepath.Join(dir, ".uni-build-binary")
+	output := filepath.Join(dir, ".jerboa-build-binary")
 	if platform.OS == "windows" {
 		output += ".exe"
 	}

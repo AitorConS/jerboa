@@ -17,7 +17,7 @@ nav_order: 5
 
 ## Overview
 
-Uni is structured as a **client–daemon** system, the same model used by Docker:
+Jerboa is structured as a **client–daemon** system, the same model used by Docker:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -37,7 +37,7 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 └──────────────────────────┬──────────────────────────────┘
                            │
                            │  JSON-RPC 2.0 over Unix domain socket
-                           │  /var/run/unid.sock
+                           │  /var/run/jerboad.sock
                            │
 ┌──────────────────────────▼──────────────────────────────┐
 │  jerboad  (daemon — long-running background process)       │
@@ -46,7 +46,7 @@ Uni is structured as a **client–daemon** system, the same model used by Docker
 │  │   VM Manager     │  │   Image Store                │ │
 │  │                  │  │   content-addressed (SHA256) │ │
 │  │  QEMUManager     │  │                              │ │
-│  │  ┌────────────┐  │  │   ~/.uni/images/             │ │
+│  │  ┌────────────┐  │  │   ~/.jerboa/images/             │ │
 │  │  │ VM #1      │  │  │     <sha256>/manifest.json   │ │
 │  │  │ qemu-sys.. │  │  │     <sha256>/disk.img        │ │
 │  │  └────────────┘  │  │     refs.json                │ │
@@ -131,7 +131,7 @@ Serial console output (stdout + stderr from QEMU) is captured into a thread-safe
 
 ### Kernel Tools Cache (`internal/tools/`)
 
-The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded from GitHub releases and cached in `~/.uni/tools/`. They are versioned independently from the CLI using semver (`kernel/VERSION` in the repo).
+The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded from GitHub releases and cached in `~/.jerboa/tools/`. They are versioned independently from the CLI using semver (`kernel/VERSION` in the repo).
 
 **Download flow:**
 1. `jerboa build` calls `tools.ResolveMkfs()`
@@ -146,7 +146,7 @@ The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded f
 **Content-addressable store** — images are stored by their SHA256 digest:
 
 ```
-~/.uni/images/
+~/.jerboa/images/
   refs.json                          ← maps "name:tag" → "sha256hex"
   abc123def456.../
     manifest.json                    ← image metadata
@@ -181,7 +181,7 @@ The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded f
 ```
 (
     children:(
-        node:(contents:(host:/home/user/.uni/packages/node/20.11.0/files/bin/node))
+        node:(contents:(host:/home/user/.jerboa/packages/node/20.11.0/files/bin/node))
         ...
     )
     program:/program
@@ -238,11 +238,11 @@ Parses compose YAML files and resolves startup order:
 
 ### Package System (`internal/package/`)
 
-Two independent package ecosystems are supported, selected with `--source`/`--pkg-source uni|ops` (see [Package Commands]({% link cli-reference.md %}#package-commands)):
+Two independent package ecosystems are supported, selected with `--source`/`--pkg-source jerboa|ops` (see [Package Commands]({% link cli-reference.md %}#package-commands)):
 
 **`jerboa` native index** — pre-packaged files for inclusion in images at build time:
 
-- **Store** — local cache at `~/.uni/packages/<name>/<version>/` holding:
+- **Store** — local cache at `~/.jerboa/packages/<name>/<version>/` holding:
   - `files.tar.gz` — the downloaded package archive
   - `files/` — extracted contents of the archive
   - `meta.json` — package metadata (name, version, SHA256, etc.)
@@ -265,7 +265,7 @@ Packages are included at build time via `jerboa build --pkg <name>[:<version>]`.
 
 **`ops` ecosystem (`OpsStore`)** — pre-built language runtimes from the `nanovms`/`eyberg` package hub at `repo.ops.city`, used both by `jerboa pkg` (with `--source ops`) and as the runtime source for source-based builds (`jerboa build --pkg-source ops`):
 
-- **`OpsStore`** — local cache at `~/.uni/packages-ops/<namespace>/<name>/<version>/`, mirroring the layout the upstream `ops` tool expects
+- **`OpsStore`** — local cache at `~/.jerboa/packages-ops/<namespace>/<name>/<version>/`, mirroring the layout the upstream `ops` tool expects
 - **`FetchOpsManifest`/`FetchManifestCached`** — downloads (and caches) the manifest at `repo.ops.city/v2/manifest.json`, listing every available `<namespace>/<name>:<version>` package with its language, architecture, and SHA256
 - **`Lookup`** — resolves a `<namespace>/<name>[:<version>]` reference against the manifest, normalizing `v` prefixes and matching version prefixes (e.g., a query of `11` matches `v11.5.0`)
 - **`Download`/`Extract`/`FindBinary`** — fetches the package archive (verifying its SHA256), extracts it, and locates the runtime binary inside it
@@ -308,7 +308,7 @@ The format is `IP/CIDR,GATEWAY` (e.g. `10.0.0.2/24,10.0.0.1`). This is x86-64 on
 
 **Download flow:**
 1. `jerboa cp` calls `tools.ResolveDump()` (and `tools.ResolveMkfs()` for copy-to-VM)
-2. If tools are absent from `~/.uni/tools/` → `downloadArtifact()` fetches them from the latest kernel release
+2. If tools are absent from `~/.jerboa/tools/` → `downloadArtifact()` fetches them from the latest kernel release
 3. For copy-from: extract filesystem, copy file to host
 4. For copy-to: extract filesystem, copy file in, rebuild disk with `mkfs`
 

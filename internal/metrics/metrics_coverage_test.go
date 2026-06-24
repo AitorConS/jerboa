@@ -136,12 +136,12 @@ func TestVMStateUpdater_UpdateCounts(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
-	require.Contains(t, body, "uni_vms_created_total 2")
-	require.Contains(t, body, "uni_vms_starting_total 1")
-	require.Contains(t, body, "uni_vms_running_total 3")
-	require.Contains(t, body, "uni_vms_stopping_total 1")
-	require.Contains(t, body, "uni_vms_stopped_total 1")
-	require.Contains(t, body, "uni_images_total 8")
+	require.Contains(t, body, "jerboa_vms_created_total 2")
+	require.Contains(t, body, "jerboa_vms_starting_total 1")
+	require.Contains(t, body, "jerboa_vms_running_total 3")
+	require.Contains(t, body, "jerboa_vms_stopping_total 1")
+	require.Contains(t, body, "jerboa_vms_stopped_total 1")
+	require.Contains(t, body, "jerboa_images_total 8")
 }
 
 func TestVMStateUpdater_RunStopsOnContextCancel(t *testing.T) {
@@ -185,8 +185,8 @@ func TestVMStateUpdater_UnknownState(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
-	require.Contains(t, body, "uni_vms_running_total 1")
-	require.Contains(t, body, "uni_vms_stopped_total 0")
+	require.Contains(t, body, "jerboa_vms_running_total 1")
+	require.Contains(t, body, "jerboa_vms_stopped_total 0")
 }
 
 func TestVMStateCounts_AtomicOps(t *testing.T) {

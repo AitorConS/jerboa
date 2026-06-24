@@ -18,7 +18,7 @@ import (
 
 func TestServe_StartsAndShutsDown(t *testing.T) {
 	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "unid-test.sock")
+	socketPath := filepath.Join(dir, "jerboad-test.sock")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -47,13 +47,13 @@ func TestDefaultEndpoint(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		require.Equal(t, "tcp://127.0.0.1:7890", ep)
 	} else {
-		require.Equal(t, "unix:///var/run/unid.sock", ep)
+		require.Equal(t, "unix:///var/run/jerboad.sock", ep)
 	}
 }
 
 func TestDefaultStorePath(t *testing.T) {
 	p := defaultStorePath()
-	require.Contains(t, p, ".uni")
+	require.Contains(t, p, ".jerboa")
 }
 
 func TestNewRootCmd_Flags(t *testing.T) {
@@ -76,7 +76,7 @@ func TestNewRootCmd_Flags(t *testing.T) {
 
 func TestServe_VersionQuery(t *testing.T) {
 	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "unid-ver.sock")
+	socketPath := filepath.Join(dir, "jerboad-ver.sock")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

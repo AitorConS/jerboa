@@ -16,8 +16,8 @@ const (
 	metaFile          = "meta.json"
 	stateFile         = "state.json"
 	defaultSubnetCIDR = "10.100.0.0/16"
-	bridgePrefix      = "uni-br-"
-	tapPrefix         = "uni-tap-"
+	bridgePrefix      = "jerboa-br-"
+	tapPrefix         = "jerboa-tap-"
 )
 
 type Network struct {

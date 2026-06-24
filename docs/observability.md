@@ -15,7 +15,7 @@ nav_order: 7
 
 ---
 
-Uni provides built-in observability for production unikernel workloads: Prometheus metrics, OpenTelemetry distributed tracing, structured JSON logging, live VM stats, and a web dashboard.
+Jerboa provides built-in observability for production unikernel workloads: Prometheus metrics, OpenTelemetry distributed tracing, structured JSON logging, live VM stats, and a web dashboard.
 
 ## Prometheus Metrics
 
@@ -36,25 +36,25 @@ This starts an HTTP server with:
 
 | Metric | Type | Description |
 |---|---|---|
-| `uni_vms_created_total` | gauge | Number of VMs in created state |
-| `uni_vms_starting_total` | gauge | Number of VMs in starting state |
-| `uni_vms_running_total` | gauge | Number of VMs in running state |
-| `uni_vms_stopping_total` | gauge | Number of VMs in stopping state |
-| `uni_vms_stopped_total` | gauge | Number of VMs in stopped state |
-| `uni_vm_starts_total` | counter | Total number of VM start operations |
-| `uni_vm_stops_total` | counter | Total number of VM stop operations |
-| `uni_vm_restarts_total` | counter | Total number of VM restart operations |
-| `uni_vm_errors_total` | counter | Total number of VM errors |
-| `uni_build_info` | gauge | Build information for the daemon (`version` label) |
-| `uni_images_total` | gauge | Number of locally stored images |
-| `uni_push_total` / `uni_pull_total` | counter | Total number of image push/pull operations |
-| `uni_push_errors_total` / `uni_pull_errors_total` | counter | Total number of image push/pull errors |
-| `uni_port_forwards_active` | gauge | Number of active port forwarding rules |
-| `uni_bridge_count` | gauge | Number of active network bridges |
-| `uni_start_time_seconds` | gauge | Unix timestamp of daemon start time |
+| `jerboa_vms_created_total` | gauge | Number of VMs in created state |
+| `jerboa_vms_starting_total` | gauge | Number of VMs in starting state |
+| `jerboa_vms_running_total` | gauge | Number of VMs in running state |
+| `jerboa_vms_stopping_total` | gauge | Number of VMs in stopping state |
+| `jerboa_vms_stopped_total` | gauge | Number of VMs in stopped state |
+| `jerboa_vm_starts_total` | counter | Total number of VM start operations |
+| `jerboa_vm_stops_total` | counter | Total number of VM stop operations |
+| `jerboa_vm_restarts_total` | counter | Total number of VM restart operations |
+| `jerboa_vm_errors_total` | counter | Total number of VM errors |
+| `jerboa_build_info` | gauge | Build information for the daemon (`version` label) |
+| `jerboa_images_total` | gauge | Number of locally stored images |
+| `jerboa_push_total` / `jerboa_pull_total` | counter | Total number of image push/pull operations |
+| `jerboa_push_errors_total` / `jerboa_pull_errors_total` | counter | Total number of image push/pull errors |
+| `jerboa_port_forwards_active` | gauge | Number of active port forwarding rules |
+| `jerboa_bridge_count` | gauge | Number of active network bridges |
+| `jerboa_start_time_seconds` | gauge | Unix timestamp of daemon start time |
 
 {: .note }
-The five `uni_vms_*_total` gauges reflect a live snapshot of the VM registry (how many VMs are currently in each state), refreshed every 5 seconds — they are not cumulative counts despite the `_total` suffix. The `uni_vm_*_total` counters (starts, stops, restarts, errors) are the cumulative lifecycle counters.
+The five `jerboa_vms_*_total` gauges reflect a live snapshot of the VM registry (how many VMs are currently in each state), refreshed every 5 seconds — they are not cumulative counts despite the `_total` suffix. The `jerboa_vm_*_total` counters (starts, stops, restarts, errors) are the cumulative lifecycle counters.
 
 ### Prometheus Scrape Config
 
@@ -207,8 +207,8 @@ The SQLite store automatically migrates any existing `state.json` VMs on first u
 
 | Backend | Flag | Storage | Best for |
 |---|---|---|---|
-| `file` | `--vm-store file` (default) | `~/.uni/vms/<id>/state.json` | Simple setups |
-| `sqlite` | `--vm-store sqlite` | `~/.uni/vms/vms.db` | Production reliability |
+| `file` | `--vm-store file` (default) | `~/.jerboa/vms/<id>/state.json` | Simple setups |
+| `sqlite` | `--vm-store sqlite` | `~/.jerboa/vms/vms.db` | Production reliability |
 
 ### Health Status Persistence
 

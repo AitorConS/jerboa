@@ -83,7 +83,7 @@ func imageDigest(cmd *cobra.Command, endpoint *string, ref string) (string, erro
 func signingStorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni"
+		return ".jerboa"
 	}
-	return home + "/.uni"
+	return home + "/.jerboa"
 }

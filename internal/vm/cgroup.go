@@ -26,7 +26,7 @@ type CgroupManager struct {
 func NewCgroupManager(vmID string) *CgroupManager {
 	return &CgroupManager{
 		vmID: vmID,
-		path: filepath.Join(cgroupBase, "uni", vmID),
+		path: filepath.Join(cgroupBase, "jerboa", vmID),
 	}
 }
 

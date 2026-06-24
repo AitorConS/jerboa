@@ -87,7 +87,7 @@ func downloadArtifact(ctx context.Context, url, dest string) error {
 			"tools: download %s failed (HTTP %d)\n"+
 				"Build artifacts from source:\n"+
 				"  cd kernel && make tools && make kernel\n"+
-				"Then run: uni build --mkfs <path/to/mkfs>",
+				"Then run: jerboa build --mkfs <path/to/mkfs>",
 			name, resp.StatusCode)
 	}
 

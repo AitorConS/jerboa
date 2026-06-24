@@ -277,12 +277,12 @@ func TestBuildCmd_tap_overrides_portmaps(t *testing.T) {
 	args := captureArgs(mgr, Config{
 		ImagePath:   "disk.img",
 		Memory:      "256M",
-		NetworkName: "uni-tap0",
+		NetworkName: "jerboa-tap0",
 		PortMaps:    []PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}},
 	})
 	idx := indexOf(args, "-netdev")
 	require.GreaterOrEqual(t, idx, 0)
-	require.Contains(t, args[idx+1], "tap,id=net0,ifname=uni-tap0")
+	require.Contains(t, args[idx+1], "tap,id=net0,ifname=jerboa-tap0")
 	require.NotContains(t, args[idx+1], "hostfwd")
 }
 
@@ -296,7 +296,7 @@ func TestBuildCmd_env_vars(t *testing.T) {
 	idx := indexOf(args, "-fw_cfg")
 	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
 	fwcfg := args[idx+1]
-	require.True(t, strings.HasPrefix(fwcfg, "name=opt/uni/env,string="))
+	require.True(t, strings.HasPrefix(fwcfg, "name=opt/jerboa/env,string="))
 	require.Contains(t, fwcfg, "FOO=bar")
 	require.Contains(t, fwcfg, "PORT=8080")
 }
@@ -320,7 +320,7 @@ func TestBuildCmd_network_cfg(t *testing.T) {
 	args := captureArgs(mgr, Config{
 		ImagePath:   "disk.img",
 		Memory:      "256M",
-		NetworkName: "uni-tap0",
+		NetworkName: "jerboa-tap0",
 		IPAddress:   "10.0.0.2",
 		GatewayIP:   "10.0.0.1",
 	})
@@ -328,7 +328,7 @@ func TestBuildCmd_network_cfg(t *testing.T) {
 	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
 	count := 0
 	for i, v := range args {
-		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/uni/network") {
+		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/jerboa/network") {
 			count++
 			require.Contains(t, args[i+1], "10.0.0.2/24,10.0.0.1")
 		}
@@ -344,7 +344,7 @@ func TestBuildCmd_no_network_cfg_without_ip(t *testing.T) {
 	})
 	for i, v := range args {
 		if v == "-fw_cfg" && i+1 < len(args) {
-			require.NotContains(t, args[i+1], "opt/uni/network")
+			require.NotContains(t, args[i+1], "opt/jerboa/network")
 		}
 	}
 }

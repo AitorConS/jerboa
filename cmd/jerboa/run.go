@@ -208,7 +208,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().BoolVar(&attach, "attach", false, "attach to VM serial console (blocks until VM stops)")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
-	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'uni network'; Linux only)")
+	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'jerboa network'; Linux only)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
 	cmd.Flags().StringVar(&verify, "verify", "off", "image signature verification: off, warn, enforce")
@@ -244,7 +244,7 @@ func rejectELF(path string) error {
 		return nil
 	}
 	if magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F' {
-		return fmt.Errorf("%s is an ELF binary, not a bootable disk image.\nRun 'uni build --name <name> %s' first, then 'uni run <name>:latest'", path, path)
+		return fmt.Errorf("%s is an ELF binary, not a bootable disk image.\nRun 'jerboa build --name <name> %s' first, then 'jerboa run <name>:latest'", path, path)
 	}
 	return nil
 }
@@ -324,7 +324,7 @@ func parseVolumeSpec(spec string, store *volume.Store) (api.VolumeMountSpec, err
 
 	vol, err := store.Get(name)
 	if err != nil {
-		return api.VolumeMountSpec{}, fmt.Errorf("volume %q not found (create with 'uni volume create %s'): %w", name, name, err)
+		return api.VolumeMountSpec{}, fmt.Errorf("volume %q not found (create with 'jerboa volume create %s'): %w", name, name, err)
 	}
 	return api.VolumeMountSpec{
 		DiskPath:  vol.DiskPath,

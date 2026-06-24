@@ -34,36 +34,36 @@ func main() {
 }
 
 func run() int {
-	var uniBin string
-	flag.StringVar(&uniBin, "jerboa", "", "path to jerboa binary")
+	var jerboaBin string
+	flag.StringVar(&jerboaBin, "jerboa", "", "path to jerboa binary")
 	flag.Parse()
 
-	if uniBin == "" {
+	if jerboaBin == "" {
 		if runtime.GOOS == "windows" {
-			uniBin = filepath.Join(".", "jerboa-windows-amd64.exe")
+			jerboaBin = filepath.Join(".", "jerboa-windows-amd64.exe")
 		} else {
-			uniBin = filepath.Join(".", "jerboa")
+			jerboaBin = filepath.Join(".", "jerboa")
 		}
 	}
 
-	absUni, err := filepath.Abs(uniBin)
+	absUni, err := filepath.Abs(jerboaBin)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "smoke setup failed (resolve uni path): %v\n", err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (resolve jerboa path): %v\n", err)
 		return 2
 	}
 	if _, err := os.Stat(absUni); err != nil {
-		fmt.Fprintf(os.Stderr, "smoke setup failed (uni binary not found): %s: %v\n", absUni, err)
+		fmt.Fprintf(os.Stderr, "smoke setup failed (jerboa binary not found): %s: %v\n", absUni, err)
 		return 2
 	}
 
-	baseDir, err := os.MkdirTemp("", "uni-smoke-")
+	baseDir, err := os.MkdirTemp("", "jerboa-smoke-")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (create temp dir): %v\n", err)
 		return 2
 	}
 	defer os.RemoveAll(baseDir)
 
-	socketPath := filepath.Join(baseDir, "unid.sock")
+	socketPath := filepath.Join(baseDir, "jerboad.sock")
 	storePath := filepath.Join(baseDir, "images")
 	homePath := filepath.Join(baseDir, "home")
 	if err := os.MkdirAll(homePath, 0o755); err != nil {
@@ -79,12 +79,12 @@ func run() int {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	netStore, err := network.NewStore(filepath.Join(homePath, ".uni", "networks"))
+	netStore, err := network.NewStore(filepath.Join(homePath, ".jerboa", "networks"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (create network store): %v\n", err)
 		return 2
 	}
-	svcStore, err := service.NewFileStore(filepath.Join(homePath, ".uni", "services"))
+	svcStore, err := service.NewFileStore(filepath.Join(homePath, ".jerboa", "services"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (create service store): %v\n", err)
 		return 2

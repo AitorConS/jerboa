@@ -27,14 +27,14 @@ type vmState struct {
 
 // FileStore is a Store that persists VM state to disk as JSON files.
 // It wraps a MemoryStore for in-memory lookups and mirrors every mutation
-// to ~/.uni/vms/<id>/state.json.
+// to ~/.jerboa/vms/<id>/state.json.
 type FileStore struct {
 	MemoryStore
-	root string // e.g. ~/.uni/vms
+	root string // e.g. ~/.jerboa/vms
 	mu   sync.Mutex
 }
 
-// NewFileStore returns a FileStore rooted at dir (~/.uni/vms).
+// NewFileStore returns a FileStore rooted at dir (~/.jerboa/vms).
 // Call Restore() to load any previously persisted VMs.
 func NewFileStore(dir string) *FileStore {
 	return &FileStore{

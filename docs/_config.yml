@@ -1,4 +1,4 @@
-title: Uni — Unikernel Engine
+title: Jerboa — Unikernel Engine
 description: A Docker-like engine for building, running, and orchestrating unikernel VMs
 baseurl: "/jerboa"
 url: "https://aitorcons.github.io"

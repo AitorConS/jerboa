@@ -334,7 +334,7 @@ const dashboardTmpl = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Uni — Dashboard</title>
+<title>Jerboa — Dashboard</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 2rem; }
@@ -362,7 +362,7 @@ footer { margin-top: 2rem; text-align: center; color: #555; font-size: 0.8rem; }
 </head>
 <body>
 <div class="container">
-<h1>Uni Dashboard <span>v{{.Version}}</span></h1>
+<h1>Jerboa Dashboard <span>v{{.Version}}</span></h1>
 
 <table>
 <thead>
@@ -385,7 +385,7 @@ footer { margin-top: 2rem; text-align: center; color: #555; font-size: 0.8rem; }
 </tbody>
 </table>
 
-<footer>Uni — Unikernel Engine &middot; Dashboard</footer>
+<footer>Jerboa — Unikernel Engine &middot; Dashboard</footer>
 </div>
 </body>
 </html>`
@@ -395,7 +395,7 @@ const detailTmpl = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Uni — VM {{.VM.ID}}</title>
+<title>Jerboa — VM {{.VM.ID}}</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 2rem; }
@@ -495,7 +495,7 @@ footer { margin-top: 2rem; text-align: center; color: #555; font-size: 0.8rem; }
 {{end}}
 </div>
 
-<footer>Uni — Unikernel Engine &middot; Dashboard</footer>
+<footer>Jerboa — Unikernel Engine &middot; Dashboard</footer>
 </div>
 <script>
 (function() {

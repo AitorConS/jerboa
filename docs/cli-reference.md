@@ -21,16 +21,16 @@ Every `jerboa` command accepts these flags:
 
 | Flag | Default | Description |
 |---|---|---|
-| `--host`, `-H` | `unix:///var/run/unid.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | `jerboad` daemon endpoint (`unix:///path` or `tcp://host:port`) |
+| `--host`, `-H` | `unix:///var/run/jerboad.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | `jerboad` daemon endpoint (`unix:///path` or `tcp://host:port`) |
 | `--socket` | — | Deprecated alias for `--host` (treated as a Unix socket path) |
-| `--store` | `~/.uni/images` | Local image store directory |
+| `--store` | `~/.jerboa/images` | Local image store directory |
 | `--output` | `table` | Output format: `table` or `json` |
 
-The endpoint is resolved in priority order: `--host` flag → `UNI_HOST` environment variable → `[daemon] endpoint` in `~/.uni/config.toml` → per-platform default.
+The endpoint is resolved in priority order: `--host` flag → `JERBOA_HOST` environment variable → `[daemon] endpoint` in `~/.jerboa/config.toml` → per-platform default.
 
-**Authentication.** When the daemon is started with a token (`jerboad --auth-token` or `UNI_AUTH_TOKEN`), every connection must complete an `Auth.Hello` handshake first. The client reads its token from `UNI_AUTH_TOKEN` or `[daemon] token` in `~/.uni/config.toml`. A token is mandatory for any `tcp://` endpoint (loopback included), since a TCP port is reachable by any local process; `unix://` sockets can rely on filesystem permissions instead.
+**Authentication.** When the daemon is started with a token (`jerboad --auth-token` or `JERBOA_AUTH_TOKEN`), every connection must complete an `Auth.Hello` handshake first. The client reads its token from `JERBOA_AUTH_TOKEN` or `[daemon] token` in `~/.jerboa/config.toml`. A token is mandatory for any `tcp://` endpoint (loopback included), since a TCP port is reachable by any local process; `unix://` sockets can rely on filesystem permissions instead.
 
-**Windows (WSL2).** On Windows the daemon runs inside a WSL2 distribution and `jerboa.exe` is a thin client that talks to it over loopback TCP (`tcp://127.0.0.1:7890`). The first daemon-backed command auto-starts `jerboad` inside WSL2 (like Docker Desktop): the client generates a token, persists it to `%USERPROFILE%\.uni\daemon.json`, and launches the daemon with the token passed through the environment (never the command line). Configure the distro and daemon binary via `[daemon] distro` and `[daemon] unid_path` in `~/.uni/config.toml`; `jerboad` must be installed inside the distro. The daemon's image store lives on the distro's ext4 filesystem.
+**Windows (WSL2).** On Windows the daemon runs inside a WSL2 distribution and `jerboa.exe` is a thin client that talks to it over loopback TCP (`tcp://127.0.0.1:7890`). The first daemon-backed command auto-starts `jerboad` inside WSL2 (like Docker Desktop): the client generates a token, persists it to `%USERPROFILE%\.jerboa\daemon.json`, and launches the daemon with the token passed through the environment (never the command line). Configure the distro and daemon binary via `[daemon] distro` and `[daemon] jerboad_path` in `~/.jerboa/config.toml`; `jerboad` must be installed inside the distro. The daemon's image store lives on the distro's ext4 filesystem.
 
 ---
 
@@ -303,7 +303,7 @@ jerboa inspect a3f8c2d1
   ],
   "env": ["NODE_ENV=production", "PORT=3000"],
   "volumes": [
-    {"disk_path": "/home/user/.uni/volumes/data/disk.img", "guest_path": "/var/data", "read_only": false}
+    {"disk_path": "/home/user/.jerboa/volumes/data/disk.img", "guest_path": "/var/data", "read_only": false}
   ],
   "created_at": "2026-04-19T10:00:00Z",
   "started_at": "2026-04-19T10:00:01Z",
@@ -432,7 +432,7 @@ When `<path>` is a directory, `jerboa build` detects the language from project m
 | `--memory` | `256M` | Default VM memory baked into the image |
 | `--cpus` | `1` | Default CPU count baked into the image |
 | `--pkg` | — | Include package in the image (repeatable), e.g. `node:20`. Downloads, extracts, and includes the package files |
-| `--pkg-source` | `uni` | Source to resolve `--pkg` (and language-driver auto-detected runtime packages) from: `uni` or `ops` |
+| `--pkg-source` | `jerboa` | Source to resolve `--pkg` (and language-driver auto-detected runtime packages) from: `jerboa` or `ops` |
 | `--lang` | *(auto-detect)* | Build from source directory with language driver (`go`, `node`, `python`, `rust`, `raw`) |
 | `--platform` | *(native)* | Target platform for cross-compilation (e.g. `linux/amd64`, `linux/arm64`) |
 | `--port` | `0` | Declared service port; enables the `network` section in the image manifest (required for any HTTP server to bind — see [Networking & Environment in the Image Manifest](#networking-environment-in-the-image-manifest)) |
@@ -611,7 +611,7 @@ The following patterns are **always excluded**, even without a `.unignore` file:
 
 ```
 .git
-.uni-build
+.jerboa-build
 node_modules
 __pycache__
 .tox
@@ -691,7 +691,7 @@ jerboa rmi hello:latest
 
 ### `jerboa sign`
 
-Sign a local image with an Ed25519 key pair. If no key pair exists, one is generated automatically and stored in `~/.uni/keys/`.
+Sign a local image with an Ed25519 key pair. If no key pair exists, one is generated automatically and stored in `~/.jerboa/keys/`.
 
 ```
 jerboa sign <image>
@@ -727,12 +727,12 @@ jerboa verify hello:latest
 
 Manage pre-packaged runtime files that can be included in images at build time (with `jerboa build --pkg`) or run directly (with `jerboa pkg load`).
 
-Uni can fetch packages from two sources, selected with the `--source` flag on `list`, `search`, `get`, and `remove`:
+Jerboa can fetch packages from two sources, selected with the `--source` flag on `list`, `search`, `get`, and `remove`:
 
 | Source | Identifier format | Cached in | Description |
 |---|---|---|---|
-| `jerboa` (default) | `<name>[:<version>]` | `~/.uni/packages/` | Uni's own package index |
-| `ops` | `<namespace>/<name>[:<version>]` | `~/.uni/packages-ops/` | The [nanovms/ops](https://ops.city) package ecosystem (`eyberg/node`, `eyberg/python`, …) |
+| `jerboa` (default) | `<name>[:<version>]` | `~/.jerboa/packages/` | Jerboa's own package index |
+| `ops` | `<namespace>/<name>[:<version>]` | `~/.jerboa/packages-ops/` | The [nanovms/ops](https://ops.city) package ecosystem (`eyberg/node`, `eyberg/python`, …) |
 
 > **Tip:** When building from a source directory with a language driver (`--lang node`, `--lang python`, …), `jerboa build` resolves the matching runtime package automatically — you don't normally need to run `jerboa pkg get` yourself. See [`jerboa build`](#jerboa-build) and [Getting Started]({% link getting-started.md %}) for the full workflow, including how to use `ops` packages such as `eyberg/node:v11.5.0`.
 
@@ -741,12 +741,12 @@ Uni can fetch packages from two sources, selected with the `--source` flag on `l
 List locally cached packages.
 
 ```
-jerboa pkg list [--source uni|ops] [--output-json]
+jerboa pkg list [--source jerboa|ops] [--output-json]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--source` | `jerboa` | Package source: `jerboa` or `ops` |
 | `--output-json` | `false` | Print as JSON instead of a table |
 
 ```bash
@@ -768,12 +768,12 @@ jerboa pkg list --source ops
 Search the remote package index.
 
 ```
-jerboa pkg search <query> [--source uni|ops] [--output-json]
+jerboa pkg search <query> [--source jerboa|ops] [--output-json]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--source` | `jerboa` | Package source: `jerboa` or `ops` |
 | `--output-json` | `false` | Print as JSON instead of a table |
 
 ```bash
@@ -796,12 +796,12 @@ jerboa pkg search node --source ops
 Download and install a package from the remote index.
 
 ```
-jerboa pkg get <name>[:version] [--source uni|ops]
+jerboa pkg get <name>[:version] [--source jerboa|ops]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--source` | `jerboa` | Package source: `jerboa` or `ops` |
 
 ```bash
 # Install the latest version from the jerboa index
@@ -822,13 +822,13 @@ jerboa pkg get eyberg/node:v11.5.0 --source ops
 Remove locally cached package(s). Without a version suffix, all versions of the package are removed. Errors if the package is not found locally.
 
 ```
-jerboa pkg remove <name>[:<version>] [--source uni|ops]
-jerboa pkg rm    <name>[:<version>] [--source uni|ops]   # alias
+jerboa pkg remove <name>[:<version>] [--source jerboa|ops]
+jerboa pkg rm    <name>[:<version>] [--source jerboa|ops]   # alias
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--source` | `jerboa` | Package source: `jerboa` or `ops` |
 
 ```bash
 # Remove a specific version
@@ -849,12 +849,12 @@ jerboa pkg remove eyberg/node:v11.5.0 --source ops
 Download a package, build a unikernel image from it, and (optionally) print the command to run it — a one-step shortcut comparable to `ops pkg load`.
 
 ```
-jerboa pkg load <package> [--source uni|ops] [-d|--detach]
+jerboa pkg load <package> [--source jerboa|ops] [-d|--detach]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--source` | `uni` | Package source: `uni` or `ops` |
+| `--source` | `jerboa` | Package source: `jerboa` or `ops` |
 | `-d`, `--detach` | `false` | Build the image only; don't print run instructions |
 
 ```bash
@@ -1020,7 +1020,7 @@ jerboa volume inspect mydata
 ```json
 {
   "id": "mydata",
-  "disk_path": "/home/user/.uni/volumes/mydata/disk.img",
+  "disk_path": "/home/user/.jerboa/volumes/mydata/disk.img",
   "size_bytes": 2147483648,
   "created_at": "2026-04-25T18:00:00Z"
 }
@@ -1052,7 +1052,7 @@ A managed network gives VMs their own bridge, subnet, gateway, and internal DNS 
 
 ### `jerboa network create`
 
-Create a managed network. When `--subnet` is omitted, Uni auto-allocates a `/24` from `10.100.0.0/16`.
+Create a managed network. When `--subnet` is omitted, Jerboa auto-allocates a `/24` from `10.100.0.0/16`.
 
 ```
 jerboa network create <name> [--subnet <cidr>] [--driver bridge]
@@ -1348,7 +1348,7 @@ Requires `--cluster-addr` on the `jerboad` daemon. When cluster is disabled, `je
 
 ## Kernel Commands
 
-Manage the kernel tools (`kernel.img`, `boot.img`, `mkfs`) cached in `~/.uni/tools/`. The kernel is versioned independently from the CLI.
+Manage the kernel tools (`kernel.img`, `boot.img`, `mkfs`) cached in `~/.jerboa/tools/`. The kernel is versioned independently from the CLI.
 
 ### `jerboa kernel check`
 
@@ -1592,11 +1592,11 @@ When using `jerboa run --attach`, the command blocks until the VM reaches the `s
 
 | Flag | Default | Description |
 |---|---|---|
-| `--host`, `-H` | `unix:///var/run/unid.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | Listen endpoint (`unix:///path` or `tcp://host:port`) |
+| `--host`, `-H` | `unix:///var/run/jerboad.sock` (Linux/macOS) / `tcp://127.0.0.1:7890` (Windows) | Listen endpoint (`unix:///path` or `tcp://host:port`) |
 | `--socket` | — | Deprecated alias for `--host` (treated as a Unix socket path) |
-| `--auth-token` | — | Shared secret required from clients via `Auth.Hello` (env: `UNI_AUTH_TOKEN`); empty disables auth |
+| `--auth-token` | — | Shared secret required from clients via `Auth.Hello` (env: `JERBOA_AUTH_TOKEN`); empty disables auth |
 | `--qemu` | `qemu-system-x86_64` | QEMU binary to use |
-| `--store` | `~/.uni/images` | Image store root directory |
+| `--store` | `~/.jerboa/images` | Image store root directory |
 | `--vm-store` | `file` | VM state backend: `file` (per-VM JSON files) or `sqlite` (single database) |
 | `--metrics-addr` | (empty, disabled) | HTTP address for Prometheus metrics (e.g. `:9090`) |
 | `--ui-addr` | (empty, disabled) | HTTP address for web dashboard (e.g. `:8080`) |
@@ -1607,7 +1607,7 @@ When using `jerboa run --attach`, the command blocks until the VM reaches the `s
 
 ### Observability Endpoints
 
-`--metrics-addr`, `--ui-addr`, `--trace-addr`, `--log-format`, and `--vm-store` together make up Uni's observability stack — Prometheus metrics, a web dashboard, OpenTelemetry tracing, structured logging, and a SQLite-backed VM store. See the full [Observability]({% link observability.md %}) guide for endpoint lists, metric names, and setup examples; the short version:
+`--metrics-addr`, `--ui-addr`, `--trace-addr`, `--log-format`, and `--vm-store` together make up Jerboa's observability stack — Prometheus metrics, a web dashboard, OpenTelemetry tracing, structured logging, and a SQLite-backed VM store. See the full [Observability]({% link observability.md %}) guide for endpoint lists, metric names, and setup examples; the short version:
 
 | Flag | Enables |
 |---|---|

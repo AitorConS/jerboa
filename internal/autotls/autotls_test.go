@@ -68,7 +68,7 @@ func TestEnsureCertDirectoryCreation(t *testing.T) {
 
 func TestDefaultCertDir(t *testing.T) {
 	dir := DefaultCertDir()
-	require.Contains(t, dir, ".uni")
+	require.Contains(t, dir, ".jerboa")
 	require.Contains(t, dir, "registry")
 	require.Contains(t, dir, "tls")
 }

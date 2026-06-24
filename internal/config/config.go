@@ -9,7 +9,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 )
 
-// Config holds global jerboa configuration stored at ~/.uni/config.toml.
+// Config holds global jerboa configuration stored at ~/.jerboa/config.toml.
 type Config struct {
 	Hypervisor string       `toml:"hypervisor"`
 	Daemon     DaemonConfig `toml:"daemon"`
@@ -17,17 +17,17 @@ type Config struct {
 
 // DaemonConfig holds client-side daemon connection settings.
 type DaemonConfig struct {
-	// Endpoint is the daemon address (e.g. unix:///var/run/unid.sock or
+	// Endpoint is the daemon address (e.g. unix:///var/run/jerboad.sock or
 	// tcp://127.0.0.1:7890). Empty falls back to the per-platform default.
 	Endpoint string `toml:"endpoint"`
 	// Distro is the WSL2 distribution to host the daemon on Windows. Empty uses
 	// the WSL default distro.
 	Distro string `toml:"distro"`
-	// UnidPath is the jerboad binary path inside the WSL distro. Empty resolves
+	// JerboadPath is the jerboad binary path inside the WSL distro. Empty resolves
 	// "jerboad" on the distro's PATH.
-	UnidPath string `toml:"jerboad_path"`
+	JerboadPath string `toml:"jerboad_path"`
 	// Token is the shared secret sent to the daemon via the Auth.Hello
-	// handshake. Overridden by the UNI_AUTH_TOKEN environment variable.
+	// handshake. Overridden by the JERBOA_AUTH_TOKEN environment variable.
 	Token string `toml:"token"`
 }
 
@@ -38,17 +38,17 @@ func DefaultEndpoint() string {
 	if runtime.GOOS == "windows" {
 		return "tcp://127.0.0.1:7890"
 	}
-	return "unix:///var/run/unid.sock"
+	return "unix:///var/run/jerboad.sock"
 }
 
 // ResolveEndpoint determines the daemon endpoint using the precedence:
-// explicit override > UNI_HOST env var > config file > platform default.
+// explicit override > JERBOA_HOST env var > config file > platform default.
 // override carries the value of an explicit CLI flag (empty if unset).
 func ResolveEndpoint(override string) string {
 	if override != "" {
 		return override
 	}
-	if v := os.Getenv("UNI_HOST"); v != "" {
+	if v := os.Getenv("JERBOA_HOST"); v != "" {
 		return v
 	}
 	if cfg, err := Load(DefaultPath()); err == nil && cfg.Daemon.Endpoint != "" {
@@ -57,11 +57,11 @@ func ResolveEndpoint(override string) string {
 	return DefaultEndpoint()
 }
 
-// ResolveToken returns the client auth token: the UNI_AUTH_TOKEN environment
+// ResolveToken returns the client auth token: the JERBOA_AUTH_TOKEN environment
 // variable takes precedence over the config file's [daemon] token. Empty means
 // no authentication.
 func ResolveToken() string {
-	if v := os.Getenv("UNI_AUTH_TOKEN"); v != "" {
+	if v := os.Getenv("JERBOA_AUTH_TOKEN"); v != "" {
 		return v
 	}
 	if cfg, err := Load(DefaultPath()); err == nil {
@@ -70,13 +70,13 @@ func ResolveToken() string {
 	return ""
 }
 
-// DefaultPath returns the default config file location (~/.uni/config.toml).
+// DefaultPath returns the default config file location (~/.jerboa/config.toml).
 func DefaultPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), ".uni", "config.toml")
+		return filepath.Join(os.TempDir(), ".jerboa", "config.toml")
 	}
-	return filepath.Join(home, ".uni", "config.toml")
+	return filepath.Join(home, ".jerboa", "config.toml")
 }
 
 // Load reads the config file at path. Returns defaults if the file does not exist.

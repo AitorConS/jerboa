@@ -94,39 +94,39 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 
 	// 3. Download both binaries to temp files before touching anything on disk.
 	sp.Start("Downloading jerboa " + remote)
-	uniTmp, err := downloadBinary(ctx, dir, "jerboa", remote)
+	jerboaTmp, err := downloadBinary(ctx, dir, "jerboa", remote)
 	if err != nil {
 		sp.Fail("Download failed")
 		return fmt.Errorf("upgrade: download jerboa: %w", err)
 	}
 	sp.Done("Downloaded jerboa " + remote)
-	defer func() { _ = os.Remove(uniTmp) }()
+	defer func() { _ = os.Remove(jerboaTmp) }()
 
 	sp.Start("Downloading jerboad " + remote)
-	unidTmp, err := downloadBinary(ctx, dir, "jerboad", remote)
+	jerboadTmp, err := downloadBinary(ctx, dir, "jerboad", remote)
 	if err != nil {
 		sp.Fail("Download failed")
 		return fmt.Errorf("upgrade: download jerboad: %w", err)
 	}
 	sp.Done("Downloaded jerboad " + remote)
-	defer func() { _ = os.Remove(unidTmp) }()
+	defer func() { _ = os.Remove(jerboadTmp) }()
 
 	// 4. Stop the daemon gracefully if it is running.
 	daemonWasRunning := stopDaemon(ctx, socketPath, out, errOut)
 
 	// 5. Atomically replace both binaries.
-	uniDest := exe
-	unidDest := filepath.Join(dir, binaryName("jerboad"))
+	jerboaDest := exe
+	jerboadDest := filepath.Join(dir, binaryName("jerboad"))
 
-	if err := installBinary(uniTmp, uniDest); err != nil {
+	if err := installBinary(jerboaTmp, jerboaDest); err != nil {
 		return fmt.Errorf("upgrade: install jerboa: %w", err)
 	}
-	fmt.Fprintf(out, "jerboa  → %s\n", uniDest)
+	fmt.Fprintf(out, "jerboa  → %s\n", jerboaDest)
 
-	if err := installBinary(unidTmp, unidDest); err != nil {
+	if err := installBinary(jerboadTmp, jerboadDest); err != nil {
 		return fmt.Errorf("upgrade: install jerboad: %w", err)
 	}
-	fmt.Fprintf(out, "jerboad → %s\n", unidDest)
+	fmt.Fprintf(out, "jerboad → %s\n", jerboadDest)
 
 	// 6. Clean up old .bak files now that the old processes have exited.
 	cleanupBackups(dir)
@@ -134,7 +134,7 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 	// 7. Restart daemon if it was running before.
 	if daemonWasRunning {
 		sp.Start("Starting new jerboad")
-		if err := launchDaemon(unidDest, socketPath); err != nil {
+		if err := launchDaemon(jerboadDest, socketPath); err != nil {
 			sp.Fail("Could not start jerboad")
 			fmt.Fprintf(errOut, "warning: start jerboad: %v\n", err)
 			fmt.Fprintln(errOut, "Start jerboad manually: jerboad --socket "+socketPath)
@@ -203,12 +203,12 @@ func waitForSocket(socketPath string, timeout time.Duration) error {
 }
 
 // launchDaemon starts a new jerboad process detached from the current terminal.
-func launchDaemon(unidBin, socketPath string) error {
-	cmd := exec.Command(unidBin, "--socket", socketPath) //nolint:noctx // daemon outlives the CLI process; no context to pass
+func launchDaemon(jerboadBin, socketPath string) error {
+	cmd := exec.Command(jerboadBin, "--socket", socketPath) //nolint:noctx // daemon outlives the CLI process; no context to pass
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start %s: %w", unidBin, err)
+		return fmt.Errorf("start %s: %w", jerboadBin, err)
 	}
 	// Detach — we don't wait for it.
 	go func() { _ = cmd.Wait() }()

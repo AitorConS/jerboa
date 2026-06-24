@@ -117,7 +117,7 @@ type Config struct {
 	// Requires SLIRP or TAP networking; mutually exclusive with "-net none".
 	PortMaps []PortMap
 	// Env is a list of "KEY=VALUE" environment variable pairs injected at
-	// boot time via QEMU fw_cfg. The kernel must read opt/uni/env to consume them.
+	// boot time via QEMU fw_cfg. The kernel must read opt/jerboa/env to consume them.
 	Env []string
 	// Name is a human-readable identifier for the VM. If empty, the UUID is used.
 	Name string

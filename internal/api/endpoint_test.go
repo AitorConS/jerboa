@@ -10,9 +10,9 @@ func TestParseEndpoint(t *testing.T) {
 		wantAddress string
 		wantErr     bool
 	}{
-		{"unix scheme", "unix:///var/run/unid.sock", "unix", "/var/run/unid.sock", false},
+		{"unix scheme", "unix:///var/run/jerboad.sock", "unix", "/var/run/jerboad.sock", false},
 		{"tcp scheme", "tcp://127.0.0.1:7890", "tcp", "127.0.0.1:7890", false},
-		{"bare path is unix", "/tmp/unid.sock", "unix", "/tmp/unid.sock", false},
+		{"bare path is unix", "/tmp/jerboad.sock", "unix", "/tmp/jerboad.sock", false},
 		{"empty", "", "", "", true},
 		{"empty unix path", "unix://", "", "", true},
 		{"empty tcp addr", "tcp://", "", "", true},

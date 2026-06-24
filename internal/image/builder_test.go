@@ -36,8 +36,8 @@ func TestBuildManifest_NoPkgFiles(t *testing.T) {
 
 func TestBuildManifest_WithPkgFiles(t *testing.T) {
 	pkgFiles := []pkg.File{
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/bin/node"), GuestPath: "node"},
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages/node/20.11.0/files/lib/libnode.so"), GuestPath: "libnode.so"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages/node/20.11.0/files/bin/node"), GuestPath: "node"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages/node/20.11.0/files/lib/libnode.so"), GuestPath: "libnode.so"},
 	}
 	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello"), PkgFiles: pkgFiles})
 	require.Contains(t, got, "program:/program")
@@ -47,9 +47,9 @@ func TestBuildManifest_WithPkgFiles(t *testing.T) {
 
 func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 	pkgFiles := []pkg.File{
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/node"), GuestPath: "node"},
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2"), GuestPath: "lib/x86_64-linux-gnu/libnss_dns.so.2"},
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/node_v16/files/sysroot/etc/ssl/certs/ca-certificates.crt"), GuestPath: "etc/ssl/certs/ca-certificates.crt"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/node_v16/files/node"), GuestPath: "node"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/node_v16/files/sysroot/lib/x86_64-linux-gnu/libnss_dns.so.2"), GuestPath: "lib/x86_64-linux-gnu/libnss_dns.so.2"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/node_v16/files/sysroot/etc/ssl/certs/ca-certificates.crt"), GuestPath: "etc/ssl/certs/ca-certificates.crt"},
 	}
 	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello"), PkgFiles: pkgFiles})
 	require.Contains(t, got, "node:(contents:(host:")
@@ -66,8 +66,8 @@ func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 
 func TestBuildManifest_NamesWithSpecialChars(t *testing.T) {
 	pkgFiles := []pkg.File{
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"), GuestPath: "usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"},
-		{HostPath: filepath.FromSlash("/home/user/.uni/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"), GuestPath: "usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"), GuestPath: "usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"},
+		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"), GuestPath: "usr/lib/python3.10/site-packages/setuptools/script (dev).tmpl"},
 	}
 	got := BuildManifest(BuildConfig{BinaryPath: filepath.FromSlash("/usr/bin/hello"), PkgFiles: pkgFiles})
 

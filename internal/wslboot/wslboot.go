@@ -1,7 +1,7 @@
-// Package wslboot bootstraps the unid daemon inside WSL2 from the Windows
-// client. The daemon always runs on Linux; on Windows uni.exe is a thin client
+// Package wslboot bootstraps the jerboad daemon inside WSL2 from the Windows
+// client. The daemon always runs on Linux; on Windows jerboa.exe is a thin client
 // that health-checks a loopback TCP endpoint and, if nothing answers, launches
-// unid inside a WSL2 distribution and waits for it to come up.
+// jerboad inside a WSL2 distribution and waits for it to come up.
 package wslboot
 
 import (
@@ -27,9 +27,9 @@ type Config struct {
 	// Token is the shared secret passed to the daemon (via the environment, not
 	// argv) and used by the client handshake. Empty disables authentication.
 	Token string
-	// UnidPath is the jerboad binary path inside WSL. Empty resolves "jerboad"
+	// JerboadPath is the jerboad binary path inside WSL. Empty resolves "jerboad"
 	// on the distro's PATH.
-	UnidPath string
+	JerboadPath string
 	// HealthTimeout bounds how long to wait for a freshly launched daemon to
 	// answer. Zero defaults to 20s.
 	HealthTimeout time.Duration
@@ -80,8 +80,8 @@ func waitHealthy(ctx context.Context, cfg Config) error {
 	}
 }
 
-// launchInWSL starts unid inside the configured WSL distro. The launching
-// `wsl` process is detached and not waited on: it runs unid in the foreground
+// launchInWSL starts jerboad inside the configured WSL distro. The launching
+// `wsl` process is detached and not waited on: it runs jerboad in the foreground
 // inside WSL, which keeps the daemon alive after the client exits. (Background
 // jobs started with `&` inside a one-shot `wsl -- ...` invocation are reaped
 // when that invocation returns, so foreground + detach is required.) The auth
@@ -105,41 +105,41 @@ func launchInWSL(cfg Config) error {
 }
 
 // buildLaunchArgs builds the `wsl` arguments and process environment that start
-// unid in the foreground inside the distro. Exposed (unexported) for testing.
+// jerboad in the foreground inside the distro. Exposed (unexported) for testing.
 func buildLaunchArgs(cfg Config) (args, env []string) {
-	unid := cfg.UnidPath
-	if unid == "" {
-		unid = "jerboad"
+	jerboad := cfg.JerboadPath
+	if jerboad == "" {
+		jerboad = "jerboad"
 	}
 	if cfg.Distro != "" {
 		args = append(args, "-d", cfg.Distro)
 	}
-	args = append(args, "--", unid, "--host", cfg.Endpoint)
+	args = append(args, "--", jerboad, "--host", cfg.Endpoint)
 
 	env = append(env, os.Environ()...)
 	if cfg.Token != "" {
 		// WSLENV exports the variable into the WSL environment so the daemon
 		// reads it without the token ever appearing on a command line.
-		env = append(env, "UNI_AUTH_TOKEN="+cfg.Token, "WSLENV=UNI_AUTH_TOKEN/u")
+		env = append(env, "JERBOA_AUTH_TOKEN="+cfg.Token, "WSLENV=JERBOA_AUTH_TOKEN/u")
 	}
 	return args, env
 }
 
-// openLaunchLog opens the daemon launch log (~/.uni/unid-wsl.log) for the WSL
+// openLaunchLog opens the daemon launch log (~/.jerboa/jerboad-wsl.log) for the WSL
 // process's stdout/stderr. Best-effort: a failure leaves logging disabled.
 func openLaunchLog() (*os.File, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(home, ".uni")
+	dir := filepath.Join(home, ".jerboa")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return os.OpenFile(filepath.Join(dir, "unid-wsl.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	return os.OpenFile(filepath.Join(dir, "jerboad-wsl.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
-// daemonFile is the on-disk shape of ~/.uni/daemon.json.
+// daemonFile is the on-disk shape of ~/.jerboa/daemon.json.
 type daemonFile struct {
 	Token    string `json:"token"`
 	Endpoint string `json:"endpoint,omitempty"`

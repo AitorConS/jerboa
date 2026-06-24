@@ -34,8 +34,8 @@ e2e:
 
 smoke:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI) ./cmd/jerboa
-	go build $(LDFLAGS) -o $(BUILD_DIR)/uni-smoke ./cmd/uni-smoke
-	./$(BUILD_DIR)/uni-smoke --jerboa ./$(BUILD_DIR)/$(BINARY_UNI)
+	go build $(LDFLAGS) -o $(BUILD_DIR)/jerboa-smoke ./cmd/jerboa-smoke
+	./$(BUILD_DIR)/jerboa-smoke --jerboa ./$(BUILD_DIR)/$(BINARY_UNI)
 
 coverage: test
 	go tool cover -html=coverage.out -o coverage.html

@@ -33,9 +33,9 @@ func TestCollectorsHandlerServesMetrics(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	require.Contains(t, body, "uni_vms_running_total 3")
-	require.Contains(t, body, "uni_vm_starts_total 5")
-	require.Contains(t, body, "uni_build_info")
+	require.Contains(t, body, "jerboa_vms_running_total 3")
+	require.Contains(t, body, "jerboa_vm_starts_total 5")
+	require.Contains(t, body, "jerboa_build_info")
 }
 
 func TestCollectorsCounters(t *testing.T) {
@@ -52,10 +52,10 @@ func TestCollectorsCounters(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	require.Contains(t, body, "uni_vm_starts_total 1")
-	require.Contains(t, body, "uni_vm_stops_total 2")
-	require.Contains(t, body, "uni_vm_restarts_total 1")
-	require.Contains(t, body, "uni_vm_errors_total 3")
+	require.Contains(t, body, "jerboa_vm_starts_total 1")
+	require.Contains(t, body, "jerboa_vm_stops_total 2")
+	require.Contains(t, body, "jerboa_vm_restarts_total 1")
+	require.Contains(t, body, "jerboa_vm_errors_total 3")
 }
 
 func TestCollectorsBuildInfo(t *testing.T) {
@@ -67,7 +67,7 @@ func TestCollectorsBuildInfo(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	require.Contains(t, body, `uni_build_info{version="v0.21.0"} 1`)
+	require.Contains(t, body, `jerboa_build_info{version="v0.21.0"} 1`)
 }
 
 func TestCollectorsStartTime(t *testing.T) {
@@ -79,7 +79,7 @@ func TestCollectorsStartTime(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	require.Contains(t, body, "uni_start_time_seconds")
+	require.Contains(t, body, "jerboa_start_time_seconds")
 }
 
 func TestCollectorsRegistryGauges(t *testing.T) {
@@ -95,9 +95,9 @@ func TestCollectorsRegistryGauges(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	require.Contains(t, body, "uni_images_total 7")
-	require.Contains(t, body, "uni_port_forwards_active 12")
-	require.Contains(t, body, "uni_bridge_count 3")
+	require.Contains(t, body, "jerboa_images_total 7")
+	require.Contains(t, body, "jerboa_port_forwards_active 12")
+	require.Contains(t, body, "jerboa_bridge_count 3")
 }
 
 func TestCollectorsPushPullCounters(t *testing.T) {
@@ -114,10 +114,10 @@ func TestCollectorsPushPullCounters(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 
 	body := rec.Body.String()
-	require.Contains(t, body, "uni_push_total 4")
-	require.Contains(t, body, "uni_pull_total 10")
-	require.Contains(t, body, "uni_push_errors_total 1")
-	require.Contains(t, body, "uni_pull_errors_total 2")
+	require.Contains(t, body, "jerboa_push_total 4")
+	require.Contains(t, body, "jerboa_pull_total 10")
+	require.Contains(t, body, "jerboa_push_errors_total 1")
+	require.Contains(t, body, "jerboa_pull_errors_total 2")
 }
 
 func TestServeHealthEndpoint(t *testing.T) {

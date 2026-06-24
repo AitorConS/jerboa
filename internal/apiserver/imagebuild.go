@@ -148,7 +148,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		return
 	}
 
-	tmpDir, err := os.MkdirTemp("", "uni-build-ctx-*")
+	tmpDir, err := os.MkdirTemp("", "jerboa-build-ctx-*")
 	if err != nil {
 		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "create build context dir: " + err.Error()})

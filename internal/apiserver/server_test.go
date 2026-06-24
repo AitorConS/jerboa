@@ -36,7 +36,7 @@ func fakeQEMUCmd(block bool) vm.CommandFunc {
 
 func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestServer_Run_WithPortsAndEnv(t *testing.T) {
 }
 
 func TestServer_Run_AutoRemove(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -182,7 +182,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 }
 
 func TestServer_UnknownMethod(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -410,7 +410,7 @@ func TestServer_Run_WithVolumes(t *testing.T) {
 // --- Daemon ---
 
 func TestServer_DaemonVersion(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -436,7 +436,7 @@ func TestServer_DaemonVersion(t *testing.T) {
 }
 
 func TestServer_DaemonShutdown(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -640,7 +640,7 @@ func TestServer_NodeList_Disabled(t *testing.T) {
 
 func TestServer_NodeList_WithCluster(t *testing.T) {
 	dir := t.TempDir()
-	socketPath := filepath.Join(dir, "unid-node.sock")
+	socketPath := filepath.Join(dir, "jerboad-node.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)

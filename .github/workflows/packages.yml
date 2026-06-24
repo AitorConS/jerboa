@@ -120,7 +120,7 @@ jobs:
         with:
           name: package-${{ matrix.package }}-${{ matrix.version }}
           path: |
-            ~/.uni/packages/${{ matrix.package }}/${{ matrix.version }}/
+            ~/.jerboa/packages/${{ matrix.package }}/${{ matrix.version }}/
 
   publish-index:
     name: Update Package Index

@@ -37,7 +37,7 @@ func newRootCmd() *cobra.Command {
 		Short:   "Unikernel engine CLI",
 		Version: version,
 		// Resolve the daemon endpoint before any subcommand runs:
-		// --host > --socket > UNI_HOST > config file > platform default.
+		// --host > --socket > JERBOA_HOST > config file > platform default.
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			override := hostFlag
 			if override == "" {
@@ -45,9 +45,9 @@ func newRootCmd() *cobra.Command {
 			}
 			endpoint = config.ResolveEndpoint(override)
 			// Surface a config-file token through the environment so api.Dial
-			// (which reads UNI_AUTH_TOKEN) authenticates transparently.
+			// (which reads JERBOA_AUTH_TOKEN) authenticates transparently.
 			if tok := config.ResolveToken(); tok != "" {
-				_ = os.Setenv("UNI_AUTH_TOKEN", tok)
+				_ = os.Setenv("JERBOA_AUTH_TOKEN", tok)
 			}
 			// On Windows the daemon lives in WSL2: auto-start it for any
 			// daemon-backed command, like Docker Desktop.
@@ -102,7 +102,7 @@ func newRootCmd() *cobra.Command {
 
 // needsDaemon reports whether the command (or any ancestor) talks to the
 // daemon. Local-only command groups and the bare root are excluded so that
-// e.g. `uni config` or `uni kernel` never spin up WSL.
+// e.g. `jerboa config` or `jerboa kernel` never spin up WSL.
 func needsDaemon(cmd *cobra.Command) bool {
 	localGroups := map[string]bool{
 		"config": true, "kernel": true, "pkg": true, "volume": true,
@@ -129,18 +129,18 @@ func ensureDaemon(ctx context.Context, endpoint string) error {
 			return fmt.Errorf("daemon token: %w", err)
 		}
 		token = t
-		_ = os.Setenv("UNI_AUTH_TOKEN", token)
+		_ = os.Setenv("JERBOA_AUTH_TOKEN", token)
 	}
-	var distro, unidPath string
+	var distro, jerboadPath string
 	if cfg, err := config.Load(config.DefaultPath()); err == nil {
 		distro = cfg.Daemon.Distro
-		unidPath = cfg.Daemon.UnidPath
+		jerboadPath = cfg.Daemon.JerboadPath
 	}
 	return wslboot.EnsureDaemon(ctx, wslboot.Config{
-		Endpoint: endpoint,
-		Distro:   distro,
-		Token:    token,
-		UnidPath: unidPath,
+		Endpoint:    endpoint,
+		Distro:      distro,
+		Token:       token,
+		JerboadPath: jerboadPath,
 	})
 }
 
@@ -148,15 +148,15 @@ func ensureDaemon(ctx context.Context, endpoint string) error {
 func daemonJSONPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "daemon.json")
+		return filepath.Join(".jerboa", "daemon.json")
 	}
-	return filepath.Join(home, ".uni", "daemon.json")
+	return filepath.Join(home, ".jerboa", "daemon.json")
 }
 
 func defaultStorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni/images"
+		return ".jerboa/images"
 	}
-	return home + "/.uni/images"
+	return home + "/.jerboa/images"
 }

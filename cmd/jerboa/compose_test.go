@@ -35,14 +35,14 @@ func writeComposeFile(t *testing.T, diskPath string) string {
 	t.Helper()
 	dir := t.TempDir()
 	content := strings.ReplaceAll(string(testComposeYAML), "DISK_PATH", filepath.ToSlash(diskPath))
-	path := filepath.Join(dir, "uni-compose.yaml")
+	path := filepath.Join(dir, "jerboa-compose.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
 
 func startComposeDaemon(t *testing.T) (*api.Client, string) {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
@@ -171,7 +171,7 @@ func TestComposeDown_UsesStateForIPRelease(t *testing.T) {
 	diskPath := filepath.Join(t.TempDir(), "disk.img")
 	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
 
-	composeFile := filepath.Join(t.TempDir(), "uni-compose.yaml")
+	composeFile := filepath.Join(t.TempDir(), "jerboa-compose.yaml")
 	composeYAML := `
 version: "1"
 services:
@@ -197,7 +197,7 @@ networks:
 		NetworkName: "app-b",
 		IPAddress:   "10.220.2.2",
 		GatewayIP:   "10.220.2.1",
-		BridgeName:  "uni-br-app-b",
+		BridgeName:  "jerboa-br-app-b",
 		SubnetMask:  "24",
 	})
 	require.NoError(t, err)
@@ -211,7 +211,7 @@ func TestComposeDown_NoState(t *testing.T) {
 	_, socketPath := startComposeDaemon(t)
 	storePath := t.TempDir()
 
-	composeFile := filepath.Join(t.TempDir(), "uni-compose.yaml")
+	composeFile := filepath.Join(t.TempDir(), "jerboa-compose.yaml")
 	require.NoError(t, os.WriteFile(composeFile, testComposeYAML, 0o600))
 
 	msg := execRootExpectError(t, socketPath, storePath, "compose", "down", composeFile)

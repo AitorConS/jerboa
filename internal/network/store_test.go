@@ -20,7 +20,7 @@ func TestCreate(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "testnet", n.Name)
 	require.Equal(t, "bridge", n.Driver)
-	require.Contains(t, n.Bridge, "uni-br-")
+	require.Contains(t, n.Bridge, "jerboa-br-")
 	require.Contains(t, n.Subnet, "/24")
 	require.NotEmpty(t, n.Gateway)
 }
@@ -56,7 +56,7 @@ func TestCreateWithSubnet(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "172.20.0.0/24", n.Subnet)
 	require.Equal(t, "172.20.0.1", n.Gateway)
-	require.Equal(t, "uni-br-my-net", n.Bridge)
+	require.Equal(t, "jerboa-br-my-net", n.Bridge)
 }
 
 func TestCreateDefaultDriver(t *testing.T) {

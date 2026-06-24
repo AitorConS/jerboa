@@ -1,6 +1,6 @@
 package compose
 
-// File is a parsed uni compose file.
+// File is a parsed jerboa compose file.
 type File struct {
 	// Version must be "1".
 	Version string `yaml:"version"`

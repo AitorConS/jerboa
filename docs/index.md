@@ -4,7 +4,7 @@ title: Home
 nav_order: 1
 ---
 
-# Uni — Unikernel Engine
+# Jerboa — Unikernel Engine
 {: .fs-9 }
 
 A Docker-like engine for building, running, and orchestrating unikernel virtual machines on KVM/QEMU.
@@ -29,7 +29,7 @@ Compared to containers:
 | Memory overhead | ~10–50 MB | ~2–5 MB |
 | Runtime | Any Linux binary | Static ELF only |
 
-## What is Uni?
+## What is Jerboa?
 
 `jerboa` is a command-line tool (plus a background daemon `jerboad`) that manages the full unikernel lifecycle — the same way Docker manages containers.
 

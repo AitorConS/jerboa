@@ -11,7 +11,7 @@ import (
 //
 // Supported schemes:
 //
-//	unix:///var/run/unid.sock  -> "unix", "/var/run/unid.sock"
+//	unix:///var/run/jerboad.sock  -> "unix", "/var/run/jerboad.sock"
 //	tcp://127.0.0.1:7890       -> "tcp",  "127.0.0.1:7890"
 //
 // A value without a "://" scheme is treated as a Unix socket path, preserving

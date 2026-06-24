@@ -14,7 +14,7 @@ import (
 )
 
 func TestHealthy(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)

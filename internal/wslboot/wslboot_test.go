@@ -26,23 +26,23 @@ func TestLoadOrCreateToken_GeneratesAndPersists(t *testing.T) {
 
 func TestBuildLaunchArgs_TokenAndDistro(t *testing.T) {
 	args, env := buildLaunchArgs(Config{
-		Endpoint: "tcp://127.0.0.1:7890",
-		Distro:   "Ubuntu",
-		Token:    "abc123",
-		UnidPath: "jerboad",
+		Endpoint:    "tcp://127.0.0.1:7890",
+		Distro:      "Ubuntu",
+		Token:       "abc123",
+		JerboadPath: "jerboad",
 	})
 
 	require.Equal(t, []string{"-d", "Ubuntu", "--", "jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
-	require.True(t, slices.Contains(env, "UNI_AUTH_TOKEN=abc123"))
-	require.True(t, slices.Contains(env, "WSLENV=UNI_AUTH_TOKEN/u"))
+	require.True(t, slices.Contains(env, "JERBOA_AUTH_TOKEN=abc123"))
+	require.True(t, slices.Contains(env, "WSLENV=JERBOA_AUTH_TOKEN/u"))
 }
 
 func TestBuildLaunchArgs_NoTokenNoDistro(t *testing.T) {
-	args, env := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", UnidPath: "/usr/local/bin/jerboad"})
+	args, env := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", JerboadPath: "/usr/local/bin/jerboad"})
 
 	require.Equal(t, []string{"--", "/usr/local/bin/jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
 	for _, e := range env {
-		require.False(t, strings.HasPrefix(e, "UNI_AUTH_TOKEN="), "token must not be set when empty")
+		require.False(t, strings.HasPrefix(e, "JERBOA_AUTH_TOKEN="), "token must not be set when empty")
 		require.False(t, strings.HasPrefix(e, "WSLENV="))
 	}
 }

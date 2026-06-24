@@ -10,7 +10,7 @@ import (
 
 // BridgeConfig holds the parameters for a Linux bridge interface.
 type BridgeConfig struct {
-	// Name is the bridge interface name (e.g. "uni-br0").
+	// Name is the bridge interface name (e.g. "jerboa-br0").
 	Name string
 	// CIDR is the gateway IP with CIDR mask (e.g. "10.0.0.1/24").
 	CIDR string

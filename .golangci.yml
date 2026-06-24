@@ -71,7 +71,7 @@ linters:
       - linters:
           - noctx
           - unparam
-        path: ^cmd/uni-smoke/
+        path: ^cmd/jerboa-smoke/
 
       # Network package: iptables/ip system calls have no meaningful context to pass
       - linters:

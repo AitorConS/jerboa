@@ -2,8 +2,8 @@
 //
 // A package is a named, versioned collection of files (typically a language
 // runtime like Node.js or Python) that can be included in a unikernel image
-// during "uni build --pkg". Packages are stored locally in
-// ~/.uni/packages/<name>/<version>/ and are downloaded from a remote index.
+// during "jerboa build --pkg". Packages are stored locally in
+// ~/.jerboa/packages/<name>/<version>/ and are downloaded from a remote index.
 package pkg
 
 import (
@@ -559,7 +559,7 @@ func (s *Store) Push(name, version string, indexURL string) error {
 // automatically without creating them on the host — making it work on all
 // platforms including Windows (where docker cp fails with symlinks).
 func FromDocker(image, containerPath string, extraLibs []string) ([]string, error) {
-	tmpDir, err := os.MkdirTemp("", "uni-pkg-from-docker-*")
+	tmpDir, err := os.MkdirTemp("", "jerboa-pkg-from-docker-*")
 	if err != nil {
 		return nil, fmt.Errorf("from-docker: temp dir: %w", err)
 	}

@@ -207,7 +207,7 @@ jobs:
           ./dist/jerboad --socket "${QEMU_SOCK}" &
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
           for i in $(seq 1 20); do [ -S "${QEMU_SOCK}" ] && break; sleep 0.5; done
-          [ -S "${QEMU_SOCK}" ] || { echo "QEMU unid failed to start"; exit 1; }
+          [ -S "${QEMU_SOCK}" ] || { echo "QEMU jerboad failed to start"; exit 1; }
 
       - name: Benchmark — build hello
         id: build-bench
@@ -256,7 +256,7 @@ jobs:
           echo "FC_PID=$!" >> "$GITHUB_ENV"
           # longer wait — first run downloads kernel-fc.img from releases
           for i in $(seq 1 60); do [ -S "${FC_SOCK}" ] && break; sleep 1; done
-          [ -S "${FC_SOCK}" ] || { echo "Firecracker unid failed to start"; exit 1; }
+          [ -S "${FC_SOCK}" ] || { echo "Firecracker jerboad failed to start"; exit 1; }
 
       - name: Benchmark — Firecracker boot hello (3 runs)
         id: fc-bench
@@ -413,7 +413,7 @@ jobs:
           TAG="${CLI_VERSION}"
           gh release view "$TAG" > /dev/null 2>&1 \
             || gh release create "$TAG" \
-               --title "uni ${CLI_VERSION}" \
+               --title "jerboa ${CLI_VERSION}" \
                --notes "Release ${CLI_VERSION} — built from commit $(git rev-parse --short HEAD)"
           gh release upload "$TAG" dist/* --clobber
 

@@ -21,7 +21,7 @@ import (
 // buildProgramPath is the reserved tar path under which the compiled program
 // binary is streamed in a build context. The daemon splits it out and places
 // it at /program in the image, so it must not collide with real guest paths.
-const buildProgramPath = ".uni-program"
+const buildProgramPath = ".jerboa-program"
 
 // absPath resolves p to an absolute path, returning p unchanged on error.
 func absPath(p string) string {
@@ -186,7 +186,7 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&memory, "memory", "256M", "default VM memory")
 	cmd.Flags().IntVar(&cpus, "cpus", 1, "default VM CPU count")
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "include package in image (e.g. node:20, python:3.12) (repeatable)")
-	cmd.Flags().StringVar(&pkgSource, "pkg-source", "uni", "package source: \"uni\" (default) or \"ops\" (nanovms/ops ecosystem)")
+	cmd.Flags().StringVar(&pkgSource, "pkg-source", "jerboa", "package source: \"jerboa\" (default) or \"ops\" (nanovms/ops ecosystem)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust, raw)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
@@ -667,9 +667,9 @@ func addFileToTar(tw *tar.Writer, hostPath, guestPath string) error {
 func defaultToolsPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "tools")
+		return filepath.Join(".jerboa", "tools")
 	}
-	return filepath.Join(home, ".uni", "tools")
+	return filepath.Join(home, ".jerboa", "tools")
 }
 
 // filterCoveredAutoPkgs removes auto-packages whose base name is already

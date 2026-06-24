@@ -44,7 +44,7 @@ func startDaemon(t *testing.T) (*api.Client, string) {
 // rooted at storePath, so Image.List/Remove and run-by-ref operate on it.
 func startDaemonWithStore(t *testing.T, storePath string) (*api.Client, string) {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)

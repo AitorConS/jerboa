@@ -66,7 +66,7 @@ El protocolo ya es JSON-RPC 2.0 sobre `net.Conn` (`internal/api/client.go`,
 estilo `DOCKER_HOST`, que es lo que escala a futuro:
 
 ```
-unix:///var/run/unid.sock      # Linux/macOS local (por defecto)
+unix:///var/run/jerboad.sock      # Linux/macOS local (por defecto)
 tcp://127.0.0.1:7890           # WSL2 desde Windows / local TCP
 tcps://host:7890               # remoto con TLS (futuro, sin cambiar protocolo)
 ```
@@ -88,12 +88,12 @@ Prioridad de resolución (de mayor a menor), igual patrón que Docker:
 
 1. Flag `--host` / `-H` (renombra el actual `--socket`, que queda como alias
    deprecado).
-2. Variable de entorno `UNI_HOST`.
-3. `~/.uni/config.toml`, nueva sección `[daemon]`.
+2. Variable de entorno `JERBOA_HOST`.
+3. `~/.jerboa/config.toml`, nueva sección `[daemon]`.
 4. Valor por defecto por plataforma.
 
 ```toml
-# ~/.uni/config.toml
+# ~/.jerboa/config.toml
 hypervisor = "firecracker"
 
 [daemon]
@@ -106,7 +106,7 @@ Defaults por plataforma (sustituye a `defaultSocketPath()` en
 
 | Plataforma | Endpoint por defecto         |
 |------------|------------------------------|
-| Linux/macOS| `unix:///var/run/unid.sock`  |
+| Linux/macOS| `unix:///var/run/jerboad.sock`  |
 | Windows    | `tcp://127.0.0.1:7890`       |
 
 ### D3 — Seguridad: loopback + token bearer (camino a TLS)
@@ -118,7 +118,7 @@ El socket Unix tenía permisos de filesystem; un TCP los pierde. Reglas:
 - **Token bearer obligatorio en cualquier endpoint TCP** (en `unix://` es
   opcional porque ya hay permisos de fichero).
 - **El cliente es el dueño del secreto**, no el daemon: `jerboa.exe` genera un
-  token aleatorio en el bootstrap, lo persiste en `%USERPROFILE%\.uni\daemon.json`
+  token aleatorio en el bootstrap, lo persiste en `%USERPROFILE%\.jerboa\daemon.json`
   (permisos solo-usuario) y lo pasa al daemon **por stdin/env al lanzarlo**
   (nunca por `argv`, que es visible en la lista de procesos).
 - **Handshake de autenticación**: primer frame tras conectar es un método
@@ -149,7 +149,7 @@ solo existe `directFunc`, porque siempre se ejecuta en Linux.
 ### D5 — Image store en ext4 de WSL2, nunca en `/mnt/c`
 
 El store del daemon vive en el filesystem ext4 de la distro WSL2
-(p.ej. `~/.uni/images` *dentro* de la distro), **no** en `/mnt/c/...` (9p es
+(p.ej. `~/.jerboa/images` *dentro* de la distro), **no** en `/mnt/c/...` (9p es
 lento). El cliente no accede al store por filesystem: lo consulta por RPC
 (`Image.List`, etc.) y transfiere bytes por la conexión. Frontera limpia y
 única: todo lo que cruza Windows↔WSL2 va por el endpoint, nada por paths
@@ -198,7 +198,7 @@ Reorganización para que la separación sea estructural, no por `if GOOS`:
   (`tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`, `cgroup_stub.go`,
   `stats_stub.go`). Marcadas `//go:build linux` todas las fuentes del lado
   daemon: `internal/{vm,network,apiserver,metrics,scheduler,service,tracing,ui}`,
-  `cmd/jerboad`, `cmd/uni-smoke`, y los tests de `cmd/jerboa` que arrancan el daemon
+  `cmd/jerboad`, `cmd/jerboa-smoke`, y los tests de `cmd/jerboa` que arrancan el daemon
   in-process. El cliente (`jerboa`) y sus paquetes portables compilan y testean en
   cualquier OS; el lado daemon compila/testea solo en Linux (validado con
   `GOOS=windows` y `GOOS=linux` build+vet). El test de salud de `wslboot` que
@@ -219,7 +219,7 @@ Cada fase es entregable y deja el sistema funcionando.
 - [x] `api.Dial(endpoint)`/`api.listen(endpoint)` con parseo de esquema
       (`unix://`, `tcp://`; valor desnudo = unix por compatibilidad).
 - [x] `jerboad` escucha en el endpoint resuelto; `--host` con alias `--socket`.
-- [x] `jerboa` resuelve endpoint (flag → `UNI_HOST` → config → default plataforma).
+- [x] `jerboa` resuelve endpoint (flag → `JERBOA_HOST` → config → default plataforma).
 - [x] Validación end-to-end por TCP loopback Windows↔WSL2.
 - [x] **Borrado** `firecracker_windows.go` (`platformInitFC` ahora no-op universal).
 
@@ -235,7 +235,7 @@ Cada fase es entregable y deja el sistema funcionando.
       loopback; aviso si TCP sin token.
 - [x] `internal/wslboot`: health check + auto-arranque de `jerboad` en WSL2,
       token por entorno (`WSLENV`, nunca `argv`), persistencia en
-      `%USERPROFILE%\.uni\daemon.json` (0600).
+      `%USERPROFILE%\.jerboa\daemon.json` (0600).
 
 ### Fase 4 — Distro dedicada y limpieza final (parcial)
 - [ ] Aprovisionamiento de distro `jerboa` vía `wsl --import` (rootfs versionado).

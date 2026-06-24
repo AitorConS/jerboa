@@ -479,13 +479,13 @@ func splitOpsDirName(dirName string) (string, string) {
 }
 
 // opsPackageStoreDir returns the path for the ops package store.
-// Defaults to ~/.uni/packages-ops/.
+// Defaults to ~/.jerboa/packages-ops/.
 func opsPackageStoreDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "packages-ops")
+		return filepath.Join(".jerboa", "packages-ops")
 	}
-	return filepath.Join(home, ".uni", "packages-ops")
+	return filepath.Join(home, ".jerboa", "packages-ops")
 }
 
 // DefaultOpsStore returns an OpsStore at the default path.

@@ -20,7 +20,7 @@ import (
 // auth) and returns the socket path.
 func startAuthServer(t *testing.T, token string) string {
 	t.Helper()
-	socketPath := filepath.Join(t.TempDir(), "unid.sock")
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)

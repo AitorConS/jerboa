@@ -70,7 +70,7 @@ func newRootCmd() *cobra.Command {
 			}
 			authToken := authTokenFlag
 			if authToken == "" {
-				authToken = os.Getenv("UNI_AUTH_TOKEN")
+				authToken = os.Getenv("JERBOA_AUTH_TOKEN")
 			}
 			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
 		},
@@ -81,11 +81,11 @@ func newRootCmd() *cobra.Command {
 		"Unix socket path for VM management API (deprecated: use --host)")
 	_ = root.Flags().MarkDeprecated("socket", "use --host instead")
 	root.Flags().StringVar(&authTokenFlag, "auth-token", "",
-		"shared secret required from clients via Auth.Hello (env: UNI_AUTH_TOKEN); empty disables auth")
+		"shared secret required from clients via Auth.Hello (env: JERBOA_AUTH_TOKEN); empty disables auth")
 	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
-		"Hypervisor backend: qemu or firecracker (overrides ~/.uni/config.toml)")
+		"Hypervisor backend: qemu or firecracker (overrides ~/.jerboa/config.toml)")
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
@@ -278,17 +278,17 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 func defaultToolsPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".uni", "tools")
+		return filepath.Join(".jerboa", "tools")
 	}
-	return filepath.Join(home, ".uni", "tools")
+	return filepath.Join(home, ".jerboa", "tools")
 }
 
 func defaultStorePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni/images"
+		return ".jerboa/images"
 	}
-	return home + "/.uni/images"
+	return home + "/.jerboa/images"
 }
 
 func newVMStore(storeType, dir string) (vm.Store, error) {
@@ -313,25 +313,25 @@ func newVMStore(storeType, dir string) (vm.Store, error) {
 func vmsDir(_ string) string { //nolint:unparam // storePath reserved for configurable store locations
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni/vms"
+		return ".jerboa/vms"
 	}
-	return home + "/.uni/vms"
+	return home + "/.jerboa/vms"
 }
 
 func networksDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni/networks"
+		return ".jerboa/networks"
 	}
-	return home + "/.uni/networks"
+	return home + "/.jerboa/networks"
 }
 
 func servicesDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ".uni/services"
+		return ".jerboa/services"
 	}
-	return home + "/.uni/services"
+	return home + "/.jerboa/services"
 }
 
 func setupLogger(format string) {

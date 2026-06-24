@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 )
 
-// Client connects to a unid server over a Unix socket or TCP.
+// Client connects to a jerboad server over a Unix socket or TCP.
 type Client struct {
 	endpoint string
 	token    string
@@ -22,11 +22,11 @@ type Client struct {
 	seq      atomic.Int64
 }
 
-// Dial connects to the unid server at endpoint. The endpoint may carry a
+// Dial connects to the jerboad server at endpoint. The endpoint may carry a
 // scheme (unix:// or tcp://); a bare value is treated as a Unix socket path.
-// The auth token is read from the UNI_AUTH_TOKEN environment variable.
+// The auth token is read from the JERBOA_AUTH_TOKEN environment variable.
 func Dial(endpoint string) (*Client, error) {
-	return DialWithToken(endpoint, os.Getenv("UNI_AUTH_TOKEN"))
+	return DialWithToken(endpoint, os.Getenv("JERBOA_AUTH_TOKEN"))
 }
 
 // DialWithToken connects like Dial and, when token is non-empty, performs the

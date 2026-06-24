@@ -173,5 +173,5 @@ jobs:
         with:
           name: integration-logs
           path: |
-            /tmp/unid-integration-test.sock
+            /tmp/jerboad-integration-test.sock
             coverage.out
