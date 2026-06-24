@@ -130,9 +130,16 @@ jobs:
         run: |
           QEMU_SOCK=/tmp/bench-qemu.sock
           BENCH_STORE=$(mktemp -d)
+          # Stage the freshly built kernel toolchain into one directory so the
+          # daemon resolves mkfs/boot.img/kernel.img locally instead of
+          # downloading a release.
+          BENCH_TOOLS=$(mktemp -d)
+          cp kernel/output/tools/bin/mkfs "${BENCH_TOOLS}/mkfs"
+          cp kernel/output/platform/pc/boot/boot.img "${BENCH_TOOLS}/boot.img"
+          cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
           echo "QEMU_SOCK=${QEMU_SOCK}" >> "$GITHUB_ENV"
           echo "BENCH_STORE=${BENCH_STORE}" >> "$GITHUB_ENV"
-          ./dist/jerboad --socket "${QEMU_SOCK}" &
+          ./dist/jerboad --socket "${QEMU_SOCK}" --tools-dir "${BENCH_TOOLS}" &
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
           for i in $(seq 1 20); do [ -S "${QEMU_SOCK}" ] && break; sleep 0.5; done
           [ -S "${QEMU_SOCK}" ] || { echo "QEMU jerboad failed to start"; exit 1; }
@@ -141,8 +148,7 @@ jobs:
         id: build-bench
         run: |
           BUILD_OUT=$(./dist/jerboa --socket "${QEMU_SOCK}" --store "${BENCH_STORE}" \
-            build examples/hello --name bench-hello --lang go \
-            --mkfs kernel/output/tools/bin/mkfs)
+            build examples/hello --name bench-hello --lang go)
           echo "${BUILD_OUT}"
           BUILD_TIME=$(echo "${BUILD_OUT}" | grep -oP 'built in \K\S+')
           IMAGE_SIZE=$(echo "${BUILD_OUT}" | grep -oP '\d+(\.\d+)?[KMGT]?B' | head -1)

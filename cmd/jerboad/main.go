@@ -55,6 +55,7 @@ func newRootCmd() *cobra.Command {
 		hypervisor    string
 		fcBin         string
 		fcKernelPath  string
+		toolsDir      string
 	)
 	root := &cobra.Command{
 		Use:     "jerboad",
@@ -72,7 +73,7 @@ func newRootCmd() *cobra.Command {
 			if authToken == "" {
 				authToken = os.Getenv("JERBOA_AUTH_TOKEN")
 			}
-			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath)
+			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
 		},
 	}
 	root.Flags().StringVarP(&hostFlag, "host", "H", "",
@@ -90,6 +91,8 @@ func newRootCmd() *cobra.Command {
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
 		"Path to Firecracker-compatible kernel (auto-downloaded if omitted)")
+	root.Flags().StringVar(&toolsDir, "tools-dir", "",
+		"directory holding the kernel build toolchain (mkfs, boot.img, kernel.img); empty downloads/caches under ~/.jerboa/tools")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
 	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
@@ -109,8 +112,15 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath string) error {
+func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string) error {
 	setupLogger(logFormat)
+
+	// Where the kernel build toolchain (mkfs, boot.img, kernel.img) lives. An
+	// explicit --tools-dir wins; otherwise fall back to the cached default,
+	// which is downloaded on first use.
+	if toolsDir == "" {
+		toolsDir = defaultToolsPath()
+	}
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
 	if err != nil {
@@ -137,7 +147,6 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	switch hypervisor {
 	case "firecracker":
 		if fcKernelPath == "" {
-			toolsDir := defaultToolsPath()
 			slog.Info("jerboad: ensuring Firecracker kernel is available", "dir", toolsDir)
 			dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer dlCancel()
@@ -258,7 +267,6 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		// Enable server-side image builds (Image.Build) with a lazy mkfs
 		// resolver: the kernel toolchain is downloaded (and cached) on the first
 		// build instead of blocking startup.
-		toolsDir := defaultToolsPath()
 		vmSrv.EnableImageBuildResolver(func(rctx context.Context) (image.MkfsFunc, error) {
 			slog.Info("jerboad: resolving mkfs toolchain for image build", "tools_dir", toolsDir)
 			return tools.ResolveMkfs(rctx, toolsDir, "")

@@ -23,7 +23,7 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		err := serve(ctx, socketPath, "", "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "", "qemu", "", "")
+		err := serve(ctx, socketPath, "", "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "", "qemu", "", "", "")
 		if err != nil && !strings.Contains(err.Error(), "context canceled") {
 			t.Logf("serve returned: %v", err)
 		}
@@ -77,7 +77,7 @@ func TestServe_VersionQuery(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = serve(ctx, socketPath, "", "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "", "qemu", "", "")
+		_ = serve(ctx, socketPath, "", "fake-qemu", t.TempDir(), "file", "", "", "text", "", "", "", "qemu", "", "", "")
 	}()
 
 	require.Eventually(t, func() bool {
