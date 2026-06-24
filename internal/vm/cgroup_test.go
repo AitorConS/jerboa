@@ -19,18 +19,6 @@ func TestNewCgroupManager(t *testing.T) {
 	require.NotNil(t, m)
 }
 
-func TestCgroupStub_NonLinux(t *testing.T) {
-	if IsCgroupV2Available() {
-		t.Skip("running on linux with cgroup v2")
-	}
-	m := NewCgroupManager("test")
-	err := m.Apply(1, CgroupLimit{CPUShares: 100})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "only available on Linux")
-	require.NoError(t, m.Remove())
-	require.False(t, IsCgroupV2Available())
-}
-
 func TestCgroupLimit_ZeroValues(t *testing.T) {
 	lim := CgroupLimit{}
 	require.Equal(t, uint64(0), lim.CPUShares)

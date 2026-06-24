@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
-	"runtime"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/vm"
@@ -18,9 +17,6 @@ import (
 func newTestManager(t *testing.T) vm.Manager {
 	t.Helper()
 	return vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-		if runtime.GOOS == "windows" {
-			return exec.Command("cmd", "/c", "exit 0")
-		}
 		return exec.Command("true")
 	}))
 }

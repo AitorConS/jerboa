@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -28,9 +27,6 @@ func fakeMkfs(t *testing.T) image.MkfsFunc {
 	t.Helper()
 	return func(ctx context.Context, imgPath, _ string, manifest string) *exec.Cmd {
 		require.NoError(t, os.WriteFile(imgPath, []byte("fake-disk:"+manifest), 0o600))
-		if runtime.GOOS == "windows" {
-			return exec.CommandContext(ctx, "cmd", "/c", "exit 0")
-		}
 		return exec.CommandContext(ctx, "true")
 	}
 }

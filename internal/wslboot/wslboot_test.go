@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -41,10 +40,9 @@ func TestBuildLaunchArgs_NoTokenNoDistro(t *testing.T) {
 	args, env := buildLaunchArgs(Config{Endpoint: "tcp://127.0.0.1:7890", JerboadPath: "/usr/local/bin/jerboad"})
 
 	require.Equal(t, []string{"--", "/usr/local/bin/jerboad", "--host", "tcp://127.0.0.1:7890"}, args)
-	for _, e := range env {
-		require.False(t, strings.HasPrefix(e, "JERBOA_AUTH_TOKEN="), "token must not be set when empty")
-		require.False(t, strings.HasPrefix(e, "WSLENV="))
-	}
+	// With no token, buildLaunchArgs must not add anything beyond the inherited
+	// process environment (no JERBOA_AUTH_TOKEN / WSLENV injection).
+	require.Equal(t, os.Environ(), env)
 }
 
 func TestLoadOrCreateToken_FileModeUnix(t *testing.T) {

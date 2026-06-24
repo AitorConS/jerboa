@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -44,11 +43,7 @@ func TestServe_StartsAndShutsDown(t *testing.T) {
 
 func TestDefaultEndpoint(t *testing.T) {
 	ep := config.DefaultEndpoint()
-	if runtime.GOOS == "windows" {
-		require.Equal(t, "tcp://127.0.0.1:7890", ep)
-	} else {
-		require.Equal(t, "unix:///var/run/jerboad.sock", ep)
-	}
+	require.Equal(t, "unix:///var/run/jerboad.sock", ep)
 }
 
 func TestDefaultStorePath(t *testing.T) {

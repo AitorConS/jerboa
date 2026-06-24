@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -39,20 +38,16 @@ func run() int {
 	flag.Parse()
 
 	if jerboaBin == "" {
-		if runtime.GOOS == "windows" {
-			jerboaBin = filepath.Join(".", "jerboa-windows-amd64.exe")
-		} else {
-			jerboaBin = filepath.Join(".", "jerboa")
-		}
+		jerboaBin = filepath.Join(".", "jerboa")
 	}
 
-	absUni, err := filepath.Abs(jerboaBin)
+	absBin, err := filepath.Abs(jerboaBin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (resolve jerboa path): %v\n", err)
 		return 2
 	}
-	if _, err := os.Stat(absUni); err != nil {
-		fmt.Fprintf(os.Stderr, "smoke setup failed (jerboa binary not found): %s: %v\n", absUni, err)
+	if _, err := os.Stat(absBin); err != nil {
+		fmt.Fprintf(os.Stderr, "smoke setup failed (jerboa binary not found): %s: %v\n", absBin, err)
 		return 2
 	}
 
@@ -109,7 +104,7 @@ func run() int {
 	runUni := func(args ...string) (string, error) {
 		base := []string{"--socket", socketPath, "--store", storePath}
 		base = append(base, args...)
-		cmd := exec.Command(absUni, base...)
+		cmd := exec.Command(absBin, base...)
 		cmd.Env = append(os.Environ(), "HOME="+homePath, "USERPROFILE="+homePath)
 		var out bytes.Buffer
 		cmd.Stdout = &out
@@ -148,11 +143,7 @@ func run() int {
 		addCmd(runUni, add, "logs", "logs", vmID)
 		addCmd(runUni, add, "inspect", "inspect", vmID)
 		addCmd(runUni, add, "stats", "stats", vmID)
-		if runtime.GOOS == "windows" {
-			skip("exec", "signal delivery unsupported on Windows")
-		} else {
-			addCmd(runUni, add, "exec", "exec", "--signal", "SIGTERM", vmID)
-		}
+		addCmd(runUni, add, "exec", "exec", "--signal", "SIGTERM", vmID)
 		addCmd(runUni, add, "stop", "stop", vmID)
 		addCmd(runUni, add, "rm", "rm", vmID)
 	} else {
@@ -247,9 +238,6 @@ func seedImageStore(storePath string) error {
 
 func fakeQEMUCmd() vm.CommandFunc {
 	return func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-		if runtime.GOOS == "windows" {
-			return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
-		}
 		return exec.Command("sleep", "3600")
 	}
 }

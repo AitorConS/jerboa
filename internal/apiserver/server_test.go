@@ -6,7 +6,6 @@ import (
 	"context"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,13 +21,7 @@ import (
 func fakeQEMUCmd(block bool) vm.CommandFunc {
 	return func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		if block {
-			if runtime.GOOS == "windows" {
-				return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
-			}
 			return exec.Command("sleep", "3600")
-		}
-		if runtime.GOOS == "windows" {
-			return exec.Command("cmd", "/c", "exit 0")
 		}
 		return exec.Command("true")
 	}

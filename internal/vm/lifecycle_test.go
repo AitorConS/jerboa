@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -88,10 +87,8 @@ func TestQEMUManager_Signal(t *testing.T) {
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
 	require.NoError(t, mgr.Start(context.Background(), v.ID))
-	if runtime.GOOS != "windows" {
-		err = mgr.Signal(context.Background(), v.ID, syscall.Signal(10))
-		require.NoError(t, err)
-	}
+	err = mgr.Signal(context.Background(), v.ID, syscall.Signal(10))
+	require.NoError(t, err)
 	require.NoError(t, mgr.Stop(context.Background(), v.ID))
 	<-v.Done()
 }

@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"runtime"
 	"sync"
 	"syscall"
 	"testing"
@@ -66,9 +65,6 @@ func TestQEMUManager_Kill_ProcessKillRealError(t *testing.T) {
 }
 
 func TestQEMUManager_Stop_SIGTERMFails(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("SIGTERM not supported on Windows, falls back to kill")
-	}
 	mgr := fakeManager(true)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
@@ -99,13 +95,7 @@ func TestMonitor_RestartAlways(t *testing.T) {
 	cmdFunc := func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		callCount++
 		if callCount <= 1 {
-			if runtime.GOOS == "windows" {
-				return exec.Command("cmd", "/c", "exit 1")
-			}
 			return exec.Command("false")
-		}
-		if runtime.GOOS == "windows" {
-			return exec.Command("powershell", "-Command", "while ($true) { Start-Sleep -Seconds 3600 }")
 		}
 		return exec.Command("sleep", "3600")
 	}
@@ -146,13 +136,7 @@ func TestMonitor_RestartOnFailure_CrashExit(t *testing.T) {
 	cmdFunc := func(_ context.Context, _ string, _ ...string) *exec.Cmd {
 		crashCount++
 		if crashCount <= 1 {
-			if runtime.GOOS == "windows" {
-				return exec.Command("cmd", "/c", "exit 1")
-			}
 			return exec.Command("false")
-		}
-		if runtime.GOOS == "windows" {
-			return exec.Command("cmd", "/c", "exit 0")
 		}
 		return exec.Command("true")
 	}
@@ -176,9 +160,6 @@ func TestMonitor_RestartOnFailure_CrashExit(t *testing.T) {
 
 func TestMonitor_RestartMaxRetries(t *testing.T) {
 	cmdFunc := func(_ context.Context, _ string, _ ...string) *exec.Cmd {
-		if runtime.GOOS == "windows" {
-			return exec.Command("cmd", "/c", "exit 1")
-		}
 		return exec.Command("false")
 	}
 	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(cmdFunc))

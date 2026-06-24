@@ -74,7 +74,7 @@ func waitHealthy(ctx context.Context, cfg Config) error {
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("wslboot: wait for daemon: %w", ctx.Err())
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -130,13 +130,17 @@ func buildLaunchArgs(cfg Config) (args, env []string) {
 func openLaunchLog() (*os.File, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("wslboot: resolve home dir: %w", err)
 	}
 	dir := filepath.Join(home, ".jerboa")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("wslboot: create log dir: %w", err)
 	}
-	return os.OpenFile(filepath.Join(dir, "jerboad-wsl.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Join(dir, "jerboad-wsl.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("wslboot: open launch log: %w", err)
+	}
+	return f, nil
 }
 
 // daemonFile is the on-disk shape of ~/.jerboa/daemon.json.
