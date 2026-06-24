@@ -461,6 +461,18 @@ func (c *Client) ImageList(_ context.Context) ([]ImageManifestResult, error) {
 	return out, nil
 }
 
+// ImageGet returns the manifest for a single name:tag (or sha) reference.
+func (c *Client) ImageGet(_ context.Context, ref string) (ImageManifestResult, error) {
+	var out ImageManifestResult
+	p := struct {
+		Ref string `json:"ref"`
+	}{Ref: ref}
+	if err := c.call("Image.Get", p, &out); err != nil {
+		return ImageManifestResult{}, fmt.Errorf("client image get: %w", err)
+	}
+	return out, nil
+}
+
 // ImageRemove deletes a name:tag (or sha) reference from the daemon's store.
 func (c *Client) ImageRemove(_ context.Context, ref string) error {
 	p := struct {

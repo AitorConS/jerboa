@@ -181,17 +181,24 @@ Reorganización para que la separación sea estructural, no por `if GOOS`:
 - `uni` (cliente): depende de `internal/api` (cliente), `internal/config`,
   formato de salida y `internal/wslboot` (bootstrap, build-tag `windows`).
   No importa `internal/vm`, `internal/network`, etc.
-- `unid` (daemon): **build target `linux` únicamente**. Concentra `internal/vm`,
-  `internal/network`, `internal/builder`, hipervisores.
+- `unid` (daemon): concentra `internal/vm`, `internal/network`,
+  `internal/builder`, hipervisores vía `internal/apiserver`.
 
-Ficheros que **se eliminan** al completar la migración:
+**Estado:**
 
-- `internal/vm/firecracker_windows.go` y el hook `platformInitFC`
-- `internal/tools/mkfs_windows.go` (+ su test)
-- `internal/network/tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`,
-  `internal/vm/cgroup_stub.go` (el daemon es Linux, no necesita stubs)
-- `internal/vm/firecracker_notwindows.go` → se renombra a `firecracker_linux.go`
-  (ya no hay "not windows", solo Linux).
+- **D7-A ✅** — `internal/api` dividido en cliente (`api`) y servidor
+  (`apiserver`). Verificado: `go list -deps ./cmd/uni` ya no enlaza
+  `internal/vm` ni `internal/network`. El parseo de puertos/endpoint y el
+  framing viven en `api` para que la CLI no importe `vm`.
+- **D7-C ✅** — `uni pkg load` enruta por el daemon (`Image.Build`); `mkfs.go`
+  sin rama Windows; `mkfs_windows.go`/`mkfs_unix.go` (+ tests) borrados;
+  `firecracker_windows.go`/`_notwindows.go` unificados en `platformInitFC`
+  no-op universal.
+- **D7-B (mantenido a propósito)** — Se conservan los stubs de plataforma
+  (`tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`, `cgroup_stub.go`).
+  Hacer el daemon `//go:build linux` puro rompe toda la suite del daemon
+  in-process en Windows; el coste de DX supera la ganancia. Los stubs ya
+  garantizan que `apiserver` compile en cualquier OS sin enlazar lógica real.
 
 ---
 
@@ -212,9 +219,8 @@ Cada fase es entregable y deja el sistema funcionando.
 - [x] RPC `Image.Build` con streaming del contexto (frames length-prefixed).
 - [x] Store del daemon en ext4 de WSL2; cliente por RPC (`Image.List/Remove`,
       run/build por ref `name:tag`). mkfs corre en Linux (resolución lazy).
-- [ ] `tools/mkfs.go` sin rama Windows; **borra** `mkfs_windows.go`.
-      *(Pendiente: `uni pkg`/`uni kernel` aún usan `ResolveMkfs` client-side;
-      requiere Fase 4 / D7.)*
+- [x] `tools/mkfs.go` sin rama Windows; `mkfs_windows.go` borrado (D7-C).
+      `uni pkg load` ya enruta su build por el daemon.
 
 ### Fase 3 — Seguridad y bootstrap ✅
 - [x] Token bearer + handshake `Auth.Hello` (comparación constante); bind
@@ -223,12 +229,21 @@ Cada fase es entregable y deja el sistema funcionando.
       token por entorno (`WSLENV`, nunca `argv`), persistencia en
       `%USERPROFILE%\.uni\daemon.json` (0600).
 
-### Fase 4 — Distro dedicada y limpieza final (pendiente)
+### Fase 4 — Distro dedicada y limpieza final (parcial)
 - [ ] Aprovisionamiento de distro `unicli` vía `wsl --import` (rootfs versionado).
-- [ ] **Borra** stubs de red/cgroup; `mkfs_windows.go`.
-- [ ] Separación de módulos D7 consolidada (cliente sin importar `vm`/`network`).
-      *Nota: hacer el daemon linux-only quita la capacidad de testear el lado
-      servidor en Windows; decisión a tomar explícitamente.*
+- [x] Separación de módulos D7 consolidada (cliente sin importar `vm`/`network`).
+      Stubs de red/cgroup **mantenidos a propósito** (ver D7-B) para no romper
+      la suite del daemon in-process en Windows.
+
+### Firma de imágenes — re-cableada al store del daemon ✅
+- [x] `uni sign`/`uni verify` resuelven el *disk digest* de la imagen vía
+      `Image.Get` (RPC nuevo) y firman/verifican por digest, no por directorio
+      local. Las firmas se guardan en `<root>/signatures/<digest>.sig`.
+- [x] `signing.Store`: `SignDigest`/`VerifyDigest` (Ed25519, clave por defecto
+      generada en primer uso). `VerifyDigest` rechaza una firma cuyo digest no
+      coincide con el solicitado.
+- [x] `uni run --verify` valida contra el store del daemon; los runs por ruta de
+      fichero (sin `name:tag`) no tienen referencia que verificar.
 
 ---
 

@@ -174,6 +174,8 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return attachHandled, nil
 	case "Image.List":
 		return s.handleImageList()
+	case "Image.Get":
+		return s.handleImageGet(req.Params)
 	case "Image.Remove":
 		return s.handleImageRemove(req.Params)
 	case "VM.Run":

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/AitorConS/unikernel-engine/internal/api"
-	"github.com/AitorConS/unikernel-engine/internal/image"
 	"github.com/AitorConS/unikernel-engine/internal/signing"
 	"github.com/AitorConS/unikernel-engine/internal/volume"
 	"github.com/spf13/cobra"
@@ -52,7 +51,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("run: %w", err)
 			}
 
-			if err := verifyImageSignature(cmd, imgArg, *storePath, imagePath, verify); err != nil {
+			if err := verifyImageSignature(cmd, socketPath, imageRef, verify); err != nil {
 				return err
 			}
 
@@ -422,7 +421,10 @@ func parseRestartPolicy(spec string) (api.RestartSpec, error) {
 	return rs, nil
 }
 
-func verifyImageSignature(_ *cobra.Command, imgArg, storePath, _ /*diskPath*/, verifyFlag string) error {
+// verifyImageSignature checks the signature of a daemon-stored image (by its
+// disk digest) according to the policy. File-path runs (empty imageRef) have no
+// store reference to verify.
+func verifyImageSignature(cmd *cobra.Command, endpoint *string, imageRef, verifyFlag string) error {
 	policy, err := signing.ParseVerifyPolicy(verifyFlag)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
@@ -430,14 +432,23 @@ func verifyImageSignature(_ *cobra.Command, imgArg, storePath, _ /*diskPath*/, v
 	if policy == signing.VerifyOff {
 		return nil
 	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = ".uni"
-	} else {
-		home += "/.uni"
+	if imageRef == "" {
+		if policy == signing.VerifyEnforce {
+			return fmt.Errorf("run: verify: signature verification requires a name:tag image, not a file path")
+		}
+		return nil
 	}
-	sigStore, err := signing.NewStore(home)
+
+	digest, err := imageDigest(cmd, endpoint, imageRef)
+	if err != nil {
+		if policy == signing.VerifyEnforce {
+			return fmt.Errorf("run: verify: %w", err)
+		}
+		log.Printf("warning: verify: %v", err)
+		return nil
+	}
+
+	sigStore, err := signing.NewStore(signingStorePath())
 	if err != nil {
 		if policy == signing.VerifyEnforce {
 			return fmt.Errorf("run: verify: open signing store: %w", err)
@@ -446,31 +457,12 @@ func verifyImageSignature(_ *cobra.Command, imgArg, storePath, _ /*diskPath*/, v
 		return nil
 	}
 
-	imgStore, err := image.NewStore(storePath)
-	if err != nil {
-		if policy == signing.VerifyEnforce {
-			return fmt.Errorf("run: verify: open image store: %w", err)
-		}
-		log.Printf("warning: verify: open image store: %v", err)
-		return nil
-	}
-
-	m, _, resolveErr := imgStore.Get(imgArg)
-	if resolveErr != nil {
-		if policy == signing.VerifyEnforce {
-			return fmt.Errorf("run: verify: resolve image: %w", resolveErr)
-		}
-		log.Printf("warning: verify: resolve image: %v", resolveErr)
-		return nil
-	}
-
-	imageDir := home + "/images/" + strings.TrimPrefix(m.DiskDigest, "sha256:")
-	sig, verifyErr := sigStore.VerifyManifest(imageDir)
+	sig, verifyErr := sigStore.VerifyDigest(digest)
 	if policy == signing.VerifyWarn {
 		if verifyErr != nil {
 			log.Printf("warning: verify: %v", verifyErr)
 		} else if sig == nil {
-			log.Printf("warning: no signature found for %s", imgArg)
+			log.Printf("warning: no signature found for %s", imageRef)
 		}
 		return nil
 	}
@@ -478,7 +470,7 @@ func verifyImageSignature(_ *cobra.Command, imgArg, storePath, _ /*diskPath*/, v
 		return fmt.Errorf("run: verify: %w", verifyErr)
 	}
 	if sig == nil {
-		return fmt.Errorf("run: verify: no signature found for %s", imgArg)
+		return fmt.Errorf("run: verify: no signature found for %s", imageRef)
 	}
 	return nil
 }

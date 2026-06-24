@@ -4,42 +4,28 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/AitorConS/unikernel-engine/internal/image"
+	"github.com/AitorConS/unikernel-engine/internal/api"
 	"github.com/AitorConS/unikernel-engine/internal/signing"
 	"github.com/spf13/cobra"
 )
 
-func newSignCmd(storePath *string) *cobra.Command {
+func newSignCmd(endpoint *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "sign <image>",
-		Short: "Sign a local image with the default Ed25519 key",
+		Short: "Sign an image (by its disk digest) with the default Ed25519 key",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
-			store, err := image.NewStore(*storePath)
-			if err != nil {
-				return fmt.Errorf("sign: open store: %w", err)
-			}
-			m, diskPath, err := store.Get(ref)
+			digest, err := imageDigest(cmd, endpoint, ref)
 			if err != nil {
 				return fmt.Errorf("sign: %w", err)
 			}
-			_ = diskPath
 
-			home := signingStorePath()
-			sigStore, err := signing.NewStore(home)
+			sigStore, err := signing.NewStore(signingStorePath())
 			if err != nil {
 				return fmt.Errorf("sign: open signing store: %w", err)
 			}
-
-			manifestData, err := image.Marshal(m)
-			if err != nil {
-				return fmt.Errorf("sign: marshal manifest: %w", err)
-			}
-			digest := image.DigestSHA256(manifestData)
-
-			imageDir := imageDirFromDigest(home, m.DiskDigest)
-			sig, err := sigStore.SignManifest(digest, imageDir)
+			sig, err := sigStore.SignDigest(digest)
 			if err != nil {
 				return fmt.Errorf("sign: %w", err)
 			}
@@ -50,30 +36,23 @@ func newSignCmd(storePath *string) *cobra.Command {
 	}
 }
 
-func newVerifyCmd(storePath *string) *cobra.Command {
-	cmd := &cobra.Command{
+func newVerifyCmd(endpoint *string) *cobra.Command {
+	return &cobra.Command{
 		Use:   "verify <image>",
-		Short: "Verify the signature of a local image",
+		Short: "Verify the signature of an image (by its disk digest)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
-			store, err := image.NewStore(*storePath)
-			if err != nil {
-				return fmt.Errorf("verify: open store: %w", err)
-			}
-			m, _, err := store.Get(ref)
+			digest, err := imageDigest(cmd, endpoint, ref)
 			if err != nil {
 				return fmt.Errorf("verify: %w", err)
 			}
 
-			home := signingStorePath()
-			sigStore, err := signing.NewStore(home)
+			sigStore, err := signing.NewStore(signingStorePath())
 			if err != nil {
 				return fmt.Errorf("verify: open signing store: %w", err)
 			}
-
-			imageDir := imageDirFromDigest(home, m.DiskDigest)
-			sig, err := sigStore.VerifyManifest(imageDir)
+			sig, err := sigStore.VerifyDigest(digest)
 			if err != nil {
 				return fmt.Errorf("verify: %w", err)
 			}
@@ -85,7 +64,20 @@ func newVerifyCmd(storePath *string) *cobra.Command {
 			return nil
 		},
 	}
-	return cmd
+}
+
+// imageDigest resolves an image reference to its disk digest via the daemon.
+func imageDigest(cmd *cobra.Command, endpoint *string, ref string) (string, error) {
+	client, err := api.Dial(*endpoint)
+	if err != nil {
+		return "", fmt.Errorf("connect to daemon: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+	res, err := client.ImageGet(cmd.Context(), ref)
+	if err != nil {
+		return "", err
+	}
+	return res.DiskDigest, nil
 }
 
 func signingStorePath() string {
@@ -94,8 +86,4 @@ func signingStorePath() string {
 		return ".uni"
 	}
 	return home + "/.uni"
-}
-
-func imageDirFromDigest(uniHome, diskDigest string) string {
-	return uniHome + "/images/" + diskDigest[len("sha256:"):]
 }

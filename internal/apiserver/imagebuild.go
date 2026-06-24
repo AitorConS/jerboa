@@ -84,6 +84,24 @@ func (s *Server) handleImageList() (any, *api.RPCError) {
 	return out, nil
 }
 
+// handleImageGet returns the manifest for a single reference.
+func (s *Server) handleImageGet(params json.RawMessage) (any, *api.RPCError) {
+	if s.imgStore == nil {
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Image.Get (image store disabled)"}
+	}
+	var p struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	m, _, err := s.imgStore.Get(p.Ref)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	return imageManifestResult(m), nil
+}
+
 // handleImageRemove deletes a name:tag (or sha) reference from the store.
 func (s *Server) handleImageRemove(params json.RawMessage) (any, *api.RPCError) {
 	if s.imgStore == nil {

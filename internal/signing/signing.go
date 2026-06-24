@@ -224,6 +224,78 @@ func (s *Store) LoadSignature(imageDir string) (*Signature, error) {
 	return &sig, nil
 }
 
+const sigDirName = "signatures"
+
+// signaturePath returns the on-disk path for a content digest's signature,
+// keyed by the digest itself rather than a store directory. This lets the
+// client sign and verify images held by a remote daemon.
+func (s *Store) signaturePath(digest string) string {
+	name := strings.ReplaceAll(digest, ":", "-") + sigExt
+	return filepath.Join(s.root, sigDirName, name)
+}
+
+// loadOrGenerateKey returns the stored key pair, generating and saving one if
+// none exists yet.
+func (s *Store) loadOrGenerateKey() (*KeyPair, error) {
+	if s.HasKeyPair() {
+		return s.LoadKeyPair()
+	}
+	return s.GenerateAndSave()
+}
+
+// SignDigest signs a content digest (e.g. an image's disk digest) with the
+// stored key pair and saves the signature keyed by that digest.
+func (s *Store) SignDigest(digest string) (*Signature, error) {
+	kp, err := s.loadOrGenerateKey()
+	if err != nil {
+		return nil, fmt.Errorf("sign digest: %w", err)
+	}
+	sig, err := Sign(kp, digest)
+	if err != nil {
+		return nil, fmt.Errorf("sign digest: %w", err)
+	}
+	path := s.signaturePath(digest)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("sign digest: %w", err)
+	}
+	data, err := json.MarshalIndent(sig, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("sign digest: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return nil, fmt.Errorf("sign digest: write: %w", err)
+	}
+	return sig, nil
+}
+
+// VerifyDigest verifies the signature stored for a content digest. It returns
+// (nil, nil) when no signature exists, the signature on success, and an error
+// when a signature exists but is invalid.
+func (s *Store) VerifyDigest(digest string) (*Signature, error) {
+	data, err := os.ReadFile(s.signaturePath(digest))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("verify digest: read: %w", err)
+	}
+	var sig Signature
+	if err := json.Unmarshal(data, &sig); err != nil {
+		return nil, fmt.Errorf("verify digest: parse: %w", err)
+	}
+	if sig.Digest != digest {
+		return &sig, fmt.Errorf("verify digest: signature is for %s, not %s", sig.Digest, digest)
+	}
+	kp, err := s.LoadKeyPair()
+	if err != nil {
+		return nil, fmt.Errorf("verify digest: load key pair: %w", err)
+	}
+	if err := Verify(kp.PublicKey, &sig); err != nil {
+		return &sig, fmt.Errorf("verify digest: %w", err)
+	}
+	return &sig, nil
+}
+
 // SignManifest signs the manifest digest using the stored key pair and saves the signature.
 // imageDir is the directory containing the manifest (typically <store>/images/<hex-digest>).
 // If no key pair exists, it generates one first.
