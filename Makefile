@@ -1,5 +1,5 @@
-BINARY_UNI   := uni
-BINARY_UNID  := unid
+BINARY_UNI   := jerboa
+BINARY_UNID  := jerboad
 BUILD_DIR    := dist
 VERSION      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS      := -ldflags="-s -w -X main.version=$(VERSION)"
@@ -7,8 +7,8 @@ LDFLAGS      := -ldflags="-s -w -X main.version=$(VERSION)"
 .PHONY: build kernel test test-integration test-kernel lint tidy-check e2e smoke coverage clean
 
 build:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/uni
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNID) ./cmd/unid
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/jerboa
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNID) ./cmd/jerboad
 
 kernel:
 	$(MAKE) -C kernel all
@@ -33,9 +33,9 @@ e2e:
 	go test -tags e2e -timeout 30m ./tests/e2e/...
 
 smoke:
-	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI) ./cmd/uni
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI) ./cmd/jerboa
 	go build $(LDFLAGS) -o $(BUILD_DIR)/uni-smoke ./cmd/uni-smoke
-	./$(BUILD_DIR)/uni-smoke --uni ./$(BUILD_DIR)/$(BINARY_UNI)
+	./$(BUILD_DIR)/uni-smoke --jerboa ./$(BUILD_DIR)/$(BINARY_UNI)
 
 coverage: test
 	go tool cover -html=coverage.out -o coverage.html

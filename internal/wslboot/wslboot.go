@@ -27,8 +27,8 @@ type Config struct {
 	// Token is the shared secret passed to the daemon (via the environment, not
 	// argv) and used by the client handshake. Empty disables authentication.
 	Token string
-	// UnidPath is the unid binary path inside WSL. Empty resolves "unid" on the
-	// distro's PATH.
+	// UnidPath is the jerboad binary path inside WSL. Empty resolves "jerboad"
+	// on the distro's PATH.
 	UnidPath string
 	// HealthTimeout bounds how long to wait for a freshly launched daemon to
 	// answer. Zero defaults to 20s.
@@ -109,7 +109,7 @@ func launchInWSL(cfg Config) error {
 func buildLaunchArgs(cfg Config) (args, env []string) {
 	unid := cfg.UnidPath
 	if unid == "" {
-		unid = "unid"
+		unid = "jerboad"
 	}
 	if cfg.Distro != "" {
 		args = append(args, "-d", cfg.Distro)

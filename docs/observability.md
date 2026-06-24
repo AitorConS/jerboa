@@ -22,7 +22,7 @@ Uni provides built-in observability for production unikernel workloads: Promethe
 Enable the metrics endpoint with `--metrics-addr` on the daemon:
 
 ```bash
-unid --metrics-addr :9090
+jerboad --metrics-addr :9090
 ```
 
 This starts an HTTP server with:
@@ -60,7 +60,7 @@ The five `uni_vms_*_total` gauges reflect a live snapshot of the VM registry (ho
 
 ```yaml
 scrape_configs:
-  - job_name: 'unid'
+  - job_name: 'jerboad'
     static_configs:
       - targets: ['localhost:9090']
 ```
@@ -74,7 +74,7 @@ The daemon also updates VM state gauges every 5 seconds via an internal poller.
 Enable distributed tracing with `--trace-addr`:
 
 ```bash
-unid --trace-addr localhost:4317
+jerboad --trace-addr localhost:4317
 ```
 
 This configures an OTLP gRPC exporter. When empty (default), tracing is completely disabled (no-op provider).
@@ -100,7 +100,7 @@ Point `--trace-addr` at your OTLP collector (Jaeger, Tempo, etc.):
 
 ```bash
 # Using Jaeger with OTLP collector
-unid --trace-addr localhost:4317
+jerboad --trace-addr localhost:4317
 ```
 
 ---
@@ -110,7 +110,7 @@ unid --trace-addr localhost:4317
 Switch from the default text format to JSON with `--log-format`:
 
 ```bash
-unid --log-format json
+jerboad --log-format json
 ```
 
 ### Output Format
@@ -134,17 +134,17 @@ JSON logs ship easily to Loki, Splunk, Datadog, or any log aggregation system.
 
 ## Live VM Stats
 
-The `uni stats` command shows real-time resource usage per VM:
+The `jerboa stats` command shows real-time resource usage per VM:
 
 ```bash
 # One-time snapshot
-uni stats <vm-id>
+jerboa stats <vm-id>
 
 # Continuous watch (2s interval by default)
-uni stats <vm-id> --watch
+jerboa stats <vm-id> --watch
 
 # Custom interval
-uni stats <vm-id> --watch --interval 5s
+jerboa stats <vm-id> --watch --interval 5s
 ```
 
 ### Available Metrics
@@ -160,7 +160,7 @@ uni stats <vm-id> --watch --interval 5s
 ### JSON Output
 
 ```bash
-uni stats <vm-id> --output json
+jerboa stats <vm-id> --output json
 ```
 
 ---
@@ -170,7 +170,7 @@ uni stats <vm-id> --output json
 Enable the read-only web dashboard with `--ui-addr`:
 
 ```bash
-unid --ui-addr :8080
+jerboad --ui-addr :8080
 ```
 
 ### Pages
@@ -198,7 +198,7 @@ The VM detail page polls stats every 3 seconds and renders CPU%, memory, and net
 By default, VM state is persisted as per-VM JSON files. For improved reliability, switch to SQLite:
 
 ```bash
-unid --vm-store sqlite
+jerboad --vm-store sqlite
 ```
 
 The SQLite store automatically migrates any existing `state.json` VMs on first use. Migration is idempotent — re-running does not create duplicates.
@@ -235,10 +235,10 @@ When running on Linux with cgroup v2, you can enforce CPU and memory limits per 
 
 ```bash
 # Limit CPU shares (1-10000 cgroup v2 weight, default 100)
-uni run myapp:latest --cpu-shares 512
+jerboa run myapp:latest --cpu-shares 512
 
 # Set a memory hard limit (K/M/G suffixes)
-uni run myapp:latest --memory-max 1G
+jerboa run myapp:latest --memory-max 1G
 ```
 
 If cgroup v2 is not available, the flags are accepted but no limits are enforced (a warning is logged). See [Resource Quotas]({% link architecture.md %}#resource-quotas) in the architecture reference for how the daemon manages cgroups.
@@ -249,10 +249,10 @@ Disk I/O for the **boot disk only** (not mounted volumes) can be limited using Q
 
 ```bash
 # Limit to 1000 IOPS
-uni run myapp:latest --disk-iops 1000
+jerboa run myapp:latest --disk-iops 1000
 
 # Limit throughput to 10MB/s
-uni run myapp:latest --disk-bps 10M
+jerboa run myapp:latest --disk-bps 10M
 ```
 
 See [I/O Throttling]({% link architecture.md %}#io-throttling) in the architecture reference for details.

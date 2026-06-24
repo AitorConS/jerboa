@@ -53,7 +53,7 @@ func TestCliIsNewer(t *testing.T) {
 }
 
 func TestBinaryName(t *testing.T) {
-	require.Equal(t, "uni", binaryName("uni"))
+	require.Equal(t, "jerboa", binaryName("jerboa"))
 }
 
 func TestBinaryExt(t *testing.T) {
@@ -62,20 +62,20 @@ func TestBinaryExt(t *testing.T) {
 
 func TestCleanupBackups(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "uni.bak"), []byte("old"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "unid.bak"), []byte("old"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "uni"), []byte("new"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "jerboa.bak"), []byte("old"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "jerboad.bak"), []byte("old"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "jerboa"), []byte("new"), 0o755))
 
 	cleanupBackups(dir)
 
-	_, err := os.Stat(filepath.Join(dir, "uni.bak"))
-	require.True(t, os.IsNotExist(err), "uni.bak should be deleted")
+	_, err := os.Stat(filepath.Join(dir, "jerboa.bak"))
+	require.True(t, os.IsNotExist(err), "jerboa.bak should be deleted")
 
-	_, err = os.Stat(filepath.Join(dir, "unid.bak"))
-	require.True(t, os.IsNotExist(err), "unid.bak should be deleted")
+	_, err = os.Stat(filepath.Join(dir, "jerboad.bak"))
+	require.True(t, os.IsNotExist(err), "jerboad.bak should be deleted")
 
-	_, err = os.Stat(filepath.Join(dir, "uni"))
-	require.NoError(t, err, "uni should still exist")
+	_, err = os.Stat(filepath.Join(dir, "jerboa"))
+	require.NoError(t, err, "jerboa should still exist")
 }
 
 func TestInstallBinary(t *testing.T) {

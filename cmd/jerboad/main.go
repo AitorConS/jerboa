@@ -57,7 +57,7 @@ func newRootCmd() *cobra.Command {
 		fcKernelPath  string
 	)
 	root := &cobra.Command{
-		Use:     "unid",
+		Use:     "jerboad",
 		Short:   "Unikernel engine daemon",
 		Version: version,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -114,14 +114,14 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 
 	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
 	if err != nil {
-		return fmt.Errorf("unid: vm store: %w", err)
+		return fmt.Errorf("jerboad: vm store: %w", err)
 	}
 
 	// Resolve hypervisor: flag > config file > default "qemu".
 	if hypervisor == "" {
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {
-			slog.Warn("unid: could not read config, defaulting to qemu", "err", err)
+			slog.Warn("jerboad: could not read config, defaulting to qemu", "err", err)
 		} else {
 			hypervisor = cfg.Hypervisor
 		}
@@ -138,31 +138,31 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	case "firecracker":
 		if fcKernelPath == "" {
 			toolsDir := defaultToolsPath()
-			slog.Info("unid: ensuring Firecracker kernel is available", "dir", toolsDir)
+			slog.Info("jerboad: ensuring Firecracker kernel is available", "dir", toolsDir)
 			dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer dlCancel()
 			var err error
 			fcKernelPath, err = tools.EnsureFCKernel(dlCtx, toolsDir)
 			if err != nil {
-				return fmt.Errorf("unid: download Firecracker kernel: %w", err)
+				return fmt.Errorf("jerboad: download Firecracker kernel: %w", err)
 			}
 		}
-		slog.Info("unid: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
+		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore))
 	case "qemu":
 		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore))
 	default:
-		return fmt.Errorf("unid: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
+		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
 
 	netStore, err := network.NewStore(networksDir())
 	if err != nil {
-		return fmt.Errorf("unid: network store: %w", err)
+		return fmt.Errorf("jerboad: network store: %w", err)
 	}
 
 	svcStore, err := service.NewFileStore(servicesDir())
 	if err != nil {
-		return fmt.Errorf("unid: service store: %w", err)
+		return fmt.Errorf("jerboad: service store: %w", err)
 	}
 	svcMgr := service.NewManager(mgr, svcStore)
 
@@ -171,7 +171,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 
 	traceProvider, err := tracing.NewProvider(ctx, traceAddr, version)
 	if err != nil {
-		return fmt.Errorf("unid: tracing: %w", err)
+		return fmt.Errorf("jerboad: tracing: %w", err)
 	}
 	defer func() {
 		if err := traceProvider.Shutdown(context.Background()); err != nil {
@@ -200,7 +200,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 
 	store := mgr.Store()
 	if err := store.Restore(); err != nil {
-		slog.Warn("unid: failed to restore VMs from disk", "err", err)
+		slog.Warn("jerboad: failed to restore VMs from disk", "err", err)
 	}
 
 	var clusterLister apiserver.ClusterMemberLister
@@ -227,7 +227,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		if joinAddrs != "" {
 			seeds := splitCommaList(joinAddrs)
 			if err := swimCluster.Join(ctx, seeds...); err != nil {
-				slog.Warn("unid: cluster join errors", "err", err)
+				slog.Warn("jerboad: cluster join errors", "err", err)
 			}
 		}
 		swimCluster.Start(ctx)
@@ -237,22 +237,22 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 
 	vmSrv, err := apiserver.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
 	if err != nil {
-		return fmt.Errorf("unid: vm server: %w", err)
+		return fmt.Errorf("jerboad: vm server: %w", err)
 	}
 
 	// Require a token on every connection when one is configured. A TCP
 	// endpoint without a token is reachable by any local process, so warn.
 	if authToken != "" {
 		vmSrv.SetAuthToken(authToken)
-		slog.Info("unid: client authentication enabled")
+		slog.Info("jerboad: client authentication enabled")
 	} else if strings.HasPrefix(endpoint, "tcp://") {
-		slog.Warn("unid: TCP endpoint without --auth-token is reachable by any local process; set a token")
+		slog.Warn("jerboad: TCP endpoint without --auth-token is reachable by any local process; set a token")
 	}
 
 	// Attach the daemon's image store so it can resolve image references for
 	// VM.Run and serve Image.List/Image.Remove.
 	if imgStore, err := image.NewStore(storePath); err != nil {
-		slog.Warn("unid: image store unavailable", "err", err)
+		slog.Warn("jerboad: image store unavailable", "err", err)
 	} else {
 		vmSrv.SetImageStore(imgStore)
 		// Enable server-side image builds (Image.Build) with a lazy mkfs
@@ -260,18 +260,18 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		// build instead of blocking startup.
 		toolsDir := defaultToolsPath()
 		vmSrv.EnableImageBuildResolver(func(rctx context.Context) (image.MkfsFunc, error) {
-			slog.Info("unid: resolving mkfs toolchain for image build", "tools_dir", toolsDir)
+			slog.Info("jerboad: resolving mkfs toolchain for image build", "tools_dir", toolsDir)
 			return tools.ResolveMkfs(rctx, toolsDir, "")
 		})
-		slog.Info("unid: image build enabled", "store", storePath)
+		slog.Info("jerboad: image build enabled", "store", storePath)
 	}
 
-	slog.Info("unid listening", "endpoint", endpoint, "qemu", qemuBin)
+	slog.Info("jerboad listening", "endpoint", endpoint, "qemu", qemuBin)
 
 	if err := vmSrv.Serve(ctx); err != nil {
-		return fmt.Errorf("unid serve: %w", err)
+		return fmt.Errorf("jerboad serve: %w", err)
 	}
-	slog.Info("unid shutdown complete")
+	slog.Info("jerboad shutdown complete")
 	return nil
 }
 
@@ -300,7 +300,7 @@ func newVMStore(storeType, dir string) (vm.Store, error) {
 		}
 		m := vm.NewMigrator(dir, sqliteStore)
 		if _, err := m.Migrate(); err != nil {
-			slog.Warn("unid: file-to-sqlite migration errors", "err", err)
+			slog.Warn("jerboad: file-to-sqlite migration errors", "err", err)
 		}
 		return sqliteStore, nil
 	case "file", "":

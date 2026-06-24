@@ -36,7 +36,7 @@ func newUpgradeCmd(socketPath *string, verbose *bool) *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "upgrade",
-		Short: "Upgrade uni and unid to the latest version",
+		Short: "Upgrade jerboa and jerboad to the latest version",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
 			defer cancel()
@@ -79,7 +79,7 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 		return nil
 	}
 
-	// 2. Locate the directory holding the running uni binary.
+	// 2. Locate the directory holding the running jerboa binary.
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("upgrade: locate binary: %w", err)
@@ -93,22 +93,22 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 	sp := newSpinner(errOut, verbose)
 
 	// 3. Download both binaries to temp files before touching anything on disk.
-	sp.Start("Downloading uni " + remote)
-	uniTmp, err := downloadBinary(ctx, dir, "uni", remote)
+	sp.Start("Downloading jerboa " + remote)
+	uniTmp, err := downloadBinary(ctx, dir, "jerboa", remote)
 	if err != nil {
 		sp.Fail("Download failed")
-		return fmt.Errorf("upgrade: download uni: %w", err)
+		return fmt.Errorf("upgrade: download jerboa: %w", err)
 	}
-	sp.Done("Downloaded uni " + remote)
+	sp.Done("Downloaded jerboa " + remote)
 	defer func() { _ = os.Remove(uniTmp) }()
 
-	sp.Start("Downloading unid " + remote)
-	unidTmp, err := downloadBinary(ctx, dir, "unid", remote)
+	sp.Start("Downloading jerboad " + remote)
+	unidTmp, err := downloadBinary(ctx, dir, "jerboad", remote)
 	if err != nil {
 		sp.Fail("Download failed")
-		return fmt.Errorf("upgrade: download unid: %w", err)
+		return fmt.Errorf("upgrade: download jerboad: %w", err)
 	}
-	sp.Done("Downloaded unid " + remote)
+	sp.Done("Downloaded jerboad " + remote)
 	defer func() { _ = os.Remove(unidTmp) }()
 
 	// 4. Stop the daemon gracefully if it is running.
@@ -116,31 +116,31 @@ func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes 
 
 	// 5. Atomically replace both binaries.
 	uniDest := exe
-	unidDest := filepath.Join(dir, binaryName("unid"))
+	unidDest := filepath.Join(dir, binaryName("jerboad"))
 
 	if err := installBinary(uniTmp, uniDest); err != nil {
-		return fmt.Errorf("upgrade: install uni: %w", err)
+		return fmt.Errorf("upgrade: install jerboa: %w", err)
 	}
-	fmt.Fprintf(out, "uni  → %s\n", uniDest)
+	fmt.Fprintf(out, "jerboa  → %s\n", uniDest)
 
 	if err := installBinary(unidTmp, unidDest); err != nil {
-		return fmt.Errorf("upgrade: install unid: %w", err)
+		return fmt.Errorf("upgrade: install jerboad: %w", err)
 	}
-	fmt.Fprintf(out, "unid → %s\n", unidDest)
+	fmt.Fprintf(out, "jerboad → %s\n", unidDest)
 
 	// 6. Clean up old .bak files now that the old processes have exited.
 	cleanupBackups(dir)
 
 	// 7. Restart daemon if it was running before.
 	if daemonWasRunning {
-		sp.Start("Starting new unid")
+		sp.Start("Starting new jerboad")
 		if err := launchDaemon(unidDest, socketPath); err != nil {
-			sp.Fail("Could not start unid")
-			fmt.Fprintf(errOut, "warning: start unid: %v\n", err)
-			fmt.Fprintln(errOut, "Start unid manually: unid --socket "+socketPath)
+			sp.Fail("Could not start jerboad")
+			fmt.Fprintf(errOut, "warning: start jerboad: %v\n", err)
+			fmt.Fprintln(errOut, "Start jerboad manually: jerboad --socket "+socketPath)
 		} else if err := waitForSocket(socketPath, daemonReadyTimeout); err != nil {
 			sp.Fail("Daemon did not become ready")
-			fmt.Fprintf(errOut, "warning: unid did not become ready: %v\n", err)
+			fmt.Fprintf(errOut, "warning: jerboad did not become ready: %v\n", err)
 		} else {
 			sp.Done("Daemon restarted and ready")
 		}
@@ -202,7 +202,7 @@ func waitForSocket(socketPath string, timeout time.Duration) error {
 	return fmt.Errorf("socket %s not ready after %s", socketPath, timeout)
 }
 
-// launchDaemon starts a new unid process detached from the current terminal.
+// launchDaemon starts a new jerboad process detached from the current terminal.
 func launchDaemon(unidBin, socketPath string) error {
 	cmd := exec.Command(unidBin, "--socket", socketPath) //nolint:noctx // daemon outlives the CLI process; no context to pass
 	cmd.Stdout = nil
@@ -357,7 +357,7 @@ func newUpgradeCheckCmd(socketPath *string) *cobra.Command {
 			cliOutdated := cliIsNewer(version, remote)
 			daemonOutdated := daemonVer != "" && cliIsNewer(daemonVer, remote)
 			if cliOutdated || daemonOutdated {
-				fmt.Fprintf(out, "Update available. Run `uni upgrade` to install %s.\n", remote)
+				fmt.Fprintf(out, "Update available. Run `jerboa upgrade` to install %s.\n", remote)
 			} else {
 				fmt.Fprintln(out, "Already up to date.")
 			}

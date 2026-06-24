@@ -35,14 +35,14 @@ func main() {
 
 func run() int {
 	var uniBin string
-	flag.StringVar(&uniBin, "uni", "", "path to uni binary")
+	flag.StringVar(&uniBin, "jerboa", "", "path to jerboa binary")
 	flag.Parse()
 
 	if uniBin == "" {
 		if runtime.GOOS == "windows" {
-			uniBin = filepath.Join(".", "uni-windows-amd64.exe")
+			uniBin = filepath.Join(".", "jerboa-windows-amd64.exe")
 		} else {
-			uniBin = filepath.Join(".", "uni")
+			uniBin = filepath.Join(".", "jerboa")
 		}
 	}
 

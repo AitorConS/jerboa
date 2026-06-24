@@ -46,7 +46,7 @@ func NewProvider(ctx context.Context, addr string, version string) (*Provider, e
 		resource.Default(),
 		resource.NewWithAttributes(
 			semconv.SchemaURL,
-			semconv.ServiceNameKey.String("unid"),
+			semconv.ServiceNameKey.String("jerboad"),
 			semconv.ServiceVersionKey.String(version),
 		),
 	)

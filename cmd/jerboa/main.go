@@ -33,7 +33,7 @@ func newRootCmd() *cobra.Command {
 	)
 
 	root := &cobra.Command{
-		Use:     "uni",
+		Use:     "jerboa",
 		Short:   "Unikernel engine CLI",
 		Version: version,
 		// Resolve the daemon endpoint before any subcommand runs:
@@ -60,9 +60,9 @@ func newRootCmd() *cobra.Command {
 		},
 	}
 	root.PersistentFlags().StringVarP(&hostFlag, "host", "H", "",
-		"unid daemon endpoint (unix:///path or tcp://host:port)")
+		"jerboad daemon endpoint (unix:///path or tcp://host:port)")
 	root.PersistentFlags().StringVar(&socketFlag, "socket", "",
-		"unid daemon socket path (deprecated: use --host)")
+		"jerboad daemon socket path (deprecated: use --host)")
 	_ = root.PersistentFlags().MarkDeprecated("socket", "use --host instead")
 	root.PersistentFlags().StringVar(&storePath, "store",
 		defaultStorePath(), "local image store path")
@@ -109,14 +109,14 @@ func needsDaemon(cmd *cobra.Command) bool {
 		"sign": true, "verify": true, "completion": true, "help": true,
 	}
 	for c := cmd; c != nil; c = c.Parent() {
-		if c.Name() == "uni" && c.Parent() == nil {
+		if c.Name() == "jerboa" && c.Parent() == nil {
 			break // reached root
 		}
 		if localGroups[c.Name()] {
 			return false
 		}
 	}
-	return cmd.Name() != "uni"
+	return cmd.Name() != "jerboa"
 }
 
 // ensureDaemon resolves (or generates) the auth token and makes sure the WSL2

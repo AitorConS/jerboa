@@ -110,7 +110,7 @@ jobs:
             echo "Error: package output directory not found at $BINARY"
             exit 1
           fi
-          ./dist/uni pkg create ${{ matrix.package }}:${{ matrix.version }} \
+          ./dist/jerboa pkg create ${{ matrix.package }}:${{ matrix.version }} \
             "$BINARY" \
             --description "${{ matrix.package }} ${{ matrix.version }} runtime" \
             --runtime ${{ matrix.package }}

@@ -71,7 +71,7 @@ volumes:
 
 | Field | Required | Default | Description |
 |---|---|---|---|
-| `image` | Yes | — | Image `name:tag` from local store, or a file path to a bootable disk image (`.img`) built with `uni build` |
+| `image` | Yes | — | Image `name:tag` from local store, or a file path to a bootable disk image (`.img`) built with `jerboa build` |
 | `memory` | No | `256M` | VM memory (QEMU format: `256M`, `1G`, `4G`) |
 | `cpus` | No | `1` | Number of virtual CPUs |
 | `depends_on` | No | `[]` | Services that must start before this one |
@@ -85,7 +85,7 @@ volumes:
 | `strategy` | No | — | Update strategy for scaled services: `RollingUpdate` or `Recreate`. Only meaningful when `replicas > 1` |
 
 {: .note }
-`health_check` and `restart` apply to single-instance services (`replicas` unset or `1`). For scaled services (`replicas > 1`), lifecycle is managed by `uni service` instead — see below.
+`health_check` and `restart` apply to single-instance services (`replicas` unset or `1`). For scaled services (`replicas > 1`), lifecycle is managed by `jerboa service` instead — see below.
 
 ---
 
@@ -205,19 +205,19 @@ services:
 
 **What changes when `replicas > 1`:**
 
-- `compose up` does **not** call `VM.Run` directly for that service. Instead it calls `Service.Run` (the same machinery behind [`uni service run`]({% link cli-reference.md %}#service-commands)), which creates `replicas` VMs behind the shared name `api`, attaches each to the service's first network with its own auto-allocated IP, and registers internal DNS records for all of them
-- Other services can reach the group by its name — `uni dns resolve-all api --network backend-net` returns every replica's IP, and the daemon round-robins between them for service-to-service traffic
-- `health_check` and `restart` are not set per-replica from the compose file; the service is managed as a unit instead. Use `strategy: RollingUpdate` (replace replicas one at a time) or `strategy: Recreate` (stop all, then start all) to control how `uni service update` rolls out changes
+- `compose up` does **not** call `VM.Run` directly for that service. Instead it calls `Service.Run` (the same machinery behind [`jerboa service run`]({% link cli-reference.md %}#service-commands)), which creates `replicas` VMs behind the shared name `api`, attaches each to the service's first network with its own auto-allocated IP, and registers internal DNS records for all of them
+- Other services can reach the group by its name — `jerboa dns resolve-all api --network backend-net` returns every replica's IP, and the daemon round-robins between them for service-to-service traffic
+- `health_check` and `restart` are not set per-replica from the compose file; the service is managed as a unit instead. Use `strategy: RollingUpdate` (replace replicas one at a time) or `strategy: Recreate` (stop all, then start all) to control how `jerboa service update` rolls out changes
 - The compose state file records the service under `scalable_services`, so `compose down` knows to call `Service.Remove` (which stops and deletes every replica) instead of `VM.Stop`/`VM.Remove` for a single VM
 - `compose ps` and `compose logs` resolve the underlying replica VM IDs through the service so they keep working transparently
 
 You can also manage a scaled service directly once it's running:
 
 ```bash
-uni service ls
-uni service inspect api
-uni service scale api 5
-uni service update api myapi:v1.1
+jerboa service ls
+jerboa service inspect api
+jerboa service scale api 5
+jerboa service update api myapi:v1.1
 ```
 
 See [Service Commands]({% link cli-reference.md %}#service-commands) for the full reference.
@@ -232,7 +232,7 @@ Uni uses **Kahn's topological sort** algorithm to determine startup order:
 2. Start services with no dependencies first
 3. When a service finishes starting, unlock any services that depended on it
 
-If a **dependency cycle** is detected (e.g. A depends on B, B depends on A), `uni compose up` will fail immediately:
+If a **dependency cycle** is detected (e.g. A depends on B, B depends on A), `jerboa compose up` will fail immediately:
 
 ```
 Error: compose up: compose: dependency cycle detected
@@ -242,7 +242,7 @@ Error: compose up: compose: dependency cycle detected
 
 ## State File
 
-When you run `uni compose up stack.yaml`, a state file is created in the same directory:
+When you run `jerboa compose up stack.yaml`, a state file is created in the same directory:
 
 ```
 stack.yaml
@@ -293,7 +293,7 @@ Content:
 Commands `down`, `ps`, and `logs` read this file to know which VM IDs (or services) belong to the stack.
 
 {: .warning }
-Do not delete `.uni-compose-state.json` manually while the stack is running. If it gets lost, use `uni ps` to find the VM IDs and stop them individually with `uni stop`.
+Do not delete `.uni-compose-state.json` manually while the stack is running. If it gets lost, use `jerboa ps` to find the VM IDs and stop them individually with `jerboa stop`.
 
 ---
 
@@ -304,7 +304,7 @@ The simplest possible compose file — one service, no networks. The `version` f
 Build the image first, then reference it by name:
 
 ```bash
-uni build ./hello-linux --name hello
+jerboa build ./hello-linux --name hello
 ```
 
 ```yaml
@@ -315,16 +315,16 @@ services:
 ```
 
 ```bash
-uni compose up hello.yaml
+jerboa compose up hello.yaml
 # started hello → a3f8c2d1-...
 
-uni compose ps hello.yaml
+jerboa compose ps hello.yaml
 # SERVICE  ID              STATE
 # hello    a3f8c2d1-...    running
 
-uni compose logs hello.yaml hello
+jerboa compose logs hello.yaml hello
 # Hello from unikernel!
 
-uni compose down hello.yaml
+jerboa compose down hello.yaml
 # stopped hello
 ```

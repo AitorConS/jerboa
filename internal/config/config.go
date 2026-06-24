@@ -23,9 +23,9 @@ type DaemonConfig struct {
 	// Distro is the WSL2 distribution to host the daemon on Windows. Empty uses
 	// the WSL default distro.
 	Distro string `toml:"distro"`
-	// UnidPath is the unid binary path inside the WSL distro. Empty resolves
-	// "unid" on the distro's PATH.
-	UnidPath string `toml:"unid_path"`
+	// UnidPath is the jerboad binary path inside the WSL distro. Empty resolves
+	// "jerboad" on the distro's PATH.
+	UnidPath string `toml:"jerboad_path"`
 	// Token is the shared secret sent to the daemon via the Auth.Hello
 	// handshake. Overridden by the UNI_AUTH_TOKEN environment variable.
 	Token string `toml:"token"`

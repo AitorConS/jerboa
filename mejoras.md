@@ -2,7 +2,7 @@
 
 > Documento de diseño. Objetivo: eliminar la capa de puentes por-operación
 > entre Windows y WSL2 y sustituirla por un modelo cliente/servidor limpio,
-> donde `unid` corre íntegramente en Linux (WSL2) y `uni.exe` es un cliente
+> donde `jerboad` corre íntegramente en Linux (WSL2) y `jerboa.exe` es un cliente
 > fino que habla con él por red. La decisión se toma pensando en escalar a
 > daemons remotos, no solo en resolver el caso Windows.
 
@@ -10,7 +10,7 @@
 
 ## 1. Problema actual
 
-Hoy en Windows `unid` corre **nativo** y reenvía operaciones sueltas a WSL2:
+Hoy en Windows `jerboad` corre **nativo** y reenvía operaciones sueltas a WSL2:
 
 - `internal/vm/firecracker_windows.go` — `platformInitFC` reescribe cada hook
   del manager (comando, socket, shutdown, logs, paths) para tunelar a `wsl --`.
@@ -33,7 +33,7 @@ daemon y pasa a ser solo un caso especial del *bootstrap* del cliente.
 ```
 Windows                              WSL2 (distro Linux)
 ──────────────────────────────      ──────────────────────────────────
-uni.exe  (cliente fino)   ──TCP──▶   unid (daemon Linux nativo)
+jerboa.exe  (cliente fino)   ──TCP──▶   jerboad (daemon Linux nativo)
   ├── parseo de comandos               ├── QEMU / Firecracker  (nativo)
   ├── resolución de endpoint           ├── TAP / bridge        (nativo)
   ├── bootstrap del daemon             ├── cgroups / KVM       (nativo)
@@ -47,8 +47,8 @@ protocolo. **Un solo modelo mental para todas las plataformas.**
 
 ### Principio rector
 
-> `uni` es multiplataforma y solo contiene lógica de cliente.
-> `unid` se compila **solo para Linux** y contiene toda la lógica de
+> `jerboa` es multiplataforma y solo contiene lógica de cliente.
+> `jerboad` se compila **solo para Linux** y contiene toda la lógica de
 > hipervisor, red y aislamiento.
 
 Esto hace que desaparezcan por construcción los ficheros `*_windows.go` y los
@@ -102,7 +102,7 @@ distro   = "jerboa"                  # distro WSL2 a usar (ver D5)
 ```
 
 Defaults por plataforma (sustituye a `defaultSocketPath()` en
-`cmd/uni/main.go:72` y `cmd/unid/main.go:232`):
+`cmd/jerboa/main.go:72` y `cmd/jerboad/main.go:232`):
 
 | Plataforma | Endpoint por defecto         |
 |------------|------------------------------|
@@ -114,10 +114,10 @@ Defaults por plataforma (sustituye a `defaultSocketPath()` en
 El socket Unix tenía permisos de filesystem; un TCP los pierde. Reglas:
 
 - **Bind a `127.0.0.1`, nunca `0.0.0.0`.** WSL2 hace localhost-forwarding, así
-  que `uni.exe` llega por `127.0.0.1` sin exponer el daemon a la LAN.
+  que `jerboa.exe` llega por `127.0.0.1` sin exponer el daemon a la LAN.
 - **Token bearer obligatorio en cualquier endpoint TCP** (en `unix://` es
   opcional porque ya hay permisos de fichero).
-- **El cliente es el dueño del secreto**, no el daemon: `uni.exe` genera un
+- **El cliente es el dueño del secreto**, no el daemon: `jerboa.exe` genera un
   token aleatorio en el bootstrap, lo persiste en `%USERPROFILE%\.uni\daemon.json`
   (permisos solo-usuario) y lo pasa al daemon **por stdin/env al lanzarlo**
   (nunca por `argv`, que es visible en la lista de procesos).
@@ -131,7 +131,7 @@ El socket Unix tenía permisos de filesystem; un TCP los pierde. Reglas:
 
 ### D4 — El build se mueve dentro del daemon (adiós reescritura de paths)
 
-Hoy `uni build` compila en el host y luego invoca `mkfs` (vía WSL en Windows,
+Hoy `jerboa build` compila en el host y luego invoca `mkfs` (vía WSL en Windows,
 reescribiendo paths). Esto es la otra mitad de la fragilidad. Decisión:
 
 - El daemon expone `Image.Build`. El cliente **empaqueta el contexto de build**
@@ -157,10 +157,10 @@ compartidos.
 
 ### D6 — Gestión del daemon y de la distro (modelo Docker Desktop)
 
-`uni.exe` gestiona el ciclo de vida como hace `docker.exe`:
+`jerboa.exe` gestiona el ciclo de vida como hace `docker.exe`:
 
 1. **Health check**: ¿responde el endpoint? Si sí, conecta.
-2. **Auto-arranque**: si no, lanza `wsl -d <distro> -- unid --host tcp://127.0.0.1:7890 ...`
+2. **Auto-arranque**: si no, lanza `wsl -d <distro> -- jerboad --host tcp://127.0.0.1:7890 ...`
    con el token por stdin, espera a que el health check pase.
 3. **Distro dedicada (estado final, recomendado):** jerboa aprovisiona su propia
    distro vía `wsl --import jerboa <ruta> <rootfs.tar>`, igual que Docker usa
@@ -178,19 +178,19 @@ compartidos.
 
 Reorganización para que la separación sea estructural, no por `if GOOS`:
 
-- `uni` (cliente): depende de `internal/api` (cliente), `internal/config`,
+- `jerboa` (cliente): depende de `internal/api` (cliente), `internal/config`,
   formato de salida y `internal/wslboot` (bootstrap, build-tag `windows`).
   No importa `internal/vm`, `internal/network`, etc.
-- `unid` (daemon): concentra `internal/vm`, `internal/network`,
+- `jerboad` (daemon): concentra `internal/vm`, `internal/network`,
   `internal/builder`, hipervisores vía `internal/apiserver`.
 
 **Estado:**
 
 - **D7-A ✅** — `internal/api` dividido en cliente (`api`) y servidor
-  (`apiserver`). Verificado: `go list -deps ./cmd/uni` ya no enlaza
+  (`apiserver`). Verificado: `go list -deps ./cmd/jerboa` ya no enlaza
   `internal/vm` ni `internal/network`. El parseo de puertos/endpoint y el
   framing viven en `api` para que la CLI no importe `vm`.
-- **D7-C ✅** — `uni pkg load` enruta por el daemon (`Image.Build`); `mkfs.go`
+- **D7-C ✅** — `jerboa pkg load` enruta por el daemon (`Image.Build`); `mkfs.go`
   sin rama Windows; `mkfs_windows.go`/`mkfs_unix.go` (+ tests) borrados;
   `firecracker_windows.go`/`_notwindows.go` unificados en `platformInitFC`
   no-op universal.
@@ -198,8 +198,8 @@ Reorganización para que la separación sea estructural, no por `if GOOS`:
   (`tap_stub.go`, `bridge_stub.go`, `portfwd_stub.go`, `cgroup_stub.go`,
   `stats_stub.go`). Marcadas `//go:build linux` todas las fuentes del lado
   daemon: `internal/{vm,network,apiserver,metrics,scheduler,service,tracing,ui}`,
-  `cmd/unid`, `cmd/uni-smoke`, y los tests de `cmd/uni` que arrancan el daemon
-  in-process. El cliente (`uni`) y sus paquetes portables compilan y testean en
+  `cmd/jerboad`, `cmd/uni-smoke`, y los tests de `cmd/jerboa` que arrancan el daemon
+  in-process. El cliente (`jerboa`) y sus paquetes portables compilan y testean en
   cualquier OS; el lado daemon compila/testea solo en Linux (validado con
   `GOOS=windows` y `GOOS=linux` build+vet). El test de salud de `wslboot` que
   necesita un daemon real vive en `health_linux_test.go`.
@@ -218,8 +218,8 @@ Cada fase es entregable y deja el sistema funcionando.
 ### Fase 1 — Transporte por endpoint (barata, alto valor) ✅
 - [x] `api.Dial(endpoint)`/`api.listen(endpoint)` con parseo de esquema
       (`unix://`, `tcp://`; valor desnudo = unix por compatibilidad).
-- [x] `unid` escucha en el endpoint resuelto; `--host` con alias `--socket`.
-- [x] `uni` resuelve endpoint (flag → `UNI_HOST` → config → default plataforma).
+- [x] `jerboad` escucha en el endpoint resuelto; `--host` con alias `--socket`.
+- [x] `jerboa` resuelve endpoint (flag → `UNI_HOST` → config → default plataforma).
 - [x] Validación end-to-end por TCP loopback Windows↔WSL2.
 - [x] **Borrado** `firecracker_windows.go` (`platformInitFC` ahora no-op universal).
 
@@ -228,12 +228,12 @@ Cada fase es entregable y deja el sistema funcionando.
 - [x] Store del daemon en ext4 de WSL2; cliente por RPC (`Image.List/Remove`,
       run/build por ref `name:tag`). mkfs corre en Linux (resolución lazy).
 - [x] `tools/mkfs.go` sin rama Windows; `mkfs_windows.go` borrado (D7-C).
-      `uni pkg load` ya enruta su build por el daemon.
+      `jerboa pkg load` ya enruta su build por el daemon.
 
 ### Fase 3 — Seguridad y bootstrap ✅
 - [x] Token bearer + handshake `Auth.Hello` (comparación constante); bind
       loopback; aviso si TCP sin token.
-- [x] `internal/wslboot`: health check + auto-arranque de `unid` en WSL2,
+- [x] `internal/wslboot`: health check + auto-arranque de `jerboad` en WSL2,
       token por entorno (`WSLENV`, nunca `argv`), persistencia en
       `%USERPROFILE%\.uni\daemon.json` (0600).
 
@@ -243,13 +243,13 @@ Cada fase es entregable y deja el sistema funcionando.
       daemon `//go:build linux`. Stubs de red/cgroup **borrados** (ver D7-B).
 
 ### Firma de imágenes — re-cableada al store del daemon ✅
-- [x] `uni sign`/`uni verify` resuelven el *disk digest* de la imagen vía
+- [x] `jerboa sign`/`jerboa verify` resuelven el *disk digest* de la imagen vía
       `Image.Get` (RPC nuevo) y firman/verifican por digest, no por directorio
       local. Las firmas se guardan en `<root>/signatures/<digest>.sig`.
 - [x] `signing.Store`: `SignDigest`/`VerifyDigest` (Ed25519, clave por defecto
       generada en primer uso). `VerifyDigest` rechaza una firma cuyo digest no
       coincide con el solicitado.
-- [x] `uni run --verify` valida contra el store del daemon; los runs por ruta de
+- [x] `jerboa run --verify` valida contra el store del daemon; los runs por ruta de
       fichero (sin `name:tag`) no tienen referencia que verificar.
 
 ---
