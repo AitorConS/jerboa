@@ -1,4 +1,9 @@
 dist/
+# Built binaries dropped at the repo root (e.g. `go build -o jerboad ./cmd/jerboad`)
+/jerboa
+/jerboad
+/jerboa.exe
+/jerboad.exe
 coverage.out
 coverage.html
 *.o
