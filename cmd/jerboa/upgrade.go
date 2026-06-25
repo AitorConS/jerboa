@@ -49,6 +49,13 @@ func newUpgradeCmd(socketPath *string, verbose *bool) *cobra.Command {
 }
 
 func runUpgrade(ctx context.Context, cmd *cobra.Command, socketPath string, yes bool, verbose bool) error {
+	// On Windows the daemon runs inside the dedicated WSL2 distro, not as a local
+	// process on a Unix socket, so it upgrades in place (no rootfs re-import, no
+	// data loss). The Linux-native flow below does not apply there.
+	if runtime.GOOS == "windows" {
+		return runUpgradeWSL(ctx, cmd, socketPath, yes, verbose)
+	}
+
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
 
@@ -218,10 +225,22 @@ func launchDaemon(jerboadBin, socketPath string) error {
 // downloadBinary downloads the named binary for the current platform into a
 // temp file in dir and returns its path.
 func downloadBinary(ctx context.Context, dir, name, ver string) (string, error) {
-	artifact := fmt.Sprintf("%s-%s-%s%s", name, runtime.GOOS, runtime.GOARCH, binaryExt())
+	return downloadBinaryPlatform(ctx, dir, name, runtime.GOOS, runtime.GOARCH, ver)
+}
+
+// downloadBinaryPlatform downloads the named binary for an explicit goos/goarch
+// into a temp file in dir and returns its path. It is the cross-platform form of
+// downloadBinary, used to fetch the linux jerboad for the WSL2 distro from a
+// Windows host.
+func downloadBinaryPlatform(ctx context.Context, dir, name, goos, goarch, ver string) (string, error) {
+	ext := ""
+	if goos == "windows" {
+		ext = ".exe"
+	}
+	artifact := fmt.Sprintf("%s-%s-%s%s", name, goos, goarch, ext)
 	url := fmt.Sprintf("%s/%s/%s", cliReleaseBase, ver, artifact)
 
-	tmp, err := os.CreateTemp(dir, name+"-upgrade-*"+binaryExt())
+	tmp, err := os.CreateTemp(dir, name+"-upgrade-*"+ext)
 	if err != nil {
 		return "", fmt.Errorf("create temp: %w", err)
 	}

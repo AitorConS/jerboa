@@ -86,6 +86,32 @@ func IP() (string, error) {
 	return fields[0], nil
 }
 
+// DaemonBinaryPath is where jerboad lives inside the distro (baked there by the
+// rootfs image and replaced in place on upgrade).
+const DaemonBinaryPath = "/usr/local/bin/jerboad"
+
+// InstallDaemonBinary streams the file at localPath into the distro, replacing
+// the jerboad binary atomically (write-then-rename, so a crash never leaves a
+// truncated binary). Piping over stdin avoids translating the Windows path into
+// the distro's /mnt view. The caller should stop the daemon first to avoid
+// ETXTBSY on the running binary.
+func InstallDaemonBinary(localPath string) error {
+	f, err := os.Open(localPath) //nolint:gosec // caller-owned freshly downloaded binary
+	if err != nil {
+		return fmt.Errorf("wsldistro: open %s: %w", localPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	tmp := DaemonBinaryPath + ".new"
+	script := fmt.Sprintf("cat > %[1]s && chmod 0755 %[1]s && mv -f %[1]s %[2]s", tmp, DaemonBinaryPath)
+	cmd := exec.Command("wsl", "-d", Name, "-u", "root", "--", "sh", "-c", script) //nolint:gosec,noctx // fixed program, controlled args
+	cmd.Stdin = f
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("wsldistro: install jerboad: %w (%s)", err, strings.TrimSpace(decodeWSLOutput(out)))
+	}
+	return nil
+}
+
 // Unregister removes the distro and all of its data.
 func Unregister() error {
 	out, err := exec.Command("wsl", "--unregister", Name).CombinedOutput() //nolint:gosec,noctx // fixed args

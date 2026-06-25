@@ -20,7 +20,7 @@ ctx="$(mktemp -d)"
 cleanup() { rm -rf "${ctx}"; [ -n "${cid:-}" ] && docker rm -f "${cid}" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 
-cp "${here}/Dockerfile" "${here}/wsl.conf" "${ctx}/"
+cp "${here}/Dockerfile" "${here}/wsl.conf" "${here}/load-kvm.sh" "${ctx}/"
 
 echo "==> building linux jerboad"
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -o "${ctx}/jerboad" ./cmd/jerboad

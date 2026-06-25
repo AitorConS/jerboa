@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-x86 qemu-utils \
         iproute2 iptables \
         e2fsprogs \
+        kmod \
         ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -35,6 +36,9 @@ COPY tools/ /root/.jerboa/tools/
 # A dedicated interactive user; the daemon itself runs as root for firecracker.
 RUN useradd -m -s /bin/bash jerboa
 COPY wsl.conf /etc/wsl.conf
+# Loads the KVM module at distro boot (referenced by wsl.conf [boot] command).
+COPY load-kvm.sh /usr/local/sbin/load-kvm.sh
+RUN chmod 0755 /usr/local/sbin/load-kvm.sh
 
 LABEL org.jerboa.distro="jerboa"
 CMD ["/bin/bash"]

@@ -104,6 +104,10 @@ func newDaemonInstallCmd() *cobra.Command {
 			if runtime.GOOS != "windows" {
 				return errNotWindows("install")
 			}
+			// Always ensure the host enables nested virtualization: firecracker
+			// needs it for /dev/kvm, and it is the one piece of setup outside the
+			// distro image. Doing it here also fixes an already-installed machine.
+			ensureNestedVirtualization(cmd)
 			exists, err := wsldistro.Exists()
 			if err != nil {
 				return err
@@ -372,6 +376,25 @@ func launchAndWait(cmd *cobra.Command, wcfg wslboot.Config, token string) error 
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "daemon running at %s (hypervisor=%s)\n", wcfg.Endpoint, wcfg.Hypervisor)
 	return nil
+}
+
+// ensureNestedVirtualization makes sure the host's .wslconfig enables nested
+// virtualization, which firecracker needs for /dev/kvm. Best-effort: a failure
+// only prints a hint, since the user can set it manually. When the file changed,
+// it must be picked up by `wsl --shutdown`, so we say so.
+func ensureNestedVirtualization(cmd *cobra.Command) {
+	changed, path, err := wsldistro.EnsureNestedVirtualization()
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: could not enable nested virtualization in .wslconfig: %v\n"+
+				"  firecracker needs it for /dev/kvm; set [wsl2] nestedVirtualization=true manually\n", err)
+		return
+	}
+	if changed {
+		fmt.Fprintf(cmd.OutOrStdout(),
+			"enabled nested virtualization in %s (firecracker needs it for /dev/kvm)\n"+
+				"  run `wsl --shutdown` for it to take effect\n", path)
+	}
 }
 
 // requireDistro errors with an install hint when the dedicated distro is absent.

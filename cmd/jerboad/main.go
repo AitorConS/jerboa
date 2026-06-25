@@ -274,7 +274,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		slog.Info("jerboad: image build enabled", "store", storePath)
 	}
 
-	slog.Info("jerboad listening", "endpoint", endpoint, "qemu", qemuBin)
+	slog.Info("jerboad listening", "endpoint", endpoint, "hypervisor", hypervisor)
 
 	if err := vmSrv.Serve(ctx); err != nil {
 		return fmt.Errorf("jerboad serve: %w", err)
