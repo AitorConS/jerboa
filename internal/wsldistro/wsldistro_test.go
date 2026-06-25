@@ -32,6 +32,14 @@ func TestDecodeWSLOutput_StripsNUL(t *testing.T) {
 	require.Equal(t, "hi\r", decodeWSLOutput([]byte{'h', 0, 'i', 0, '\r', 0}))
 }
 
+func TestInstallDaemonBinary_OpenError(t *testing.T) {
+	// A missing source binary fails before any `wsl` invocation, so the open
+	// error path is exercised without a real distro.
+	err := InstallDaemonBinary(filepath.Join(t.TempDir(), "does-not-exist"))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "wsldistro: open")
+}
+
 func TestDefaultInstallDir_FallbackHome(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", "")
 	require.Contains(t, DefaultInstallDir(), filepath.Join(".jerboa", "distro"))

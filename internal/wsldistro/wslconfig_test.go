@@ -104,3 +104,27 @@ func TestEnsureNestedVirtualization_CreatesFile(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, changed)
 }
+
+func TestEnsureNestedVirtualization_UpdatesExisting(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("HOME", dir)
+
+	path := filepath.Join(dir, ".wslconfig")
+	require.NoError(t, os.WriteFile(path, []byte("[wsl2]\nnestedVirtualization=false\nmemory=4GB\n"), 0o600))
+
+	changed, got, err := EnsureNestedVirtualization()
+	require.NoError(t, err)
+	require.True(t, changed)
+	require.Equal(t, path, got)
+
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	// Flips the key to true while preserving unrelated settings.
+	require.Equal(t, "[wsl2]\nnestedVirtualization=true\nmemory=4GB\n", string(data))
+
+	// Re-running on the now-correct file is a no-op.
+	changed, _, err = EnsureNestedVirtualization()
+	require.NoError(t, err)
+	require.False(t, changed)
+}

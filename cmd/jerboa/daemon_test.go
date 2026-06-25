@@ -127,3 +127,41 @@ func TestErrNotWindows(t *testing.T) {
 func TestDaemonLogPath(t *testing.T) {
 	require.Contains(t, daemonLogPath(), filepath.Join(".jerboa", "jerboad-wsl.log"))
 }
+
+func TestEnsureNestedVirtualization_AnnouncesChange(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("USERPROFILE", dir)
+	t.Setenv("HOME", dir)
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	// No .wslconfig yet, so EnsureNestedVirtualization creates it and reports a
+	// change; the wrapper must tell the user to restart WSL.
+	ensureNestedVirtualization(cmd)
+	require.Contains(t, out.String(), "enabled nested virtualization")
+	require.Contains(t, out.String(), "wsl --shutdown")
+
+	// Second run is a no-op and prints nothing.
+	out.Reset()
+	ensureNestedVirtualization(cmd)
+	require.Empty(t, out.String())
+}
+
+func TestEnsureNestedVirtualization_WarnsOnError(t *testing.T) {
+	// With no home directory resolvable, EnsureNestedVirtualization fails and the
+	// wrapper must degrade to a best-effort warning rather than abort.
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	cmd := &cobra.Command{}
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	ensureNestedVirtualization(cmd)
+	require.Contains(t, out.String(), "could not enable nested virtualization")
+	require.Contains(t, out.String(), "nestedVirtualization=true manually")
+}
