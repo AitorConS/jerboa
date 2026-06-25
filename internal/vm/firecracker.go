@@ -541,7 +541,10 @@ func ensureFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", path, err)
+	}
+	return nil
 }
 
 func fcSocketPath(id string) string {
