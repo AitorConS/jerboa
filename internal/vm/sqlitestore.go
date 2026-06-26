@@ -173,12 +173,9 @@ func (s *SQLiteStore) Restore() error {
 
 		switch v.State {
 		case StateRunning, StateStarting:
-			slog.Info("restore: marking vm as stopped (daemon restart)", "vm_id", v.ID)
-			v.State = StateStopped
-			now := time.Now()
-			v.StoppedAt = &now
-			v.DaemonRecovered = true
-			close(v.done)
+			// The sqlite store does not persist the hypervisor PID, so there is
+			// no live process to re-adopt: mark stopped and flag as recovered.
+			recoverVM(s, v, 0)
 		case StateStopped:
 			close(v.done)
 		default:

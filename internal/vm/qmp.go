@@ -6,14 +6,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 )
 
-// qmpDo connects to a QEMU Machine Protocol socket at addr (TCP "host:port"),
-// negotiates capabilities, and executes the given QMP command.
-// Using TCP makes this work identically on Linux, macOS, and Windows.
+// qmpDo connects to a QEMU Machine Protocol socket at addr, negotiates
+// capabilities, and executes the given QMP command. addr is "unix:<path>"
+// (default on Linux) or "tcp:host:port" for backwards compatibility.
 func qmpDo(addr, command string) error {
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second) //nolint:noctx // QMP dial has a built-in 3s timeout; no caller context available
+	network, address := parseQMPAddr(addr)
+	conn, err := net.DialTimeout(network, address, 3*time.Second) //nolint:noctx // QMP dial has a built-in 3s timeout; no caller context available
 	if err != nil {
 		return fmt.Errorf("qmp dial %s: %w", addr, err)
 	}
@@ -59,13 +63,29 @@ func qmpDo(addr, command string) error {
 	}
 }
 
-// freePort returns an available TCP port on the loopback interface.
-// There is a small race between Close and QEMU binding; acceptable in practice.
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0") //nolint:noctx // ephemeral port probe; no request context
-	if err != nil {
-		return 0, fmt.Errorf("find free port: %w", err)
+// parseQMPAddr splits a QMP address into a net dial network and address.
+// "unix:<path>" → ("unix", "<path>"); "tcp:host:port" or bare "host:port" → tcp.
+func parseQMPAddr(addr string) (network, address string) {
+	switch {
+	case strings.HasPrefix(addr, "unix:"):
+		return "unix", strings.TrimPrefix(addr, "unix:")
+	case strings.HasPrefix(addr, "tcp:"):
+		return "tcp", strings.TrimPrefix(addr, "tcp:")
+	default:
+		return "tcp", addr
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// qmpSocketPath returns the Unix domain socket path used for a VM's QMP channel.
+// A Unix socket is bound directly by QEMU, so there is no ephemeral-port race
+// window (unlike a TCP listener probed and closed before QEMU starts).
+func qmpSocketPath(id string) string {
+	return filepath.Join(os.TempDir(), "jerboa-qmp-"+id+".sock")
+}
+
+// removeQMPSocket deletes the Unix socket file backing a QMP address, if any.
+func removeQMPSocket(addr string) {
+	if network, path := parseQMPAddr(addr); network == "unix" {
+		_ = os.Remove(path)
+	}
 }

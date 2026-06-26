@@ -23,6 +23,7 @@ type vmState struct {
 	DaemonRecovered bool       `json:"daemon_recovered,omitempty"`
 	HealthStatus    string     `json:"health_status,omitempty"`
 	RestartCount    int        `json:"restart_count,omitempty"`
+	PID             int        `json:"pid,omitempty"`
 }
 
 // FileStore is a Store that persists VM state to disk as JSON files.
@@ -115,12 +116,9 @@ func (s *FileStore) Restore() error {
 
 		switch st.State {
 		case StateRunning, StateStarting:
-			slog.Info("restore: marking vm as stopped (daemon restart)", "vm_id", v.ID)
-			v.State = StateStopped
-			now := time.Now()
-			v.StoppedAt = &now
-			v.DaemonRecovered = true
-			close(v.done)
+			// Re-adopt the process if it survived the daemon; otherwise mark
+			// the VM stopped and flag it as daemon-recovered.
+			recoverVM(s, v, st.PID)
 		case StateStopped:
 			close(v.done)
 		default:
@@ -147,6 +145,7 @@ func (s *FileStore) writeState(v *VM) error {
 		DaemonRecovered: v.DaemonRecovered,
 		HealthStatus:    string(v.HealthStatus),
 		RestartCount:    v.RestartCount,
+		PID:             v.pid,
 	}
 	v.mu.RUnlock()
 

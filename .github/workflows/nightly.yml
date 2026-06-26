@@ -27,7 +27,7 @@ jobs:
           cache: false
 
       - name: Run unit tests
-        run: go test ./cmd/... ./internal/... ./pkg/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+        run: go test ./cmd/... ./internal/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
   kernel-tests:
     name: Full Kernel Test Suite

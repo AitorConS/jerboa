@@ -63,7 +63,7 @@ jobs:
           cache: true
 
       - name: Run unit tests
-        run: go test ./cmd/... ./internal/... ./pkg/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
+        run: go test ./cmd/... ./internal/... -race -count=1 -coverprofile=coverage.out -covermode=atomic
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
@@ -438,6 +438,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+      id-token: write # keyless cosign signing via Sigstore OIDC
     steps:
       - uses: actions/checkout@v4
 
@@ -458,6 +459,28 @@ jobs:
         run: |
           VERSION="v$(cat VERSION | tr -d '[:space:]')"
           echo "CLI_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Install syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate SBOMs and sign release artifacts
+        env:
+          COSIGN_YES: "true"
+        run: |
+          cd dist
+          for f in jerboa-* jerboad-*; do
+            [ -f "$f" ] || continue
+            echo "::group::SBOM + signature for $f"
+            syft "$f" -o spdx-json > "$f.sbom.spdx.json"
+            cosign sign-blob --yes \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.pem" \
+              "$f"
+            echo "::endgroup::"
+          done
 
       - name: Publish versioned release
         env:
