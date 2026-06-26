@@ -116,7 +116,11 @@ func TestServer_Run_WithPortsAndEnv(t *testing.T) {
 		Memory:    "256M",
 		CPUs:      1,
 		Name:      "myvm",
-		Env:       []string{"FOO=bar", "PORT=8080"},
+		// Port publishing requires a TAP network. NetworkName satisfies the
+		// guard; with no IPAddress the forwarder no-ops (binds nothing), so the
+		// test stays hermetic while still exercising port-config plumbing.
+		NetworkName: "testnet",
+		Env:         []string{"FOO=bar", "PORT=8080"},
 		PortMaps: []api.PortMapSpec{
 			{HostPort: 8080, GuestPort: 80, Protocol: "tcp"},
 		},

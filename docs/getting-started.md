@@ -311,10 +311,10 @@ jerboa dns resolve web --network app
 jerboa dns list --network app
 ```
 
-When you publish ports with `-p` on a managed network, Jerboa configures the iptables DNAT rules automatically so traffic reaches the VM through its bridge interface. See [Architecture → Networking]({% link architecture.md %}) for how this fits together, and [`jerboa network` / `jerboa dns`]({% link cli-reference.md %}#network-and-dns-commands) for the full command reference.
+Publishing ports with `-p` requires a managed network (`--network`); there is no SLIRP fallback. Jerboa runs a userspace forwarder that listens on the host port and proxies connections to the VM over its bridge. See [Architecture → Networking]({% link architecture.md %}) for how this fits together, and [`jerboa network` / `jerboa dns`]({% link cli-reference.md %}#network-and-dns-commands) for the full command reference.
 
 {: .note }
-Managed networks, static IPs, and DNAT port forwarding require Linux with `CAP_NET_ADMIN`/root and `iptables` (the relevant code is built only on Linux — see `internal/network/bridge_linux.go` and `tap.go`). On Windows and macOS, `jerboa run -p` still works through QEMU's user-mode SLIRP networking, but `--network` and `--ip` are not available.
+Managed networks, static IPs, and port publishing require Linux with `CAP_NET_ADMIN`/root (the relevant code is built only on Linux — see `internal/network/bridge_linux.go` and `tap.go`). `jerboa run -p` therefore requires `--network`; running without a network still works but exposes no ports. Under WSL2 on Windows, the daemon runs in the Linux VM and published ports are reachable from Windows via WSL2 localhost forwarding.
 
 ### 6. Use persistent volumes
 

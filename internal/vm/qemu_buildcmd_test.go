@@ -45,7 +45,7 @@ func TestBuildCmd_NetworkCfg_CustomSubnetMask(t *testing.T) {
 			netCfg = args[i+1]
 		}
 	}
-	require.Contains(t, netCfg, "10.100.0.5/16,10.100.0.1")
+	require.Contains(t, netCfg, "10.100.0.5/16,,10.100.0.1")
 }
 
 func TestBuildCmd_NetworkCfg_DefaultSubnetMask(t *testing.T) {
@@ -64,7 +64,8 @@ func TestBuildCmd_NetworkCfg_DefaultSubnetMask(t *testing.T) {
 			netCfg = args[i+1]
 		}
 	}
-	require.Contains(t, netCfg, "10.0.0.2/24,10.0.0.1")
+	// Commas are doubled for QEMU fw_cfg escaping; the guest sees a single comma.
+	require.Contains(t, netCfg, "10.0.0.2/24,,10.0.0.1")
 }
 
 func TestBuildCmd_NetworkCfg_MissingGateway(t *testing.T) {
@@ -153,22 +154,16 @@ func TestBuildEnvArgs_Multiple(t *testing.T) {
 	require.Contains(t, args[1], "A=1\nB=2")
 }
 
+func TestBuildEnvArgs_EscapesCommas(t *testing.T) {
+	// A comma in an env value must be doubled so QEMU's fw_cfg option parser
+	// keeps it as part of the value instead of treating it as a separator.
+	args := buildEnvArgs([]string{"PATH=/a,/b"})
+	require.Contains(t, args[1], "PATH=/a,,/b")
+}
+
 func TestBuildEnvArgs_Empty(t *testing.T) {
 	args := buildEnvArgs(nil)
 	require.Nil(t, args)
-}
-
-func TestSlirpNetArgs_Single(t *testing.T) {
-	args := slirpNetArgs([]PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}})
-	require.Len(t, args, 4)
-	require.Equal(t, "-netdev", args[0])
-	require.Contains(t, args[1], "user,id=net0")
-	require.Contains(t, args[1], "hostfwd=tcp::8080-:80")
-}
-
-func TestSlirpNetArgs_UDP(t *testing.T) {
-	args := slirpNetArgs([]PortMap{{HostPort: 5353, GuestPort: 53, Protocol: ProtocolUDP}})
-	require.Contains(t, args[1], "hostfwd=udp::5353-:53")
 }
 
 func TestBuildNetArgs_TAP(t *testing.T) {
@@ -176,11 +171,20 @@ func TestBuildNetArgs_TAP(t *testing.T) {
 	require.Contains(t, args[1], "tap,id=net0,ifname=tap0")
 }
 
-func TestBuildNetArgs_SlirpFromPorts(t *testing.T) {
+// Port maps without a TAP network no longer fall back to SLIRP; the VM gets no
+// network (publishing is rejected earlier at Start).
+func TestBuildNetArgs_PortsWithoutNetworkIsNone(t *testing.T) {
 	args := buildNetArgs(Config{
 		PortMaps: []PortMap{{HostPort: 9090, GuestPort: 80, Protocol: ProtocolTCP}},
 	})
-	require.Contains(t, args[1], "user,id=net0")
+	require.Equal(t, "-net", args[0])
+	require.Equal(t, "none", args[1])
+}
+
+func TestValidatePortNetwork(t *testing.T) {
+	require.Error(t, validatePortNetwork(Config{PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
+	require.NoError(t, validatePortNetwork(Config{NetworkName: "tap0", PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
+	require.NoError(t, validatePortNetwork(Config{}))
 }
 
 func TestBuildNetArgs_None(t *testing.T) {
@@ -192,7 +196,7 @@ func TestBuildNetArgs_None(t *testing.T) {
 func TestBuildNetworkCfgArgs_BothRequired(t *testing.T) {
 	args := buildNetworkCfgArgs(Config{IPAddress: "10.0.0.2", GatewayIP: "10.0.0.1"})
 	require.Len(t, args, 2)
-	require.Contains(t, args[1], "10.0.0.2/24,10.0.0.1")
+	require.Contains(t, args[1], "10.0.0.2/24,,10.0.0.1")
 }
 
 func TestBuildNetworkCfgArgs_MissingIP(t *testing.T) {
@@ -207,7 +211,7 @@ func TestBuildNetworkCfgArgs_MissingGateway(t *testing.T) {
 
 func TestBuildNetworkCfgArgs_CustomMask(t *testing.T) {
 	args := buildNetworkCfgArgs(Config{IPAddress: "10.0.0.2", GatewayIP: "10.0.0.1", SubnetMask: "28"})
-	require.Contains(t, args[1], "10.0.0.2/28,10.0.0.1")
+	require.Contains(t, args[1], "10.0.0.2/28,,10.0.0.1")
 }
 
 func TestToNetworkPortForwards(t *testing.T) {

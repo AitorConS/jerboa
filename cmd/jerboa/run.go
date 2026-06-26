@@ -59,6 +59,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
 			}
+			if len(portMaps) > 0 && network == "" {
+				return fmt.Errorf("run: --port requires --network <name> (create one with 'jerboa network create'); SLIRP user-mode networking is no longer supported")
+			}
 
 			env, err := buildEnv(envs, envFile)
 			if err != nil {
