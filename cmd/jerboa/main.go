@@ -100,8 +100,13 @@ func newRootCmd() *cobra.Command {
 		newNodeCmd(&endpoint, &outputFmt),
 		newServiceCmd(&endpoint, &outputFmt),
 		newConfigCmd(),
-		newDaemonCmd(),
 	)
+	// The daemon command group manages the dedicated WSL2 distro that hosts
+	// jerboad on Windows (import/start/stop). On Linux jerboad runs natively
+	// (see scripts/install.sh), so the group has nothing to do and is hidden.
+	if runtime.GOOS == "windows" {
+		root.AddCommand(newDaemonCmd())
+	}
 	return root
 }
 

@@ -88,6 +88,22 @@ curl -Lo /usr/local/bin/jerboad  https://github.com/AitorConS/jerboa/releases/la
 chmod +x /usr/local/bin/jerboa /usr/local/bin/jerboad
 ```
 
+### Linux: one-shot install (recommended)
+
+On a Linux host, `scripts/install.sh` provisions everything the daemon needs —
+firecracker, qemu, runtime deps, a dedicated unprivileged `jerboa` user, and a
+systemd service — and points your CLI at it. It is the Linux counterpart to
+`jerboa daemon install` on Windows (which imports a preconfigured WSL2 distro).
+
+```bash
+sudo scripts/install.sh
+jerboa status        # daemon should report running
+```
+
+The daemon starts automatically and on boot (`systemctl status jerboad`,
+`journalctl -u jerboad -f`). On Windows the `jerboa daemon` command group manages
+the WSL2 distro instead; it is hidden on Linux, where jerboad runs natively.
+
 ### Build from source
 
 ```bash
