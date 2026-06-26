@@ -118,13 +118,19 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
 	}
 
 	// Prefix-glob on disk: try each candidate prefix in priority order.
-	// This catches versioned binaries like python2.7 or python3.12.
+	// This catches versioned binaries like python2.7 or python3.12 while
+	// rejecting helper scripts like python3-config: a valid runtime suffix is
+	// empty or starts with a dot or digit ('-' sorts before '.', so a bare
+	// matches[0] would otherwise pick python3-config over python3.12).
 	for _, name := range candidates {
 		for _, f := range pkgFiles {
 			dir := filepath.Dir(f.HostPath)
 			matches, _ := filepath.Glob(filepath.Join(dir, name+"*"))
-			if len(matches) > 0 {
-				return matches[0], nil
+			for _, match := range matches {
+				suffix := strings.TrimPrefix(filepath.Base(match), name)
+				if suffix == "" || strings.HasPrefix(suffix, ".") || (suffix[0] >= '0' && suffix[0] <= '9') {
+					return match, nil
+				}
 			}
 		}
 	}
@@ -157,8 +163,14 @@ func sourceFiles(dir string) ([]pkg.File, error) {
 			}
 			return nil
 		}
-		if !info.IsDir() {
+		// Only regular files can be streamed into the tar. filepath.Walk follows
+		// the dir tree without following symlinks to non-regular targets, but a
+		// FIFO/socket/device entry would otherwise be tarred as TypeReg and then
+		// block or fail during os.Open/io.Copy.
+		if info.Mode().IsRegular() {
 			files = append(files, pkg.File{HostPath: path, GuestPath: rel})
+		} else if !info.IsDir() {
+			return fmt.Errorf("unsupported non-regular source file %q", rel)
 		}
 		return nil
 	})

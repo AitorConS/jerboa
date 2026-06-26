@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,13 +60,14 @@ const sqlCreateSchema = `
 		stopped_at      TEXT,
 		daemon_recovered INTEGER DEFAULT 0,
 		health_status   TEXT DEFAULT '',
-		restart_count   INTEGER DEFAULT 0
+		restart_count   INTEGER DEFAULT 0,
+		pid             INTEGER DEFAULT 0
 	)
 `
 
 const sqlUpsertVM = `
-	INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count, pid)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
 		config = excluded.config,
 		state = excluded.state,
@@ -73,13 +75,19 @@ const sqlUpsertVM = `
 		stopped_at = excluded.stopped_at,
 		daemon_recovered = excluded.daemon_recovered,
 		health_status = excluded.health_status,
-		restart_count = excluded.restart_count
+		restart_count = excluded.restart_count,
+		pid = excluded.pid
 `
 
 func (s *SQLiteStore) createSchema() error {
-	_, err := s.db.Exec(sqlCreateSchema) //nolint:noctx // schema creation at startup; no per-request context
-	if err != nil {
+	if _, err := s.db.Exec(sqlCreateSchema); err != nil { //nolint:noctx // schema creation at startup; no per-request context
 		return fmt.Errorf("create table: %w", err)
+	}
+	// Migrate databases created before the pid column existed. SQLite has no
+	// "ADD COLUMN IF NOT EXISTS", so ignore the duplicate-column error.
+	if _, err := s.db.Exec("ALTER TABLE vms ADD COLUMN pid INTEGER DEFAULT 0"); err != nil && //nolint:noctx // startup migration; no per-request context
+		!strings.Contains(err.Error(), "duplicate column name") {
+		return fmt.Errorf("add pid column: %w", err)
 	}
 	return nil
 }
@@ -113,13 +121,17 @@ func (s *SQLiteStore) Save(v *VM) error {
 
 func (s *SQLiteStore) Restore() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
-	rows, err := s.db.Query("SELECT id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count FROM vms") //nolint:noctx // RestoreAll is called at daemon startup with no context
+	rows, err := s.db.Query("SELECT id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count, pid FROM vms") //nolint:noctx // RestoreAll is called at daemon startup with no context
 	if err != nil {
+		s.mu.Unlock()
 		return fmt.Errorf("restore: query: %w", err)
 	}
 	defer rows.Close()
+
+	// VMs whose in-memory state diverged from the DB during recovery; persisted
+	// after the lock is released since Save re-acquires s.mu.
+	var toSave []*VM
 
 	for rows.Next() {
 		var id, configJSON, stateStr, createdAtStr string
@@ -127,8 +139,9 @@ func (s *SQLiteStore) Restore() error {
 		var daemonRecovered int
 		var healthStatus string
 		var restartCount int
+		var pid int
 
-		if err := rows.Scan(&id, &configJSON, &stateStr, &createdAtStr, &startedAtStr, &stoppedAtStr, &daemonRecovered, &healthStatus, &restartCount); err != nil {
+		if err := rows.Scan(&id, &configJSON, &stateStr, &createdAtStr, &startedAtStr, &stoppedAtStr, &daemonRecovered, &healthStatus, &restartCount, &pid); err != nil {
 			slog.Warn("restore: scan row", "err", err)
 			continue
 		}
@@ -173,9 +186,11 @@ func (s *SQLiteStore) Restore() error {
 
 		switch v.State {
 		case StateRunning, StateStarting:
-			// The sqlite store does not persist the hypervisor PID, so there is
-			// no live process to re-adopt: mark stopped and flag as recovered.
-			recoverVM(s, v, 0)
+			// Re-adopt the process if it survived the daemon; otherwise mark
+			// the VM stopped and flag it as daemon-recovered.
+			if recoverVM(s, v, pid) {
+				toSave = append(toSave, v)
+			}
 		case StateStopped:
 			close(v.done)
 		default:
@@ -183,8 +198,19 @@ func (s *SQLiteStore) Restore() error {
 
 		s.vms[v.ID] = v
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("restore: rows: %w", err)
+	rowsErr := rows.Err()
+	s.mu.Unlock()
+
+	if rowsErr != nil {
+		return fmt.Errorf("restore: rows: %w", rowsErr)
+	}
+
+	// Persist the recovered stopped state so a dead VM is not re-recovered (and
+	// its network re-reconciled) on every subsequent daemon restart.
+	for _, v := range toSave {
+		if err := s.Save(v); err != nil {
+			slog.Warn("restore: persist recovered vm", "vm_id", v.ID, "err", err)
+		}
 	}
 	return nil
 }
@@ -207,15 +233,17 @@ func (s *SQLiteStore) writeVM(v *VM) error {
 		StartedAt:    v.StartedAt,
 		StoppedAt:    v.StoppedAt,
 		RestartCount: v.RestartCount,
+		PID:          v.pid,
 	}
 	if v.DaemonRecovered {
 		st.DaemonRecovered = true
 	}
+	health := string(v.HealthStatus)
 	v.mu.RUnlock()
 
 	_, dbErr := s.db.Exec(sqlUpsertVM, //nolint:noctx // writeVM is called from the VM state machine with no context
 		st.ID, string(cfg), string(st.State), st.CreatedAt.Format(time.RFC3339Nano),
-		nullTime(st.StartedAt), nullTime(st.StoppedAt), boolToInt(st.DaemonRecovered), string(v.GetHealthStatus()), st.RestartCount)
+		nullTime(st.StartedAt), nullTime(st.StoppedAt), boolToInt(st.DaemonRecovered), health, st.RestartCount, st.PID)
 
 	if dbErr != nil {
 		return fmt.Errorf("upsert vm %s: %w", v.ID, dbErr)

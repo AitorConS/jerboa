@@ -76,15 +76,19 @@ func (s *FileStore) Save(v *VM) error {
 // DaemonRecovered=true, since the QEMU process died with the daemon.
 func (s *FileStore) Restore() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
+		s.mu.Unlock()
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("restore: read vms dir: %w", err)
 	}
+
+	// VMs whose in-memory state diverged from disk during recovery; persisted
+	// after the lock is released since Save re-acquires s.mu.
+	var toSave []*VM
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -118,7 +122,9 @@ func (s *FileStore) Restore() error {
 		case StateRunning, StateStarting:
 			// Re-adopt the process if it survived the daemon; otherwise mark
 			// the VM stopped and flag it as daemon-recovered.
-			recoverVM(s, v, st.PID)
+			if recoverVM(s, v, st.PID) {
+				toSave = append(toSave, v)
+			}
 		case StateStopped:
 			close(v.done)
 		default:
@@ -126,6 +132,15 @@ func (s *FileStore) Restore() error {
 		}
 
 		s.vms[v.ID] = v
+	}
+	s.mu.Unlock()
+
+	// Persist the recovered stopped state so a dead VM is not re-recovered (and
+	// its network re-reconciled) on every subsequent daemon restart.
+	for _, v := range toSave {
+		if err := s.Save(v); err != nil {
+			slog.Warn("restore: persist recovered vm", "vm_id", v.ID, "err", err)
+		}
 	}
 	return nil
 }

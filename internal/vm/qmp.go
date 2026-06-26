@@ -76,11 +76,22 @@ func parseQMPAddr(addr string) (network, address string) {
 	}
 }
 
+// qmpRuntimeDir returns a per-user, 0700 directory for QMP sockets, creating it
+// on demand. Keeping sockets in a private directory rather than directly under a
+// world-writable temp dir stops another local process from name-squatting a
+// socket path between cleanup and QEMU's bind.
+func qmpRuntimeDir() string {
+	dir := filepath.Join(os.TempDir(), fmt.Sprintf("jerboa-run-%d", os.Getuid()))
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.Chmod(dir, 0o700) // tighten perms if the dir pre-existed and we own it
+	return dir
+}
+
 // qmpSocketPath returns the Unix domain socket path used for a VM's QMP channel.
 // A Unix socket is bound directly by QEMU, so there is no ephemeral-port race
 // window (unlike a TCP listener probed and closed before QEMU starts).
 func qmpSocketPath(id string) string {
-	return filepath.Join(os.TempDir(), "jerboa-qmp-"+id+".sock")
+	return filepath.Join(qmpRuntimeDir(), "qmp-"+id+".sock")
 }
 
 // removeQMPSocket deletes the Unix socket file backing a QMP address, if any.

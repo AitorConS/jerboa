@@ -169,11 +169,12 @@ var vmLogMaxBytes atomic.Int64
 func init() { vmLogMaxBytes.Store(defaultVMLogMaxBytes) }
 
 // SetVMLogMaxBytes sets the per-VM in-memory log capture limit in bytes.
-// Non-positive values are ignored. Call once at daemon startup.
+// A non-positive value restores the 4 MiB default. Call once at daemon startup.
 func SetVMLogMaxBytes(n int64) {
-	if n > 0 {
-		vmLogMaxBytes.Store(n)
+	if n <= 0 {
+		n = defaultVMLogMaxBytes
 	}
+	vmLogMaxBytes.Store(n)
 }
 
 // safeBuffer is a concurrency-safe, write-only ring buffer used for VM log
@@ -198,21 +199,25 @@ func (b *safeBuffer) Write(p []byte) (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
+	// Cap the backing array at exactly max so it can never grow past the limit,
+	// even transiently inside append.
+	if cap(b.buf) < b.max {
+		grown := make([]byte, len(b.buf), b.max)
+		copy(grown, b.buf)
+		b.buf = grown
+	}
 	// If this chunk alone exceeds capacity, keep only its tail.
 	if n >= b.max {
-		if cap(b.buf) < b.max {
-			b.buf = make([]byte, b.max)
-		}
 		b.buf = b.buf[:b.max]
 		copy(b.buf, p[n-b.max:])
 		return n, nil
 	}
-	b.buf = append(b.buf, p...)
-	if len(b.buf) > b.max {
-		// Drop the oldest bytes, retaining the most recent max in order.
-		overflow := len(b.buf) - b.max
+	// Drop the oldest bytes first so the append never exceeds the capped array.
+	if len(b.buf)+n > b.max {
+		overflow := len(b.buf) + n - b.max
 		b.buf = b.buf[:copy(b.buf, b.buf[overflow:])]
 	}
+	b.buf = append(b.buf, p...)
 	return n, nil
 }
 

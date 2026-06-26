@@ -175,8 +175,7 @@ func filterCoveredAutoPkgs(autoPkgs, userPkgs []string) []string {
 		}
 		covered := false
 		for _, userName := range userBaseNames {
-			// Exact match or prefix relationship catches python/python3/python2 variants.
-			if userName == autoName || strings.HasPrefix(userName, autoName) || strings.HasPrefix(autoName, userName) {
+			if sameRuntimeFamily(userName, autoName) {
 				covered = true
 				break
 			}
@@ -186,6 +185,30 @@ func filterCoveredAutoPkgs(autoPkgs, userPkgs []string) []string {
 		}
 	}
 	return filtered
+}
+
+// sameRuntimeFamily reports whether two runtime base names refer to the same
+// runtime, allowing only a trailing numeric version to differ (python/python3,
+// node/node20). It does not treat arbitrary shared prefixes as equivalent, so
+// "node-exporter" does not cover "node".
+func sameRuntimeFamily(a, b string) bool {
+	if a == b {
+		return true
+	}
+	long, short := a, b
+	if len(b) > len(a) {
+		long, short = b, a
+	}
+	if !strings.HasPrefix(long, short) {
+		return false
+	}
+	rest := long[len(short):]
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return rest != ""
 }
 
 // resolveAutoPackages resolves language runtime packages (e.g. "node:20")
