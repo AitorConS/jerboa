@@ -373,9 +373,15 @@ func validatePortNetwork(cfg Config) error {
 // network and are rejected earlier (Start) when NetworkName is empty.
 func buildNetArgs(cfg Config) []string {
 	if cfg.NetworkName != "" {
+		dev := "virtio-net-pci,netdev=net0"
+		// Give each VM a stable, unique MAC derived from its IP. QEMU's default
+		// is a fixed MAC, which collides when several VMs share a bridge.
+		if cfg.IPAddress != "" {
+			dev += ",mac=" + guestMACFromIP(cfg.IPAddress)
+		}
 		return []string{
 			"-netdev", "tap,id=net0,ifname=" + cfg.NetworkName,
-			"-device", "virtio-net-pci,netdev=net0",
+			"-device", dev,
 		}
 	}
 	return []string{"-net", "none"}
