@@ -84,6 +84,14 @@ func TestVolumePersistence(t *testing.T) {
 		ImagePath: diskPath,
 		Memory:    "256M",
 		CPUs:      1,
+		// Port publishing requires a TAP network (no SLIRP). The daemon creates
+		// the bridge, QEMU creates the tap, and the userspace forwarder proxies
+		// host 18080 → guest 8080.
+		NetworkName: "voltest0",
+		IPAddress:   "10.123.0.2",
+		GatewayIP:   "10.123.0.1",
+		BridgeName:  "jerboa-bvol",
+		SubnetMask:  "24",
 		PortMaps: []api.PortMapSpec{
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
@@ -115,6 +123,14 @@ func TestVolumePersistence(t *testing.T) {
 		ImagePath: diskPath,
 		Memory:    "256M",
 		CPUs:      1,
+		// Port publishing requires a TAP network (no SLIRP). The daemon creates
+		// the bridge, QEMU creates the tap, and the userspace forwarder proxies
+		// host 18080 → guest 8080.
+		NetworkName: "voltest0",
+		IPAddress:   "10.123.0.2",
+		GatewayIP:   "10.123.0.1",
+		BridgeName:  "jerboa-bvol",
+		SubnetMask:  "24",
 		PortMaps: []api.PortMapSpec{
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
