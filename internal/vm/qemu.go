@@ -169,8 +169,10 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 			mask = "24"
 		}
 		cidr := v.Cfg.GatewayIP + "/" + mask
-		if err := network.CreateBridge(network.BridgeConfig{Name: bridgeName, CIDR: cidr}); err != nil {
-			slog.Warn("qemu start: failed to create bridge", "bridge", bridgeName, "err", err)
+		// EnsureBridge is idempotent: a bridge shared by several VMs must not
+		// fail the second VM with "File exists".
+		if err := network.EnsureBridge(network.BridgeConfig{Name: bridgeName, CIDR: cidr}); err != nil {
+			slog.Warn("qemu start: failed to ensure bridge", "bridge", bridgeName, "err", err)
 		}
 		if err := network.AttachTAP(v.Cfg.NetworkName, bridgeName); err != nil {
 			slog.Warn("qemu start: failed to attach TAP to bridge", "tap", v.Cfg.NetworkName, "bridge", bridgeName, "err", err)
