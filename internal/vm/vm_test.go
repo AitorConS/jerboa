@@ -307,7 +307,8 @@ func TestBuildCmd_network_cfg(t *testing.T) {
 	for i, v := range args {
 		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/jerboa/network") {
 			count++
-			require.Contains(t, args[i+1], "10.0.0.2/24,10.0.0.1")
+			// Commas doubled for QEMU fw_cfg escaping; guest sees a single comma.
+			require.Contains(t, args[i+1], "10.0.0.2/24,,10.0.0.1")
 		}
 	}
 	require.Equal(t, 1, count)

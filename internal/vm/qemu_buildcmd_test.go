@@ -45,7 +45,7 @@ func TestBuildCmd_NetworkCfg_CustomSubnetMask(t *testing.T) {
 			netCfg = args[i+1]
 		}
 	}
-	require.Contains(t, netCfg, "10.100.0.5/16,10.100.0.1")
+	require.Contains(t, netCfg, "10.100.0.5/16,,10.100.0.1")
 }
 
 func TestBuildCmd_NetworkCfg_DefaultSubnetMask(t *testing.T) {
