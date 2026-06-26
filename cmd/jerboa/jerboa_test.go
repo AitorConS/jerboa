@@ -517,7 +517,7 @@ func TestVolume_Remove(t *testing.T) {
 
 // --- run with new flags ---
 
-func TestRun_WithPortAndEnv(t *testing.T) {
+func TestRun_WithEnv(t *testing.T) {
 	_, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
@@ -525,12 +525,28 @@ func TestRun_WithPortAndEnv(t *testing.T) {
 	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
 
 	out := execRoot(t, socketPath, storePath, "run",
-		"-p", "8080:80",
 		"-e", "FOO=bar",
 		"--name", "myvm",
 		diskPath,
 	)
 	require.NotEmpty(t, strings.TrimSpace(out))
+}
+
+// Port publishing now requires a TAP network (no SLIRP fallback), so -p without
+// --network must fail fast with a clear message.
+func TestRun_PortRequiresNetwork(t *testing.T) {
+	_, socketPath := startDaemon(t)
+	storePath := t.TempDir()
+
+	diskPath := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
+
+	msg := execRootExpectError(t, socketPath, storePath, "run",
+		"-p", "8080:80",
+		"--name", "myvm",
+		diskPath,
+	)
+	require.Contains(t, msg, "requires --network")
 }
 
 func TestRun_WithInvalidPort(t *testing.T) {
