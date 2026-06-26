@@ -3,13 +3,13 @@
 package vm
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -157,27 +157,75 @@ type process interface {
 	signal(sig os.Signal) error
 }
 
-// safeBuffer is a concurrency-safe write-only byte buffer used for VM log capture.
+// defaultVMLogMaxBytes bounds the in-memory log capture per VM. A noisy guest
+// that writes endlessly to stdout/stderr must not be able to exhaust daemon
+// memory and trigger the OOM killer, so only the most recent bytes are kept.
+const defaultVMLogMaxBytes int64 = 4 << 20 // 4 MiB
+
+// vmLogMaxBytes is the active per-VM log capture limit. Override at daemon
+// startup with SetVMLogMaxBytes before any VM is created.
+var vmLogMaxBytes atomic.Int64
+
+func init() { vmLogMaxBytes.Store(defaultVMLogMaxBytes) }
+
+// SetVMLogMaxBytes sets the per-VM in-memory log capture limit in bytes.
+// A non-positive value restores the 4 MiB default. Call once at daemon startup.
+func SetVMLogMaxBytes(n int64) {
+	if n <= 0 {
+		n = defaultVMLogMaxBytes
+	}
+	vmLogMaxBytes.Store(n)
+}
+
+// safeBuffer is a concurrency-safe, write-only ring buffer used for VM log
+// capture. It retains only the most recent max bytes written; older bytes are
+// discarded so memory usage stays bounded regardless of guest output volume.
 type safeBuffer struct {
 	mu  sync.Mutex
-	buf bytes.Buffer
+	buf []byte // retained tail, never longer than max
+	max int    // capacity in bytes; resolved lazily on first write
 }
 
 func (b *safeBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	n, err := b.buf.Write(p)
-	if err != nil {
-		return n, fmt.Errorf("safe buffer write: %w", err)
+	if b.max <= 0 {
+		b.max = int(vmLogMaxBytes.Load())
+		if b.max <= 0 {
+			b.max = int(defaultVMLogMaxBytes)
+		}
 	}
+	n := len(p)
+	if n == 0 {
+		return 0, nil
+	}
+	// Cap the backing array at exactly max so it can never grow past the limit,
+	// even transiently inside append.
+	if cap(b.buf) < b.max {
+		grown := make([]byte, len(b.buf), b.max)
+		copy(grown, b.buf)
+		b.buf = grown
+	}
+	// If this chunk alone exceeds capacity, keep only its tail.
+	if n >= b.max {
+		b.buf = b.buf[:b.max]
+		copy(b.buf, p[n-b.max:])
+		return n, nil
+	}
+	// Drop the oldest bytes first so the append never exceeds the capped array.
+	if len(b.buf)+n > b.max {
+		overflow := len(b.buf) + n - b.max
+		b.buf = b.buf[:copy(b.buf, b.buf[overflow:])]
+	}
+	b.buf = append(b.buf, p...)
 	return n, nil
 }
 
 func (b *safeBuffer) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	cp := make([]byte, b.buf.Len())
-	copy(cp, b.buf.Bytes())
+	cp := make([]byte, len(b.buf))
+	copy(cp, b.buf)
 	return cp
 }
 
@@ -242,6 +290,7 @@ type VM struct {
 
 	mu            sync.RWMutex
 	proc          process
+	pid           int // OS pid of the hypervisor process; persisted for crash recovery
 	done          chan struct{}
 	logBuf        safeBuffer
 	logPipeReader io.Reader
@@ -249,7 +298,7 @@ type VM struct {
 	explicitStop  bool
 	statsProvider func() RuntimeStats
 	cgroupMgr     *CgroupManager
-	qmpAddr       string // TCP "host:port" of QMP socket; set at start, cleared when stopped
+	qmpAddr       string // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.

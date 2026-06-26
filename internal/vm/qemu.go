@@ -64,6 +64,9 @@ func (m *QEMUManager) Store() Store { return m.store }
 
 // Create registers a new VM with the given config.
 func (m *QEMUManager) Create(_ context.Context, cfg Config) (*VM, error) {
+	if err := validateVMConfig(cfg); err != nil {
+		return nil, fmt.Errorf("qemu manager create: %w", err)
+	}
 	v, err := m.store.Create(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("qemu manager create: %w", err)
@@ -83,15 +86,12 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 
-	// Find a free port for QMP before building the QEMU command args.
-	// QMP over TCP is used cross-platform (instead of OS signals) for
-	// graceful shutdown and exec signal delivery.
-	qmpAddr := ""
-	if port, portErr := freePort(); portErr == nil {
-		qmpAddr = fmt.Sprintf("127.0.0.1:%d", port)
-	} else {
-		slog.Warn("qemu start: cannot find free QMP port; stop/signal may fall back to OS signals", "vm_id", id, "err", portErr)
-	}
+	// QMP travels over a per-VM Unix domain socket (instead of OS signals) for
+	// graceful shutdown and exec signal delivery. A Unix socket is bound
+	// directly by QEMU, eliminating the TCP ephemeral-port race where another
+	// process could grab the port between probing it and QEMU binding.
+	qmpAddr := "unix:" + qmpSocketPath(v.ID)
+	removeQMPSocket(qmpAddr) // clear any stale socket from a previous run
 
 	cmd := m.buildCmd(ctx, v.Cfg, qmpAddr)
 
@@ -116,6 +116,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	now := time.Now()
 	v.mu.Lock()
 	v.proc = &osProcess{cmd.Process}
+	v.pid = cmd.Process.Pid
 	v.StartedAt = &now
 	v.qmpAddr = qmpAddr
 	v.mu.Unlock()
@@ -339,8 +340,8 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	args = append(args, buildNetworkCfgArgs(cfg)...)
 	args = append(args, buildVolumeArgs(cfg.Volumes)...)
 	if qmpAddr != "" {
-		// QMP over TCP: works on Linux, macOS, and Windows without admin privileges.
-		args = append(args, "-qmp", "tcp:"+qmpAddr+",server,nowait")
+		// qmpAddr already carries its scheme ("unix:<path>" or "tcp:host:port").
+		args = append(args, "-qmp", qmpAddr+",server,nowait")
 	}
 
 	cmd := m.mkCmd(ctx, m.qemuBin, args...)
@@ -424,7 +425,9 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		_ = v.logPipeWriter.Close()
 	}
 	explicitStop := v.explicitStop
+	qmpAddr := v.qmpAddr
 	v.mu.Unlock()
+	removeQMPSocket(qmpAddr)
 	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
 		if err := network.TeardownTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
 			slog.Warn("qemu monitor: failed to tear down TAP port forwarding", "vm_id", v.ID, "err", err)

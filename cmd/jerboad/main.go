@@ -56,6 +56,7 @@ func newRootCmd() *cobra.Command {
 		fcBin         string
 		fcKernelPath  string
 		toolsDir      string
+		vmLogMaxBytes int64
 	)
 	root := &cobra.Command{
 		Use:     "jerboad",
@@ -73,6 +74,7 @@ func newRootCmd() *cobra.Command {
 			if authToken == "" {
 				authToken = os.Getenv("JERBOA_AUTH_TOKEN")
 			}
+			vm.SetVMLogMaxBytes(vmLogMaxBytes)
 			return serve(cmd.Context(), endpoint, authToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
 		},
 	}
@@ -97,6 +99,8 @@ func newRootCmd() *cobra.Command {
 		"image store root directory")
 	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
 		"VM state store backend: file (default) or sqlite")
+	root.Flags().Int64Var(&vmLogMaxBytes, "vm-log-max-bytes", 0,
+		"max in-memory serial log bytes retained per VM (0 uses the 4 MiB default)")
 	root.Flags().StringVar(&metricsAddr, "metrics-addr", "",
 		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
 	root.Flags().StringVar(&uiAddr, "ui-addr", "",
