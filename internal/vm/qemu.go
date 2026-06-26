@@ -82,6 +82,9 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
+	if err := validatePortNetwork(v.Cfg); err != nil {
+		return fmt.Errorf("qemu start %s: %w", id, err)
+	}
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
@@ -146,9 +149,14 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
-	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
-		if err := network.SetupTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
-			slog.Warn("qemu start: failed to set up TAP port forwarding", "vm_id", id, "err", err)
+	if len(v.Cfg.PortMaps) > 0 {
+		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		if fwdErr != nil {
+			slog.Warn("qemu start: failed to start port forwarder", "vm_id", id, "err", fwdErr)
+		} else {
+			v.mu.Lock()
+			v.portFwd = fwd
+			v.mu.Unlock()
 		}
 	}
 	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
@@ -348,8 +356,21 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	return cmd
 }
 
+// validatePortNetwork rejects port maps without a TAP network. Port publishing
+// requires a guest IP on a TAP interface (handled by the userspace forwarder);
+// there is no SLIRP fallback, so PortMaps without a NetworkName cannot work.
+func validatePortNetwork(cfg Config) error {
+	if len(cfg.PortMaps) > 0 && cfg.NetworkName == "" {
+		return fmt.Errorf("--port requires --network <name>: SLIRP user-mode networking is no longer supported")
+	}
+	return nil
+}
+
 // buildNetArgs returns the QEMU network arguments for cfg.
-// Priority: TAP (explicit NetworkName) → SLIRP with hostfwd (PortMaps set) → no network.
+// Networking is TAP only (explicit NetworkName); otherwise the VM has no
+// network. Port publishing is handled by a userspace forwarder, not SLIRP, so
+// QEMU and Firecracker share one networking model. PortMaps require a TAP
+// network and are rejected earlier (Start) when NetworkName is empty.
 func buildNetArgs(cfg Config) []string {
 	if cfg.NetworkName != "" {
 		return []string{
@@ -357,22 +378,7 @@ func buildNetArgs(cfg Config) []string {
 			"-device", "virtio-net-pci,netdev=net0",
 		}
 	}
-	if len(cfg.PortMaps) > 0 {
-		return slirpNetArgs(cfg.PortMaps)
-	}
 	return []string{"-net", "none"}
-}
-
-// slirpNetArgs builds the SLIRP user-mode networking arguments with hostfwd rules.
-func slirpNetArgs(ports []PortMap) []string {
-	netdev := "user,id=net0"
-	for _, pm := range ports {
-		netdev += fmt.Sprintf(",hostfwd=%s::%d-:%d", pm.Protocol, pm.HostPort, pm.GuestPort)
-	}
-	return []string{
-		"-netdev", netdev,
-		"-device", "virtio-net-pci,netdev=net0",
-	}
 }
 
 // buildVolumeArgs appends extra virtio-blk drives for each volume mount.
@@ -426,12 +432,12 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	}
 	explicitStop := v.explicitStop
 	qmpAddr := v.qmpAddr
+	fwd := v.portFwd
+	v.portFwd = nil
 	v.mu.Unlock()
 	removeQMPSocket(qmpAddr)
-	if v.Cfg.NetworkName != "" && len(v.Cfg.PortMaps) > 0 {
-		if err := network.TeardownTAPPortForwarding(v.Cfg.NetworkName, v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps)); err != nil {
-			slog.Warn("qemu monitor: failed to tear down TAP port forwarding", "vm_id", v.ID, "err", err)
-		}
+	if fwd != nil {
+		fwd.Close()
 	}
 	v.mu.RLock()
 	cg := v.cgroupMgr

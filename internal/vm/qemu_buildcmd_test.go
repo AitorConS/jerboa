@@ -158,29 +158,25 @@ func TestBuildEnvArgs_Empty(t *testing.T) {
 	require.Nil(t, args)
 }
 
-func TestSlirpNetArgs_Single(t *testing.T) {
-	args := slirpNetArgs([]PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}})
-	require.Len(t, args, 4)
-	require.Equal(t, "-netdev", args[0])
-	require.Contains(t, args[1], "user,id=net0")
-	require.Contains(t, args[1], "hostfwd=tcp::8080-:80")
-}
-
-func TestSlirpNetArgs_UDP(t *testing.T) {
-	args := slirpNetArgs([]PortMap{{HostPort: 5353, GuestPort: 53, Protocol: ProtocolUDP}})
-	require.Contains(t, args[1], "hostfwd=udp::5353-:53")
-}
-
 func TestBuildNetArgs_TAP(t *testing.T) {
 	args := buildNetArgs(Config{NetworkName: "tap0"})
 	require.Contains(t, args[1], "tap,id=net0,ifname=tap0")
 }
 
-func TestBuildNetArgs_SlirpFromPorts(t *testing.T) {
+// Port maps without a TAP network no longer fall back to SLIRP; the VM gets no
+// network (publishing is rejected earlier at Start).
+func TestBuildNetArgs_PortsWithoutNetworkIsNone(t *testing.T) {
 	args := buildNetArgs(Config{
 		PortMaps: []PortMap{{HostPort: 9090, GuestPort: 80, Protocol: ProtocolTCP}},
 	})
-	require.Contains(t, args[1], "user,id=net0")
+	require.Equal(t, "-net", args[0])
+	require.Equal(t, "none", args[1])
+}
+
+func TestValidatePortNetwork(t *testing.T) {
+	require.Error(t, validatePortNetwork(Config{PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
+	require.NoError(t, validatePortNetwork(Config{NetworkName: "tap0", PortMaps: []PortMap{{HostPort: 80, GuestPort: 80}}}))
+	require.NoError(t, validatePortNetwork(Config{}))
 }
 
 func TestBuildNetArgs_None(t *testing.T) {

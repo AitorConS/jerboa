@@ -19,6 +19,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/network"
 )
 
 // FCOption configures a FirecrackerManager.
@@ -39,8 +41,9 @@ func WithFCCommandFunc(fn CommandFunc) FCOption {
 // over a per-VM Unix socket.
 //
 // Limitations vs. QEMUManager:
-//   - TAP networking only; SLIRP (user-mode) is not supported by Firecracker.
-//     Port maps without a NetworkName are silently ignored.
+//   - TAP networking only (like QEMU now): port maps require a NetworkName and
+//     are rejected at Start otherwise. Publishing is done by the userspace
+//     forwarder, shared with QEMU.
 //   - DiskIOPS / DiskBPS throttling is not available (no Firecracker equivalent).
 //   - On Windows, Firecracker runs inside WSL2; KVM must be available in WSL2.
 //   - The kernel image must be a flat ELF vmlinux compatible with Firecracker
@@ -103,6 +106,9 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
+	if err := validatePortNetwork(v.Cfg); err != nil {
+		return fmt.Errorf("firecracker start %s: %w", id, err)
+	}
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
@@ -157,6 +163,17 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
+
+	if len(v.Cfg.PortMaps) > 0 {
+		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		if fwdErr != nil {
+			slog.Warn("firecracker start: failed to start port forwarder", "vm_id", id, "err", fwdErr)
+		} else {
+			v.mu.Lock()
+			v.portFwd = fwd
+			v.mu.Unlock()
+		}
+	}
 
 	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog)
 	m.hchecker.Start(ctx, v)
@@ -296,7 +313,12 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 		_ = v.logPipeWriter.Close()
 	}
 	explicitStop := v.explicitStop
+	fwd := v.portFwd
+	v.portFwd = nil
 	v.mu.Unlock()
+	if fwd != nil {
+		fwd.Close()
+	}
 
 	// If the VM died with no serial output (e.g. Firecracker couldn't start the
 	// microVM), surface the VMM log so `jerboa logs` shows the actual error.
@@ -422,8 +444,6 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config) (string, error
 				HostDevName: cfg.NetworkName,
 			},
 		}
-	} else if len(cfg.PortMaps) > 0 {
-		slog.Warn("firecracker: port maps require a TAP interface (--network); SLIRP is not supported — port maps ignored", "vm_id", id)
 	}
 
 	m.rewriteConfigPaths(&fcCfg)

@@ -318,14 +318,14 @@ This requires the VM to be in `stopped` state because the disk image must not be
 
 ## Networking
 
-Each VM can use one of two networking modes, chosen automatically based on the flags passed to `jerboa run`:
+VMs use **TAP + bridge** networking. (SLIRP user-mode networking was removed: Firecracker does not support it, so keeping a single model — TAP for both QEMU and Firecracker — is simpler and more maintainable.)
 
-**SLIRP user-mode** (used when `-p` is set without `--network`): QEMU's built-in user-mode networking with port forwarding via `hostfwd` rules. Works on any platform without root access. Does not support inbound ICMP (ping).
+**TAP + bridge** (set with `--network <name>`): `--network` takes the name of a *managed network* created beforehand with `jerboa network create` — not a raw host interface name. The daemon looks it up via `Network.Get`, creates a TAP interface, and bridges it on the Linux host, giving the VM full network access including its own IP address (auto-allocated from the network's subnet, or pinned with `--ip`). Requires Linux and elevated permissions (`CAP_NET_ADMIN`/root). When `--ip` is specified, the guest-side static IP is configured via fw_cfg (`opt/jerboa/network`) — no DHCP required.
 
-**TAP + bridge** (used when `--network <name>` is set): `--network` takes the name of a *managed network* created beforehand with `jerboa network create` — not a raw host interface name. The daemon looks it up via `Network.Get`, creates a TAP interface, and bridges it on the Linux host, giving the VM full network access including its own IP address (auto-allocated from the network's subnet, or pinned with `--ip`). Requires Linux and elevated permissions (`CAP_NET_ADMIN`/root). When port mappings (`-p`) are used together with `--network`, iptables DNAT rules are automatically configured so that traffic arriving at the host is forwarded to the guest's static IP. The bridge is created via `internal/network/bridge_linux.go`, the TAP is attached, and iptables rules (with interface filtering via `-i tapName`) are applied for port forwarding. When `--ip` is specified, the guest-side static IP is configured via fw_cfg (`opt/jerboa/network`) — no DHCP required.
+**Port publishing** (`-p host:guest`): requires `--network` (there is no SLIRP fallback, so `-p` without `--network` is rejected). Publishing is handled by a **userspace forwarder** (`internal/network/forwarder.go`): the daemon opens a real TCP listening socket on the host port and proxies each connection to the guest's IP over the bridge. This replaces the previous iptables DNAT approach, which never worked for host-local access (the PREROUTING rule matched the wrong direction) and was invisible to WSL2's localhost forwarding — a DNAT rule opens no listening socket, so a Windows host could not reach it. A real listener is reachable from the host itself and is mirrored by WSL2 to the Windows side. (UDP publishing is not yet supported.)
 
 {: .note }
-TAP networking requires Linux and elevated permissions. It is not available on Windows. See `internal/network/tap.go` (Linux-only build tag).
+TAP networking requires Linux and elevated permissions. It is not available natively on Windows; under WSL2 the daemon runs in the Linux VM and published ports are reachable from Windows via WSL2 localhost forwarding. See `internal/network/tap.go` (Linux-only build tag).
 
 ---
 

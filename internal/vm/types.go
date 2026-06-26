@@ -11,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/network"
 )
 
 // State represents a VM lifecycle state.
@@ -110,11 +112,11 @@ type Config struct {
 	// CPUs is the number of virtual CPUs; 0 uses QEMU default.
 	CPUs int
 	// NetworkName is the TAP interface name to attach; empty disables networking.
-	// When PortMaps are set and NetworkName is empty, SLIRP user-mode networking
-	// is used automatically so no TAP device is required.
+	// Networking is TAP only (SLIRP is not supported), so PortMaps require a
+	// non-empty NetworkName.
 	NetworkName string
-	// PortMaps is the list of host-to-guest port forwarding rules.
-	// Requires SLIRP or TAP networking; mutually exclusive with "-net none".
+	// PortMaps is the list of host-to-guest port forwarding rules, published by
+	// a userspace forwarder. Requires TAP networking (a non-empty NetworkName).
 	PortMaps []PortMap
 	// Env is a list of "KEY=VALUE" environment variable pairs injected at
 	// boot time via QEMU fw_cfg. The kernel must read opt/jerboa/env to consume them.
@@ -298,7 +300,8 @@ type VM struct {
 	explicitStop  bool
 	statsProvider func() RuntimeStats
 	cgroupMgr     *CgroupManager
-	qmpAddr       string // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped
+	portFwd       *network.Forwarder // userspace host→guest port publisher; nil when no PortMaps
+	qmpAddr       string             // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped
 }
 
 // Done returns a channel that is closed when the VM reaches StateStopped.

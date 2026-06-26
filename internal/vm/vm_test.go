@@ -233,36 +233,20 @@ func TestBuildCmd_no_network(t *testing.T) {
 	require.Equal(t, "none", args[idx+1])
 }
 
-func TestBuildCmd_slirp_single_port(t *testing.T) {
+func TestBuildCmd_ports_without_network_no_slirp(t *testing.T) {
 	mgr := NewQEMUManager("fake-qemu")
 	args := captureArgs(mgr, Config{
 		ImagePath: "disk.img",
 		Memory:    "256M",
 		PortMaps:  []PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}},
 	})
-	// -net none must NOT appear
-	require.NotContains(t, args, "none")
-	// -netdev user,id=net0,hostfwd=tcp::8080-:80
-	idx := indexOf(args, "-netdev")
+	// No SLIRP fallback: the VM gets "-net none" and no hostfwd.
+	idx := indexOf(args, "-net")
 	require.GreaterOrEqual(t, idx, 0)
-	require.Contains(t, args[idx+1], "hostfwd=tcp::8080-:80")
-}
-
-func TestBuildCmd_slirp_multiple_ports(t *testing.T) {
-	mgr := NewQEMUManager("fake-qemu")
-	args := captureArgs(mgr, Config{
-		ImagePath: "disk.img",
-		Memory:    "256M",
-		PortMaps: []PortMap{
-			{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP},
-			{HostPort: 5353, GuestPort: 53, Protocol: ProtocolUDP},
-		},
-	})
-	idx := indexOf(args, "-netdev")
-	require.GreaterOrEqual(t, idx, 0)
-	netdev := args[idx+1]
-	require.Contains(t, netdev, "hostfwd=tcp::8080-:80")
-	require.Contains(t, netdev, "hostfwd=udp::5353-:53")
+	require.Equal(t, "none", args[idx+1])
+	for _, a := range args {
+		require.NotContains(t, a, "hostfwd")
+	}
 }
 
 func TestBuildCmd_tap_overrides_portmaps(t *testing.T) {

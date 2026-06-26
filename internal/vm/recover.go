@@ -73,19 +73,15 @@ func recoverVM(s Store, v *VM, pid int) (needsSave bool) {
 	return true
 }
 
-// reconcileNetwork tears down the per-VM network resources a dead VM may have
-// left behind: its TAP port forwards and the TAP's attachment to the bridge. It
-// deliberately does not destroy the bridge itself — bridges are shared across
-// VMs (e.g. the default jerboa-br0), so removing one here could break other
-// running or re-adopted VMs. Best-effort: failures are logged at debug level.
+// reconcileNetwork detaches a dead VM's TAP from its bridge. It deliberately
+// does not destroy the bridge itself — bridges are shared across VMs (e.g. the
+// default jerboa-br0), so removing one here could break other running or
+// re-adopted VMs. Published ports need no cleanup: they are served by an
+// in-process userspace forwarder that dies with the daemon, leaving no host
+// state behind. Best-effort: failures are logged at debug level.
 func reconcileNetwork(vmID string, cfg Config) {
 	if cfg.NetworkName == "" {
 		return
-	}
-	if len(cfg.PortMaps) > 0 {
-		if err := network.TeardownTAPPortForwarding(cfg.NetworkName, cfg.IPAddress, toNetworkPortForwards(cfg.PortMaps)); err != nil {
-			slog.Debug("reconcile: tear down port forwarding", "vm_id", vmID, "err", err)
-		}
 	}
 	if cfg.GatewayIP != "" {
 		if err := network.DetachTAP(cfg.NetworkName); err != nil {
