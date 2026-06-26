@@ -113,6 +113,15 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 
+	// Firecracker, unlike QEMU, does not create the tap or wire the bridge: it
+	// opens an existing tap by name. Set up the persistent tap + bridge here,
+	// before launching, so the guest is reachable on the host network.
+	if v.Cfg.NetworkName != "" {
+		if err := setupFCNetwork(v.Cfg); err != nil {
+			slog.Warn("firecracker start: network setup failed", "vm_id", id, "err", err)
+		}
+	}
+
 	sockPath := m.vmSockPath(id)
 	cfgPath, err := m.writeFCConfig(id, v.Cfg)
 	if err != nil {
@@ -304,6 +313,31 @@ func (m *FirecrackerManager) List() []*VM {
 	return m.store.List()
 }
 
+// setupFCNetwork creates the persistent tap device and (idempotently) the
+// bridge for a Firecracker VM, attaching the tap so the guest's static IP is
+// reachable from the host. QEMU does this inline in its own Start; Firecracker
+// needs it done before the process launches.
+func setupFCNetwork(cfg Config) error {
+	if err := network.CreateTAPDevice(cfg.NetworkName); err != nil {
+		return err
+	}
+	if cfg.GatewayIP == "" {
+		return nil
+	}
+	bridgeName := cfg.BridgeName
+	if bridgeName == "" {
+		bridgeName = "jerboa-br0"
+	}
+	mask := cfg.SubnetMask
+	if mask == "" {
+		mask = "24"
+	}
+	if err := network.EnsureBridge(network.BridgeConfig{Name: bridgeName, CIDR: cfg.GatewayIP + "/" + mask}); err != nil {
+		return err
+	}
+	return network.AttachTAP(cfg.NetworkName, bridgeName)
+}
+
 func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog string) {
 	exitErr := cmd.Wait()
 	now := time.Now()
@@ -318,6 +352,14 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 	v.mu.Unlock()
 	if fwd != nil {
 		fwd.Close()
+	}
+	if v.Cfg.NetworkName != "" {
+		if err := network.DetachTAP(v.Cfg.NetworkName); err != nil {
+			slog.Debug("firecracker monitor: detach tap", "vm_id", v.ID, "err", err)
+		}
+		if err := network.DeleteTAPDevice(v.Cfg.NetworkName); err != nil {
+			slog.Debug("firecracker monitor: delete tap", "vm_id", v.ID, "err", err)
+		}
 	}
 
 	// If the VM died with no serial output (e.g. Firecracker couldn't start the
@@ -470,19 +512,36 @@ func buildFCBootArgs(cfg Config) string {
 		args += " environment." + kv
 	}
 
-	// Static network config via boot args (TAP only).
+	// Static network config via boot args (TAP only). Nanos' cmdline_apply maps
+	// each "key=value" to a root tuple entry, and init_network_iface reads the
+	// root-level ipaddr/netmask/gateway symbols. The values must be plain (no
+	// CIDR suffix), so the mask is emitted in dotted form.
 	if cfg.NetworkName != "" && cfg.IPAddress != "" {
 		mask := cfg.SubnetMask
 		if mask == "" {
 			mask = "24"
 		}
-		args += fmt.Sprintf(" netdev=eth0 ip=%s/%s", cfg.IPAddress, mask)
+		args += fmt.Sprintf(" ipaddr=%s netmask=%s", cfg.IPAddress, cidrToNetmask(mask))
 		if cfg.GatewayIP != "" {
 			args += fmt.Sprintf(" gateway=%s", cfg.GatewayIP)
 		}
 	}
 
 	return args
+}
+
+// cidrToNetmask converts a CIDR prefix string (e.g. "24") to a dotted-quad
+// netmask (e.g. "255.255.255.0"). Invalid input falls back to a /24 mask.
+func cidrToNetmask(cidr string) string {
+	n, err := strconv.Atoi(cidr)
+	if err != nil || n < 0 || n > 32 {
+		n = 24
+	}
+	var mask uint32 = 0xffffffff << (32 - n)
+	if n == 0 {
+		mask = 0
+	}
+	return fmt.Sprintf("%d.%d.%d.%d", byte(mask>>24), byte(mask>>16), byte(mask>>8), byte(mask))
 }
 
 // parseMiB converts a QEMU-style memory string ("256M", "1G", "512") to MiB.

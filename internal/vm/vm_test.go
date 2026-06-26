@@ -273,7 +273,7 @@ func TestBuildCmd_env_vars(t *testing.T) {
 	idx := indexOf(args, "-fw_cfg")
 	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
 	fwcfg := args[idx+1]
-	require.True(t, strings.HasPrefix(fwcfg, "name=opt/jerboa/env,string="))
+	require.True(t, strings.HasPrefix(fwcfg, "name=opt/uni/env,string="))
 	require.Contains(t, fwcfg, "FOO=bar")
 	require.Contains(t, fwcfg, "PORT=8080")
 }
@@ -305,7 +305,7 @@ func TestBuildCmd_network_cfg(t *testing.T) {
 	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
 	count := 0
 	for i, v := range args {
-		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/jerboa/network") {
+		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/uni/network") {
 			count++
 			// Commas doubled for QEMU fw_cfg escaping; guest sees a single comma.
 			require.Contains(t, args[i+1], "10.0.0.2/24,,10.0.0.1")
@@ -322,7 +322,7 @@ func TestBuildCmd_no_network_cfg_without_ip(t *testing.T) {
 	})
 	for i, v := range args {
 		if v == "-fw_cfg" && i+1 < len(args) {
-			require.NotContains(t, args[i+1], "opt/jerboa/network")
+			require.NotContains(t, args[i+1], "opt/uni/network")
 		}
 	}
 }

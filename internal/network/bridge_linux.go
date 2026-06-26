@@ -36,6 +36,40 @@ func CreateBridge(cfg BridgeConfig) error {
 	return nil
 }
 
+// EnsureBridge creates the bridge if it does not already exist, assigning the
+// gateway IP and bringing it up. Unlike CreateBridge it is idempotent, so it is
+// safe to call for a bridge shared by multiple VMs.
+func EnsureBridge(cfg BridgeConfig) error {
+	if bridgeExists(cfg.Name) {
+		return nil
+	}
+	return CreateBridge(cfg)
+}
+
+func bridgeExists(name string) bool {
+	return exec.Command("ip", "link", "show", name).Run() == nil
+}
+
+// CreateTAPDevice creates a persistent TAP device by name. It is idempotent: a
+// device that already exists is treated as success. Firecracker requires the tap
+// to exist before it opens it; unlike QEMU it does not create taps itself.
+func CreateTAPDevice(name string) error {
+	out, err := exec.Command("ip", "tuntap", "add", "dev", name, "mode", "tap").CombinedOutput()
+	if err != nil && !strings.Contains(string(out), "File exists") {
+		return fmt.Errorf("create tap %s: %w (output: %s)", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// DeleteTAPDevice removes a persistent TAP device created by CreateTAPDevice.
+func DeleteTAPDevice(name string) error {
+	out, err := exec.Command("ip", "tuntap", "del", "dev", name, "mode", "tap").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("delete tap %s: %w (output: %s)", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // DestroyBridge removes a Linux bridge interface.
 func DestroyBridge(name string) error {
 	if err := ipLink("del", name); err != nil {

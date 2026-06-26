@@ -41,7 +41,7 @@ func TestBuildCmd_NetworkCfg_CustomSubnetMask(t *testing.T) {
 	})
 	var netCfg string
 	for i, v := range args {
-		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/jerboa/network") {
+		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/uni/network") {
 			netCfg = args[i+1]
 		}
 	}
@@ -60,7 +60,7 @@ func TestBuildCmd_NetworkCfg_DefaultSubnetMask(t *testing.T) {
 	})
 	var netCfg string
 	for i, v := range args {
-		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/jerboa/network") {
+		if v == "-fw_cfg" && i+1 < len(args) && strings.HasPrefix(args[i+1], "name=opt/uni/network") {
 			netCfg = args[i+1]
 		}
 	}
@@ -79,7 +79,7 @@ func TestBuildCmd_NetworkCfg_MissingGateway(t *testing.T) {
 	})
 	for i, v := range args {
 		if v == "-fw_cfg" && i+1 < len(args) {
-			require.NotContains(t, args[i+1], "opt/jerboa/network")
+			require.NotContains(t, args[i+1], "opt/uni/network")
 		}
 	}
 }
@@ -95,7 +95,7 @@ func TestBuildCmd_NetworkCfg_MissingIP(t *testing.T) {
 	})
 	for i, v := range args {
 		if v == "-fw_cfg" && i+1 < len(args) {
-			require.NotContains(t, args[i+1], "opt/jerboa/network")
+			require.NotContains(t, args[i+1], "opt/uni/network")
 		}
 	}
 }
@@ -145,7 +145,7 @@ func TestBuildEnvArgs_Single(t *testing.T) {
 	args := buildEnvArgs([]string{"KEY=VAL"})
 	require.Len(t, args, 2)
 	require.Equal(t, "-fw_cfg", args[0])
-	require.Contains(t, args[1], "name=opt/jerboa/env,string=KEY=VAL")
+	require.Contains(t, args[1], "name=opt/uni/env,string=KEY=VAL")
 }
 
 func TestBuildEnvArgs_Multiple(t *testing.T) {

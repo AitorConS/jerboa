@@ -396,14 +396,14 @@ func buildVolumeArgs(vols []VolumeMount) []string {
 }
 
 // buildEnvArgs encodes environment variables as QEMU fw_cfg entries.
-// The guest kernel reads them from the "opt/jerboa/env" fw_cfg key.
+// The guest kernel reads them from the "opt/uni/env" fw_cfg key.
 // Each call produces zero or one -fw_cfg argument; format is "KEY=VALUE\n" joined.
 func buildEnvArgs(env []string) []string {
 	if len(env) == 0 {
 		return nil
 	}
 	encoded := strings.Join(env, "\n")
-	return []string{"-fw_cfg", "name=opt/jerboa/env,string=" + escapeFwCfgValue(encoded)}
+	return []string{"-fw_cfg", "name=opt/uni/env,string=" + escapeFwCfgValue(encoded)}
 }
 
 // escapeFwCfgValue escapes a value for use inside a QEMU -fw_cfg "string=" field.
@@ -416,7 +416,7 @@ func escapeFwCfgValue(s string) string {
 }
 
 // buildNetworkCfgArgs encodes static network configuration as a QEMU fw_cfg entry.
-// The guest kernel reads it from the "opt/jerboa/network" key.
+// The guest kernel reads it from the "opt/uni/network" key.
 // Format: "IP/CIDR,GATEWAY" (e.g. "10.0.0.2/24,10.0.0.1").
 // Only populated when IPAddress is set (TAP networking with static IP).
 func buildNetworkCfgArgs(cfg Config) []string {
@@ -428,7 +428,7 @@ func buildNetworkCfgArgs(cfg Config) []string {
 		netMask = "24"
 	}
 	netCfg := cfg.IPAddress + "/" + netMask + "," + cfg.GatewayIP
-	return []string{"-fw_cfg", "name=opt/jerboa/network,string=" + escapeFwCfgValue(netCfg)}
+	return []string{"-fw_cfg", "name=opt/uni/network,string=" + escapeFwCfgValue(netCfg)}
 }
 
 func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
