@@ -484,6 +484,10 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config) (string, error
 			{
 				IfaceID:     "eth0",
 				HostDevName: cfg.NetworkName,
+				// Firecracker leaves the guest NIC MAC unset otherwise, and Nanos
+				// ends up with an all-zero MAC that bridges drop (ARP never
+				// resolves). Assign a stable locally-administered MAC, like ops.
+				GuestMAC: guestMACFromIP(cfg.IPAddress),
 			},
 		}
 	}
@@ -512,22 +516,44 @@ func buildFCBootArgs(cfg Config) string {
 		args += " environment." + kv
 	}
 
-	// Static network config via boot args (TAP only). Nanos' cmdline_apply maps
-	// each "key=value" to a root tuple entry, and init_network_iface reads the
-	// root-level ipaddr/netmask/gateway symbols. The values must be plain (no
-	// CIDR suffix), so the mask is emitted in dotted form.
+	// Static network config via boot args (TAP only), using the interface-scoped
+	// form ops uses: "en1.ipaddr=… en1.netmask=… en1.gateway=…". Nanos'
+	// cmdline_apply turns the "en1." prefix into a nested en1 tuple that
+	// init_network_iface looks up directly (the bare root-level form only hits a
+	// deprecated fallback that assigns the address but does not fully bring the
+	// interface up). The mask must be dotted-quad, not a CIDR suffix.
 	if cfg.NetworkName != "" && cfg.IPAddress != "" {
 		mask := cfg.SubnetMask
 		if mask == "" {
 			mask = "24"
 		}
-		args += fmt.Sprintf(" ipaddr=%s netmask=%s", cfg.IPAddress, cidrToNetmask(mask))
+		args += fmt.Sprintf(" en1.ipaddr=%s en1.netmask=%s", cfg.IPAddress, cidrToNetmask(mask))
 		if cfg.GatewayIP != "" {
-			args += fmt.Sprintf(" gateway=%s", cfg.GatewayIP)
+			args += fmt.Sprintf(" en1.gateway=%s", cfg.GatewayIP)
 		}
 	}
 
 	return args
+}
+
+// guestMACFromIP derives a stable, locally-administered unicast MAC from a
+// guest IPv4 address (e.g. 10.100.0.6 -> "AA:FC:0A:64:00:06"). The AA:FC prefix
+// is locally administered (matching ops' convention); the four IPv4 octets keep
+// it unique per VM. Falls back to a fixed MAC if the IP cannot be parsed.
+func guestMACFromIP(ip string) string {
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return "AA:FC:00:00:00:01"
+	}
+	octets := make([]int, 4)
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 || n > 255 {
+			return "AA:FC:00:00:00:01"
+		}
+		octets[i] = n
+	}
+	return fmt.Sprintf("AA:FC:%02X:%02X:%02X:%02X", octets[0], octets[1], octets[2], octets[3])
 }
 
 // cidrToNetmask converts a CIDR prefix string (e.g. "24") to a dotted-quad
