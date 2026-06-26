@@ -403,7 +403,16 @@ func buildEnvArgs(env []string) []string {
 		return nil
 	}
 	encoded := strings.Join(env, "\n")
-	return []string{"-fw_cfg", "name=opt/jerboa/env,string=" + encoded}
+	return []string{"-fw_cfg", "name=opt/jerboa/env,string=" + escapeFwCfgValue(encoded)}
+}
+
+// escapeFwCfgValue escapes a value for use inside a QEMU -fw_cfg "string=" field.
+// QEMU's option parser treats commas as separators, so a literal comma must be
+// doubled; QEMU collapses ",," back to "," before exposing the value to the
+// guest. Without this, a value like "10.0.0.2/24,10.0.0.1" is split and the part
+// after the comma is rejected as an invalid option.
+func escapeFwCfgValue(s string) string {
+	return strings.ReplaceAll(s, ",", ",,")
 }
 
 // buildNetworkCfgArgs encodes static network configuration as a QEMU fw_cfg entry.
@@ -419,7 +428,7 @@ func buildNetworkCfgArgs(cfg Config) []string {
 		netMask = "24"
 	}
 	netCfg := cfg.IPAddress + "/" + netMask + "," + cfg.GatewayIP
-	return []string{"-fw_cfg", "name=opt/jerboa/network,string=" + netCfg}
+	return []string{"-fw_cfg", "name=opt/jerboa/network,string=" + escapeFwCfgValue(netCfg)}
 }
 
 func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {

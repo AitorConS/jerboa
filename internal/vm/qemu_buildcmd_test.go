@@ -64,7 +64,8 @@ func TestBuildCmd_NetworkCfg_DefaultSubnetMask(t *testing.T) {
 			netCfg = args[i+1]
 		}
 	}
-	require.Contains(t, netCfg, "10.0.0.2/24,10.0.0.1")
+	// Commas are doubled for QEMU fw_cfg escaping; the guest sees a single comma.
+	require.Contains(t, netCfg, "10.0.0.2/24,,10.0.0.1")
 }
 
 func TestBuildCmd_NetworkCfg_MissingGateway(t *testing.T) {
@@ -153,6 +154,13 @@ func TestBuildEnvArgs_Multiple(t *testing.T) {
 	require.Contains(t, args[1], "A=1\nB=2")
 }
 
+func TestBuildEnvArgs_EscapesCommas(t *testing.T) {
+	// A comma in an env value must be doubled so QEMU's fw_cfg option parser
+	// keeps it as part of the value instead of treating it as a separator.
+	args := buildEnvArgs([]string{"PATH=/a,/b"})
+	require.Contains(t, args[1], "PATH=/a,,/b")
+}
+
 func TestBuildEnvArgs_Empty(t *testing.T) {
 	args := buildEnvArgs(nil)
 	require.Nil(t, args)
@@ -188,7 +196,7 @@ func TestBuildNetArgs_None(t *testing.T) {
 func TestBuildNetworkCfgArgs_BothRequired(t *testing.T) {
 	args := buildNetworkCfgArgs(Config{IPAddress: "10.0.0.2", GatewayIP: "10.0.0.1"})
 	require.Len(t, args, 2)
-	require.Contains(t, args[1], "10.0.0.2/24,10.0.0.1")
+	require.Contains(t, args[1], "10.0.0.2/24,,10.0.0.1")
 }
 
 func TestBuildNetworkCfgArgs_MissingIP(t *testing.T) {
@@ -203,7 +211,7 @@ func TestBuildNetworkCfgArgs_MissingGateway(t *testing.T) {
 
 func TestBuildNetworkCfgArgs_CustomMask(t *testing.T) {
 	args := buildNetworkCfgArgs(Config{IPAddress: "10.0.0.2", GatewayIP: "10.0.0.1", SubnetMask: "28"})
-	require.Contains(t, args[1], "10.0.0.2/28,10.0.0.1")
+	require.Contains(t, args[1], "10.0.0.2/28,,10.0.0.1")
 }
 
 func TestToNetworkPortForwards(t *testing.T) {

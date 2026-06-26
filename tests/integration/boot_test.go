@@ -89,6 +89,18 @@ func requireQEMU(t *testing.T) {
 	}
 }
 
+// requireTAPNetworking skips the test unless the process can manage bridges.
+// Port publishing now uses TAP networking, which needs CAP_NET_ADMIN; an
+// unprivileged runner (where "ip link add" returns EPERM) cannot exercise it.
+func requireTAPNetworking(t *testing.T) {
+	t.Helper()
+	const probe = "jerboa-netprobe"
+	if err := network.CreateBridge(network.BridgeConfig{Name: probe, CIDR: "10.255.255.1/30"}); err != nil {
+		t.Skipf("TAP networking unavailable (need CAP_NET_ADMIN): %v", err)
+	}
+	_ = network.DestroyBridge(probe)
+}
+
 func makeTrivialImage(t *testing.T) string {
 	t.Helper()
 	f, err := os.CreateTemp(t.TempDir(), "test-*.img")

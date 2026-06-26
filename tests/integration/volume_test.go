@@ -26,6 +26,7 @@ import (
 // survives a VM stop+restart cycle.
 func TestVolumePersistence(t *testing.T) {
 	requireQEMU(t)
+	requireTAPNetworking(t)
 
 	storeDir := t.TempDir()
 	imgStore, err := image.NewStore(filepath.Join(storeDir, "images"))
