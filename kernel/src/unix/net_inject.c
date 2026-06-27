@@ -37,11 +37,13 @@ static buffer parse_ip4_string(heap h, const u8 *s, bytes len)
     if (dots != 3)
         return INVALID_ADDRESS;
 
-    buffer buf = allocate_buffer(h, len + 1);
+    /* No NUL terminator: Nanos ip4addr_aton() takes a length-based sstring
+     * (via buffer_to_sstring), so a trailing NUL would be read as a stray
+     * non-space character and make aton reject the whole address. */
+    buffer buf = allocate_buffer(h, len);
     if (buf == INVALID_ADDRESS)
         return INVALID_ADDRESS;
     buffer_write(buf, s, len);
-    push_u8(buf, 0);  /* NUL-terminate for ip4addr_aton */
     return buf;
 }
 
@@ -63,8 +65,9 @@ static buffer cidr_to_netmask(heap h, int cidr)
     buffer buf = allocate_buffer(h, 16);
     if (buf == INVALID_ADDRESS)
         return INVALID_ADDRESS;
+    /* No NUL: ip4addr_aton reads this as a length-based sstring (see
+     * parse_ip4_string). */
     bprintf(buf, "%d.%d.%d.%d", a, b, c, d);
-    push_u8(buf, 0);
     return buf;
 }
 
