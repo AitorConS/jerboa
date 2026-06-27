@@ -85,13 +85,18 @@ void net_inject_from_fw_cfg(tuple root)
         return;
 
     heap h = heap_locked(get_kernel_heaps());
+    msg_print("net_inject: DIAG enter, fw_cfg_present");
     buffer raw = fw_cfg_read_file(h, ss("opt/uni/network"));
-    if (raw == INVALID_ADDRESS)
+    if (raw == INVALID_ADDRESS) {
+        msg_print("net_inject: DIAG read opt/uni/network -> INVALID_ADDRESS");
         return;
+    }
     if (buffer_length(raw) == 0) {
+        msg_print("net_inject: DIAG read opt/uni/network -> empty");
         deallocate_buffer(raw);
         return;
     }
+    msg_print("net_inject: DIAG raw len=%d content=[%b]", buffer_length(raw), raw);
 
     /* Format: "IP/CIDR,GATEWAY"
      * e.g. "10.0.0.2/24,10.0.0.1"
@@ -193,8 +198,8 @@ void net_inject_from_fw_cfg(tuple root)
     set(root, sym(netmask), mask_buf);
     set(root, sym(gateway), gw_buf);
 
-    msg_info("net_inject: static IP config from fw_cfg: ipaddr=%b netmask=%b gateway=%b",
-             ip_buf, mask_buf, gw_buf);
+    msg_print("net_inject: DIAG set root ipaddr=%b netmask=%b gateway=%b",
+              ip_buf, mask_buf, gw_buf);
 
     deallocate_buffer(raw);
 #endif
