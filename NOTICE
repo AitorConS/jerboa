@@ -1,0 +1,10 @@
+Jerboa
+
+Copyright 2026 Jerboa contributors.
+
+This repository is licensed under the Apache License, Version 2.0, except where
+otherwise noted.
+
+The `kernel/` subtree and any bundled third-party material may carry their own
+copyright notices, attribution text, and license files. Those notices must be
+retained as provided in the relevant files.
