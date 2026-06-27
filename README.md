@@ -131,11 +131,6 @@ Avoid framing it as stable infrastructure for arbitrary production workloads wit
 
 For reporting guidance, see [SECURITY.md](SECURITY.md).
 
-## Release Prep
-
-- [Release Checklist](RELEASE_CHECKLIST.md)
-- [Public Beta Release Draft](PUBLIC_BETA_RELEASE.md)
-
 ## License
 
 This repository is licensed under **Apache-2.0**.
