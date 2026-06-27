@@ -123,7 +123,7 @@ type Config struct {
 	// a userspace forwarder. Requires TAP networking (a non-empty NetworkName).
 	PortMaps []PortMap
 	// Env is a list of "KEY=VALUE" environment variable pairs injected at
-	// boot time via QEMU fw_cfg. The kernel must read opt/jerboa/env to consume them.
+	// boot time via QEMU fw_cfg. The kernel reads opt/uni/env to consume them.
 	Env []string
 	// Name is a human-readable identifier for the VM. If empty, the UUID is used.
 	Name string

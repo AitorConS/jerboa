@@ -276,9 +276,9 @@ This is the mechanism behind [building directly from source]({% link getting-sta
 Environment variables passed via `jerboa run -e KEY=VALUE` reach the guest through QEMU's `fw_cfg` device — no disk rebuild required.
 
 **Flow:**
-1. `jerboa run -e KEY=VAL` → daemon builds `-fw_cfg name=opt/jerboa/env,string=KEY=VAL\n`
+1. `jerboa run -e KEY=VAL` → daemon builds `-fw_cfg name=opt/uni/env,string=KEY=VAL\n`
 2. QEMU exposes this as a named file on the fw_cfg device (I/O ports `0x510`/`0x511`)
-3. At boot, `env_inject_from_fw_cfg()` in the kernel reads `opt/jerboa/env` and merges entries into the process environment tuple before `exec_elf` builds the user-space stack
+3. At boot, `env_inject_from_fw_cfg()` in the kernel reads `opt/uni/env` and merges entries into the process environment tuple before `exec_elf` builds the user-space stack
 
 This is x86-64 only; the function compiles to a no-op stub on aarch64.
 
@@ -287,9 +287,9 @@ This is x86-64 only; the function compiles to a no-op stub on aarch64.
 Static IP configuration passed via `jerboa run --ip` reaches the guest through QEMU's `fw_cfg` device, the same mechanism used for environment variables.
 
 **Flow:**
-1. `jerboa run --network app --ip 10.0.0.2` → daemon builds `-fw_cfg name=opt/jerboa/network,string=10.0.0.2/24,10.0.0.1`
+1. `jerboa run --network app --ip 10.0.0.2` → daemon builds `-fw_cfg name=opt/uni/network,string=10.0.0.2/24,10.0.0.1`
 2. QEMU exposes this as a named file on the fw_cfg device (I/O ports `0x510`/`0x511`)
-3. At boot, `net_inject_from_fw_cfg()` in the kernel reads `opt/jerboa/network`, parses the IP/CIDR and gateway, and injects them into the root tuple
+3. At boot, `net_inject_from_fw_cfg()` in the kernel reads `opt/uni/network`, parses the IP/CIDR and gateway, and injects them into the root tuple
 4. `init_network_iface()` picks up the injected values to configure the first ethernet interface with a static IP instead of DHCP
 
 The format is `IP/CIDR,GATEWAY` (e.g. `10.0.0.2/24,10.0.0.1`). This is x86-64 only.
