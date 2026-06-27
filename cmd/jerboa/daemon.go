@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/config"
+	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/AitorConS/jerboa/internal/wsldistro"
 	"github.com/spf13/cobra"
@@ -22,6 +24,29 @@ import (
 // root runs privileged (firecracker networking) without any host sudo prompt,
 // because the distro is isolated and contains nothing but jerboa.
 const daemonLaunchUser = "root"
+
+// cliReleaseBase is the GitHub release download base for jerboa artifacts.
+const cliReleaseBase = "https://github.com/AitorConS/jerboa/releases/download"
+
+// downloadToVerified streams the body of a GET request for url into w.
+func downloadToVerified(ctx context.Context, url string, w io.Writer) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	resp, err := httpclient.Default.Do(req)
+	if err != nil {
+		return fmt.Errorf("download: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned HTTP %d for %s", resp.StatusCode, url)
+	}
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		return fmt.Errorf("write: %w", err)
+	}
+	return nil
+}
 
 // newDaemonCmd builds the `jerboa daemon` command group, which manages the
 // jerboad daemon hosted in the dedicated jerboa WSL2 distro.

@@ -367,24 +367,60 @@ sudo systemctl status jerboad
 
 ## Keeping Up to Date
 
-### Updating the CLI (`jerboa` and `jerboad`)
+### Updating jerboa and jerboad
+
+There is no self-update command. Check your installed version with `jerboa --version`, then replace the binaries manually with the latest release from
+[github.com/AitorConS/jerboa/releases](https://github.com/AitorConS/jerboa/releases). The CLI (`jerboa`) and daemon (`jerboad`) are versioned together — update both to the same release.
+
+#### Linux
+
+The daemon runs natively as a `systemd` service. Download the new binaries, drop them into place, and restart the service:
 
 ```bash
-# Check if a newer version exists
-jerboa upgrade check
-# Installed CLI:  v0.1.0
-# Running daemon: v0.1.0
-# Latest:         v0.1.1
-# Update available. Run `jerboa upgrade` to install v0.1.1.
+BASE=https://github.com/AitorConS/jerboa/releases/latest/download
 
-# Install latest (prompts for confirmation)
-jerboa upgrade
+# Download the latest CLI and daemon
+curl -fsSL "$BASE/jerboa-linux-amd64"  -o /tmp/jerboa
+curl -fsSL "$BASE/jerboad-linux-amd64" -o /tmp/jerboad
 
-# Skip the prompt
-jerboa upgrade --yes
+# Stop the daemon, replace both binaries, start it again
+sudo systemctl stop jerboad
+sudo install -m 0755 /tmp/jerboad /usr/local/bin/jerboad
+sudo install -m 0755 /tmp/jerboa  /usr/local/bin/jerboa
+sudo systemctl start jerboad
+
+# Verify
+jerboa --version
+jerboa status
 ```
 
-`jerboa upgrade` replaces the running `jerboa` binary in-place and also updates `jerboad` if it is found in the same directory. On Windows the running binary is renamed to `.bak` before the new one is installed. After the upgrade completes successfully, old `.bak` files are cleaned up automatically.
+Replace `latest` with a tag (e.g. `download/v0.1.1`) to pin a specific release. Re-running [`scripts/install.sh`](#linux-one-shot-install-recommended) achieves the same result.
+
+#### Windows
+
+The CLI is `jerboa.exe` on the host; the daemon (`jerboad`, a Linux binary) runs inside the dedicated `jerboa` WSL2 distro at `/usr/local/bin/jerboad`. Update both:
+
+```powershell
+# 1. Replace the host CLI. Windows cannot overwrite a running .exe, so close
+#    any running jerboa first, then download jerboa-windows-amd64.exe from
+#    the releases page and replace your existing jerboa.exe with it.
+#    (e.g. save it over C:\Users\<you>\bin\jerboa.exe)
+
+# 2. Download the Linux daemon binary next to it
+curl.exe -fsSL https://github.com/AitorConS/jerboa/releases/latest/download/jerboad-linux-amd64 -o $env:TEMP\jerboad
+
+# 3. Stop the daemon, copy the new binary into the distro, restart
+jerboa daemon stop
+wsl -d jerboa -u root -- cp "$(wslpath "$env:TEMP\jerboad")" /usr/local/bin/jerboad
+wsl -d jerboa -u root -- chmod 0755 /usr/local/bin/jerboad
+jerboa daemon start
+
+# 4. Verify
+jerboa --version
+jerboa status
+```
+
+Only the daemon binary is swapped, so images, volumes, and other distro data are preserved. (`jerboa daemon install --force` re-imports the whole rootfs and is not needed for a routine update.)
 
 ### Updating the kernel tools
 

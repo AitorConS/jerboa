@@ -23,7 +23,7 @@ Jerboa is structured as a **client–daemon** system, the same model used by Doc
 ┌─────────────────────────────────────────────────────────┐
 │  jerboa  (CLI — short-lived process)                       │
 │                                                         │
-│  build · run · ps · status · logs · stop · rm · inspect · exec · cp │
+│  build · run · ps · status · logs · stop · rm · inspect · exec │
 │  compose up · compose down · compose ps · compose logs  │
 │  service run · service scale · service update · service ls/inspect/rm │
 │  volume create · volume ls · volume rm · volume inspect │
@@ -33,7 +33,6 @@ Jerboa is structured as a **client–daemon** system, the same model used by Doc
 │  sign · verify                                            │
 │  pkg list · pkg search · pkg get · pkg remove · pkg load│
 │  kernel check · kernel update · kernel list · kernel use│
-│  upgrade · upgrade check · upgrade list                 │
 └──────────────────────────┬──────────────────────────────┘
                            │
                            │  JSON-RPC 2.0 over Unix domain socket
@@ -135,9 +134,8 @@ The kernel artifacts (`kernel.img`, `boot.img`, `mkfs`, `dump`) are downloaded f
 
 **Download flow:**
 1. `jerboa build` calls `tools.ResolveMkfs()`
-2. `jerboa cp` calls `tools.ResolveDump()`
-3. If tools are absent → `DownloadVersion("latest")` fetches all artifacts + saves `kernel-version.txt`
-4. If tools are present → checks remote version via GitHub API; if newer, prompts `[y/N]` before replacing
+2. If tools are absent → `DownloadVersion("latest")` fetches all artifacts + saves `kernel-version.txt`
+3. If tools are present → checks remote version via GitHub API; if newer, prompts `[y/N]` before replacing
 
 **Versioned releases:** each kernel release is tagged `kernel-vX.Y.Z` on GitHub and is immutable. A rolling `latest` release always points to the most recent build. `jerboa kernel use <v>` downloads from the specific versioned tag.
 
@@ -295,24 +293,6 @@ Static IP configuration passed via `jerboa run --ip` reaches the guest through Q
 4. `init_network_iface()` picks up the injected values to configure the first ethernet interface with a static IP instead of DHCP
 
 The format is `IP/CIDR,GATEWAY` (e.g. `10.0.0.2/24,10.0.0.1`). This is x86-64 only.
-
----
-
-## File Copy (`jerboa cp`)
-
-`jerboa cp` copies files to and from stopped VM disk images using the `dump` and `mkfs` tools from the Nanos kernel toolchain. The tools read and write the TFS (Tiny File System) filesystem directly on the raw disk image.
-
-**Copy FROM a VM** — the `dump` tool extracts the entire filesystem to a temporary directory, then the requested file is copied to the destination.
-
-**Copy TO a VM** — the `dump` tool extracts the filesystem, the new file is injected, then `mkfs` rebuilds the disk image with the updated content.
-
-**Download flow:**
-1. `jerboa cp` calls `tools.ResolveDump()` (and `tools.ResolveMkfs()` for copy-to-VM)
-2. If tools are absent from `~/.jerboa/tools/` → `downloadArtifact()` fetches them from the latest kernel release
-3. For copy-from: extract filesystem, copy file to host
-4. For copy-to: extract filesystem, copy file in, rebuild disk with `mkfs`
-
-This requires the VM to be in `stopped` state because the disk image must not be in use by a running QEMU process.
 
 ---
 

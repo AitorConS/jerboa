@@ -43,11 +43,9 @@ jerboa dns list --network app              # inspect internal DNS records
 jerboa ps                                  # list running VMs
 jerboa logs <id>                           # read serial console output
 jerboa stop <id>                           # graceful shutdown
-jerboa cp <id>:/path/file.txt ./local.txt  # copy a file out of a stopped VM
 jerboa compose up stack.yaml               # start a multi-service application
 jerboa service run web app:latest --replicas 3 --network app  # scale a service to N replicas
 jerboa kernel update                       # update the cached kernel tools
-jerboa upgrade                             # self-update jerboa and jerboad
 ```
 
 ## Architecture Overview
@@ -90,4 +88,4 @@ See [Architecture]({% link architecture.md %}) for the full breakdown of every s
 - **Attach mode** — stream VM serial console output in real time with `--attach` (default is detached)
 - **Graceful lifecycle** — SIGTERM → 30s grace period → SIGKILL, with configurable restart policies and health checks
 - **JSON output** — every command supports `--output json` for scripting
-- **Versioned releases** — the CLI and the kernel are independently versioned with semver; `jerboa upgrade` self-updates the binaries, `jerboa kernel update` updates the kernel tools
+- **Versioned releases** — the CLI and the kernel are independently versioned with semver; `jerboa kernel update` updates the kernel tools

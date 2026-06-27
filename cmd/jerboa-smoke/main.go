@@ -196,8 +196,6 @@ func run() int {
 	addCmd(runUni, add, "pkg list", "pkg", "list")
 	skip("pkg search/get/push", "package index/network dependent")
 	skip("kernel", "remote kernel release interaction")
-	skip("cp", "requires real image rebuild tools dump/mkfs")
-	skip("upgrade", "network/release dependent")
 
 	printResults(results)
 

@@ -25,6 +25,7 @@ Every `jerboa` command accepts these flags:
 | `--socket` | — | Deprecated alias for `--host` (treated as a Unix socket path) |
 | `--store` | `~/.jerboa/images` | Local image store directory |
 | `--output` | `table` | Output format: `table` or `json` |
+| `--version`, `-v` | — | Print the CLI version and exit |
 
 The endpoint is resolved in priority order: `--host` flag → `JERBOA_HOST` environment variable → `[daemon] endpoint` in `~/.jerboa/config.toml` → per-platform default.
 
@@ -1425,73 +1426,16 @@ jerboa kernel use v0.1.0
 
 ---
 
-## Upgrade Commands
+## Version
 
-Manage the `jerboa` and `jerboad` binaries themselves. The CLI is versioned independently from the kernel.
-
-### `jerboa upgrade`
-
-Download and install the latest `jerboa` and `jerboad` binaries side by side, stopping the running daemon (if any) before replacing it and restarting it afterward.
-
-```
-jerboa upgrade [--yes]
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `-y`, `--yes` | `false` | Skip confirmation prompt |
+Print the installed CLI version and exit. The CLI is versioned independently from the kernel.
 
 ```bash
-jerboa upgrade
-# Installed CLI:  v0.1.0
-# Running daemon: v0.1.0
-# Latest:         v0.1.1
-# New version available: v0.1.1
-# Upgrade? [y/N] y
-# Downloading jerboa...
-# Downloading jerboad...
-# jerboa  → /usr/local/bin/jerboa
-# jerboad → /usr/local/bin/jerboad
-# Starting new jerboad...
-# Daemon restarted and ready.
+jerboa --version
+# jerboa version v0.1.0
 ```
 
-{: .note }
-On Windows, the running binary is renamed to `.bak` before the new one is placed in its position, since Windows does not allow overwriting a running executable directly. After the upgrade completes successfully, old `.bak` files are cleaned up automatically.
-
----
-
-### `jerboa upgrade check`
-
-Show the installed CLI version, the running daemon's version, and whether a newer release is available — without installing anything.
-
-```
-jerboa upgrade check
-```
-
-```bash
-jerboa upgrade check
-# Installed CLI:  v0.1.0
-# Running daemon: v0.1.0
-# Latest:         v0.1.1
-# Update available. Run `jerboa upgrade` to install v0.1.1.
-```
-
----
-
-### `jerboa upgrade list`
-
-List all available CLI versions, newest first. The currently running version is marked with `*`.
-
-```
-jerboa upgrade list
-```
-
-```bash
-jerboa upgrade list
-#   v0.1.1
-# * v0.1.0
-```
+There is no self-update command — update the `jerboa` and `jerboad` binaries manually. See [Updating jerboa and jerboad]({% link getting-started.md %}#updating-jerboa-and-jerboad).
 
 ---
 

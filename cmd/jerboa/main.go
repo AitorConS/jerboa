@@ -93,7 +93,6 @@ func newRootCmd() *cobra.Command {
 		newVolumeCmd(&storePath, &outputFmt),
 		newKernelCmd(&verbose),
 		newPkgCmd(&endpoint),
-		newUpgradeCmd(&endpoint, &verbose),
 		newNetworkCmd(&endpoint, &outputFmt),
 		newDNSCmd(&endpoint, &outputFmt),
 		newStatsCmd(&endpoint, &outputFmt),
