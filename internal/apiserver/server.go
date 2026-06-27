@@ -286,6 +286,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 	cfg := vm.Config{
 		ImagePath:   imagePath,
+		ImageRef:    p.Image,
 		Memory:      p.Memory,
 		CPUs:        p.CPUs,
 		NetworkName: p.NetworkName,
@@ -472,11 +473,21 @@ func (s *Server) handleStats(params json.RawMessage) (any, *api.RPCError) {
 	}, nil
 }
 
+// imageDisplay returns the image reference the VM was created from (e.g.
+// "flaskapp:latest") for display, falling back to the raw disk path when the
+// VM was started without a registered image reference.
+func imageDisplay(cfg vm.Config) string {
+	if cfg.ImageRef != "" {
+		return cfg.ImageRef
+	}
+	return cfg.ImagePath
+}
+
 func toInfo(v *vm.VM) api.VMInfo {
 	return api.VMInfo{
 		ID:     v.ID,
 		State:  string(v.GetState()),
-		Image:  v.Cfg.ImagePath,
+		Image:  imageDisplay(v.Cfg),
 		Name:   v.Cfg.Name,
 		Health: string(v.GetHealthStatus()),
 	}
@@ -486,7 +497,7 @@ func toDetail(v *vm.VM) api.VMDetail {
 	d := api.VMDetail{
 		ID:              v.ID,
 		State:           string(v.GetState()),
-		Image:           v.Cfg.ImagePath,
+		Image:           imageDisplay(v.Cfg),
 		Name:            v.Cfg.Name,
 		Memory:          v.Cfg.Memory,
 		CPUs:            v.Cfg.CPUs,

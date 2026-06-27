@@ -107,6 +107,10 @@ type HealthCheckConfig struct {
 type Config struct {
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
+	// ImageRef is the image reference the VM was created from (e.g.
+	// "flaskapp:latest"), preserved for display. Empty when the VM was started
+	// from a raw ImagePath with no registered image.
+	ImageRef string
 	// Memory is the QEMU memory string (e.g. "256M").
 	Memory string
 	// CPUs is the number of virtual CPUs; 0 uses QEMU default.
