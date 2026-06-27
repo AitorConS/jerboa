@@ -52,8 +52,9 @@ type BuildConfig struct {
 	// Env holds runtime environment variables to bake into the image manifest.
 	// Sourced from ops package.manifest Env fields and language driver output.
 	Env map[string]string
-	// Port, when non-zero, declares the service port and enables the network
-	// section in the manifest (required for any HTTP server to bind).
+	// Port is the service port declared for the image. It is metadata only:
+	// network config is injected at run time (fw_cfg / boot args), not baked
+	// into the manifest.
 	Port int
 	// Output is where mkfs subprocess output is written. Nil defaults to os.Stderr.
 	Output io.Writer
@@ -192,8 +193,8 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 // reads '(' as a tuple of name:value pairs — not a bare value list — so
 // arguments must use integer-string keys rather than e.g. ("/<entrypoint>").
 // cfg.Env entries are emitted as environment:(KEY:val ...) sorted by key.
-// When cfg.Port > 0 a network section is added with QEMU user-mode defaults,
-// which is required for any service that binds to a port.
+// Static network config is not baked into the manifest: the daemon injects the
+// assigned TAP IP at run time (QEMU fw_cfg or Firecracker boot args).
 func BuildManifest(cfg BuildConfig) string {
 	absBin, _ := filepath.Abs(cfg.BinaryPath)
 
@@ -240,9 +241,11 @@ func BuildManifest(cfg BuildConfig) string {
 		}
 	}
 	b.WriteString(")\n")
-	if cfg.Port > 0 {
-		b.WriteString("    network:(ip:10.0.2.15 gateway:10.0.2.2 netmask:255.255.255.0)\n")
-	}
+	// Static network config is injected at run time from the daemon-assigned
+	// TAP IP — via QEMU fw_cfg (opt/uni/network → net_inject) or Firecracker
+	// boot args (en1.ipaddr=…). The old build-time "network:(ip:10.0.2.15…)"
+	// section was a SLIRP-era constant that init_network_iface never read (it
+	// looks for an "en1"/root tuple, not a "network" child), so it is gone.
 	b.WriteString(")")
 	return b.String()
 }

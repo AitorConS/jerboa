@@ -133,15 +133,15 @@ func TestBuildManifest_WithEnv(t *testing.T) {
 	require.Less(t, homeIdx, pathIdx, "env keys must be sorted: HOME before PYTHONPATH")
 }
 
-func TestBuildManifest_WithPort(t *testing.T) {
+// A port no longer bakes a static network section into the manifest; the IP
+// is injected at run time (fw_cfg / boot args) from the daemon-assigned TAP IP.
+func TestBuildManifest_WithPortHasNoBakedNetwork(t *testing.T) {
 	got := BuildManifest(BuildConfig{
 		BinaryPath: filepath.FromSlash("/usr/bin/python3"),
 		Port:       8080,
 	})
-	require.Contains(t, got, "network:(")
-	require.Contains(t, got, "ip:10.0.2.15")
-	require.Contains(t, got, "gateway:10.0.2.2")
-	require.Contains(t, got, "netmask:255.255.255.0")
+	require.NotContains(t, got, "network:(")
+	require.NotContains(t, got, "10.0.2.15")
 }
 
 func TestBuildManifest_NoPortNoNetwork(t *testing.T) {
