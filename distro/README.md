@@ -1,40 +1,40 @@
 # jerboa WSL2 distro
 
-A dedicated, versioned WSL2 distribution that hosts the `jerboad` daemon on
-Windows — the same model Docker Desktop uses for `docker-desktop`. It bundles
-everything the daemon needs (jerboad, qemu, firecracker, the kernel build
-toolchain), so nothing depends on the user's WSL setup, on `jerboad` being on
-PATH, or on host `sudo`.
+This directory builds the dedicated WSL2 distro used by Windows installs.
 
-## Contents
+It exists to keep the Windows story consistent:
 
-| Path in distro | What |
-|---|---|
-| `/usr/local/bin/jerboad` | the daemon binary |
-| `/usr/local/bin/firecracker` | firecracker microVM monitor |
-| `qemu-system-x86_64` (apt) | QEMU hypervisor |
-| `/root/.jerboa/tools/{mkfs,boot.img,kernel.img}` | kernel build toolchain (daemon default cache dir) |
-| user `jerboa` | default interactive user; the daemon runs as `root` |
+- `jerboa.exe` runs on the host
+- `jerboad` runs as Linux inside its own imported distro
+- QEMU, Firecracker, and the kernel toolchain live there with it
+
+## What The Rootfs Contains
+
+- `/usr/local/bin/jerboad`
+- `/usr/local/bin/firecracker`
+- QEMU installed from the distro package manager
+- kernel tools under `/root/.jerboa/tools/`
+
+The daemon is launched as `root` inside this distro.
 
 ## Build
 
-```bash
-make kernel && make -C kernel tools     # produce the toolchain
-distro/build.sh                          # -> jerboa-rootfs-amd64.tar.gz
-```
-
-`build.sh` builds a linux `jerboad`, stages it with the toolchain into a Docker
-build context, builds `distro/Dockerfile`, and `docker export`s the container
-filesystem to the tarball. CI builds and attaches this tarball to each release.
-
-## Install (client side)
+From the repo root:
 
 ```bash
-jerboa daemon install                      # downloads the release rootfs and wsl --imports it
-jerboa daemon install --rootfs ./jerboa-rootfs-amd64.tar.gz   # or a local build
-jerboa daemon start --hypervisor firecracker
+make kernel
+make -C kernel tools
+bash distro/build.sh
 ```
 
-The client imports the distro to `%LOCALAPPDATA%\jerboa\distro`, runs `jerboad`
-inside it as `root` bound to `tcp://0.0.0.0:7890`, and dials it from Windows on
-`tcp://127.0.0.1:7890`. Remove it with `jerboa daemon uninstall`.
+That produces `jerboa-rootfs-amd64.tar.gz`.
+
+## Use From Windows
+
+```powershell
+jerboa daemon install --rootfs .\jerboa-rootfs-amd64.tar.gz
+jerboa daemon start
+jerboa daemon status
+```
+
+Without `--rootfs`, `jerboa daemon install` downloads the release rootfs artifact instead.

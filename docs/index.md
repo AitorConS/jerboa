@@ -4,10 +4,10 @@ title: Home
 nav_order: 1
 ---
 
-# Jerboa — Unikernel Engine
+# Jerboa
 {: .fs-9 }
 
-A Docker-like engine for building, running, and orchestrating unikernel virtual machines on KVM/QEMU.
+Unikernel engine for building, running, and orchestrating VM-based application images.
 {: .fs-6 .fw-300 }
 
 [Get Started]({% link getting-started.md %}){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
@@ -15,77 +15,72 @@ A Docker-like engine for building, running, and orchestrating unikernel virtual 
 
 ---
 
-## What is a Unikernel?
+## What It Is
 
-A **unikernel** is a single-purpose virtual machine: your application code compiled together with only the OS components it needs, running as a minimal VM. No shell, no package manager, no unused services — just your app and a tiny kernel.
+Jerboa is split into two parts:
 
-Compared to containers:
+- `jerboa`: the CLI
+- `jerboad`: the daemon that owns builds, images, VM lifecycle, networks, services, and compose state
 
-| | Container | Unikernel |
-|---|---|---|
-| Isolation | Shared kernel (namespaces) | Full VM hardware boundary |
-| Attack surface | Large (host kernel exposed) | Tiny (minimal kernel) |
-| Boot time | ~100ms | ~50ms |
-| Memory overhead | ~10–50 MB | ~2–5 MB |
-| Runtime | Any Linux binary | Static ELF only |
+The daemon is Linux-only. On Windows, the CLI runs on the host and boots the daemon inside a dedicated WSL2 distro managed by `jerboa daemon`.
 
-## What is Jerboa?
+## Current Capabilities
 
-`jerboa` is a command-line tool (plus a background daemon `jerboad`) that manages the full unikernel lifecycle — the same way Docker manages containers.
+- Build unikernel images from:
+  - static ELF binaries
+  - Go, Node.js, Python, Rust, and `raw` projects
+- Run VMs on:
+  - QEMU
+  - Firecracker
+- Manage:
+  - images
+  - volumes
+  - bridge networks with TAP-backed guest connectivity
+  - internal DNS
+  - compose stacks
+  - replicated services
+- Observe:
+  - VM logs
+  - live stats
+  - Prometheus metrics
+  - OTLP traces
+  - a read-only dashboard
 
-```
-jerboa build ./myapp                       # build a unikernel image from source or a binary
-jerboa run hello:latest                    # start a unikernel VM (detached by default)
-jerboa run hello:latest --attach           # start and stream serial console output
-jerboa network create app
-jerboa run hello:latest --network app -p 8080:80   # auto-allocated IP + port forwarding
-jerboa dns list --network app              # inspect internal DNS records
-jerboa ps                                  # list running VMs
-jerboa logs <id>                           # read serial console output
-jerboa stop <id>                           # graceful shutdown
-jerboa compose up stack.yaml               # start a multi-service application
-jerboa service run web app:latest --replicas 3 --network app  # scale a service to N replicas
-jerboa kernel update                       # update the cached kernel tools
-```
+## Important Runtime Constraints
 
-## Architecture Overview
+- Native VM execution requires Linux.
+- Port publishing requires a managed network (`--network`).
+- TCP publishing works today through a userspace forwarder.
+- UDP port mappings parse and persist, but the current forwarder skips them with a warning.
+- The daemon binary is built only for Linux; Windows uses WSL2.
 
-```
-┌──────────────────────────────────────────────────┐
-│  jerboa CLI  (cobra commands)                       │
-│  run · build · compose · service · network · ... │
-└──────────────────────┬───────────────────────────┘
-                       │  JSON-RPC over Unix socket
-┌──────────────────────▼───────────────────────────┐
-│  jerboad  (daemon)                                  │
-│  ┌────────────┐  ┌─────────────────────────────┐ │
-│  │ VM Manager │  │ Image Store                 │ │
-│  │ QEMU/KVM   │  │ content-addressed (SHA256)  │ │
-│  └────────────┘  └─────────────────────────────┘ │
-│  Networking · Volumes · Compose · Services       │
-│  Cluster gossip · Metrics · Tracing · Dashboard  │
-└──────────────────────┬───────────────────────────┘
-                       │
-┌──────────────────────▼───────────────────────────┐
-│  Nanos Kernel (C + ASM fork)                     │
-│  Boots application images on KVM/QEMU            │
-└──────────────────────────────────────────────────┘
-```
+## Repo Shape
 
-See [Architecture]({% link architecture.md %}) for the full breakdown of every subsystem.
+- `cmd/jerboa/` - CLI commands
+- `cmd/jerboad/` - daemon entrypoint
+- `internal/vm/` - VM lifecycle, QEMU, Firecracker, stats, persistence
+- `internal/image/` - image store and build pipeline
+- `internal/network/` - bridge, TAP, IPAM, port forwarder
+- `internal/service/` - replicated service management
+- `internal/compose/` - compose parser and ordering
+- `internal/wsldistro/` and `internal/wslboot/` - Windows/WSL integration
+- `tests/integration/` and `tests/e2e/` - higher-level verification
+- `kernel/` - Nanos-derived kernel tree and tooling
 
-## Key Features
+## Versions In This Repo
 
-- **Build from source or binary** — `jerboa build` compiles Go, Node.js, Python, or Rust projects directly with built-in language drivers, or packages a pre-compiled static ELF binary; supports multi-stage builds via `unikernel.toml`
-- **Content-addressed image store** — images are a JSON manifest + raw disk, addressed by SHA256 digest, with optional Ed25519 signing and verification (`jerboa sign` / `jerboa verify`)
-- **Full VM isolation** — every service runs in its own KVM virtual machine, with optional cgroup v2 CPU/memory quotas and disk I/O throttling
-- **Compose support** — define multi-service stacks in YAML with dependency ordering, health checks, restart policies, and replica scaling
-- **Services** — `jerboa service` runs and manages groups of replica VMs behind a shared name, with rolling updates and scaling
-- **Managed networking & internal DNS** — create isolated bridge networks with auto-allocated IPs, resolve services by name, and round-robin across replicas (`jerboa dns resolve-all`)
-- **Persistent volumes** — named, reusable disk images that survive VM restarts (`jerboa volume`)
-- **Cluster mode** — gossip-based multi-node membership for distributing VMs across hosts (`jerboa node ls`)
-- **Built-in observability** — Prometheus metrics, OpenTelemetry tracing, structured JSON logs, live `jerboa stats`, and a read-only web dashboard (see [Observability]({% link observability.md %}))
-- **Attach mode** — stream VM serial console output in real time with `--attach` (default is detached)
-- **Graceful lifecycle** — SIGTERM → 30s grace period → SIGKILL, with configurable restart policies and health checks
-- **JSON output** — every command supports `--output json` for scripting
-- **Versioned releases** — the CLI and the kernel are independently versioned with semver; `jerboa kernel update` updates the kernel tools
+- CLI version source: `VERSION`
+- Kernel version source: `kernel/VERSION`
+
+At the time of this documentation update:
+
+- CLI version: `v0.48.0`
+- Kernel version: `v0.1.2`
+
+## Next
+
+- [Getting Started]({% link getting-started.md %})
+- [CLI Reference]({% link cli-reference.md %})
+- [Compose]({% link compose.md %})
+- [Architecture]({% link architecture.md %})
+- [Observability]({% link observability.md %})
