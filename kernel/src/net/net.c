@@ -232,13 +232,8 @@ static boolean get_static_config(tuple t, struct netif *n, sstring ifname, boole
     ip4_addr_t netmask;
     ip4_addr_t gw;
 
-    string dbg_ip = t ? get_string(t, sym(ipaddr)) : 0;
-    msg_print("net_inject: DIAG get_static_config ifname=%s t=%p ipaddr_str=%s",
-              ifname, t, dbg_ip ? "present" : "absent");
-    if (!get_config_addr(t, sym(ipaddr), &ip)) {
-        msg_print("net_inject: DIAG get_config_addr(ipaddr) FAILED for %s", ifname);
+    if (!get_config_addr(t, sym(ipaddr), &ip))
         return false;
-    }
 
     if (!get_config_addr(t, sym(netmask), &netmask))
         ip4_addr_set_u32(&netmask, lwip_htonl(0xffffff00)); // 255.255.255.0
