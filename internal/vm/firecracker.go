@@ -117,7 +117,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// opens an existing tap by name. Set up the persistent tap + bridge here,
 	// before launching, so the guest is reachable on the host network.
 	if v.Cfg.NetworkName != "" {
-		if err := setupFCNetwork(v.Cfg); err != nil {
+		if err := setupTAPNetwork(v.Cfg); err != nil {
 			slog.Warn("firecracker start: network setup failed", "vm_id", id, "err", err)
 		}
 	}
@@ -313,11 +313,13 @@ func (m *FirecrackerManager) List() []*VM {
 	return m.store.List()
 }
 
-// setupFCNetwork creates the persistent tap device and (idempotently) the
-// bridge for a Firecracker VM, attaching the tap so the guest's static IP is
-// reachable from the host. QEMU does this inline in its own Start; Firecracker
-// needs it done before the process launches.
-func setupFCNetwork(cfg Config) error {
+// setupTAPNetwork creates the persistent tap device and (idempotently) the
+// bridge, attaching the tap so the guest's static IP is reachable from the
+// host. Both hypervisors must do this before the process launches: the tap has
+// to exist and be bridged before the guest brings its interface up. (QEMU is
+// told script=no,downscript=no so it consumes this pre-made tap instead of
+// running /etc/qemu-ifup.)
+func setupTAPNetwork(cfg Config) error {
 	if err := network.CreateTAPDevice(cfg.NetworkName); err != nil {
 		return err
 	}

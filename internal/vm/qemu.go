@@ -98,6 +98,18 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 
 	cmd := m.buildCmd(ctx, v.Cfg, qmpAddr)
 
+	// Wire the tap into the bridge before launching QEMU. QEMU runs with
+	// script=no,downscript=no, so it will not create or bridge the tap itself;
+	// the device must already exist, be enslaved to the bridge, and be up by
+	// the time the guest brings its interface online. Doing this after
+	// cmd.Start() raced QEMU's own tap creation and left the tap down and
+	// unbridged, so the guest's static IP was never reachable.
+	if v.Cfg.NetworkName != "" {
+		if err := setupTAPNetwork(v.Cfg); err != nil {
+			slog.Warn("qemu start: tap network setup failed", "vm_id", id, "err", err)
+		}
+	}
+
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
 		pr, pw := io.Pipe()
@@ -157,25 +169,6 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 			v.mu.Lock()
 			v.portFwd = fwd
 			v.mu.Unlock()
-		}
-	}
-	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
-		bridgeName := v.Cfg.BridgeName
-		if bridgeName == "" {
-			bridgeName = "jerboa-br0"
-		}
-		mask := v.Cfg.SubnetMask
-		if mask == "" {
-			mask = "24"
-		}
-		cidr := v.Cfg.GatewayIP + "/" + mask
-		// EnsureBridge is idempotent: a bridge shared by several VMs must not
-		// fail the second VM with "File exists".
-		if err := network.EnsureBridge(network.BridgeConfig{Name: bridgeName, CIDR: cidr}); err != nil {
-			slog.Warn("qemu start: failed to ensure bridge", "bridge", bridgeName, "err", err)
-		}
-		if err := network.AttachTAP(v.Cfg.NetworkName, bridgeName); err != nil {
-			slog.Warn("qemu start: failed to attach TAP to bridge", "tap", v.Cfg.NetworkName, "bridge", bridgeName, "err", err)
 		}
 	}
 	go m.monitor(v, cmd)
@@ -467,16 +460,16 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 			slog.Warn("qemu monitor: cgroup remove failed", "vm_id", v.ID, "err", err)
 		}
 	}
-	if v.Cfg.NetworkName != "" && v.Cfg.GatewayIP != "" {
-		bridgeName := v.Cfg.BridgeName
-		if bridgeName == "" {
-			bridgeName = "jerboa-br0"
-		}
+	if v.Cfg.NetworkName != "" {
+		// Mirror setupTAPNetwork's creation: detach and delete the persistent
+		// tap. The bridge is intentionally left in place — it may be shared by
+		// other VMs and (for `jerboa network`-managed bridges) is owned by the
+		// network's lifecycle, not the VM's.
 		if err := network.DetachTAP(v.Cfg.NetworkName); err != nil {
-			slog.Warn("qemu monitor: failed to detach TAP from bridge", "tap", v.Cfg.NetworkName, "err", err)
+			slog.Debug("qemu monitor: detach tap", "vm_id", v.ID, "err", err)
 		}
-		if err := network.DestroyBridge(bridgeName); err != nil {
-			slog.Warn("qemu monitor: failed to destroy bridge", "bridge", bridgeName, "err", err)
+		if err := network.DeleteTAPDevice(v.Cfg.NetworkName); err != nil {
+			slog.Debug("qemu monitor: delete tap", "vm_id", v.ID, "err", err)
 		}
 	}
 	if err := v.transition(StateStopped); err != nil {
