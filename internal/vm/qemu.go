@@ -382,7 +382,10 @@ func buildNetArgs(cfg Config) []string {
 			dev += ",mac=" + guestMACFromIP(cfg.IPAddress)
 		}
 		return []string{
-			"-netdev", "tap,id=net0,ifname=" + cfg.NetworkName,
+			// script=no/downscript=no: the daemon wires the tap into the bridge
+			// itself, so QEMU must not run /etc/qemu-ifup (which fails with
+			// "no bridge found"). Matches ops' TAP setup.
+			"-netdev", "tap,id=net0,ifname=" + cfg.NetworkName + ",script=no,downscript=no",
 			"-device", dev,
 		}
 	}
