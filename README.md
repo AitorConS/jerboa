@@ -76,12 +76,6 @@ jerboa run hello:latest --attach
 - [Architecture](docs/architecture.md)
 - [Observability](docs/observability.md)
 
-## Known Limits
-
-Before using Jerboa seriously, read:
-
-- [Known Limitations](KNOWN_LIMITATIONS.md)
-
 The short version:
 
 - port publishing requires `--network`
