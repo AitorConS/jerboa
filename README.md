@@ -111,15 +111,6 @@ make lint
 
 For contribution expectations, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Public Beta Positioning
-
-If you are opening the repository publicly, the safest framing is:
-
-- public beta
-- developer preview
-- experimental but usable for interested systems engineers
-
-Avoid framing it as stable infrastructure for arbitrary production workloads without qualification.
 
 ## Security
 
