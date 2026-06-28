@@ -1,14 +1,19 @@
-BINARY_UNI   := jerboa
-BINARY_UNID  := jerboad
-BUILD_DIR    := dist
-VERSION      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
-LDFLAGS      := -ldflags="-s -w -X main.version=$(VERSION)"
+BINARY_UNI       := jerboa
+BINARY_UNID      := jerboad
+BINARY_INSTALLER := jerboa-installer.exe
+BUILD_DIR        := dist
+VERSION          ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
+LDFLAGS          := -ldflags="-s -w -X main.version=$(VERSION)"
 
-.PHONY: build kernel test test-integration test-kernel lint tidy-check e2e smoke coverage clean
+.PHONY: build installer kernel test test-integration test-kernel lint tidy-check e2e smoke coverage clean
 
 build:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI)  ./cmd/jerboa
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNID) ./cmd/jerboad
+
+installer:
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build $(LDFLAGS) \
+		-o $(BUILD_DIR)/$(BINARY_INSTALLER) ./cmd/installer
 
 kernel:
 	$(MAKE) -C kernel all
