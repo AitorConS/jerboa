@@ -5,6 +5,10 @@ on:
     - cron: '0 2 * * *'  # 02:00 UTC daily
   workflow_dispatch:      # allow manual trigger
 
+# Least privilege by default.
+permissions:
+  contents: read
+
 # Only one nightly at a time.
 concurrency:
   group: ${{ github.workflow }}
@@ -16,9 +20,11 @@ jobs:
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           # Self-hosted runner: the module cache persists on disk between runs,
@@ -34,7 +40,9 @@ jobs:
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Verify toolchain
         run: |
@@ -59,9 +67,11 @@ jobs:
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           # Self-hosted runner: the module cache persists on disk between runs,
@@ -85,9 +95,11 @@ jobs:
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           # Self-hosted runner: the module cache persists on disk between runs,
@@ -99,7 +111,7 @@ jobs:
         run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: benchmark-results-${{ github.run_id }}
           path: benchmark-results.txt
@@ -109,9 +121,11 @@ jobs:
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           # Self-hosted runner: the module cache persists on disk between runs,
@@ -265,7 +279,7 @@ jobs:
           EOF
 
       - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: image-benchmarks-${{ github.run_id }}
           path: bench-image.json
@@ -275,20 +289,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           cache: true
 
       - name: govulncheck
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
           govulncheck ./...
 
       - name: trivy filesystem scan
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .

@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Go modules
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
+
+  # GitHub Actions — keeps the SHA-pinned actions current and flags advisories.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Jekyll docs site (Ruby/Bundler)
+  - package-ecosystem: bundler
+    directory: "/docs"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
