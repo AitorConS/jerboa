@@ -206,12 +206,16 @@ func BuildManifest(cfg BuildConfig) string {
 	root.children["program"] = &manifestNode{hostPath: absBin}
 
 	for _, f := range cfg.PkgFiles {
-		abs, _ := filepath.Abs(f.HostPath)
 		guestPath := f.GuestPath
 		if guestPath == "" {
 			guestPath = filepath.Base(f.HostPath)
 		}
-		insertManifestFile(root, filepath.ToSlash(guestPath), abs)
+		if f.IsDir {
+			insertManifestDir(root, filepath.ToSlash(guestPath))
+		} else {
+			abs, _ := filepath.Abs(f.HostPath)
+			insertManifestFile(root, filepath.ToSlash(guestPath), abs)
+		}
 	}
 
 	var b strings.Builder
@@ -280,6 +284,20 @@ func insertManifestFile(node *manifestNode, guestPath, hostPath string) {
 			}
 			cur = cur.children[part]
 		}
+	}
+}
+
+// insertManifestDir ensures a directory node exists at the given slash-separated
+// guest path. Called for empty directories from package sysroots so mkfs creates
+// them in the TFS image even when they contain no files.
+func insertManifestDir(node *manifestNode, guestPath string) {
+	parts := strings.FieldsFunc(guestPath, func(r rune) bool { return r == '/' })
+	cur := node
+	for _, part := range parts {
+		if cur.children[part] == nil {
+			cur.children[part] = newManifestNode()
+		}
+		cur = cur.children[part]
 	}
 }
 

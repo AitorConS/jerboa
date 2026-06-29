@@ -1,0 +1,15 @@
+[build]
+lang = "raw"
+disk_size = "800M"
+
+[program]
+path = "mongod"
+args = [
+  "--bind_ip_all",
+  "--nounixsocket",
+  "--dbpath=/data/db",
+]
+
+[run]
+memory = "512M"
+ports = ["27017:27017"]

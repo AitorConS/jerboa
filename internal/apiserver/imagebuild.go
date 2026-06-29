@@ -227,22 +227,33 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg {
+		guestPath := filepath.ToSlash(filepath.Clean("/" + strings.TrimSuffix(hdr.Name, "/")))
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			dest, err := safeJoin(dir, guestPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(dest, 0o755); err != nil {
+				return nil, fmt.Errorf("mkdir %s: %w", hdr.Name, err)
+			}
+			files = append(files, pkg.File{GuestPath: strings.TrimPrefix(guestPath, "/"), IsDir: true})
+		case tar.TypeReg:
+			dest, err := safeJoin(dir, guestPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return nil, fmt.Errorf("mkdir for %s: %w", hdr.Name, err)
+			}
+			mode := os.FileMode(hdr.Mode).Perm() //nolint:gosec // tar mode bits are bounded by Perm()
+			if err := writeFileFromTar(dest, tr, mode); err != nil {
+				return nil, err
+			}
+			files = append(files, pkg.File{HostPath: dest, GuestPath: strings.TrimPrefix(guestPath, "/")})
+		default:
 			continue
 		}
-		guestPath := filepath.ToSlash(filepath.Clean("/" + hdr.Name))
-		dest, err := safeJoin(dir, guestPath)
-		if err != nil {
-			return nil, err
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return nil, fmt.Errorf("mkdir for %s: %w", hdr.Name, err)
-		}
-		mode := os.FileMode(hdr.Mode).Perm() //nolint:gosec // tar mode bits are bounded by Perm()
-		if err := writeFileFromTar(dest, tr, mode); err != nil {
-			return nil, err
-		}
-		files = append(files, pkg.File{HostPath: dest, GuestPath: strings.TrimPrefix(guestPath, "/")})
 	}
 	return files, nil
 }

@@ -247,6 +247,8 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 type File struct {
 	HostPath  string
 	GuestPath string
+	// IsDir marks an empty directory to create inside the image (no host file).
+	IsDir bool
 }
 
 // opsRuntimeBloatDir reports whether a slash-separated package-relative path
@@ -301,6 +303,15 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		if d.IsDir() {
 			if opsRuntimeBloatDir(rel) {
 				return fs.SkipDir
+			}
+			// Emit empty sysroot directories so mkfs creates them in the image.
+			// Non-empty dirs are implicitly created when their files are added.
+			if strings.HasPrefix(rel, "sysroot/") {
+				entries, readErr := os.ReadDir(path)
+				if readErr == nil && len(entries) == 0 {
+					guestPath := strings.TrimPrefix(rel, "sysroot/")
+					files = append(files, File{GuestPath: guestPath, IsDir: true})
+				}
 			}
 			return nil
 		}
