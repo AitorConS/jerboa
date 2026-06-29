@@ -1,0 +1,14 @@
+[build]
+lang = "raw"
+disk_size = "512M"
+
+[program]
+path = "mysqld"
+args = [
+  "--initialize-insecure",
+  "--user=root",
+  "--datadir=/var/lib/mysql",
+]
+
+[run]
+memory = "512M"

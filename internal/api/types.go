@@ -263,6 +263,10 @@ type BuildParams struct {
 	Args       []string          `json:"args,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 	Port       int               `json:"port,omitempty"`
+	// DiskSize sets the minimum image size passed to mkfs (e.g. "512M", "1G").
+	// Use when the default content-based size leaves insufficient free space
+	// for runtime writes (e.g. database temp tablespaces, log files).
+	DiskSize string `json:"disk_size,omitempty"`
 }
 
 // ImageManifestResult is the wire representation of a built image manifest.

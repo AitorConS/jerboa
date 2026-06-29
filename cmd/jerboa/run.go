@@ -330,7 +330,7 @@ func parseVolumeSpec(spec string, store *volume.Store) (api.VolumeMountSpec, err
 		return api.VolumeMountSpec{}, fmt.Errorf("volume %q not found (create with 'jerboa volume create %s'): %w", name, name, err)
 	}
 	return api.VolumeMountSpec{
-		DiskPath:  vol.DiskPath,
+		DiskPath:  hostPathForDaemon(vol.DiskPath),
 		GuestPath: guestPath,
 		ReadOnly:  readOnly,
 	}, nil

@@ -193,6 +193,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Args:       p.Args,
 		Env:        p.Env,
 		Port:       p.Port,
+		DiskSize:   p.DiskSize,
 		Output:     io.Discard,
 	})
 	if err != nil {

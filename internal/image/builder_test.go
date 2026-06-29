@@ -187,6 +187,21 @@ func TestBuildManifest_ArgsWithSpaceQuoted(t *testing.T) {
 	require.Contains(t, got, `arguments:(0:/program 1:-jar 2:"/My App.jar")`)
 }
 
+func TestBuildManifest_DiskSize(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/mysqld"),
+		DiskSize:   "512M",
+	})
+	require.Contains(t, got, "imagesize:512M")
+}
+
+func TestBuildManifest_NoDiskSize(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: filepath.FromSlash("/usr/bin/app"),
+	})
+	require.NotContains(t, got, "imagesize")
+}
+
 func TestManifestValue(t *testing.T) {
 	cases := []struct {
 		input string

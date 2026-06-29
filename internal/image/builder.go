@@ -56,6 +56,10 @@ type BuildConfig struct {
 	// network config is injected at run time (fw_cfg / boot args), not baked
 	// into the manifest.
 	Port int
+	// DiskSize is the minimum image file size passed to mkfs (e.g. "512M", "1G").
+	// When non-empty, emitted as imagesize in the Nanos manifest so mkfs pads
+	// the image to at least that size, leaving free space for runtime writes.
+	DiskSize string
 	// Output is where mkfs subprocess output is written. Nil defaults to os.Stderr.
 	Output io.Writer
 }
@@ -241,6 +245,9 @@ func BuildManifest(cfg BuildConfig) string {
 		}
 	}
 	b.WriteString(")\n")
+	if cfg.DiskSize != "" {
+		fmt.Fprintf(&b, "    imagesize:%s\n", cfg.DiskSize)
+	}
 	// Static network config is injected at run time from the daemon-assigned
 	// TAP IP — via QEMU fw_cfg (opt/uni/network → net_inject) or Firecracker
 	// boot args (en1.ipaddr=…). The old build-time "network:(ip:10.0.2.15…)"
