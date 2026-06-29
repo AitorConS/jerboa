@@ -513,7 +513,7 @@ jobs:
             --title "latest" --notes "Rolling latest release" \
             2>/dev/null || true
           # Upload only CLI binaries, installer, and the distro rootfs — never touch kernel assets.
-          gh release upload latest dist/jerboa-* dist/jerboad-* dist/jerboa-installer.exe dist-distro/jerboa-rootfs-amd64.tar.gz --clobber
+          gh release upload latest dist/jerboa-* dist/jerboad-* dist-distro/jerboa-rootfs-amd64.tar.gz --clobber
 
   coverage:
     name: Coverage Report
