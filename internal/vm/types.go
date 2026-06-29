@@ -44,10 +44,16 @@ var validTransitions = map[State][]State{
 type VolumeMount struct {
 	// DiskPath is the absolute path to the raw disk image on the host.
 	DiskPath string
-	// GuestPath is the mount point inside the VM (informational; used by kernel).
+	// GuestPath is the mount point inside the VM. The hypervisor passes
+	// "Label:GuestPath" to the guest kernel (QEMU fw_cfg opt/uni/mounts or
+	// Firecracker boot args) so the volume is mounted there.
 	GuestPath string
 	// ReadOnly marks the volume as read-only.
 	ReadOnly bool
+	// Label is the volume's TFS filesystem label, used by the guest kernel's
+	// volume_match to bind this disk to GuestPath. Empty volumes are skipped
+	// for mount injection (attached as a bare block device only).
+	Label string
 }
 
 // HealthStatus represents the result of a health check probe.

@@ -78,6 +78,17 @@ closure_function(5, 0, void, startup,
      * static IP is configured instead of DHCP. */
     net_inject_from_fw_cfg(root);
 
+    /* Inject volume mount points from QEMU fw_cfg opt/uni/mounts (set by
+     * uni run -v). The manifest carries no mounts for generic images, so the
+     * early storage_set_mountpoints() in init.c was a no-op; re-apply here with
+     * the runtime-injected tuple. Volumes that attach later are mounted by
+     * volume_add(), which re-checks storage.mounts. */
+    if (mounts_inject_from_fw_cfg(root)) {
+        tuple mounts = get_tuple(root, sym(mounts));
+        if (mounts)
+            storage_set_mountpoints(mounts);
+    }
+
     value p = get(root, sym(program));
     assert(p && is_string(p));
     init_network_iface(root, bound(m));

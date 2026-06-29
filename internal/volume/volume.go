@@ -5,6 +5,8 @@
 package volume
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,7 +19,31 @@ import (
 const (
 	defaultSizeBytes = 1 << 30 // 1 GiB
 	metaFile         = "meta.json"
+	// maxLabelLen mirrors the kernel's VOLUME_LABEL_MAX_LEN (32, NUL-terminated),
+	// so the usable label length is 31 bytes.
+	maxLabelLen = 31
 )
+
+// tfsMagic is the 6-byte signature at offset 0 of a TFS-formatted volume
+// (kernel src/fs/tlog.c). A freshly allocated (zero-filled) disk lacks it, so a
+// magic check is a cheap, reliable "is this volume already formatted?" probe.
+var tfsMagic = []byte("NVMTFS")
+
+// Formatter formats the raw disk at diskPath as an empty TFS filesystem labeled
+// label with a minimum size of sizeBytes. Implemented by internal/tools using
+// the mkfs toolchain; the daemon supplies one at run time (mkfs is Linux-only,
+// so formatting cannot happen on a Windows client at create time).
+type Formatter func(ctx context.Context, diskPath, label string, sizeBytes int64) error
+
+// SanitizeLabel trims name to a valid TFS label (<= maxLabelLen bytes). The
+// kernel's volume_match compares the label verbatim, so it must equal the value
+// injected into the guest mount config.
+func SanitizeLabel(name string) string {
+	if len(name) > maxLabelLen {
+		return name[:maxLabelLen]
+	}
+	return name
+}
 
 // Volume is a named persistent disk image.
 type Volume struct {
@@ -29,6 +55,10 @@ type Volume struct {
 	SizeBytes int64 `json:"size_bytes"`
 	// CreatedAt is when the volume was created.
 	CreatedAt time.Time `json:"created_at"`
+	// Label is the TFS filesystem label written when the volume is formatted.
+	// It defaults to the volume ID and is the key the guest kernel matches to
+	// mount this disk. Capped to maxLabelLen.
+	Label string `json:"label,omitempty"`
 }
 
 // Store manages volumes on disk.
@@ -77,6 +107,7 @@ func (s *Store) Create(name string, sizeBytes int64) (*Volume, error) {
 		DiskPath:  diskPath,
 		SizeBytes: sizeBytes,
 		CreatedAt: time.Now().UTC(),
+		Label:     SanitizeLabel(name),
 	}
 	if err := writeMeta(dir, v); err != nil {
 		_ = os.RemoveAll(dir)
@@ -172,6 +203,56 @@ func allocateDisk(path string, sizeBytes int64) error {
 	}
 	if _, err := f.Write([]byte{0}); err != nil {
 		return fmt.Errorf("write disk tail: %w", err)
+	}
+	return nil
+}
+
+// IsFormatted reports whether the disk at path already carries a TFS
+// filesystem (its first bytes match the TFS magic). A missing file or a
+// freshly allocated zero-filled disk reports false.
+func IsFormatted(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("open volume %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	head := make([]byte, len(tfsMagic))
+	n, err := f.Read(head)
+	if err != nil || n < len(tfsMagic) {
+		return false, nil // too short to be formatted; treat as unformatted
+	}
+	return bytes.Equal(head, tfsMagic), nil
+}
+
+// EnsureFormatted formats the disk at diskPath as an empty TFS volume labeled
+// label if it is not already formatted. It is idempotent: a volume that already
+// carries a TFS filesystem is left untouched so existing data is preserved.
+// sizeBytes is the minimum image size; when <= 0 the current file size is used.
+// format must be non-nil (the mkfs toolchain is supplied by the daemon).
+func EnsureFormatted(ctx context.Context, diskPath, label string, sizeBytes int64, format Formatter) error {
+	formatted, err := IsFormatted(diskPath)
+	if err != nil {
+		return err
+	}
+	if formatted {
+		return nil
+	}
+	if format == nil {
+		return fmt.Errorf("volume %s not formatted and no formatter available", diskPath)
+	}
+	if sizeBytes <= 0 {
+		if st, statErr := os.Stat(diskPath); statErr == nil {
+			sizeBytes = st.Size()
+		}
+	}
+	if label == "" {
+		return fmt.Errorf("volume %s: empty label", diskPath)
+	}
+	if err := format(ctx, diskPath, label, sizeBytes); err != nil {
+		return fmt.Errorf("format volume %s: %w", diskPath, err)
 	}
 	return nil
 }

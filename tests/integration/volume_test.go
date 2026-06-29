@@ -37,15 +37,12 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, buildLinuxBinary(voltestSrc, voltestBin), "failed to build voltest binary")
 
 	var mkfsRun image.MkfsFunc
-	localTools := filepath.Join("..", "..", "kernel", "output", "tools", "bin")
-	if tools.Exist(localTools) {
-		mkfsRun, err = tools.ResolveMkfs(context.Background(), localTools, "")
-		require.NoError(t, err, "failed to resolve local mkfs")
-	} else {
-		t.Logf("Local kernel tools not found at %s; downloading from release", localTools)
-		mkfsRun, err = tools.ResolveMkfs(context.Background(), filepath.Join(storeDir, "tools"), "")
-		require.NoError(t, err, "failed to resolve mkfs")
-	}
+	var volFmt volume.Formatter
+	toolsDir := localToolsDir(t, storeDir)
+	mkfsRun, err = tools.ResolveMkfs(context.Background(), toolsDir, "")
+	require.NoError(t, err, "failed to resolve mkfs")
+	volFmt, err = tools.ResolveVolumeFormatter(context.Background(), toolsDir, "")
+	require.NoError(t, err, "failed to resolve volume formatter")
 
 	builder := image.NewBuilder(imgStore)
 	_, err = builder.Build(context.Background(), image.BuildConfig{
@@ -73,6 +70,9 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, err)
 	srv, err := apiserver.NewServer(mgr, netStore, nil, defaultSocket, nil, "", nil)
 	require.NoError(t, err)
+	srv.EnableVolumeFormatResolver(func(context.Context) (volume.Formatter, error) {
+		return volFmt, nil
+	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -97,7 +97,7 @@ func TestVolumePersistence(t *testing.T) {
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
 		Volumes: []api.VolumeMountSpec{
-			{DiskPath: vol.DiskPath, GuestPath: "/data"},
+			{DiskPath: vol.DiskPath, GuestPath: "/data", Label: vol.Label},
 		},
 	})
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestVolumePersistence(t *testing.T) {
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
 		Volumes: []api.VolumeMountSpec{
-			{DiskPath: vol.DiskPath, GuestPath: "/data"},
+			{DiskPath: vol.DiskPath, GuestPath: "/data", Label: vol.Label},
 		},
 	})
 	require.NoError(t, err)
@@ -195,6 +195,35 @@ func dumpVMLogs(t *testing.T, client *api.Client, vmID, label string) {
 		return
 	}
 	t.Logf("[%s] VM serial console output:\n%s", label, logs.Logs)
+}
+
+// localToolsDir returns a tools directory containing kernel artifacts. It
+// prefers the freshly built local kernel (kernel/output/...) so the test
+// exercises the in-tree kernel (e.g. mount_inject) rather than a published
+// release; it copies mkfs, kernel.img and boot.img into a temp dir that
+// tools.Exist/ResolveMkfs accept. If the local build is absent it falls back to
+// a download dir under storeDir.
+func localToolsDir(t *testing.T, storeDir string) string {
+	t.Helper()
+	out := filepath.Join("..", "..", "kernel", "output")
+	srcs := map[string]string{
+		"mkfs":       filepath.Join(out, "tools", "bin", "mkfs"),
+		"kernel.img": filepath.Join(out, "platform", "pc", "bin", "kernel.img"),
+		"boot.img":   filepath.Join(out, "platform", "pc", "boot", "boot.img"),
+	}
+	for _, p := range srcs {
+		if _, err := os.Stat(p); err != nil {
+			t.Logf("local kernel artifact %s missing; falling back to release download", p)
+			return filepath.Join(storeDir, "tools")
+		}
+	}
+	dir := t.TempDir()
+	for name, src := range srcs {
+		data, err := os.ReadFile(src)
+		require.NoError(t, err, "read local artifact %s", src)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o755))
+	}
+	return dir
 }
 
 func buildLinuxBinary(src, dst string) error {

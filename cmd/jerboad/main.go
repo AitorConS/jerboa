@@ -26,6 +26,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/tracing"
 	"github.com/AitorConS/jerboa/internal/ui"
 	"github.com/AitorConS/jerboa/internal/vm"
+	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
 
@@ -277,6 +278,14 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		})
 		slog.Info("jerboad: image build enabled", "store", storePath)
 	}
+
+	// Enable on-demand TFS formatting of attached volumes (lazy mkfs resolver).
+	// Volumes are created as sparse files on the client (mkfs is Linux-only);
+	// the daemon formats them with a label the first time they are attached.
+	vmSrv.EnableVolumeFormatResolver(func(rctx context.Context) (volume.Formatter, error) {
+		slog.Info("jerboad: resolving mkfs toolchain for volume format", "tools_dir", toolsDir)
+		return tools.ResolveVolumeFormatter(rctx, toolsDir, "")
+	})
 
 	slog.Info("jerboad listening", "endpoint", endpoint, "hypervisor", hypervisor)
 

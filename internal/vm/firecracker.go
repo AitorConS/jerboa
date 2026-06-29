@@ -535,6 +535,18 @@ func buildFCBootArgs(cfg Config) string {
 		}
 	}
 
+	// Volume mount points: Nanos reads "mounts.LABEL=/path" from boot args and,
+	// via cmdline_apply, builds a nested "mounts" tuple that storage_set_mountpoints
+	// consumes (init.c, applied before the unix process starts). Each attached
+	// volume is matched to a mount by its TFS label. No fw_cfg is needed on
+	// Firecracker — the cmdline is delivered directly, unlike QEMU.
+	for _, vol := range cfg.Volumes {
+		if vol.Label == "" || vol.GuestPath == "" {
+			continue
+		}
+		args += fmt.Sprintf(" mounts.%s=%s", vol.Label, vol.GuestPath)
+	}
+
 	return args
 }
 

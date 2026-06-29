@@ -18,6 +18,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
+	"github.com/AitorConS/jerboa/internal/volume"
 )
 
 // SetImageStore attaches the daemon's image store, enabling image resolution
@@ -68,6 +69,35 @@ func (s *Server) resolveMkfs(ctx context.Context) (image.MkfsFunc, error) {
 		return nil, err
 	}
 	s.mkfsCached = f
+	return f, nil
+}
+
+// EnableVolumeFormatResolver configures a resolver that produces the volume
+// formatter (mkfs-based) on first use, so the daemon can format attached
+// volumes as TFS at run time. A successful result is cached; errors are not.
+func (s *Server) EnableVolumeFormatResolver(resolver func(context.Context) (volume.Formatter, error)) {
+	s.volFmtMu.Lock()
+	s.volFmtResolv = resolver
+	s.volFmtCached = nil
+	s.volFmtMu.Unlock()
+}
+
+// resolveVolumeFormatter returns the volume formatter, invoking the resolver
+// once and caching the result. Returns nil (no error) when no resolver is set.
+func (s *Server) resolveVolumeFormatter(ctx context.Context) (volume.Formatter, error) {
+	s.volFmtMu.Lock()
+	defer s.volFmtMu.Unlock()
+	if s.volFmtResolv == nil {
+		return nil, nil
+	}
+	if s.volFmtCached != nil {
+		return s.volFmtCached, nil
+	}
+	f, err := s.volFmtResolv(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.volFmtCached = f
 	return f, nil
 }
 

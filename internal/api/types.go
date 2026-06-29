@@ -36,6 +36,11 @@ type VolumeMountSpec struct {
 	DiskPath  string `json:"disk_path"`
 	GuestPath string `json:"guest_path"`
 	ReadOnly  bool   `json:"read_only,omitempty"`
+	// Label is the volume's TFS filesystem label (its name). The daemon formats
+	// the volume with this label and injects "Label:GuestPath" into the guest's
+	// mount config (QEMU fw_cfg opt/uni/mounts or Firecracker boot args) so the
+	// kernel mounts the matching volume at GuestPath.
+	Label string `json:"label,omitempty"`
 }
 
 // RunParams are the parameters for the VM.Run method.
