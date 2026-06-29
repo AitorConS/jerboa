@@ -137,7 +137,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     needs: [lint, unit-tests]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    environment: kvm
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 20
     steps:
@@ -167,7 +167,7 @@ jobs:
   e2e-tests:
     name: E2E Tests
     needs: [lint, unit-tests, kernel-build]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    environment: kvm
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 45
     steps:
@@ -200,7 +200,7 @@ jobs:
   image-benchmarks:
     name: Image Build & Boot Benchmarks
     needs: [lint, unit-tests]
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    environment: kvm
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 30
     steps:
