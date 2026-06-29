@@ -1,7 +1,12 @@
-name: Main Branch
+name: CI
 
 on:
   push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  pull_request:
     branches: [main]
     paths-ignore:
       - 'docs/**'
@@ -132,6 +137,7 @@ jobs:
   integration-tests:
     name: Integration Tests
     needs: [lint, unit-tests]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 20
     steps:
@@ -161,6 +167,7 @@ jobs:
   e2e-tests:
     name: E2E Tests
     needs: [lint, unit-tests, kernel-build]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 45
     steps:
@@ -193,6 +200,7 @@ jobs:
   image-benchmarks:
     name: Image Build & Boot Benchmarks
     needs: [lint, unit-tests]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 30
     steps:
@@ -363,6 +371,7 @@ jobs:
     name: Build WSL2 Distro Rootfs
     runs-on: ubuntu-latest
     needs: [lint, unit-tests]
+    if: github.event_name == 'push'
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -395,6 +404,7 @@ jobs:
     name: Build Release Binaries
     runs-on: ubuntu-latest
     needs: [lint, unit-tests, integration-tests, e2e-tests]
+    if: github.event_name == 'push'
     timeout-minutes: 15
     outputs:
       version: ${{ steps.read-version.outputs.version }}
@@ -471,6 +481,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs: [build-release, build-distro]
+    if: github.event_name == 'push'
     timeout-minutes: 10
     permissions:
       contents: write
