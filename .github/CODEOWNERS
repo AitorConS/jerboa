@@ -1,0 +1,7 @@
+# Default owner for everything in the repo.
+* @AitorConS
+
+# CI/CD and security-sensitive configuration require explicit owner review.
+/.github/ @AitorConS
+/scripts/ @AitorConS
+/distro/ @AitorConS

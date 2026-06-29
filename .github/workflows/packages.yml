@@ -11,6 +11,10 @@ on:
         description: 'Version override (e.g. v20.11.0, leave empty for default)'
         required: false
 
+# Least privilege by default.
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,65 +28,81 @@ jobs:
       matrix:
         include:
           # Language runtimes
+          # sha256 values are mandatory: the build job verifies the downloaded
+          # source against them and fails closed if they are empty or mismatch.
           - package: node
             version: "20.11.0"
             source_url: "https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz"
+            sha256: "822780369d0ea309e7d218e41debbd1a03f8cdf354ebf8a4420e89f39cc2e612"
             build_script: "scripts/build-node.sh"
           - package: node
             version: "22.0.0"
             source_url: "https://nodejs.org/dist/v22.0.0/node-v22.0.0-linux-x64.tar.xz"
+            sha256: "9122e50f2642afd5f6078cafd1f52ede60fc464284384f05c18a04d13d07ae5a"
             build_script: "scripts/build-node.sh"
           - package: python
             version: "3.12.0"
             source_url: "https://www.python.org/ftp/python/3.12.0/Python-3.12.0.tar.xz"
+            sha256: "795c34f44df45a0e9b9710c8c71c15c671871524cd412ca14def212e8ccb155d"
             build_script: "scripts/build-python.sh"
           - package: python
             version: "3.11.0"
             source_url: "https://www.python.org/ftp/python/3.11.0/Python-3.11.0.tar.xz"
+            sha256: "a57dc82d77358617ba65b9841cee1e3b441f386c3789ddc0676eca077f2951c3"
             build_script: "scripts/build-python.sh"
           - package: ruby
             version: "3.2.2"
             source_url: "https://cache.ruby-lang.org/pub/ruby/3.2/ruby-3.2.2.tar.gz"
+            sha256: "96c57558871a6748de5bc9f274e93f4b5aad06cd8f37befa0e8d94e7b8a423bc"
             build_script: "scripts/build-ruby.sh"
           - package: lua
             version: "5.4.6"
             source_url: "https://www.lua.org/ftp/lua-5.4.6.tar.gz"
+            sha256: "7d5ea1b9cb6aa0b59ca3dde1c6adcb57ef83a1ba8e5432c0ecd06bf439b3ad88"
             build_script: "scripts/build-lua.sh"
           - package: php
             version: "8.3.0"
             source_url: "https://www.php.net/distributions/php-8.3.0.tar.xz"
+            sha256: "1db84fec57125aa93638b51bb2b15103e12ac196e2f960f0d124275b2687ea54"
             build_script: "scripts/build-php.sh"
           # Web servers
           - package: nginx
             version: "1.24.0"
             source_url: "https://nginx.org/download/nginx-1.24.0.tar.gz"
+            sha256: "77a2541637b92a621e3ee76776c8b7b40cf6d707e69ba53a940283e30ff2f55d"
             build_script: "scripts/build-nginx.sh"
           - package: caddy
             version: "2.7.6"
             source_url: "https://github.com/caddyserver/caddy/archive/refs/tags/v2.7.6.tar.gz"
+            sha256: "e1c524fc4f4bd2b0d39df51679d9d065bb811e381b7e4e51466ba39a0083e3ed"
             build_script: "scripts/build-caddy.sh"
           # Databases & data stores
           - package: redis
             version: "7.2.4"
-            source_url: "https://github.com/redis/redis/archive/refs/tags/v7.2.4.tar.gz"
+            # Redis archive tags have no "v" prefix; the old v7.2.4 URL 404s.
+            source_url: "https://github.com/redis/redis/archive/refs/tags/7.2.4.tar.gz"
+            sha256: "0a62b9ae89b4be4e8d40c0035c83a72cb6776f4b62fe53553981a57f0f4ff73d"
             build_script: "scripts/build-redis.sh"
           - package: sqlite
             version: "3.45.0"
             source_url: "https://www.sqlite.org/2024/sqlite-tools-linux-x64-3450000.zip"
+            sha256: "ec4b0c18bf6c23dd1b84d3a0f507b4f4017b0f1ac358af84bbc7e30b7bd517ed"
             build_script: "scripts/build-sqlite.sh"
           # Tools
           - package: curl
             version: "8.6.0"
             source_url: "https://curl.se/download/curl-8.6.0.tar.gz"
+            sha256: "9c6db808160015f30f3c656c0dec125feb9dc00753596bf858a272b5dd8dc398"
             build_script: "scripts/build-curl.sh"
           - package: jq
             version: "1.7.1"
             source_url: "https://github.com/jqlang/jq/archive/refs/tags/jq-1.7.1.tar.gz"
+            sha256: "fc75b1824aba7a954ef0886371d951c3bf4b6e0a921d1aefc553f309702d6ed1"
             build_script: "scripts/build-jq.sh"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.25'
           # Self-hosted runner: the module cache persists on disk between runs,
@@ -93,16 +113,43 @@ jobs:
       - name: Build CLI binaries
         run: make build
 
+      # Download the source ONCE and verify its SHA256 before any build runs.
+      # Fail-closed: an empty or mismatched checksum aborts the job. The build
+      # script then consumes the already-verified local copy via a file:// URL,
+      # so the bytes that are checked are exactly the bytes that get built
+      # (no second download, no TOCTOU window).
+      - name: Fetch and verify source
+        id: fetch
+        env:
+          SOURCE_URL: ${{ matrix.source_url }}
+          EXPECTED_SHA256: ${{ matrix.sha256 }}
+        run: |
+          if [ -z "${EXPECTED_SHA256}" ]; then
+            echo "::error::No sha256 pinned for this package — refusing to build unverified source."
+            exit 1
+          fi
+          SRC="${RUNNER_TEMP}/pkg-source"
+          curl -fSL --retry 3 -o "${SRC}" "${SOURCE_URL}"
+          echo "${EXPECTED_SHA256}  ${SRC}" | sha256sum -c - || {
+            echo "::error::Checksum mismatch for ${SOURCE_URL}"
+            echo "expected: ${EXPECTED_SHA256}"
+            echo "actual:   $(sha256sum "${SRC}" | cut -d' ' -f1)"
+            exit 1
+          }
+          echo "verified_src=${SRC}" >> "$GITHUB_OUTPUT"
+
       - name: Build package
         env:
           PACKAGE_NAME: ${{ matrix.package }}
           PACKAGE_VERSION: ${{ matrix.version }}
-          SOURCE_URL: ${{ matrix.source_url }}
+          # Point the build script at the verified local file instead of the network.
+          SOURCE_URL: "file://${{ steps.fetch.outputs.verified_src }}"
+          BUILD_SCRIPT: ${{ matrix.build_script }}
         run: |
-          if [ -f "${{ matrix.build_script }}" ]; then
-            bash "${{ matrix.build_script }}"
+          if [ -f "${BUILD_SCRIPT}" ]; then
+            bash "${BUILD_SCRIPT}"
           else
-            echo "Build script ${{ matrix.build_script }} not found — skipping"
+            echo "Build script ${BUILD_SCRIPT} not found — skipping"
             exit 1
           fi
 
@@ -119,7 +166,7 @@ jobs:
             --runtime ${{ matrix.package }}
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-${{ matrix.package }}-${{ matrix.version }}
           path: |
@@ -132,10 +179,10 @@ jobs:
     timeout-minutes: 10
     if: github.ref == 'refs/heads/main'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Download package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: package-*
           path: dist/packages/

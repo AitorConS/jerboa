@@ -8,6 +8,10 @@ on:
       - '.github/workflows/kernel-release.yml'
   workflow_dispatch:
 
+# Least privilege by default; the publish job elevates to contents: write.
+permissions:
+  contents: read
+
 jobs:
   build-and-publish:
     name: Build kernel artifacts and publish to release
@@ -15,7 +19,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install toolchain
         run: |
