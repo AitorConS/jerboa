@@ -282,7 +282,10 @@ func TestVolumeSeed_RoundTrip(t *testing.T) {
 	}, ctxTar)
 	require.NoError(t, err)
 	require.Equal(t, vol.DiskPath, res.DiskPath)
-	require.Equal(t, vol.SizeBytes, res.SizeBytes)
+	st, err := os.Stat(vol.DiskPath)
+	require.NoError(t, err)
+	require.Equal(t, st.Size(), res.SizeBytes)
+	require.GreaterOrEqual(t, res.SizeBytes, vol.SizeBytes)
 
 	data, err := os.ReadFile(vol.DiskPath)
 	require.NoError(t, err)
