@@ -35,6 +35,15 @@ var tfsMagic = []byte("NVMTFS")
 // so formatting cannot happen on a Windows client at create time).
 type Formatter func(ctx context.Context, diskPath, label string, sizeBytes int64) error
 
+// Seeder formats the raw disk at diskPath as a TFS filesystem labeled label and
+// populated with the files described by manifest (a children-only Nanos
+// manifest, e.g. from image.BuildVolumeManifest). Implemented by internal/tools
+// via mkfs; the daemon supplies one at run time. sizeBytes is the minimum image
+// size. Unlike Formatter, which produces an empty volume, a Seeder pre-populates
+// the volume so initialized data (a database cluster, seed files) is present the
+// first time it is mounted.
+type Seeder func(ctx context.Context, diskPath, label string, sizeBytes int64, manifest string) error
+
 // SanitizeLabel trims name to a valid TFS label (<= maxLabelLen bytes). The
 // kernel's volume_match compares the label verbatim, so it must equal the value
 // injected into the guest mount config.

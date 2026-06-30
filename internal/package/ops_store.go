@@ -183,6 +183,7 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 
 	tr := tar.NewReader(gz)
 	var stripPrefix string
+	var pendingLinks []pendingLink
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -208,6 +209,13 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 		}
 
 		target := filepath.Join(dir, entryName)
+		// Defend against archive path traversal ("Zip Slip"): an entry whose name
+		// contains ".." could otherwise resolve outside the package directory and
+		// overwrite arbitrary files. Skip any entry that escapes dir.
+		if !withinDir(dir, target) {
+			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
+			continue
+		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -234,10 +242,97 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 				if err := os.Symlink(hdr.Linkname, target); err != nil {
 					slog.Warn("ops extract: symlink failed", "target", target, "error", err)
 				}
+				break
 			}
-			// Symlinks are silently skipped on non-Linux hosts; the unikernel
-			// builder resolves them at image assembly time on the Linux side.
+			// Non-Linux hosts can't create symlinks unprivileged, and dropping
+			// them loses soname links such as libpq.so.5 -> libpq.so.5.11 that
+			// binaries load at runtime. Record the link and materialize it as a
+			// real file copy after extraction (ExtractedFiles only walks regular
+			// files on disk, so a skipped link would never reach the image).
+			pendingLinks = append(pendingLinks, pendingLink{path: target, linkname: hdr.Linkname})
 		}
+	}
+	materializeLinks(dir, pendingLinks)
+	return nil
+}
+
+// withinDir reports whether path is contained within dir. It defends against
+// archive entries or symlink targets that escape the package directory via "..".
+func withinDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+// pendingLink records a tar symlink to be turned into a real file copy on hosts
+// that cannot create symlinks.
+type pendingLink struct {
+	path     string // absolute path where the link should exist
+	linkname string // raw link target from the tar header
+}
+
+// materializeLinks turns recorded symlinks into real file copies. Soname links
+// such as libpq.so.5 -> libpq.so.5.11 must survive as regular files because the
+// image build only includes regular files on disk. Multiple passes resolve
+// chains where a link points at another link.
+func materializeLinks(dir string, links []pendingLink) {
+	remaining := links
+	for len(remaining) > 0 {
+		var next []pendingLink
+		progressed := false
+		for _, l := range remaining {
+			src := filepath.FromSlash(l.linkname)
+			if !filepath.IsAbs(src) {
+				src = filepath.Join(filepath.Dir(l.path), src)
+			}
+			// Defend against a symlink target that escapes the package directory
+			// ("Zip Slip" via the link name): never copy from outside dir.
+			if !withinDir(dir, src) {
+				slog.Warn("ops extract: skipping symlink with target outside package dir", "target", l.path, "linkname", l.linkname)
+				continue
+			}
+			info, err := os.Stat(src) // follows: src may be a copy made in a prior pass
+			if err != nil || info.IsDir() {
+				next = append(next, l) // target not materialized yet; retry next pass
+				continue
+			}
+			if err := copyFileContents(src, l.path, info.Mode().Perm()); err != nil {
+				slog.Warn("ops extract: link materialize failed", "target", l.path, "error", err)
+			}
+			progressed = true
+		}
+		if !progressed {
+			for _, l := range next {
+				slog.Warn("ops extract: unresolved symlink", "target", l.path, "linkname", l.linkname)
+			}
+			return
+		}
+		remaining = next
+	}
+}
+
+// copyFileContents copies src to dst with the given permission bits.
+func copyFileContents(src, dst string, perm fs.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("open link target %s: %w", src, err)
+	}
+	defer func() { _ = in.Close() }()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("mkdir for %s: %w", dst, err)
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm|0o200)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", dst, err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("copy to %s: %w", dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/vm"
+	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,6 +61,52 @@ func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	require.NoError(t, err)
 	srv.SetImageStore(store)
 	srv.EnableImageBuild(fakeMkfs(t))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		if err := srv.Serve(ctx); err != nil {
+			t.Logf("server stopped: %v", err)
+		}
+	}()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond, "server did not start")
+
+	t.Cleanup(func() {
+		_ = client.Close()
+		cancel()
+	})
+	return client
+}
+
+func fakeVolumeSeeder(t *testing.T) volume.Seeder {
+	t.Helper()
+	return func(_ context.Context, diskPath, label string, sizeBytes int64, manifest string) error {
+		payload := []byte("label=" + label + "\nmanifest=" + manifest)
+		if sizeBytes > int64(len(payload)) {
+			padding := make([]byte, sizeBytes-int64(len(payload)))
+			payload = append(payload, padding...)
+		}
+		return os.WriteFile(diskPath, payload, 0o600)
+	}
+}
+
+func startSeedServer(t *testing.T, volStore *volume.Store) *api.Client {
+	t.Helper()
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	require.NoError(t, err)
+	srv.SetVolumeStore(volStore)
+	srv.EnableVolumeSeedResolver(func(context.Context) (volume.Seeder, error) {
+		return fakeVolumeSeeder(t), nil
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -217,4 +264,48 @@ func TestImageBuild_Disabled(t *testing.T) {
 	_, err = client.ImageBuild(context.Background(), api.BuildParams{Name: "x", Program: "app"}, ctxTar)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "image build disabled")
+}
+
+func TestVolumeSeed_RoundTrip(t *testing.T) {
+	volStore, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	vol, err := volStore.Create("pgdata", 128)
+	require.NoError(t, err)
+	client := startSeedServer(t, volStore)
+
+	ctxTar := buildContextTar(t, map[string][]byte{"db/PG_VERSION": []byte("16")})
+	res, err := client.VolumeSeed(context.Background(), api.VolumeSeedParams{
+		VolumeName: "pgdata",
+		DiskPath:   vol.DiskPath,
+		Label:      vol.Label,
+		SizeBytes:  vol.SizeBytes,
+	}, ctxTar)
+	require.NoError(t, err)
+	require.Equal(t, vol.DiskPath, res.DiskPath)
+	st, err := os.Stat(vol.DiskPath)
+	require.NoError(t, err)
+	require.Equal(t, st.Size(), res.SizeBytes)
+	require.GreaterOrEqual(t, res.SizeBytes, vol.SizeBytes)
+
+	data, err := os.ReadFile(vol.DiskPath)
+	require.NoError(t, err)
+	require.Contains(t, string(data), "PG_VERSION")
+}
+
+func TestVolumeSeed_RejectsMismatchedDiskPath(t *testing.T) {
+	volStore, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	vol, err := volStore.Create("pgdata", 128)
+	require.NoError(t, err)
+	client := startSeedServer(t, volStore)
+
+	ctxTar := buildContextTar(t, map[string][]byte{"db/PG_VERSION": []byte("16")})
+	_, err = client.VolumeSeed(context.Background(), api.VolumeSeedParams{
+		VolumeName: "pgdata",
+		DiskPath:   filepath.Join(t.TempDir(), "escape.img"),
+		Label:      vol.Label,
+		SizeBytes:  vol.SizeBytes,
+	}, ctxTar)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disk_path does not match the requested volume")
 }

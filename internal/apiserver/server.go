@@ -52,12 +52,16 @@ type Server struct {
 	resolver     *scheduler.Resolver
 	cluster      ClusterMemberLister
 	imgStore     *image.Store
+	volStore     *volume.Store
 	mkfsMu       sync.Mutex
 	mkfsResolver func(context.Context) (image.MkfsFunc, error)
 	mkfsCached   image.MkfsFunc
 	volFmtMu     sync.Mutex
 	volFmtResolv func(context.Context) (volume.Formatter, error)
 	volFmtCached volume.Formatter
+	volSeedMu    sync.Mutex
+	volSeedResol func(context.Context) (volume.Seeder, error)
+	volSeedCache volume.Seeder
 	authToken    string
 }
 
@@ -66,6 +70,12 @@ type Server struct {
 // token (the default) disables authentication. Call once before Serve.
 func (s *Server) SetAuthToken(token string) {
 	s.authToken = token
+}
+
+// SetVolumeStore attaches the daemon's volume store, enabling Volume.Seed to
+// resolve and validate store-owned volume disk paths server-side.
+func (s *Server) SetVolumeStore(store *volume.Store) {
+	s.volStore = store
 }
 
 // NewServer creates a Server that will listen on endpoint. The endpoint may
@@ -178,6 +188,12 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
 		skipLeadingWhitespace(br)
 		s.handleBuild(ctx, req.Params, api.NewFrameReader(br), conn, req.ID)
+		return attachHandled, nil
+	case "Volume.Seed":
+		// Like Image.Build, Volume.Seed streams its context tar after the request.
+		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
+		skipLeadingWhitespace(br)
+		s.handleVolumeSeed(ctx, req.Params, api.NewFrameReader(br), conn, req.ID)
 		return attachHandled, nil
 	case "Image.List":
 		return s.handleImageList()
