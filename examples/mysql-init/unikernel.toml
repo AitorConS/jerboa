@@ -1,6 +1,8 @@
 [build]
 lang = "raw"
 disk_size = "512M"
+# Mount point for the mysql data volume that --initialize-insecure seeds.
+dirs = ["/var/lib/mysql"]
 
 [program]
 path = "mysqld"

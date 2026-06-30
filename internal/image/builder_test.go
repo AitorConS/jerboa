@@ -45,6 +45,41 @@ func TestBuildManifest_WithPkgFiles(t *testing.T) {
 	require.Contains(t, got, "libnode.so:(contents:(host:")
 }
 
+func TestBuildManifest_ProgramPath(t *testing.T) {
+	// A raw/ops program runs from its real package path so it can locate its
+	// installation prefix and $ORIGIN-relative libraries. The program field,
+	// argv[0], and the in-image binary node all use that path — not /program.
+	pkgFiles := []pkg.File{
+		{HostPath: filepath.FromSlash("/pkgs/postgres/sysroot/usr/local/postgresql/bin/postgres"), GuestPath: "usr/local/postgresql/bin/postgres"},
+		{HostPath: filepath.FromSlash("/pkgs/postgres/sysroot/usr/local/postgresql/lib/libpq.so.5"), GuestPath: "usr/local/postgresql/lib/libpq.so.5"},
+	}
+	got := BuildManifest(BuildConfig{
+		BinaryPath:  filepath.FromSlash("/pkgs/postgres/sysroot/usr/local/postgresql/bin/postgres"),
+		ProgramPath: "usr/local/postgresql/bin/postgres",
+		PkgFiles:    pkgFiles,
+		Args:        []string{"-D", "/var/lib/postgresql/data"},
+	})
+	require.Contains(t, got, "program:/usr/local/postgresql/bin/postgres")
+	require.NotContains(t, got, "program:/program\n")
+	require.Contains(t, got, "arguments:(0:/usr/local/postgresql/bin/postgres 1:-D 2:/var/lib/postgresql/data)")
+	// The binary node lives under its real path, not a flat /program node.
+	require.Contains(t, got, "postgres:(contents:(host:")
+	require.Contains(t, got, "libpq.so.5:(contents:(host:")
+}
+
+func TestBuildManifest_ProgramPathRootFallback(t *testing.T) {
+	// A ProgramPath that normalizes to the image root must not produce program:/
+	// or place the binary at "". It falls back to the flat /program layout.
+	for _, p := range []string{"/", ".", "bin/.."} {
+		got := BuildManifest(BuildConfig{
+			BinaryPath:  filepath.FromSlash("/usr/bin/hello"),
+			ProgramPath: p,
+		})
+		require.Contains(t, got, "program:/program", "ProgramPath %q should fall back to /program", p)
+		require.NotContains(t, got, "program:/\n")
+	}
+}
+
 func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 	pkgFiles := []pkg.File{
 		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/node_v16/files/node"), GuestPath: "node"},
@@ -272,6 +307,26 @@ func TestBuild_Success(t *testing.T) {
 	require.Equal(t, 2, m.Config.CPUs)
 	require.Positive(t, m.DiskSize)
 	require.True(t, strings.HasPrefix(m.DiskDigest, "sha256:"))
+}
+
+func TestBuild_BakesPorts(t *testing.T) {
+	s := makeStore(t)
+	b := NewBuilder(s)
+	dir := t.TempDir()
+	binPath := writeELF(t, dir)
+
+	cfg := BuildConfig{
+		Name:       "svc",
+		BinaryPath: binPath,
+		MkfsRun:    fakeMkfsRun(t),
+		Memory:     "512M",
+		CPUs:       2,
+		Ports:      []string{"5432:5432"},
+	}
+
+	m, err := b.Build(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Equal(t, []string{"5432:5432"}, m.Config.Ports)
 }
 
 func TestBuild_Defaults(t *testing.T) {

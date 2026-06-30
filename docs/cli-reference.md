@@ -156,8 +156,41 @@ Key flags:
 | `--lang` | `go`, `node`, `python`, `rust`, `raw` |
 | `--platform` | Cross-build target |
 | `--port` | Declared service port; emits the guest network section in the build manifest |
+| `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
 
-`unikernel.toml` is read automatically when present.
+`unikernel.toml` is read automatically when present, or selected explicitly with
+`-f/--file`. Relevant `[build]` keys:
+
+| Key | Description |
+|---|---|
+| `lang` | Build driver: `go`, `node`, `python`, `rust`, `raw` |
+| `entrypoint` | Override the default entrypoint |
+| `run` | Shell commands to run before packaging (like a Dockerfile `RUN`) |
+| `disk_size` | Minimum image size (e.g. `512M`, `1G`) for runtime scratch space |
+| `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
+
+For `lang = "raw"`, `[program] path` names the runtime binary resolved from
+`--pkg` files; the program is executed from its real in-image path, so binaries
+that locate their installation prefix relative to their own executable (e.g.
+`postgres`, `mysqld`) and binaries with `$ORIGIN`-relative library paths resolve
+correctly.
+
+`[env]` keys are baked into the image environment (highest priority — they
+override env supplied by packages or the language driver).
+
+`[run]` keys are baked into the image manifest and inherited by `jerboa run`
+unless overridden by a flag (precedence: run flag > `[run]` value > built-in
+default):
+
+| Key | Description |
+|---|---|
+| `memory` | Default VM memory (e.g. `512M`); applied unless `--memory` is given |
+| `cpus` | Default vCPU count; applied unless `--cpus` is given |
+| `ports` | `host:guest` publish maps; applied when the VM joins a network (`--network`) and no `-p` is given |
+
+`[[stages]]` defines multi-stage builds: each stage has its own `lang`,
+`entrypoint`, `args`, and `copy_from` (`stage`, `src`, `dst`) directives; the
+final stage's output becomes the image binary.
 
 ### `jerboa images`
 

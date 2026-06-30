@@ -36,6 +36,10 @@ type Config struct {
 	CPUs int `json:"cpus"`
 	// Env is the list of environment variables passed to the application.
 	Env []string `json:"env,omitempty"`
+	// Ports holds default host:guest port-publish specs (from [run] ports in
+	// unikernel.toml). They are applied at run time when the VM joins a network
+	// and no -p flag is given, so an image can declare the ports it serves.
+	Ports []string `json:"ports,omitempty"`
 }
 
 // Ref returns the canonical name:tag reference string.

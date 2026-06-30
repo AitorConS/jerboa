@@ -212,19 +212,21 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	}
 
 	m, err := image.NewBuilder(s.imgStore).Build(ctx, image.BuildConfig{
-		Name:       p.Name,
-		Tag:        p.Tag,
-		BinaryPath: binaryPath,
-		MkfsRun:    mkfs,
-		Memory:     p.Memory,
-		CPUs:       p.CPUs,
-		PkgFiles:   pkgFiles,
-		Entrypoint: p.Entrypoint,
-		Args:       p.Args,
-		Env:        p.Env,
-		Port:       p.Port,
-		DiskSize:   p.DiskSize,
-		Output:     io.Discard,
+		Name:        p.Name,
+		Tag:         p.Tag,
+		BinaryPath:  binaryPath,
+		ProgramPath: p.ProgramPath,
+		MkfsRun:     mkfs,
+		Memory:      p.Memory,
+		CPUs:        p.CPUs,
+		PkgFiles:    pkgFiles,
+		Entrypoint:  p.Entrypoint,
+		Args:        p.Args,
+		Env:         p.Env,
+		Port:        p.Port,
+		Ports:       p.Ports,
+		DiskSize:    p.DiskSize,
+		Output:      io.Discard,
 	})
 	if err != nil {
 		drain(stream)

@@ -62,6 +62,57 @@ run = ["npm install", "npm run build"]
 	require.Equal(t, ".output/server/index.mjs", cfg.Build.Entrypoint)
 }
 
+func TestLoadConfigDirs(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+lang = "raw"
+dirs = ["/var/lib/postgresql/data", "/tmp/scratch"]
+
+[program]
+path = "postgres"
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	cfg, err := LoadConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, []string{"/var/lib/postgresql/data", "/tmp/scratch"}, cfg.Build.Dirs)
+}
+
+func TestLoadConfigDirsRelativeRejected(t *testing.T) {
+	dir := t.TempDir()
+	content := `[build]
+dirs = ["var/lib/data"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ConfigFileName), []byte(content), 0o644))
+
+	_, err := LoadConfig(dir)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "build.dirs[0]")
+}
+
+func TestLoadConfigFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pg.toml")
+	content := `[build]
+lang = "raw"
+
+[program]
+path = "postgres"
+`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	cfg, err := LoadConfigFile(path)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.Equal(t, "postgres", cfg.Program.Path)
+}
+
+func TestLoadConfigFileMissing(t *testing.T) {
+	_, err := LoadConfigFile(filepath.Join(t.TempDir(), "nope.toml"))
+	require.Error(t, err)
+}
+
 func TestLoadConfigMinimal(t *testing.T) {
 	dir := t.TempDir()
 	content := `[build]

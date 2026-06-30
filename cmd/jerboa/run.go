@@ -62,6 +62,12 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if len(portMaps) > 0 && network == "" {
 				return fmt.Errorf("run: --port requires --network <name> (create one with 'jerboa network create'); SLIRP user-mode networking is no longer supported")
 			}
+			// A VM needs at least one CPU. Rejecting an explicit non-positive value
+			// also disambiguates "flag omitted" (inherit the image's baked default)
+			// from "explicitly requested", which both map to CPUs == 0 on the wire.
+			if cmd.Flags().Changed("cpus") && cpus < 1 {
+				return fmt.Errorf("run: --cpus must be at least 1")
+			}
 
 			env, err := buildEnv(envs, envFile)
 			if err != nil {
@@ -129,11 +135,24 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}
 
+			// Leave Memory/CPUs unset unless the user passed the flag, so the
+			// daemon can inherit the image's baked [run] defaults. An explicit
+			// flag always wins; absent that, the manifest value applies; absent
+			// both, the daemon falls back to 256M / 1 CPU.
+			reqMemory := ""
+			if cmd.Flags().Changed("memory") {
+				reqMemory = memory
+			}
+			reqCPUs := 0
+			if cmd.Flags().Changed("cpus") {
+				reqCPUs = cpus
+			}
+
 			params := api.RunParams{
 				Image:       imageRef,
 				ImagePath:   imagePath,
-				Memory:      memory,
-				CPUs:        cpus,
+				Memory:      reqMemory,
+				CPUs:        reqCPUs,
 				NetworkName: network,
 				Env:         env,
 				Name:        name,

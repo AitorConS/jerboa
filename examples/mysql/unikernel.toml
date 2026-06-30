@@ -1,6 +1,8 @@
 [build]
 lang = "raw"
 disk_size = "512M"
+# Mount point for the mysql data volume (-v <volume>:/var/lib/mysql).
+dirs = ["/var/lib/mysql"]
 
 [program]
 path = "mysqld"

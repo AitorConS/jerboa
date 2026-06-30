@@ -1,0 +1,14 @@
+[build]
+lang = "raw"
+# Mount point for the pgdata volume that initdb seeds.
+dirs = ["/var/lib/postgresql/data"]
+
+[program]
+path = "initdb"
+args = [
+  "-D", "/var/lib/postgresql/data",
+  "--auth=trust",
+]
+
+[run]
+memory = "512M"

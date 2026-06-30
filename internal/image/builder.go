@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -27,6 +28,15 @@ type BuildConfig struct {
 	Tag string
 	// BinaryPath is the path to the static ELF binary to package.
 	BinaryPath string
+	// ProgramPath, when non-empty, is the in-image guest path at which the
+	// program is placed and from which it is executed (e.g.
+	// "usr/local/postgresql/bin/postgres"). The Nanos manifest's program field,
+	// argv[0], and /proc/self/exe all resolve to this path, so binaries that
+	// locate their installation prefix relative to their own executable (e.g.
+	// postgres) and binaries with $ORIGIN-relative RPATHs resolve correctly.
+	// Empty places the program flat at /program (the default for compiled and
+	// interpreted-runtime builds, where the layout is irrelevant).
+	ProgramPath string
 	// MkfsRun invokes mkfs to produce the disk image.
 	// Use internal/tools.ResolveMkfs to obtain a platform-appropriate func.
 	MkfsRun MkfsFunc
@@ -56,6 +66,10 @@ type BuildConfig struct {
 	// network config is injected at run time (fw_cfg / boot args), not baked
 	// into the manifest.
 	Port int
+	// Ports holds default host:guest port-publish specs (from [run] ports).
+	// Stored in the image manifest and applied at run time when the VM joins a
+	// network and no -p flag is given.
+	Ports []string
 	// DiskSize is the minimum image file size passed to mkfs (e.g. "512M", "1G").
 	// When non-empty, emitted as imagesize in the Nanos manifest so mkfs pads
 	// the image to at least that size, leaving free space for runtime writes.
@@ -124,6 +138,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		Config: Config{
 			Memory: cfg.Memory,
 			CPUs:   cfg.CPUs,
+			Ports:  cfg.Ports,
 		},
 		DiskDigest: digest,
 		DiskSize:   stat.Size(),
@@ -202,8 +217,24 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 func BuildManifest(cfg BuildConfig) string {
 	absBin, _ := filepath.Abs(cfg.BinaryPath)
 
+	// progGuest is the slash-separated, root-relative path at which the program
+	// lives in the image. Default "program" (→ /program). A ProgramPath override
+	// runs the binary from its real package location so self-locating programs
+	// and $ORIGIN-relative RPATHs resolve.
+	progGuest := "program"
+	if cfg.ProgramPath != "" {
+		// Reject inputs that normalize to the image root (e.g. "/", ".", "bin/..");
+		// an empty guest path would emit program:/ and place the binary at the root
+		// instead of an executable path. Fall back to the flat /program layout.
+		// path.Clean (not filepath.Clean) keeps this OS-independent: the guest path
+		// is always slash-separated, and filepath.Clean would mangle "//" on Windows.
+		if cleaned := strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(cfg.ProgramPath)), "/"); cleaned != "" {
+			progGuest = cleaned
+		}
+	}
+	progRef := "/" + progGuest
+
 	root := newManifestNode()
-	root.children["program"] = &manifestNode{hostPath: absBin}
 
 	for _, f := range cfg.PkgFiles {
 		guestPath := f.GuestPath
@@ -218,17 +249,22 @@ func BuildManifest(cfg BuildConfig) string {
 		}
 	}
 
+	// Place the program node last so it is authoritative when ProgramPath
+	// coincides with a package file already present at that path (the raw/ops
+	// case, where the same binary is also streamed among the package files).
+	insertManifestFile(root, progGuest, absBin)
+
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n")
 	writeManifestChildren(&b, root, "        ")
-	b.WriteString("    )\n    program:/program\n")
+	fmt.Fprintf(&b, "    )\n    program:%s\n", manifestValue(progRef))
 	var argv []string
 	if cfg.Entrypoint != "" {
 		argv = append(argv, "/"+filepath.ToSlash(cfg.Entrypoint))
 	}
 	argv = append(argv, cfg.Args...)
 	if len(argv) > 0 {
-		b.WriteString("    arguments:(0:/program")
+		fmt.Fprintf(&b, "    arguments:(0:%s", manifestValue(progRef))
 		for i, a := range argv {
 			fmt.Fprintf(&b, " %d:%s", i+1, manifestValue(a))
 		}

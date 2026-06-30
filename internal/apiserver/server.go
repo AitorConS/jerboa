@@ -292,13 +292,45 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
 		return nil, rerr
 	}
+
+	// Inherit defaults baked into the image manifest ([run] in unikernel.toml)
+	// for any run parameter the client left unset. Explicit run flags always win.
+	memory, cpus := p.Memory, p.CPUs
+	portMaps := portMapsFromSpec(p.PortMaps)
+	if p.Image != "" && !looksLikePath(p.Image) && s.imgStore != nil {
+		if m, _, err := s.imgStore.Get(p.Image); err == nil {
+			if memory == "" {
+				memory = m.Config.Memory
+			}
+			if cpus == 0 {
+				cpus = m.Config.CPUs
+			}
+			// Baked ports only publish when the VM joins a network; without one
+			// there is nothing to forward through, so leave them inert.
+			if len(portMaps) == 0 && p.NetworkName != "" && len(m.Config.Ports) > 0 {
+				if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
+					portMaps = portMapsFromSpec(specs)
+				}
+			}
+		}
+	}
+	// Final fallback when neither a flag nor a manifest default supplied a value
+	// (e.g. file-path runs, which have no manifest). The VM manager requires a
+	// non-empty memory and a positive CPU count.
+	if memory == "" {
+		memory = "256M"
+	}
+	if cpus == 0 {
+		cpus = 1
+	}
+
 	cfg := vm.Config{
 		ImagePath:   imagePath,
 		ImageRef:    p.Image,
-		Memory:      p.Memory,
-		CPUs:        p.CPUs,
+		Memory:      memory,
+		CPUs:        cpus,
 		NetworkName: p.NetworkName,
-		PortMaps:    portMapsFromSpec(p.PortMaps),
+		PortMaps:    portMaps,
 		Env:         p.Env,
 		Name:        p.Name,
 		Volumes:     volumeMountsFromSpec(p.Volumes),
