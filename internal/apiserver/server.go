@@ -314,6 +314,15 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			}
 		}
 	}
+	// Final fallback when neither a flag nor a manifest default supplied a value
+	// (e.g. file-path runs, which have no manifest). The VM manager requires a
+	// non-empty memory and a positive CPU count.
+	if memory == "" {
+		memory = "256M"
+	}
+	if cpus == 0 {
+		cpus = 1
+	}
 
 	cfg := vm.Config{
 		ImagePath:   imagePath,
