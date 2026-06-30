@@ -1,0 +1,60 @@
+# unikernel.toml — full build + run spec for a PostgreSQL unikernel.
+#
+# A single file describes how the image is assembled (like a Dockerfile) and the
+# defaults used when it runs (like a compose service). Build it with:
+#
+#   jerboa build . --name postgresql --pkg eyberg/postgresql:11.3.0 --pkg-source ops
+#
+# Select a different file with -f/--file:
+#
+#   jerboa build . -f ./unikernel.toml --pkg eyberg/postgresql:11.3.0 --pkg-source ops
+
+[build]
+# Build driver: go | node | python | rust | raw.
+# "raw" performs no compilation — the binary comes from a --pkg package and is
+# named by [program] below. Use it for prebuilt runtimes (databases, the JVM…).
+lang = "raw"
+
+# Minimum image size passed to mkfs. Reserves scratch space *inside the root
+# image* (lost on stop) for runtime writes — temp tablespaces, logs, sockets.
+# Persisted data belongs on a volume (see dirs + -v), not here.
+disk_size = "1G"
+
+# Empty directories to create in the image — the Dockerfile `mkdir`/`VOLUME`
+# analogue. Volume mount points MUST be listed here: a TFS volume can only be
+# mounted onto a directory that already exists in the root image, and the
+# boot-time mount fails silently otherwise. Also handy for scratch paths the
+# program writes to. This path matches the -v <volume>:<guest-path> used at run.
+dirs = ["/var/lib/postgresql/data"]
+
+# Shell commands run before packaging — the Dockerfile `RUN` analogue. Use for
+# build steps (npm run build, collectstatic, mvn package…). None needed here
+# since the binaries come prebuilt from the ops package.
+# run = ["echo build step"]
+
+[program]
+# raw-only: the runtime binary, resolved from the --pkg files by exact guest
+# path, path suffix, or basename. The program is executed from its REAL in-image
+# path (e.g. /usr/local/postgresql/bin/postgres), so it can locate its install
+# prefix (share/, lib/) and $ORIGIN-relative shared libraries such as libpq.so.5.
+path = "postgres"
+
+# argv[1..] passed to the program (argv[0] is the program path itself).
+args = [
+  "-D", "/var/lib/postgresql/data",
+  "-p", "5432",
+  "-c", "listen_addresses=*",
+]
+
+[env]
+# Environment baked into the image, highest priority (overrides package/driver
+# env for the same key). Postgres needs none here; shown for completeness.
+# LANG = "en_US.UTF-8"
+
+[run]
+# Defaults baked into the image manifest and inherited by `jerboa run` unless a
+# flag overrides them. Precedence: run flag > [run] value > built-in default.
+memory = "512M"          # inherited unless `jerboa run --memory ...` is given
+cpus = 1                 # inherited unless `jerboa run --cpus ...` is given
+ports = ["5432:5432"]    # host:guest publish maps; applied when the VM joins a
+                         # network (jerboa run --network ...) and no -p is given

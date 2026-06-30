@@ -261,13 +261,21 @@ type BuildParams struct {
 	Tag  string `json:"tag,omitempty"`
 	// Program is the guest path (within the context tar) of the main ELF
 	// binary. All other tar entries are treated as additional image files.
-	Program    string            `json:"program"`
-	Memory     string            `json:"memory,omitempty"`
-	CPUs       int               `json:"cpus,omitempty"`
-	Entrypoint string            `json:"entrypoint,omitempty"`
-	Args       []string          `json:"args,omitempty"`
-	Env        map[string]string `json:"env,omitempty"`
-	Port       int               `json:"port,omitempty"`
+	Program string `json:"program"`
+	// ProgramPath, when set, is the in-image guest path at which the program is
+	// placed and executed (e.g. "usr/local/postgresql/bin/postgres"). Empty runs
+	// the program flat at /program. Used by lang="raw" builds so binaries
+	// resolve their installation prefix and $ORIGIN-relative libraries.
+	ProgramPath string            `json:"program_path,omitempty"`
+	Memory      string            `json:"memory,omitempty"`
+	CPUs        int               `json:"cpus,omitempty"`
+	Entrypoint  string            `json:"entrypoint,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	Port        int               `json:"port,omitempty"`
+	// Ports holds default host:guest port-publish specs (from [run] ports in
+	// unikernel.toml), baked into the image manifest for run-time inheritance.
+	Ports []string `json:"ports,omitempty"`
 	// DiskSize sets the minimum image size passed to mkfs (e.g. "512M", "1G").
 	// Use when the default content-based size leaves insufficient free space
 	// for runtime writes (e.g. database temp tablespaces, log files).

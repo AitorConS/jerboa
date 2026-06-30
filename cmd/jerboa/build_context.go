@@ -14,27 +14,29 @@ import (
 
 // findProgramBinary locates the program binary among resolved package files by
 // exact guest path, a guest path suffix (preserving directory structure, e.g.
-// "jdk-21/bin/java"), or a basename match (e.g. "java").
-func findProgramBinary(pkgFiles []pkg.File, programPath string) (string, error) {
+// "jdk-21/bin/java"), or a basename match (e.g. "java"). It returns both the
+// host path (to stream into the build context) and the matched in-image guest
+// path, so the program can be executed from its real location.
+func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guestPath string, err error) {
 	want := filepath.ToSlash(programPath)
 
 	for _, f := range pkgFiles {
 		if filepath.ToSlash(f.GuestPath) == want {
-			return f.HostPath, nil
+			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
 	for _, f := range pkgFiles {
 		if strings.HasSuffix(filepath.ToSlash(f.GuestPath), "/"+want) {
-			return f.HostPath, nil
+			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
 	base := filepath.Base(want)
 	for _, f := range pkgFiles {
 		if filepath.Base(f.HostPath) == base {
-			return f.HostPath, nil
+			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
-	return "", fmt.Errorf("program %q not found in resolved packages (--pkg)", programPath)
+	return "", "", fmt.Errorf("program %q not found in resolved packages (--pkg)", programPath)
 }
 
 // buildContextReader returns a streaming tar archive of the build context: the

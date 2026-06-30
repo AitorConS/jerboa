@@ -129,11 +129,24 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}
 
+			// Leave Memory/CPUs unset unless the user passed the flag, so the
+			// daemon can inherit the image's baked [run] defaults. An explicit
+			// flag always wins; absent that, the manifest value applies; absent
+			// both, the daemon falls back to 256M / 1 CPU.
+			reqMemory := ""
+			if cmd.Flags().Changed("memory") {
+				reqMemory = memory
+			}
+			reqCPUs := 0
+			if cmd.Flags().Changed("cpus") {
+				reqCPUs = cpus
+			}
+
 			params := api.RunParams{
 				Image:       imageRef,
 				ImagePath:   imagePath,
-				Memory:      memory,
-				CPUs:        cpus,
+				Memory:      reqMemory,
+				CPUs:        reqCPUs,
 				NetworkName: network,
 				Env:         env,
 				Name:        name,

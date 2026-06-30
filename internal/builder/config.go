@@ -31,6 +31,11 @@ type BuildConfig struct {
 	// Use when the default content-based image size leaves insufficient free space
 	// for runtime writes (e.g. database temp tablespaces, log files).
 	DiskSize string `toml:"disk_size"`
+	// Dirs lists absolute directories to create (empty) inside the image —
+	// analogous to a Dockerfile's mkdir/VOLUME. Use for volume mount points (a
+	// TFS volume can only be mounted onto a directory that already exists in the
+	// root image) and for scratch paths the program writes to at runtime.
+	Dirs []string `toml:"dirs"`
 }
 
 type RunConfig struct {
@@ -85,7 +90,20 @@ func LoadConfig(dir string) (*Config, error) {
 		}
 		return nil, fmt.Errorf("read config %s: %w", path, err)
 	}
+	return parseConfig(path, data)
+}
 
+// LoadConfigFile loads a config from an explicit file path (the -f/--file flag).
+// Unlike LoadConfig, a missing file is an error: the user named a specific file.
+func LoadConfigFile(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	return parseConfig(path, data)
+}
+
+func parseConfig(path string, data []byte) (*Config, error) {
 	var cfg Config
 	if err := toml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
@@ -133,6 +151,31 @@ func validateConfig(cfg *Config) error {
 		return err
 	}
 
+	for i, d := range cfg.Build.Dirs {
+		if err := validateDir(d); err != nil {
+			return fmt.Errorf("build.dirs[%d]: %w", i, err)
+		}
+	}
+
+	return nil
+}
+
+// validateDir checks that a dirs entry is a usable absolute, in-image path.
+// Paths are slash-style (image paths), must be absolute, and may not escape
+// the image root via "..".
+func validateDir(d string) error {
+	if strings.TrimSpace(d) == "" {
+		return fmt.Errorf("empty directory path")
+	}
+	s := filepath.ToSlash(d)
+	if !strings.HasPrefix(s, "/") {
+		return fmt.Errorf("must be an absolute path, got %q", d)
+	}
+	for _, part := range strings.Split(s, "/") {
+		if part == ".." {
+			return fmt.Errorf("must not contain %q, got %q", "..", d)
+		}
+	}
 	return nil
 }
 

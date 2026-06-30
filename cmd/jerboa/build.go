@@ -43,6 +43,7 @@ func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 		lang       string
 		platform   string
 		entrypoint string
+		configFile string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -88,6 +89,7 @@ project markers (go.mod, package.json, etc.).`,
 			srcPath := absPath(args[0])
 
 			var binaryPath string
+			var programPath string
 			var programArgs []string
 			var cfg *builder.Config
 			info, err := os.Stat(srcPath)
@@ -102,8 +104,16 @@ project markers (go.mod, package.json, etc.).`,
 			}
 			subW := sp.SubWriter()
 
+			if configFile != "" && !info.IsDir() {
+				return fmt.Errorf("build: -f/--file only applies when building from a source directory")
+			}
+
 			if info.IsDir() {
-				cfg, err = builder.LoadConfig(srcPath)
+				if configFile != "" {
+					cfg, err = builder.LoadConfigFile(absPath(configFile))
+				} else {
+					cfg, err = builder.LoadConfig(srcPath)
+				}
 				if err != nil {
 					return fmt.Errorf("build: %w", err)
 				}
@@ -121,7 +131,7 @@ project markers (go.mod, package.json, etc.).`,
 					sp.Start("Building project")
 					var buildEntrypoint string
 					var driverEnv map[string]string
-					binaryPath, buildEntrypoint, programArgs, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
+					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -147,8 +157,34 @@ project markers (go.mod, package.json, etc.).`,
 			}
 
 			var diskSize string
+			var runPorts []string
 			if cfg != nil {
 				diskSize = cfg.Build.DiskSize
+				// Bake declared directories (e.g. volume mount points) into the
+				// image as empty dirs. A TFS volume can only be mounted onto a
+				// directory that already exists in the root image.
+				for _, d := range cfg.Build.Dirs {
+					guest := strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+d)), "/")
+					pkgFiles = append(pkgFiles, pkg.File{GuestPath: guest, IsDir: true})
+				}
+
+				// [env] table: user-declared environment, highest priority so it
+				// overrides package/driver env for the same keys.
+				for k, v := range cfg.Env {
+					pkgEnv[k] = v
+				}
+
+				// [run] memory/cpus become the image defaults unless overridden
+				// by an explicit flag. They are baked into the image manifest and
+				// inherited at run time (see jerboa run).
+				if !cmd.Flags().Changed("memory") && cfg.Run.Memory != "" {
+					memory = cfg.Run.Memory
+				}
+				if !cmd.Flags().Changed("cpus") && cfg.Run.CPUs != 0 {
+					cpus = cfg.Run.CPUs
+				}
+				// [run] ports: default publish maps recorded in the manifest.
+				runPorts = cfg.Run.Ports
 			}
 
 			sp.Start("Assembling image on daemon")
@@ -162,16 +198,18 @@ project markers (go.mod, package.json, etc.).`,
 			pr := buildContextReader(binaryPath, pkgFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
-				Name:       name,
-				Tag:        tag,
-				Program:    buildProgramPath,
-				Memory:     memory,
-				CPUs:       cpus,
-				Entrypoint: entrypoint,
-				Args:       programArgs,
-				Env:        pkgEnv,
-				Port:       port,
-				DiskSize:   diskSize,
+				Name:        name,
+				Tag:         tag,
+				Program:     buildProgramPath,
+				ProgramPath: programPath,
+				Memory:      memory,
+				CPUs:        cpus,
+				Entrypoint:  entrypoint,
+				Args:        programArgs,
+				Env:         pkgEnv,
+				Port:        port,
+				Ports:       runPorts,
+				DiskSize:    diskSize,
 			}, pr)
 			if err != nil {
 				sp.Fail("Image assembly failed")
@@ -196,6 +234,7 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust, raw)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
+	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
 	return cmd
 }
 
@@ -218,19 +257,20 @@ func runBuildCommand(ctx context.Context, dir, command string, w io.Writer) erro
 }
 
 // buildSingle handles a single-language build (no stages).
-// Returns (binaryPath, entrypoint, args, env, error). entrypoint is non-empty
-// for interpreted languages (e.g. "hi.js" for Node). args holds additional
-// argv elements for lang="raw" builds (from [program].args). env holds
-// runtime environment variables the driver requires (e.g. PYTHONPATH when
-// pip installed packages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, []string, map[string]string, error) {
+// Returns (binaryPath, programPath, entrypoint, args, env, error). programPath
+// is the in-image guest path to run the binary from (lang="raw" only; empty
+// runs flat at /program). entrypoint is non-empty for interpreted languages
+// (e.g. "hi.js" for Node). args holds additional argv elements for lang="raw"
+// builds (from [program].args). env holds runtime environment variables the
+// driver requires (e.g. PYTHONPATH when pip installed packages).
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, string, []string, map[string]string, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
 	case langFlag != "":
 		langHint, err = builder.ParseLang(langFlag)
 		if err != nil {
-			return "", "", nil, nil, fmt.Errorf("build: %w", err)
+			return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
 		}
 	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
 		langHint = cfg.LangHint()
@@ -241,17 +281,17 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", "", nil, nil, fmt.Errorf("build: %w", err)
+			return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
 		}
 	}
 
 	detected, err := builder.DetectLanguage(srcPath, langHint)
 	if err != nil {
-		return "", "", nil, nil, fmt.Errorf("build: %w", err)
+		return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
 	}
 	driver, err := builder.GetDriver(detected)
 	if err != nil {
-		return "", "", nil, nil, fmt.Errorf("build: %w", err)
+		return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
 	}
 	fmt.Fprintf(infoW, "detected language: %s\n", detected)
 
@@ -269,7 +309,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	for _, command := range buildRun {
 		fmt.Fprintf(infoW, "$ %s\n", command)
 		if err := runBuildCommand(cmd.Context(), srcPath, command, subW); err != nil {
-			return "", "", nil, nil, fmt.Errorf("build: run %q: %w", command, err)
+			return "", "", "", nil, nil, fmt.Errorf("build: run %q: %w", command, err)
 		}
 	}
 
@@ -280,37 +320,38 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		Output:     subW,
 	})
 	if err != nil {
-		return "", "", nil, nil, fmt.Errorf("build %s: %w", detected, err)
+		return "", "", "", nil, nil, fmt.Errorf("build %s: %w", detected, err)
 	}
 
 	switch {
 	case result.BinaryPath != "":
-		return result.BinaryPath, "", nil, nil, nil
+		return result.BinaryPath, "", "", nil, nil, nil
 	case result.SourceDir != "":
 		var runtimeBinary string
+		var programPath string
 		var programArgs []string
 		env := make(map[string]string)
 
 		if detected == builder.LangRaw {
 			if cfg == nil || cfg.Program.Path == "" {
-				return "", "", nil, nil, fmt.Errorf("build: lang %q requires %s with [program] path = \"...\"", "raw", builder.ConfigFileName)
+				return "", "", "", nil, nil, fmt.Errorf("build: lang %q requires %s with [program] path = \"...\"", "raw", builder.ConfigFileName)
 			}
-			runtimeBinary, err = findProgramBinary(*pkgFiles, cfg.Program.Path)
+			runtimeBinary, programPath, err = findProgramBinary(*pkgFiles, cfg.Program.Path)
 			if err != nil {
-				return "", "", nil, nil, fmt.Errorf("build: %w", err)
+				return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
 			}
 			programArgs = cfg.Program.Args
 		} else {
 			autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
 			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)
 			if err != nil {
-				return "", "", nil, nil, fmt.Errorf("build: resolve packages: %w", err)
+				return "", "", "", nil, nil, fmt.Errorf("build: resolve packages: %w", err)
 			}
 			*pkgFiles = append(*pkgFiles, resolvedPkgs...)
 
 			runtimeBinary, err = findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
 			if err != nil {
-				return "", "", nil, nil, fmt.Errorf("build: %w", err)
+				return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
 			}
 
 			// Merge env from auto-resolved ops packages, then driver (driver takes priority).
@@ -323,16 +364,16 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 
 		srcFiles, err := sourceFiles(result.SourceDir)
 		if err != nil {
-			return "", "", nil, nil, fmt.Errorf("build: collect source files: %w", err)
+			return "", "", "", nil, nil, fmt.Errorf("build: collect source files: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, srcFiles...)
 
 		for k, v := range result.Env {
 			env[k] = v
 		}
-		return runtimeBinary, result.Entrypoint, programArgs, env, nil
+		return runtimeBinary, programPath, result.Entrypoint, programArgs, env, nil
 	default:
-		return "", "", nil, nil, fmt.Errorf("build %s: driver returned empty result", detected)
+		return "", "", "", nil, nil, fmt.Errorf("build %s: driver returned empty result", detected)
 	}
 }
 
