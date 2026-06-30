@@ -234,10 +234,16 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		return
 	}
 
+	// extractBuildContext stopped at the tar's EOF, but the client's frame
+	// terminator (written by FrameWriter.Close after the last tar byte) is still
+	// in flight. Drain it before responding so the client's terminator write does
+	// not race the connection close (broken pipe) — the same reason the error
+	// paths above drain.
+	drain(stream)
+
 	resp := api.Response{JSONRPC: "2.0", ID: reqID}
 	raw, mErr := json.Marshal(imageManifestResult(m))
 	if mErr != nil {
-		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
 		return
 	}
