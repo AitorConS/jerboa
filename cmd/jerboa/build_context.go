@@ -20,18 +20,29 @@ import (
 func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guestPath string, err error) {
 	want := filepath.ToSlash(programPath)
 
+	// Directory placeholders (e.g. volume mount points from [build] dirs) have no
+	// executable host file, so they can never satisfy a program lookup.
 	for _, f := range pkgFiles {
+		if f.IsDir {
+			continue
+		}
 		if filepath.ToSlash(f.GuestPath) == want {
 			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
 	for _, f := range pkgFiles {
+		if f.IsDir {
+			continue
+		}
 		if strings.HasSuffix(filepath.ToSlash(f.GuestPath), "/"+want) {
 			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
 	base := filepath.Base(want)
 	for _, f := range pkgFiles {
+		if f.IsDir {
+			continue
+		}
 		if filepath.Base(f.HostPath) == base {
 			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}

@@ -58,3 +58,27 @@ func TestFindProgramBinaryNotFound(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `program "java" not found in resolved packages (--pkg)`)
 }
+
+func TestFindProgramBinarySkipsDirEntries(t *testing.T) {
+	// A directory placeholder (e.g. from [build] dirs) whose name matches the
+	// program must not be resolved — it has no executable host file. The real
+	// file with the same basename should win.
+	pkgFiles := []pkg.File{
+		{GuestPath: "var/lib/data", IsDir: true},
+		{HostPath: filepath.FromSlash("/pkgs/postgres/sysroot/usr/local/bin/data"), GuestPath: "usr/local/bin/data"},
+	}
+	got, guest, err := findProgramBinary(pkgFiles, "data")
+	require.NoError(t, err)
+	require.Equal(t, filepath.FromSlash("/pkgs/postgres/sysroot/usr/local/bin/data"), got)
+	require.Equal(t, "usr/local/bin/data", guest)
+}
+
+func TestFindProgramBinaryDirOnlyMatchFails(t *testing.T) {
+	// When only a directory placeholder matches by suffix, resolution must fail
+	// rather than return an empty host path.
+	pkgFiles := []pkg.File{
+		{GuestPath: "var/lib/postgresql/data", IsDir: true},
+	}
+	_, _, err := findProgramBinary(pkgFiles, "data")
+	require.Error(t, err)
+}

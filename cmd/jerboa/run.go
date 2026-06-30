@@ -62,6 +62,12 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if len(portMaps) > 0 && network == "" {
 				return fmt.Errorf("run: --port requires --network <name> (create one with 'jerboa network create'); SLIRP user-mode networking is no longer supported")
 			}
+			// A VM needs at least one CPU. Rejecting an explicit non-positive value
+			// also disambiguates "flag omitted" (inherit the image's baked default)
+			// from "explicitly requested", which both map to CPUs == 0 on the wire.
+			if cmd.Flags().Changed("cpus") && cpus < 1 {
+				return fmt.Errorf("run: --cpus must be at least 1")
+			}
 
 			env, err := buildEnv(envs, envFile)
 			if err != nil {

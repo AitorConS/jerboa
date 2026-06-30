@@ -67,6 +67,19 @@ func TestBuildManifest_ProgramPath(t *testing.T) {
 	require.Contains(t, got, "libpq.so.5:(contents:(host:")
 }
 
+func TestBuildManifest_ProgramPathRootFallback(t *testing.T) {
+	// A ProgramPath that normalizes to the image root must not produce program:/
+	// or place the binary at "". It falls back to the flat /program layout.
+	for _, p := range []string{"/", ".", "bin/.."} {
+		got := BuildManifest(BuildConfig{
+			BinaryPath:  filepath.FromSlash("/usr/bin/hello"),
+			ProgramPath: p,
+		})
+		require.Contains(t, got, "program:/program", "ProgramPath %q should fall back to /program", p)
+		require.NotContains(t, got, "program:/\n")
+	}
+}
+
 func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 	pkgFiles := []pkg.File{
 		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/node_v16/files/node"), GuestPath: "node"},

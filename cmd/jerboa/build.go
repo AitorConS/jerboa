@@ -120,24 +120,28 @@ project markers (go.mod, package.json, etc.).`,
 
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
-					binaryPath, pkgFiles, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
+					var cleanupBinary bool
+					binaryPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
 					}
 					sp.Done("Build complete")
-					defer func() { _ = os.Remove(binaryPath) }()
+					if cleanupBinary && binaryPath != "" {
+						defer func() { _ = os.Remove(binaryPath) }()
+					}
 				} else {
 					sp.Start("Building project")
 					var buildEntrypoint string
 					var driverEnv map[string]string
-					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
+					var cleanupBinary bool
+					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
 					}
 					sp.Done("Build complete")
-					if binaryPath != "" {
+					if cleanupBinary && binaryPath != "" {
 						defer func() { _ = os.Remove(binaryPath) }()
 					}
 					if buildEntrypoint != "" {
@@ -257,20 +261,23 @@ func runBuildCommand(ctx context.Context, dir, command string, w io.Writer) erro
 }
 
 // buildSingle handles a single-language build (no stages).
-// Returns (binaryPath, programPath, entrypoint, args, env, error). programPath
-// is the in-image guest path to run the binary from (lang="raw" only; empty
-// runs flat at /program). entrypoint is non-empty for interpreted languages
-// (e.g. "hi.js" for Node). args holds additional argv elements for lang="raw"
-// builds (from [program].args). env holds runtime environment variables the
-// driver requires (e.g. PYTHONPATH when pip installed packages).
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, string, []string, map[string]string, error) {
+// Returns (binaryPath, programPath, entrypoint, args, env, cleanupBinary, error).
+// programPath is the in-image guest path to run the binary from (lang="raw"
+// only; empty runs flat at /program). entrypoint is non-empty for interpreted
+// languages (e.g. "hi.js" for Node). args holds additional argv elements for
+// lang="raw" builds (from [program].args). env holds runtime environment
+// variables the driver requires (e.g. PYTHONPATH when pip installed packages).
+// cleanupBinary is true only when binaryPath is a temporary build artifact the
+// caller owns and must delete; it is false when binaryPath points into the
+// package store (raw/interpreted runtimes), which must never be removed.
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, string, []string, map[string]string, bool, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
 	case langFlag != "":
 		langHint, err = builder.ParseLang(langFlag)
 		if err != nil {
-			return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
+			return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 		}
 	case cfg != nil && cfg.LangHint() != builder.LangUnknown:
 		langHint = cfg.LangHint()
@@ -281,17 +288,17 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
+			return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 		}
 	}
 
 	detected, err := builder.DetectLanguage(srcPath, langHint)
 	if err != nil {
-		return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
+		return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 	}
 	driver, err := builder.GetDriver(detected)
 	if err != nil {
-		return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
+		return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 	}
 	fmt.Fprintf(infoW, "detected language: %s\n", detected)
 
@@ -309,7 +316,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	for _, command := range buildRun {
 		fmt.Fprintf(infoW, "$ %s\n", command)
 		if err := runBuildCommand(cmd.Context(), srcPath, command, subW); err != nil {
-			return "", "", "", nil, nil, fmt.Errorf("build: run %q: %w", command, err)
+			return "", "", "", nil, nil, false, fmt.Errorf("build: run %q: %w", command, err)
 		}
 	}
 
@@ -320,12 +327,13 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		Output:     subW,
 	})
 	if err != nil {
-		return "", "", "", nil, nil, fmt.Errorf("build %s: %w", detected, err)
+		return "", "", "", nil, nil, false, fmt.Errorf("build %s: %w", detected, err)
 	}
 
 	switch {
 	case result.BinaryPath != "":
-		return result.BinaryPath, "", "", nil, nil, nil
+		// Compiled languages (go/rust) produce a temporary binary the caller owns.
+		return result.BinaryPath, "", "", nil, nil, true, nil
 	case result.SourceDir != "":
 		var runtimeBinary string
 		var programPath string
@@ -334,24 +342,24 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 
 		if detected == builder.LangRaw {
 			if cfg == nil || cfg.Program.Path == "" {
-				return "", "", "", nil, nil, fmt.Errorf("build: lang %q requires %s with [program] path = \"...\"", "raw", builder.ConfigFileName)
+				return "", "", "", nil, nil, false, fmt.Errorf("build: lang %q requires %s with [program] path = \"...\"", "raw", builder.ConfigFileName)
 			}
 			runtimeBinary, programPath, err = findProgramBinary(*pkgFiles, cfg.Program.Path)
 			if err != nil {
-				return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
+				return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 			}
 			programArgs = cfg.Program.Args
 		} else {
 			autoPkgs := filterCoveredAutoPkgs(result.Packages, userPkgs)
 			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), autoPkgs, pkgSource)
 			if err != nil {
-				return "", "", "", nil, nil, fmt.Errorf("build: resolve packages: %w", err)
+				return "", "", "", nil, nil, false, fmt.Errorf("build: resolve packages: %w", err)
 			}
 			*pkgFiles = append(*pkgFiles, resolvedPkgs...)
 
 			runtimeBinary, err = findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
 			if err != nil {
-				return "", "", "", nil, nil, fmt.Errorf("build: %w", err)
+				return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 			}
 
 			// Merge env from auto-resolved ops packages, then driver (driver takes priority).
@@ -364,16 +372,18 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 
 		srcFiles, err := sourceFiles(result.SourceDir)
 		if err != nil {
-			return "", "", "", nil, nil, fmt.Errorf("build: collect source files: %w", err)
+			return "", "", "", nil, nil, false, fmt.Errorf("build: collect source files: %w", err)
 		}
 		*pkgFiles = append(*pkgFiles, srcFiles...)
 
 		for k, v := range result.Env {
 			env[k] = v
 		}
-		return runtimeBinary, programPath, result.Entrypoint, programArgs, env, nil
+		// runtimeBinary points into the package store (the raw program or the
+		// node/python runtime); it must not be deleted after assembly.
+		return runtimeBinary, programPath, result.Entrypoint, programArgs, env, false, nil
 	default:
-		return "", "", "", nil, nil, fmt.Errorf("build %s: driver returned empty result", detected)
+		return "", "", "", nil, nil, false, fmt.Errorf("build %s: driver returned empty result", detected)
 	}
 }
 
@@ -387,7 +397,7 @@ type stageResult struct {
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, []pkg.File, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, []pkg.File, bool, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -395,7 +405,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", nil, fmt.Errorf("build: %w", err)
+			return "", nil, false, fmt.Errorf("build: %w", err)
 		}
 	}
 
@@ -404,16 +414,16 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 
 		stageLang, err := builder.ParseLang(stage.Lang)
 		if err != nil {
-			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 
 		detected, err := builder.DetectLanguage(srcPath, stageLang)
 		if err != nil {
-			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 		driver, err := builder.GetDriver(detected)
 		if err != nil {
-			return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 
 		var stagePkgs []pkg.File
@@ -422,10 +432,10 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 		for _, cf := range stage.CopyFrom {
 			prev, ok := stageOutputs[cf.Stage]
 			if !ok {
-				return "", nil, fmt.Errorf("build stage %q: copy_from references unknown stage %q", stage.Name, cf.Stage)
+				return "", nil, false, fmt.Errorf("build stage %q: copy_from references unknown stage %q", stage.Name, cf.Stage)
 			}
 			if prev.binaryPath == "" {
-				return "", nil, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
+				return "", nil, false, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
 			}
 			dst := cf.Dst
 			if dst == "" {
@@ -448,7 +458,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			Output:     subW,
 		})
 		if err != nil {
-			return "", nil, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)
+			return "", nil, false, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)
 		}
 
 		switch {
@@ -460,13 +470,13 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 		case result.SourceDir != "":
 			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
 			if err != nil {
-				return "", nil, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
+				return "", nil, false, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
 			}
 			stagePkgs = append(stagePkgs, resolvedPkgs...)
 
 			runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
 			if err != nil {
-				return "", nil, fmt.Errorf("build stage %q: %w", stage.Name, err)
+				return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 			}
 
 			stageOutputs[stage.Name] = &stageResult{
@@ -475,17 +485,20 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 				pkgFiles:   stagePkgs,
 			}
 		default:
-			return "", nil, fmt.Errorf("build stage %q: driver returned empty result", stage.Name)
+			return "", nil, false, fmt.Errorf("build stage %q: driver returned empty result", stage.Name)
 		}
 	}
 
 	finalStage := cfg.Stages[len(cfg.Stages)-1]
 	finalResult := stageOutputs[finalStage.Name]
 	if finalResult == nil {
-		return "", nil, fmt.Errorf("build: final stage %q has no output", finalStage.Name)
+		return "", nil, false, fmt.Errorf("build: final stage %q has no output", finalStage.Name)
 	}
 
-	return finalResult.binaryPath, finalResult.pkgFiles, nil
+	// A stage binary is a temporary build artifact to clean up only when it came
+	// from a compiled language (sourceDir empty). Interpreted final stages return
+	// a package-store runtime path, which must not be deleted.
+	return finalResult.binaryPath, finalResult.pkgFiles, finalResult.sourceDir == "", nil
 }
 
 func defaultToolsPath() string {

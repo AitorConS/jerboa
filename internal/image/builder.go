@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -222,7 +223,14 @@ func BuildManifest(cfg BuildConfig) string {
 	// and $ORIGIN-relative RPATHs resolve.
 	progGuest := "program"
 	if cfg.ProgramPath != "" {
-		progGuest = strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+cfg.ProgramPath)), "/")
+		// Reject inputs that normalize to the image root (e.g. "/", ".", "bin/..");
+		// an empty guest path would emit program:/ and place the binary at the root
+		// instead of an executable path. Fall back to the flat /program layout.
+		// path.Clean (not filepath.Clean) keeps this OS-independent: the guest path
+		// is always slash-separated, and filepath.Clean would mangle "//" on Windows.
+		if cleaned := strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(cfg.ProgramPath)), "/"); cleaned != "" {
+			progGuest = cleaned
+		}
 	}
 	progRef := "/" + progGuest
 
