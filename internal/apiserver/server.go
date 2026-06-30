@@ -52,6 +52,7 @@ type Server struct {
 	resolver     *scheduler.Resolver
 	cluster      ClusterMemberLister
 	imgStore     *image.Store
+	volStore     *volume.Store
 	mkfsMu       sync.Mutex
 	mkfsResolver func(context.Context) (image.MkfsFunc, error)
 	mkfsCached   image.MkfsFunc
@@ -69,6 +70,12 @@ type Server struct {
 // token (the default) disables authentication. Call once before Serve.
 func (s *Server) SetAuthToken(token string) {
 	s.authToken = token
+}
+
+// SetVolumeStore attaches the daemon's volume store, enabling Volume.Seed to
+// resolve and validate store-owned volume disk paths server-side.
+func (s *Server) SetVolumeStore(store *volume.Store) {
+	s.volStore = store
 }
 
 // NewServer creates a Server that will listen on endpoint. The endpoint may

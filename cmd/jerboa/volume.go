@@ -104,9 +104,10 @@ survives recreating the VM.
 			pr := seedContextReader(seedFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.VolumeSeed(cmd.Context(), api.VolumeSeedParams{
-				DiskPath:  hostPathForDaemon(vol.DiskPath),
-				Label:     label,
-				SizeBytes: vol.SizeBytes,
+				VolumeName: name,
+				DiskPath:   hostPathForDaemon(vol.DiskPath),
+				Label:      label,
+				SizeBytes:  vol.SizeBytes,
 			}, pr)
 			if err != nil {
 				sp.Fail("Volume seeding failed")

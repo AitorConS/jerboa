@@ -130,8 +130,8 @@ func (s *Server) resolveVolumeSeeder(ctx context.Context) (volume.Seeder, error)
 	return f, nil
 }
 
-// handleVolumeSeed reads a streamed build context and populates the volume disk
-// at p.DiskPath with a TFS filesystem built from those files, via mkfs. The
+// handleVolumeSeed reads a streamed build context and populates the requested
+// volume's disk with a TFS filesystem built from those files, via mkfs. The
 // response (or error) is written directly to conn; the connection is consumed
 // and not reused afterwards (mirrors handleBuild).
 func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, stream io.Reader, conn net.Conn, reqID int64) {
@@ -141,11 +141,29 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
 	}
-	if p.DiskPath == "" || p.Label == "" {
+	if p.VolumeName == "" || p.DiskPath == "" || p.Label == "" {
 		drain(stream)
-		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path and label are required"})
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "volume_name, disk_path, and label are required"})
 		return
 	}
+	if s.volStore == nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32601, Message: "method not found: Volume.Seed (volume store disabled)"})
+		return
+	}
+
+	vol, err := s.volStore.Get(p.VolumeName)
+	if err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "resolve volume: " + err.Error()})
+		return
+	}
+	if filepath.Clean(p.DiskPath) != filepath.Clean(vol.DiskPath) {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path does not match the requested volume"})
+		return
+	}
+	diskPath := vol.DiskPath
 
 	seeder, err := s.resolveVolumeSeeder(ctx)
 	if err != nil {
@@ -169,6 +187,7 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 
 	files, err := extractBuildContext(stream, tmpDir)
 	if err != nil {
+		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "extract seed context: " + err.Error()})
 		return
 	}
@@ -179,7 +198,7 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 	}
 
 	manifest := image.BuildVolumeManifest(files)
-	if err := seeder(ctx, p.DiskPath, p.Label, p.SizeBytes, manifest); err != nil {
+	if err := seeder(ctx, diskPath, p.Label, p.SizeBytes, manifest); err != nil {
 		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
 		return
@@ -191,11 +210,11 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 	drain(stream)
 
 	var size int64
-	if st, statErr := os.Stat(p.DiskPath); statErr == nil {
+	if st, statErr := os.Stat(diskPath); statErr == nil {
 		size = st.Size()
 	}
 	resp := api.Response{JSONRPC: "2.0", ID: reqID}
-	raw, mErr := json.Marshal(api.VolumeSeedResult{DiskPath: p.DiskPath, SizeBytes: size})
+	raw, mErr := json.Marshal(api.VolumeSeedResult{DiskPath: diskPath, SizeBytes: size})
 	if mErr != nil {
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
 		return

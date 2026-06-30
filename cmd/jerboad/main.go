@@ -278,6 +278,11 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		})
 		slog.Info("jerboad: image build enabled", "store", storePath)
 	}
+	if volStore, err := volume.NewStore(volumeStorePath(storePath)); err != nil {
+		slog.Warn("jerboad: volume store unavailable", "err", err)
+	} else {
+		vmSrv.SetVolumeStore(volStore)
+	}
 
 	// Enable on-demand TFS formatting of attached volumes (lazy mkfs resolver).
 	// Volumes are created as sparse files on the client (mkfs is Linux-only);
@@ -383,6 +388,10 @@ func splitCommaList(s string) []string {
 		}
 	}
 	return out
+}
+
+func volumeStorePath(storePath string) string {
+	return filepath.Join(filepath.Dir(storePath), "volumes")
 }
 
 type clusterMemberAdapter struct {

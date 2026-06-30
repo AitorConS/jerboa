@@ -284,11 +284,14 @@ type BuildParams struct {
 
 // VolumeSeedParams seeds an existing volume's disk with an initialized
 // filesystem populated from a streamed build context (tar), following the
-// request. The daemon runs mkfs against DiskPath (a daemon-visible path) using
-// the streamed files as the volume's root tree, labeling it Label. Used to
+// request. The daemon resolves the volume from VolumeName, validates DiskPath
+// against the store-owned disk image for that volume, and runs mkfs using the
+// streamed files as the volume's root tree, labeling it Label. Used to
 // pre-populate a volume so a database's initialized data directory persists
 // across VM lifecycles.
 type VolumeSeedParams struct {
+	// VolumeName is the logical volume name in the daemon's volume store.
+	VolumeName string `json:"volume_name"`
 	// DiskPath is the daemon-visible path to the volume's raw disk image.
 	DiskPath string `json:"disk_path"`
 	// Label is the TFS filesystem label the guest kernel matches to mount the

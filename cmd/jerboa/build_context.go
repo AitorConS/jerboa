@@ -67,20 +67,8 @@ func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
 			if err := addFileToTar(tw, binaryPath, buildProgramPath); err != nil {
 				return err
 			}
-			for _, f := range pkgFiles {
-				guestPath := f.GuestPath
-				if guestPath == "" {
-					guestPath = filepath.Base(f.HostPath)
-				}
-				if f.IsDir {
-					if err := addDirToTar(tw, guestPath); err != nil {
-						return err
-					}
-				} else {
-					if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
-						return err
-					}
-				}
+			if err := writePkgFiles(tw, pkgFiles); err != nil {
+				return err
 			}
 			return tw.Close()
 		}()
@@ -97,26 +85,33 @@ func seedContextReader(files []pkg.File) *io.PipeReader {
 	go func() {
 		tw := tar.NewWriter(pw)
 		err := func() error {
-			for _, f := range files {
-				guestPath := f.GuestPath
-				if guestPath == "" {
-					guestPath = filepath.Base(f.HostPath)
-				}
-				if f.IsDir {
-					if err := addDirToTar(tw, guestPath); err != nil {
-						return err
-					}
-				} else {
-					if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
-						return err
-					}
-				}
+			if err := writePkgFiles(tw, files); err != nil {
+				return err
 			}
 			return tw.Close()
 		}()
 		_ = pw.CloseWithError(err)
 	}()
 	return pr
+}
+
+func writePkgFiles(tw *tar.Writer, files []pkg.File) error {
+	for _, f := range files {
+		guestPath := f.GuestPath
+		if guestPath == "" {
+			guestPath = filepath.Base(f.HostPath)
+		}
+		if f.IsDir {
+			if err := addDirToTar(tw, guestPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // addDirToTar writes a directory entry into tw at the slash-separated guestPath.
