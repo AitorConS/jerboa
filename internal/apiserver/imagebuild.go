@@ -101,6 +101,109 @@ func (s *Server) resolveVolumeFormatter(ctx context.Context) (volume.Formatter, 
 	return f, nil
 }
 
+// EnableVolumeSeedResolver configures a resolver that produces the volume seeder
+// (mkfs-based) on first use, so the daemon can populate a volume's disk with an
+// initialised filesystem. A successful result is cached; errors are not.
+func (s *Server) EnableVolumeSeedResolver(resolver func(context.Context) (volume.Seeder, error)) {
+	s.volSeedMu.Lock()
+	s.volSeedResol = resolver
+	s.volSeedCache = nil
+	s.volSeedMu.Unlock()
+}
+
+// resolveVolumeSeeder returns the volume seeder, invoking the resolver once and
+// caching the result. Returns nil (no error) when no resolver is set.
+func (s *Server) resolveVolumeSeeder(ctx context.Context) (volume.Seeder, error) {
+	s.volSeedMu.Lock()
+	defer s.volSeedMu.Unlock()
+	if s.volSeedResol == nil {
+		return nil, nil
+	}
+	if s.volSeedCache != nil {
+		return s.volSeedCache, nil
+	}
+	f, err := s.volSeedResol(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.volSeedCache = f
+	return f, nil
+}
+
+// handleVolumeSeed reads a streamed build context and populates the volume disk
+// at p.DiskPath with a TFS filesystem built from those files, via mkfs. The
+// response (or error) is written directly to conn; the connection is consumed
+// and not reused afterwards (mirrors handleBuild).
+func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, stream io.Reader, conn net.Conn, reqID int64) {
+	var p api.VolumeSeedParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
+		return
+	}
+	if p.DiskPath == "" || p.Label == "" {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path and label are required"})
+		return
+	}
+
+	seeder, err := s.resolveVolumeSeeder(ctx)
+	if err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "resolve volume seeder: " + err.Error()})
+		return
+	}
+	if seeder == nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32601, Message: "method not found: Volume.Seed (seeding disabled)"})
+		return
+	}
+
+	tmpDir, err := os.MkdirTemp("", "jerboa-seed-ctx-*")
+	if err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "create seed context dir: " + err.Error()})
+		return
+	}
+	defer func() { _ = os.RemoveAll(tmpDir) }()
+
+	files, err := extractBuildContext(stream, tmpDir)
+	if err != nil {
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "extract seed context: " + err.Error()})
+		return
+	}
+	if len(files) == 0 {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "seed context is empty"})
+		return
+	}
+
+	manifest := image.BuildVolumeManifest(files)
+	if err := seeder(ctx, p.DiskPath, p.Label, p.SizeBytes, manifest); err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
+		return
+	}
+
+	// extractBuildContext stops at the tar's EOF; drain the client's frame
+	// terminator before responding so its write does not race the connection
+	// close (broken pipe) — the same reason handleBuild drains.
+	drain(stream)
+
+	var size int64
+	if st, statErr := os.Stat(p.DiskPath); statErr == nil {
+		size = st.Size()
+	}
+	resp := api.Response{JSONRPC: "2.0", ID: reqID}
+	raw, mErr := json.Marshal(api.VolumeSeedResult{DiskPath: p.DiskPath, SizeBytes: size})
+	if mErr != nil {
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "marshal result: " + mErr.Error()})
+		return
+	}
+	resp.Result = raw
+	_ = json.NewEncoder(conn).Encode(resp)
+}
+
 // handleImageList returns the manifests held in the daemon's image store.
 func (s *Server) handleImageList() (any, *api.RPCError) {
 	if s.imgStore == nil {

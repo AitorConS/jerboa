@@ -99,6 +99,34 @@ func TestBuildManifest_OpsSysrootPkgFiles(t *testing.T) {
 	require.Contains(t, got, "ca-certificates.crt:(contents:(host:")
 }
 
+func TestBuildVolumeManifest(t *testing.T) {
+	files := []pkg.File{
+		{HostPath: filepath.FromSlash("/seed/PG_VERSION"), GuestPath: "PG_VERSION"},
+		{HostPath: filepath.FromSlash("/seed/base/1/PG_VERSION"), GuestPath: "base/1/PG_VERSION"},
+		{GuestPath: "pg_wal", IsDir: true},
+	}
+	got := BuildVolumeManifest(files)
+
+	// Children-only: no program, no arguments, no environment sections.
+	require.Contains(t, got, "children:(")
+	require.NotContains(t, got, "program:")
+	require.NotContains(t, got, "arguments:")
+	require.NotContains(t, got, "environment:")
+
+	// Files placed at their guest path; nested dirs become nested children.
+	require.Contains(t, got, "PG_VERSION:(contents:(host:")
+	require.Contains(t, got, "base:(\n")
+	require.Contains(t, got, "1:(\n")
+	// Empty directory node present (a child scope with no contents host).
+	require.Contains(t, got, "pg_wal:(")
+}
+
+func TestBuildVolumeManifest_Empty(t *testing.T) {
+	got := BuildVolumeManifest(nil)
+	require.Contains(t, got, "children:(")
+	require.NotContains(t, got, "contents:(host:")
+}
+
 func TestBuildManifest_NamesWithSpecialChars(t *testing.T) {
 	pkgFiles := []pkg.File{
 		{HostPath: filepath.FromSlash("/home/user/.jerboa/packages-ops/eyberg/python_3.10.6/files/sysroot/usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"), GuestPath: "usr/lib/python3.10/site-packages/jaraco/text/Lorem ipsum.txt"},

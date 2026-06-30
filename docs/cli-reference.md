@@ -263,6 +263,41 @@ Flag:
 
 - `--size`, default `1G`
 
+### `jerboa volume seed <name>`
+
+Populate an existing volume with an initialised filesystem taken from one or
+more packages, so the data is present the first time the volume is mounted.
+Created volumes are empty; mounting an empty volume over a data directory
+shadows whatever the image baked there. Seeding writes the package files into
+the volume's filesystem (via `mkfs` on the daemon) so the data persists across
+VM lifecycles.
+
+The canonical use is making a database persistent: a package such as
+`eyberg/postgresql` ships a pre-initialised data directory (`initdb` cannot run
+inside a unikernel — it fork/execs helper processes, which Nanos does not
+support), which is seeded onto a volume and then mounted.
+
+```sh
+jerboa volume create pgdata --size 1G
+jerboa volume seed pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
+jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
+```
+
+Flags:
+
+| Flag | Description |
+|---|---|
+| `--pkg` | Package providing the seed files (repeatable) |
+| `--pkg-source` | `jerboa` (default) or `ops` |
+| `--src` | In-package subtree whose contents become the volume root (default `/`); e.g. `/db` |
+
+Notes:
+
+- `--src /db` rebases the package's `/db` contents to the volume root, so
+  mounting the volume at `/db` (`-v <name>:/db`) restores them in place.
+- Re-running `volume seed` reformats and re-populates the volume, discarding any
+  data written since the last seed — use it to reset a volume to a clean state.
+
 ### `jerboa volume ls`
 ### `jerboa volume inspect <name>`
 ### `jerboa volume rm <name>`

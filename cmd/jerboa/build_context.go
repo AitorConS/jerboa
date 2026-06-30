@@ -18,7 +18,12 @@ import (
 // host path (to stream into the build context) and the matched in-image guest
 // path, so the program can be executed from its real location.
 func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guestPath string, err error) {
-	want := filepath.ToSlash(programPath)
+	// Package guest paths are slash-style and relative (no leading "/"), but the
+	// most intuitive way to name the program is its absolute in-image path
+	// (e.g. "/usr/local/pgsql/bin/postgres" — what it actually is once booted).
+	// Normalize the leading slash off both sides so an absolute path still
+	// matches the relative guest path by exact path or path suffix.
+	want := strings.TrimPrefix(filepath.ToSlash(programPath), "/")
 
 	// Directory placeholders (e.g. volume mount points from [build] dirs) have no
 	// executable host file, so they can never satisfy a program lookup.
@@ -26,7 +31,7 @@ func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guest
 		if f.IsDir {
 			continue
 		}
-		if filepath.ToSlash(f.GuestPath) == want {
+		if strings.TrimPrefix(filepath.ToSlash(f.GuestPath), "/") == want {
 			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
@@ -34,7 +39,7 @@ func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guest
 		if f.IsDir {
 			continue
 		}
-		if strings.HasSuffix(filepath.ToSlash(f.GuestPath), "/"+want) {
+		if strings.HasSuffix(strings.TrimPrefix(filepath.ToSlash(f.GuestPath), "/"), "/"+want) {
 			return f.HostPath, filepath.ToSlash(f.GuestPath), nil
 		}
 	}
@@ -63,6 +68,36 @@ func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
 				return err
 			}
 			for _, f := range pkgFiles {
+				guestPath := f.GuestPath
+				if guestPath == "" {
+					guestPath = filepath.Base(f.HostPath)
+				}
+				if f.IsDir {
+					if err := addDirToTar(tw, guestPath); err != nil {
+						return err
+					}
+				} else {
+					if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
+						return err
+					}
+				}
+			}
+			return tw.Close()
+		}()
+		_ = pw.CloseWithError(err)
+	}()
+	return pr
+}
+
+// seedContextReader returns a streaming tar archive of files for a volume seed:
+// each file/dir at its guest path, with no program binary (unlike
+// buildContextReader). The caller must Close the returned reader.
+func seedContextReader(files []pkg.File) *io.PipeReader {
+	pr, pw := io.Pipe()
+	go func() {
+		tw := tar.NewWriter(pw)
+		err := func() error {
+			for _, f := range files {
 				guestPath := f.GuestPath
 				if guestPath == "" {
 					guestPath = filepath.Base(f.HostPath)

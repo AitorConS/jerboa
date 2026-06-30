@@ -287,6 +287,14 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		return tools.ResolveVolumeFormatter(rctx, toolsDir, "")
 	})
 
+	// Enable Volume.Seed: populate a volume's disk with an initialised filesystem
+	// (e.g. a database's pre-initialised data dir) streamed from the client, via
+	// the same mkfs toolchain.
+	vmSrv.EnableVolumeSeedResolver(func(rctx context.Context) (volume.Seeder, error) {
+		slog.Info("jerboad: resolving mkfs toolchain for volume seed", "tools_dir", toolsDir)
+		return tools.ResolveVolumeSeeder(rctx, toolsDir, "")
+	})
+
 	slog.Info("jerboad listening", "endpoint", endpoint, "hypervisor", hypervisor)
 
 	if err := vmSrv.Serve(ctx); err != nil {

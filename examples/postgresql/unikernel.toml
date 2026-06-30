@@ -16,16 +16,9 @@
 lang = "raw"
 
 # Minimum image size passed to mkfs. Reserves scratch space *inside the root
-# image* (lost on stop) for runtime writes — temp tablespaces, logs, sockets.
-# Persisted data belongs on a volume (see dirs + -v), not here.
+# image* (lost on stop) for runtime writes — temp tablespaces, logs, sockets,
+# and the database files themselves under /db (see -D below).
 disk_size = "1G"
-
-# Empty directories to create in the image — the Dockerfile `mkdir`/`VOLUME`
-# analogue. Volume mount points MUST be listed here: a TFS volume can only be
-# mounted onto a directory that already exists in the root image, and the
-# boot-time mount fails silently otherwise. Also handy for scratch paths the
-# program writes to. This path matches the -v <volume>:<guest-path> used at run.
-dirs = ["/var/lib/postgresql/data"]
 
 # Shell commands run before packaging — the Dockerfile `RUN` analogue. Use for
 # build steps (npm run build, collectstatic, mvn package…). None needed here
@@ -34,14 +27,21 @@ dirs = ["/var/lib/postgresql/data"]
 
 [program]
 # raw-only: the runtime binary, resolved from the --pkg files by exact guest
-# path, path suffix, or basename. The program is executed from its REAL in-image
-# path (e.g. /usr/local/postgresql/bin/postgres), so it can locate its install
-# prefix (share/, lib/) and $ORIGIN-relative shared libraries such as libpq.so.5.
-path = "postgres"
+# path, path suffix, or basename. Give the FULL in-image path so it resolves to
+# the real install tree, not a same-named launcher stub at the image root: the
+# eyberg/postgresql package ships both /postgres (root) and the real binary under
+# /usr/local/pgsql/bin. The program is executed from its real path, so postgres
+# can locate its install prefix (../share, ../lib) via /proc/self/exe and resolve
+# $ORIGIN-relative shared libraries such as libpq.so.5.
+path = "/usr/local/pgsql/bin/postgres"
 
 # argv[1..] passed to the program (argv[0] is the program path itself).
+# The eyberg/postgresql package ships a PRE-INITIALISED data directory baked into
+# the image at /db (it contains PG_VERSION, base/, global/ …), so no initdb step
+# is needed — initdb cannot run in a unikernel anyway because it fork/execs the
+# postgres bootstrap process and nanos is single-process. Point -D at that /db.
 args = [
-  "-D", "/var/lib/postgresql/data",
+  "-D", "/db",
   "-p", "5432",
   "-c", "listen_addresses=*",
 ]
@@ -58,3 +58,14 @@ memory = "512M"          # inherited unless `jerboa run --memory ...` is given
 cpus = 1                 # inherited unless `jerboa run --cpus ...` is given
 ports = ["5432:5432"]    # host:guest publish maps; applied when the VM joins a
                          # network (jerboa run --network ...) and no -p is given
+
+# Persistence: /db in the root image is ephemeral. For data that survives
+# recreating the VM, seed a TFS volume with the initialised cluster once and
+# mount it at /db (the volume shadows the baked copy):
+#
+#   jerboa volume create pgdata --size 1G
+#   jerboa volume seed   pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
+#   jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
+#
+# Always stop the VM with `jerboa stop` (graceful) so postgres checkpoints and
+# removes postmaster.pid; an ungraceful kill can leave a stale lock on the volume.

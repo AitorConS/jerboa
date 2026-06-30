@@ -90,7 +90,7 @@ func newRootCmd() *cobra.Command {
 		newInspectCmd(&endpoint),
 		newExecCmd(&endpoint),
 		newComposeCmd(&endpoint, &storePath, &outputFmt),
-		newVolumeCmd(&storePath, &outputFmt),
+		newVolumeCmd(&endpoint, &storePath, &outputFmt, &verbose),
 		newKernelCmd(&verbose),
 		newPkgCmd(&endpoint),
 		newNetworkCmd(&endpoint, &outputFmt),
@@ -113,6 +113,12 @@ func newRootCmd() *cobra.Command {
 // daemon. Local-only command groups and the bare root are excluded so that
 // e.g. `jerboa config` or `jerboa kernel` never spin up WSL.
 func needsDaemon(cmd *cobra.Command) bool {
+	// `volume seed` is the one volume subcommand that talks to the daemon (it
+	// streams seed files to mkfs), so it must trigger daemon auto-boot even
+	// though the rest of the volume group is local-only.
+	if cmd.Name() == "seed" {
+		return true
+	}
 	localGroups := map[string]bool{
 		"config": true, "kernel": true, "pkg": true, "volume": true,
 		"sign": true, "verify": true, "completion": true, "help": true,

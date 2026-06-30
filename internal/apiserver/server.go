@@ -58,6 +58,9 @@ type Server struct {
 	volFmtMu     sync.Mutex
 	volFmtResolv func(context.Context) (volume.Formatter, error)
 	volFmtCached volume.Formatter
+	volSeedMu    sync.Mutex
+	volSeedResol func(context.Context) (volume.Seeder, error)
+	volSeedCache volume.Seeder
 	authToken    string
 }
 
@@ -178,6 +181,12 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
 		skipLeadingWhitespace(br)
 		s.handleBuild(ctx, req.Params, api.NewFrameReader(br), conn, req.ID)
+		return attachHandled, nil
+	case "Volume.Seed":
+		// Like Image.Build, Volume.Seed streams its context tar after the request.
+		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
+		skipLeadingWhitespace(br)
+		s.handleVolumeSeed(ctx, req.Params, api.NewFrameReader(br), conn, req.ID)
 		return attachHandled, nil
 	case "Image.List":
 		return s.handleImageList()

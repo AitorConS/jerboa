@@ -1,81 +1,95 @@
-# PostgreSQL on Jerboa - persistent data with volumes
+# PostgreSQL on Jerboa
 
-PostgreSQL needs a data directory that survives VM restarts. Jerboa volumes are
-TFS-formatted disks that the guest kernel mounts at a path you choose at run
-time (`-v <volume>:<guest-path>`), so the same mechanism works for every
-database - no per-database engine changes.
+This builds a unikernel that boots PostgreSQL and accepts connections on port
+5432, using the `eyberg/postgresql:11.3.0` package pulled from the `ops`
+ecosystem.
 
-The image (`eyberg/postgresql:11.3.0`, pulled as an `ops` package) ships the
-PostgreSQL binaries, but a fresh data directory must be initialised before the
-server can start. Because a newly created volume is empty too, mounting it over
-the database path means you must seed the volume first with `initdb`, then run
-the server against that same volume.
+## Why there is no `initdb` step
 
-## 1. Create a persistent volume
+A PostgreSQL data directory normally has to be initialised with `initdb` before
+the server can start. `initdb` **cannot run inside a unikernel**: it fork/execs
+the `postgres` bootstrap process (and other helper binaries), and nanos is a
+single-process kernel with no `fork`/`exec`. Attempting it fails with
+`popen failure: Cannot allocate memory`.
 
-```sh
-jerboa volume create pgdata --size 1G
-```
+The `eyberg/postgresql` package sidesteps this by **shipping a pre-initialised
+cluster** inside the package (`sysroot/db`, containing `PG_VERSION`, `base/`,
+`global/`, …). It is baked into the image at `/db`, so the server can start
+against it directly — exactly what the upstream ops package manifest does
+(`Args: ["/usr/local/pgsql/bin/postgres", "-D", "db"]`).
 
-The volume is formatted as a labelled TFS filesystem (label = `pgdata`) the
-first time it is attached. Re-attaching it never reformats, so data is
-preserved.
-
-## 2. Seed it once (initialise the data directory)
-
-Build and run the init image from `../postgresql-init`, mounting the volume at
-the data dir. `initdb` writes the PostgreSQL cluster files into the volume and
-exits.
+## Build and run
 
 ```sh
-jerboa build ../postgresql-init --name postgresql-init --pkg eyberg/postgresql:11.3.0 --pkg-source ops
-jerboa run postgresql-init -v pgdata:/var/lib/postgresql/data
-```
-
-The `512M` memory comes from `[run] memory` in the image's `unikernel.toml` — no
-`--memory` flag needed.
-
-## 3. Run the server against the persisted data
-
-```sh
-jerboa network create mynet
+jerboa network create pgnet
 jerboa build . --name postgresql --pkg eyberg/postgresql:11.3.0 --pkg-source ops
-jerboa run postgresql -v pgdata:/var/lib/postgresql/data --network mynet
+jerboa run postgresql --network pgnet -p 5432:5432
+jerboa logs <id>     # → "database system is ready to accept connections"
 ```
 
-`[run]` in `unikernel.toml` is inherited at run time: memory (`512M`) and the
-published port (`5432:5432`) are applied automatically — the port publishes
-because the VM joined `mynet`. Any explicit flag (`--memory`, `--cpus`, `-p`)
+`memory` (`512M`), `cpus`, and the published port (`5432:5432`) come from
+`[run]` in `unikernel.toml` and are inherited automatically; the port publishes
+because the VM joined `pgnet`. Any explicit flag (`--memory`, `--cpus`, `-p`)
 still overrides the baked default.
 
-Both images declare `dirs = ["/var/lib/postgresql/data"]` under `[build]`, so the
-mount point exists in the root image before the volume is attached — a volume can
-only be mounted onto a directory that already exists. Build with a config in a
-non-default location via `-f`/`--file`:
+## How the `unikernel.toml` works
+
+- `lang = "raw"` — no compilation; the binaries come from the `--pkg` package.
+- `[program] path = "/usr/local/pgsql/bin/postgres"` — the full in-image path,
+  so the binary runs from its real install location and can locate its prefix
+  (`../share`, `../lib`) via `/proc/self/exe` and resolve `$ORIGIN`-relative
+  shared libraries such as `libpq.so.5`. Pointing at a bare `postgres` would
+  instead match a same-named launcher stub at the image root (`/postgres`) and
+  fail with *"could not locate my own executable path"*.
+- `[program] args = ["-D", "/db", ...]` — run against the pre-seeded cluster.
+- `disk_size = "1G"` — reserves scratch space inside the root image for the
+  database files and runtime writes (WAL, temp, sockets).
+
+## Persistence (seeded volume)
+
+`/db` baked into the image is **ephemeral** — removing the VM (`jerboa rm`)
+discards the data. To make the database durable, put the cluster on a TFS
+volume. A freshly created volume is empty, and mounting an empty volume over
+`/db` would just shadow the seeded data — so the volume has to be **seeded once**
+with the initialised cluster before it is mounted. `jerboa volume seed` does
+this: it writes a package subtree into the volume's filesystem with `mkfs`.
 
 ```sh
-jerboa build . --name postgresql --pkg eyberg/postgresql:11.3.0 --pkg-source ops -f ./unikernel.toml
+# 1. Create the volume
+jerboa volume create pgdata --size 1G
+
+# 2. Seed it with the package's pre-initialised cluster (/db → volume root)
+jerboa volume seed pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
+
+# 3. Run with the volume mounted at /db (it shadows the baked copy)
+jerboa network create pgnet
+jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
 ```
 
-Stop and start the VM as often as you like: the data lives in `pgdata`, not in
-the (ephemeral) root image. To wipe it, `jerboa volume rm pgdata`.
+Now the data survives recreating the VM:
+
+```sh
+jerboa stop <id>          # graceful: postgres checkpoints and clears its lock
+jerboa rm <id>            # remove the VM entirely
+jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
+jerboa logs <id>          # → "database system was shut down at <your last stop>"
+```
+
+The shutdown timestamp in the new VM's log matches when you stopped the previous
+one (not the package's original `2023-…` build time), confirming the writes
+persisted on the volume across `jerboa rm`. Wipe the data with
+`jerboa volume rm pgdata` (and re-seed to start fresh).
+
+> **Always stop with `jerboa stop`** (graceful). Postgres then checkpoints and
+> removes `postmaster.pid`. An ungraceful kill leaves a stale `postmaster.pid`
+> on the volume, and the next boot refuses to start
+> (*"pre-existing shared memory block … is still in use"*); re-seeding the volume
+> clears it.
 
 ## Notes
 
-- `dirs` under `[build]` bakes empty directories into the image. Volume mount
-  points must be listed here; the boot-time mount silently fails if the target
-  directory does not already exist in the root image.
-- The `postgres` binary runs from its real package path (e.g.
-  `/usr/local/postgresql/bin/postgres`), not a flattened `/program`, so it can
-  locate its installation prefix (`share/`, `lib/`) and `$ORIGIN`-relative
-  shared libraries such as `libpq.so.5`.
-- `[run]` (memory, cpus, ports) is baked into the image and inherited by
-  `jerboa run`. Explicit flags win; baked ports only publish when the VM joins a
-  network (there is nothing to forward through otherwise).
-- `disk_size` in `unikernel.toml` only reserves scratch space **inside the root
-  image** (lost on stop). Use a volume for anything you need to keep.
-- The volume mount is injected at boot: QEMU via the `opt/uni/mounts` fw_cfg
-  key, Firecracker via the `mounts.<label>=<path>` kernel boot argument. The
-  guest kernel matches the volume by its TFS label.
-- `postgres` is configured with `listen_addresses=*` so it accepts connections
-  on the managed network interface.
+- `postgres` is configured with `-c listen_addresses=*` so it accepts
+  connections on the managed-network interface, not just the Unix socket.
+- The `could not resolve "localhost"` warning and the disabled statistics
+  collector are benign: the stats collector wants a `localhost` UDP socket and
+  the guest has no resolver entry for it. The server still accepts connections.

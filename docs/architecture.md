@@ -187,6 +187,14 @@ VM persistence backends:
 - file
 - SQLite
 
+Volumes are raw TFS disk images created (sparse) on the client and labeled by the
+daemon. They are formatted lazily on first attach, or pre-populated up front with
+`jerboa volume seed`: the client streams a package subtree to the daemon, which
+builds a children-only Nanos manifest and runs `mkfs` to write the files into the
+volume's filesystem. This lets a volume carry initialised data (e.g. a database
+cluster that cannot be initialised inside the single-process unikernel) before it
+is ever mounted.
+
 ## Tests And CI
 
 The repo currently contains:

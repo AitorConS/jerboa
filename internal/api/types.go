@@ -282,6 +282,28 @@ type BuildParams struct {
 	DiskSize string `json:"disk_size,omitempty"`
 }
 
+// VolumeSeedParams seeds an existing volume's disk with an initialised
+// filesystem populated from a streamed build context (tar), following the
+// request. The daemon runs mkfs against DiskPath (a daemon-visible path) using
+// the streamed files as the volume's root tree, labeling it Label. Used to
+// pre-populate a volume so a database's initialised data directory persists
+// across VM lifecycles.
+type VolumeSeedParams struct {
+	// DiskPath is the daemon-visible path to the volume's raw disk image.
+	DiskPath string `json:"disk_path"`
+	// Label is the TFS filesystem label the guest kernel matches to mount the
+	// volume; it must equal the label the volume was created with.
+	Label string `json:"label"`
+	// SizeBytes is the minimum image size; 0 keeps the disk's current size.
+	SizeBytes int64 `json:"size_bytes,omitempty"`
+}
+
+// VolumeSeedResult is returned after a successful Volume.Seed.
+type VolumeSeedResult struct {
+	DiskPath  string `json:"disk_path"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
 // ImageManifestResult is the wire representation of a built image manifest.
 type ImageManifestResult struct {
 	Name       string `json:"name"`

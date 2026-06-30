@@ -452,6 +452,58 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 	return out, nil
 }
 
+// VolumeSeed populates a volume's disk with an initialised filesystem built
+// from the streamed context tar. It mirrors ImageBuild's framed streaming: the
+// request is sent, then the tar bytes are framed onto the same connection, then
+// the daemon's response is read. A dedicated connection is used and closed after.
+func (c *Client) VolumeSeed(_ context.Context, p VolumeSeedParams, contextTar io.Reader) (VolumeSeedResult, error) {
+	conn, err := net.Dial(dialArgs(c.endpoint)) //nolint:noctx // dedicated seed connection
+	if err != nil {
+		return VolumeSeedResult{}, fmt.Errorf("dial seed connection: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	enc := json.NewEncoder(conn)
+	dec := json.NewDecoder(conn)
+	if c.token != "" {
+		if err := sendAuth(enc, dec, c.token); err != nil {
+			return VolumeSeedResult{}, err
+		}
+	}
+
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return VolumeSeedResult{}, fmt.Errorf("marshal seed params: %w", err)
+	}
+	req := Request{JSONRPC: "2.0", ID: 1, Method: "Volume.Seed", Params: json.RawMessage(raw)}
+	if err := enc.Encode(req); err != nil {
+		return VolumeSeedResult{}, fmt.Errorf("encode seed request: %w", err)
+	}
+
+	fw := NewFrameWriter(conn)
+	if _, err := io.Copy(fw, contextTar); err != nil {
+		return VolumeSeedResult{}, fmt.Errorf("stream seed context: %w", err)
+	}
+	if err := fw.Close(); err != nil {
+		return VolumeSeedResult{}, fmt.Errorf("finish seed context: %w", err)
+	}
+
+	var resp Response
+	if err := dec.Decode(&resp); err != nil {
+		return VolumeSeedResult{}, fmt.Errorf("decode seed response: %w", err)
+	}
+	if resp.Error != nil {
+		return VolumeSeedResult{}, fmt.Errorf("rpc error %d: %s", resp.Error.Code, resp.Error.Message)
+	}
+	var out VolumeSeedResult
+	if resp.Result != nil {
+		if err := json.Unmarshal(resp.Result, &out); err != nil {
+			return VolumeSeedResult{}, fmt.Errorf("unmarshal seed result: %w", err)
+		}
+	}
+	return out, nil
+}
+
 // ImageList returns the images held in the daemon's store.
 func (c *Client) ImageList(_ context.Context) ([]ImageManifestResult, error) {
 	var out []ImageManifestResult

@@ -245,6 +245,31 @@ func TestOpsStore_DownloadAndExtract(t *testing.T) {
 	require.True(t, guestPaths["etc/ssl/certs/ca-certificates.crt"], "should have sysroot etc")
 }
 
+func TestMaterializeLinks(t *testing.T) {
+	dir := t.TempDir()
+	libDir := filepath.Join(dir, "usr", "local", "pgsql", "lib")
+	require.NoError(t, os.MkdirAll(libDir, 0o755))
+
+	// The real shared library on disk.
+	real := filepath.Join(libDir, "libpq.so.5.11")
+	require.NoError(t, os.WriteFile(real, []byte("ELF-bytes"), 0o755))
+
+	// libpq.so.5 -> libpq.so.5.11 (soname link), and libpq.so -> libpq.so.5
+	// (a link pointing at another link, to exercise the multi-pass resolution).
+	links := []pendingLink{
+		{path: filepath.Join(libDir, "libpq.so"), linkname: "libpq.so.5"},
+		{path: filepath.Join(libDir, "libpq.so.5"), linkname: "libpq.so.5.11"},
+	}
+
+	materializeLinks(links)
+
+	for _, name := range []string{"libpq.so.5", "libpq.so"} {
+		got, err := os.ReadFile(filepath.Join(libDir, name))
+		require.NoError(t, err, "link %q should have been materialized as a real file", name)
+		require.Equal(t, "ELF-bytes", string(got), "materialized %q should copy the target's bytes", name)
+	}
+}
+
 func TestOpsStore_Download_SHA256Mismatch(t *testing.T) {
 	content := []byte("fake package content")
 
