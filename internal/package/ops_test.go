@@ -261,13 +261,40 @@ func TestMaterializeLinks(t *testing.T) {
 		{path: filepath.Join(libDir, "libpq.so.5"), linkname: "libpq.so.5.11"},
 	}
 
-	materializeLinks(links)
+	materializeLinks(dir, links)
 
 	for _, name := range []string{"libpq.so.5", "libpq.so"} {
 		got, err := os.ReadFile(filepath.Join(libDir, name))
 		require.NoError(t, err, "link %q should have been materialized as a real file", name)
 		require.Equal(t, "ELF-bytes", string(got), "materialized %q should copy the target's bytes", name)
 	}
+}
+
+func TestMaterializeLinks_RejectsTraversalTarget(t *testing.T) {
+	dir := t.TempDir()
+	libDir := filepath.Join(dir, "lib")
+	require.NoError(t, os.MkdirAll(libDir, 0o755))
+
+	// A secret outside the package dir that a malicious symlink target points at.
+	outside := filepath.Join(filepath.Dir(dir), "secret.txt")
+	require.NoError(t, os.WriteFile(outside, []byte("top-secret"), 0o600))
+
+	// evil.so -> ../../secret.txt would copy a file from outside the package dir.
+	links := []pendingLink{
+		{path: filepath.Join(libDir, "evil.so"), linkname: "../../secret.txt"},
+	}
+	materializeLinks(dir, links)
+
+	_, err := os.Stat(filepath.Join(libDir, "evil.so"))
+	require.True(t, os.IsNotExist(err), "link with an escaping target must not be materialized")
+}
+
+func TestWithinDir(t *testing.T) {
+	dir := filepath.FromSlash("/pkgs/foo")
+	require.True(t, withinDir(dir, filepath.Join(dir, "lib", "x")))
+	require.True(t, withinDir(dir, dir))
+	require.False(t, withinDir(dir, filepath.Join(dir, "..", "bar")))
+	require.False(t, withinDir(dir, filepath.FromSlash("/etc/passwd")))
 }
 
 func TestOpsStore_Download_SHA256Mismatch(t *testing.T) {

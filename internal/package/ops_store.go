@@ -209,6 +209,13 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 		}
 
 		target := filepath.Join(dir, entryName)
+		// Defend against archive path traversal ("Zip Slip"): an entry whose name
+		// contains ".." could otherwise resolve outside the package directory and
+		// overwrite arbitrary files. Skip any entry that escapes dir.
+		if !withinDir(dir, target) {
+			slog.Warn("ops extract: skipping entry outside package dir", "entry", hdr.Name)
+			continue
+		}
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -245,8 +252,18 @@ func (s *OpsStore) Extract(namespace, name, version string) error {
 			pendingLinks = append(pendingLinks, pendingLink{path: target, linkname: hdr.Linkname})
 		}
 	}
-	materializeLinks(pendingLinks)
+	materializeLinks(dir, pendingLinks)
 	return nil
+}
+
+// withinDir reports whether path is contained within dir. It defends against
+// archive entries or symlink targets that escape the package directory via "..".
+func withinDir(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 // pendingLink records a tar symlink to be turned into a real file copy on hosts
@@ -260,7 +277,7 @@ type pendingLink struct {
 // such as libpq.so.5 -> libpq.so.5.11 must survive as regular files because the
 // image build only includes regular files on disk. Multiple passes resolve
 // chains where a link points at another link.
-func materializeLinks(links []pendingLink) {
+func materializeLinks(dir string, links []pendingLink) {
 	remaining := links
 	for len(remaining) > 0 {
 		var next []pendingLink
@@ -269,6 +286,12 @@ func materializeLinks(links []pendingLink) {
 			src := filepath.FromSlash(l.linkname)
 			if !filepath.IsAbs(src) {
 				src = filepath.Join(filepath.Dir(l.path), src)
+			}
+			// Defend against a symlink target that escapes the package directory
+			// ("Zip Slip" via the link name): never copy from outside dir.
+			if !withinDir(dir, src) {
+				slog.Warn("ops extract: skipping symlink with target outside package dir", "target", l.path, "linkname", l.linkname)
+				continue
 			}
 			info, err := os.Stat(src) // follows: src may be a copy made in a prior pass
 			if err != nil || info.IsDir() {
