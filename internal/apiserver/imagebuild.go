@@ -103,7 +103,7 @@ func (s *Server) resolveVolumeFormatter(ctx context.Context) (volume.Formatter, 
 
 // EnableVolumeSeedResolver configures a resolver that produces the volume seeder
 // (mkfs-based) on first use, so the daemon can populate a volume's disk with an
-// initialised filesystem. A successful result is cached; errors are not.
+// initialized filesystem. A successful result is cached; errors are not.
 func (s *Server) EnableVolumeSeedResolver(resolver func(context.Context) (volume.Seeder, error)) {
 	s.volSeedMu.Lock()
 	s.volSeedResol = resolver

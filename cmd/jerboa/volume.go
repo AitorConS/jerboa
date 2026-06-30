@@ -28,8 +28,8 @@ func newVolumeCmd(endpoint *string, storePath *string, outputFmt *string, verbos
 	return cmd
 }
 
-// newVolumeSeedCmd populates a volume with an initialised filesystem taken from
-// one or more packages — e.g. a database's pre-initialised data directory — so
+// newVolumeSeedCmd populates a volume with an initialized filesystem taken from
+// one or more packages — e.g. a database's pre-initialized data directory — so
 // the data persists across VM lifecycles. The files are resolved from --pkg,
 // optionally narrowed to a subtree with --src (whose contents become the volume
 // root), streamed to the daemon, and written into the volume's disk with mkfs.
@@ -41,11 +41,11 @@ func newVolumeSeedCmd(endpoint *string, storePath *string, verbose *bool) *cobra
 	)
 	cmd := &cobra.Command{
 		Use:   "seed <name>",
-		Short: "Populate a volume with initialised data from a package",
+		Short: "Populate a volume with initialized data from a package",
 		Long: `Seed an existing volume with files from one or more packages.
 
 Use this to make a database persistent: a package such as eyberg/postgresql
-ships a pre-initialised data directory (initdb cannot run inside a unikernel),
+ships a pre-initialized data directory (initdb cannot run inside a unikernel),
 which can be written onto a volume once and then mounted, so the cluster
 survives recreating the VM.
 

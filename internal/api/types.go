@@ -282,11 +282,11 @@ type BuildParams struct {
 	DiskSize string `json:"disk_size,omitempty"`
 }
 
-// VolumeSeedParams seeds an existing volume's disk with an initialised
+// VolumeSeedParams seeds an existing volume's disk with an initialized
 // filesystem populated from a streamed build context (tar), following the
 // request. The daemon runs mkfs against DiskPath (a daemon-visible path) using
 // the streamed files as the volume's root tree, labeling it Label. Used to
-// pre-populate a volume so a database's initialised data directory persists
+// pre-populate a volume so a database's initialized data directory persists
 // across VM lifecycles.
 type VolumeSeedParams struct {
 	// DiskPath is the daemon-visible path to the volume's raw disk image.

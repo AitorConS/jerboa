@@ -6,13 +6,13 @@ ecosystem.
 
 ## Why there is no `initdb` step
 
-A PostgreSQL data directory normally has to be initialised with `initdb` before
+A PostgreSQL data directory normally has to be initialized with `initdb` before
 the server can start. `initdb` **cannot run inside a unikernel**: it fork/execs
 the `postgres` bootstrap process (and other helper binaries), and nanos is a
 single-process kernel with no `fork`/`exec`. Attempting it fails with
 `popen failure: Cannot allocate memory`.
 
-The `eyberg/postgresql` package sidesteps this by **shipping a pre-initialised
+The `eyberg/postgresql` package sidesteps this by **shipping a pre-initialized
 cluster** inside the package (`sysroot/db`, containing `PG_VERSION`, `base/`,
 `global/`, …). It is baked into the image at `/db`, so the server can start
 against it directly — exactly what the upstream ops package manifest does
@@ -51,14 +51,14 @@ still overrides the baked default.
 discards the data. To make the database durable, put the cluster on a TFS
 volume. A freshly created volume is empty, and mounting an empty volume over
 `/db` would just shadow the seeded data — so the volume has to be **seeded once**
-with the initialised cluster before it is mounted. `jerboa volume seed` does
+with the initialized cluster before it is mounted. `jerboa volume seed` does
 this: it writes a package subtree into the volume's filesystem with `mkfs`.
 
 ```sh
 # 1. Create the volume
 jerboa volume create pgdata --size 1G
 
-# 2. Seed it with the package's pre-initialised cluster (/db → volume root)
+# 2. Seed it with the package's pre-initialized cluster (/db → volume root)
 jerboa volume seed pgdata --pkg eyberg/postgresql:11.3.0 --pkg-source ops --src /db
 
 # 3. Run with the volume mounted at /db (it shadows the baked copy)

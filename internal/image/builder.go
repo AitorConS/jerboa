@@ -301,7 +301,7 @@ func BuildManifest(cfg BuildConfig) string {
 // tree (no program, no boot/kernel), suitable for seeding a data volume with
 // mkfs. Each entry in files is placed at its guest path; the resulting children
 // tree becomes the volume's root filesystem when mkfs writes it without boot or
-// kernel images. Used to pre-populate a volume with, e.g., an initialised
+// kernel images. Used to pre-populate a volume with, e.g., an initialized
 // database data directory so it persists across VM lifecycles.
 func BuildVolumeManifest(files []pkg.File) string {
 	root := newManifestNode()

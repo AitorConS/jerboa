@@ -452,7 +452,7 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 	return out, nil
 }
 
-// VolumeSeed populates a volume's disk with an initialised filesystem built
+// VolumeSeed populates a volume's disk with an initialized filesystem built
 // from the streamed context tar. It mirrors ImageBuild's framed streaming: the
 // request is sent, then the tar bytes are framed onto the same connection, then
 // the daemon's response is read. A dedicated connection is used and closed after.

@@ -40,7 +40,7 @@ type Formatter func(ctx context.Context, diskPath, label string, sizeBytes int64
 // manifest, e.g. from image.BuildVolumeManifest). Implemented by internal/tools
 // via mkfs; the daemon supplies one at run time. sizeBytes is the minimum image
 // size. Unlike Formatter, which produces an empty volume, a Seeder pre-populates
-// the volume so initialised data (a database cluster, seed files) is present the
+// the volume so initialized data (a database cluster, seed files) is present the
 // first time it is mounted.
 type Seeder func(ctx context.Context, diskPath, label string, sizeBytes int64, manifest string) error
 

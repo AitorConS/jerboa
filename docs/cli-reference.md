@@ -265,7 +265,7 @@ Flag:
 
 ### `jerboa volume seed <name>`
 
-Populate an existing volume with an initialised filesystem taken from one or
+Populate an existing volume with an initialized filesystem taken from one or
 more packages, so the data is present the first time the volume is mounted.
 Created volumes are empty; mounting an empty volume over a data directory
 shadows whatever the image baked there. Seeding writes the package files into
@@ -273,7 +273,7 @@ the volume's filesystem (via `mkfs` on the daemon) so the data persists across
 VM lifecycles.
 
 The canonical use is making a database persistent: a package such as
-`eyberg/postgresql` ships a pre-initialised data directory (`initdb` cannot run
+`eyberg/postgresql` ships a pre-initialized data directory (`initdb` cannot run
 inside a unikernel — it fork/execs helper processes, which Nanos does not
 support), which is seeded onto a volume and then mounted.
 

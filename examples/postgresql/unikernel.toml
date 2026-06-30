@@ -60,7 +60,7 @@ ports = ["5432:5432"]    # host:guest publish maps; applied when the VM joins a
                          # network (jerboa run --network ...) and no -p is given
 
 # Persistence: /db in the root image is ephemeral. For data that survives
-# recreating the VM, seed a TFS volume with the initialised cluster once and
+# recreating the VM, seed a TFS volume with the initialized cluster once and
 # mount it at /db (the volume shadows the baked copy):
 #
 #   jerboa volume create pgdata --size 1G
