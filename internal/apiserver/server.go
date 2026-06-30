@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,6 +23,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/service"
 	"github.com/AitorConS/jerboa/internal/vm"
+	"github.com/AitorConS/jerboa/internal/volume"
 )
 
 type ClusterMemberLister interface {
@@ -53,6 +55,9 @@ type Server struct {
 	mkfsMu       sync.Mutex
 	mkfsResolver func(context.Context) (image.MkfsFunc, error)
 	mkfsCached   image.MkfsFunc
+	volFmtMu     sync.Mutex
+	volFmtResolv func(context.Context) (volume.Formatter, error)
+	volFmtCached volume.Formatter
 	authToken    string
 }
 
@@ -283,6 +288,9 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			return nil, &api.RPCError{Code: -32000, Message: rerr.Error()}
 		}
 		imagePath = resolved
+	}
+	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
+		return nil, rerr
 	}
 	cfg := vm.Config{
 		ImagePath:   imagePath,
@@ -539,6 +547,47 @@ func portMapsFromSpec(specs []api.PortMapSpec) []vm.PortMap {
 	return out
 }
 
+// ensureVolumesFormatted formats each attached volume as a labeled TFS
+// filesystem before the VM starts, unless it is already formatted (idempotent,
+// so existing data is preserved). Read-only volumes are never formatted — they
+// must already hold a filesystem. Returns an RPC error on failure.
+func (s *Server) ensureVolumesFormatted(ctx context.Context, specs []api.VolumeMountSpec) *api.RPCError {
+	if len(specs) == 0 {
+		return nil
+	}
+	var formatter volume.Formatter
+	for _, sp := range specs {
+		if sp.DiskPath == "" || sp.GuestPath == "" {
+			continue // bare block device with no mount point; nothing to format
+		}
+		if sp.ReadOnly {
+			continue
+		}
+		formatted, err := volume.IsFormatted(sp.DiskPath)
+		if err != nil {
+			return &api.RPCError{Code: -32000, Message: "volume probe: " + err.Error()}
+		}
+		if formatted {
+			continue
+		}
+		if formatter == nil {
+			f, err := s.resolveVolumeFormatter(ctx)
+			if err != nil {
+				return &api.RPCError{Code: -32000, Message: "resolve volume formatter: " + err.Error()}
+			}
+			formatter = f
+		}
+		label := sp.Label
+		if label == "" {
+			label = volume.SanitizeLabel(filepath.Base(filepath.Dir(sp.DiskPath)))
+		}
+		if err := volume.EnsureFormatted(ctx, sp.DiskPath, label, 0, formatter); err != nil {
+			return &api.RPCError{Code: -32000, Message: err.Error()}
+		}
+	}
+	return nil
+}
+
 // volumeMountsFromSpec converts API wire types to vm domain types.
 func volumeMountsFromSpec(specs []api.VolumeMountSpec) []vm.VolumeMount {
 	out := make([]vm.VolumeMount, len(specs))
@@ -547,6 +596,7 @@ func volumeMountsFromSpec(specs []api.VolumeMountSpec) []vm.VolumeMount {
 			DiskPath:  s.DiskPath,
 			GuestPath: s.GuestPath,
 			ReadOnly:  s.ReadOnly,
+			Label:     s.Label,
 		}
 	}
 	return out
@@ -563,6 +613,7 @@ func volumeMountsToSpec(vols []vm.VolumeMount) []api.VolumeMountSpec {
 			DiskPath:  v.DiskPath,
 			GuestPath: v.GuestPath,
 			ReadOnly:  v.ReadOnly,
+			Label:     v.Label,
 		}
 	}
 	return out

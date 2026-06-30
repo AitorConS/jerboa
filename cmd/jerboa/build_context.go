@@ -54,8 +54,14 @@ func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
 				if guestPath == "" {
 					guestPath = filepath.Base(f.HostPath)
 				}
-				if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
-					return err
+				if f.IsDir {
+					if err := addDirToTar(tw, guestPath); err != nil {
+						return err
+					}
+				} else {
+					if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
+						return err
+					}
 				}
 			}
 			return tw.Close()
@@ -63,6 +69,21 @@ func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
 		_ = pw.CloseWithError(err)
 	}()
 	return pr
+}
+
+// addDirToTar writes a directory entry into tw at the slash-separated guestPath.
+// Used for empty directories from package sysroots (IsDir: true) that have no
+// host file but must exist in the image for the program to write into them.
+func addDirToTar(tw *tar.Writer, guestPath string) error {
+	hdr := &tar.Header{
+		Name:     filepath.ToSlash(guestPath) + "/",
+		Typeflag: tar.TypeDir,
+		Mode:     0o755,
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return fmt.Errorf("tar dir header %s: %w", guestPath, err)
+	}
+	return nil
 }
 
 // addFileToTar writes hostPath into tw under the slash-separated guestPath.

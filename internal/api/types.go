@@ -36,6 +36,11 @@ type VolumeMountSpec struct {
 	DiskPath  string `json:"disk_path"`
 	GuestPath string `json:"guest_path"`
 	ReadOnly  bool   `json:"read_only,omitempty"`
+	// Label is the volume's TFS filesystem label (its name). The daemon formats
+	// the volume with this label and injects "Label:GuestPath" into the guest's
+	// mount config (QEMU fw_cfg opt/uni/mounts or Firecracker boot args) so the
+	// kernel mounts the matching volume at GuestPath.
+	Label string `json:"label,omitempty"`
 }
 
 // RunParams are the parameters for the VM.Run method.
@@ -263,6 +268,10 @@ type BuildParams struct {
 	Args       []string          `json:"args,omitempty"`
 	Env        map[string]string `json:"env,omitempty"`
 	Port       int               `json:"port,omitempty"`
+	// DiskSize sets the minimum image size passed to mkfs (e.g. "512M", "1G").
+	// Use when the default content-based size leaves insufficient free space
+	// for runtime writes (e.g. database temp tablespaces, log files).
+	DiskSize string `json:"disk_size,omitempty"`
 }
 
 // ImageManifestResult is the wire representation of a built image manifest.

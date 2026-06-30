@@ -1,0 +1,17 @@
+[build]
+lang = "raw"
+disk_size = "512M"
+
+[program]
+path = "mysqld"
+args = [
+  "--datadir=/var/lib/mysql",
+  "--user=root",
+  "--bind-address=0.0.0.0",
+  "--plugin-dir=/usr/lib/mysql/plugin",
+  "--console",
+]
+
+[run]
+memory = "512M"
+ports = ["3306:3306"]

@@ -18,6 +18,11 @@ void env_inject_from_fw_cfg(tuple root);
  * configuration into the root tuple before init_network_iface. No-op if absent. */
 void net_inject_from_fw_cfg(tuple root);
 
+/* mounts_inject_from_fw_cfg merges QEMU fw_cfg "opt/uni/mounts" volume mount
+ * points ("LABEL:/path" per line) into root[mounts]. Returns true if any entry
+ * was added, so the caller re-applies storage_set_mountpoints. No-op if absent. */
+boolean mounts_inject_from_fw_cfg(tuple root);
+
 void program_set_perms(tuple root, tuple prog);
 
 void dump_mem_stats(buffer b);

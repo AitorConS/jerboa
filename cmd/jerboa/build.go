@@ -89,6 +89,7 @@ project markers (go.mod, package.json, etc.).`,
 
 			var binaryPath string
 			var programArgs []string
+			var cfg *builder.Config
 			info, err := os.Stat(srcPath)
 			if err != nil {
 				return fmt.Errorf("build: stat %s: %w", srcPath, err)
@@ -102,7 +103,7 @@ project markers (go.mod, package.json, etc.).`,
 			subW := sp.SubWriter()
 
 			if info.IsDir() {
-				cfg, err := builder.LoadConfig(srcPath)
+				cfg, err = builder.LoadConfig(srcPath)
 				if err != nil {
 					return fmt.Errorf("build: %w", err)
 				}
@@ -145,6 +146,11 @@ project markers (go.mod, package.json, etc.).`,
 				name = filepath.Base(filepath.Clean(args[0]))
 			}
 
+			var diskSize string
+			if cfg != nil {
+				diskSize = cfg.Build.DiskSize
+			}
+
 			sp.Start("Assembling image on daemon")
 			client, err := api.Dial(*endpoint)
 			if err != nil {
@@ -165,6 +171,7 @@ project markers (go.mod, package.json, etc.).`,
 				Args:       programArgs,
 				Env:        pkgEnv,
 				Port:       port,
+				DiskSize:   diskSize,
 			}, pr)
 			if err != nil {
 				sp.Fail("Image assembly failed")

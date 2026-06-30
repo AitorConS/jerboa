@@ -18,6 +18,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
+	"github.com/AitorConS/jerboa/internal/volume"
 )
 
 // SetImageStore attaches the daemon's image store, enabling image resolution
@@ -68,6 +69,35 @@ func (s *Server) resolveMkfs(ctx context.Context) (image.MkfsFunc, error) {
 		return nil, err
 	}
 	s.mkfsCached = f
+	return f, nil
+}
+
+// EnableVolumeFormatResolver configures a resolver that produces the volume
+// formatter (mkfs-based) on first use, so the daemon can format attached
+// volumes as TFS at run time. A successful result is cached; errors are not.
+func (s *Server) EnableVolumeFormatResolver(resolver func(context.Context) (volume.Formatter, error)) {
+	s.volFmtMu.Lock()
+	s.volFmtResolv = resolver
+	s.volFmtCached = nil
+	s.volFmtMu.Unlock()
+}
+
+// resolveVolumeFormatter returns the volume formatter, invoking the resolver
+// once and caching the result. Returns nil (no error) when no resolver is set.
+func (s *Server) resolveVolumeFormatter(ctx context.Context) (volume.Formatter, error) {
+	s.volFmtMu.Lock()
+	defer s.volFmtMu.Unlock()
+	if s.volFmtResolv == nil {
+		return nil, nil
+	}
+	if s.volFmtCached != nil {
+		return s.volFmtCached, nil
+	}
+	f, err := s.volFmtResolv(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.volFmtCached = f
 	return f, nil
 }
 
@@ -193,6 +223,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Args:       p.Args,
 		Env:        p.Env,
 		Port:       p.Port,
+		DiskSize:   p.DiskSize,
 		Output:     io.Discard,
 	})
 	if err != nil {
@@ -226,22 +257,33 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
 		}
-		if hdr.Typeflag != tar.TypeReg {
+		guestPath := filepath.ToSlash(filepath.Clean("/" + strings.TrimSuffix(hdr.Name, "/")))
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			dest, err := safeJoin(dir, guestPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(dest, 0o755); err != nil {
+				return nil, fmt.Errorf("mkdir %s: %w", hdr.Name, err)
+			}
+			files = append(files, pkg.File{GuestPath: strings.TrimPrefix(guestPath, "/"), IsDir: true})
+		case tar.TypeReg:
+			dest, err := safeJoin(dir, guestPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+				return nil, fmt.Errorf("mkdir for %s: %w", hdr.Name, err)
+			}
+			mode := os.FileMode(hdr.Mode).Perm() //nolint:gosec // tar mode bits are bounded by Perm()
+			if err := writeFileFromTar(dest, tr, mode); err != nil {
+				return nil, err
+			}
+			files = append(files, pkg.File{HostPath: dest, GuestPath: strings.TrimPrefix(guestPath, "/")})
+		default:
 			continue
 		}
-		guestPath := filepath.ToSlash(filepath.Clean("/" + hdr.Name))
-		dest, err := safeJoin(dir, guestPath)
-		if err != nil {
-			return nil, err
-		}
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-			return nil, fmt.Errorf("mkdir for %s: %w", hdr.Name, err)
-		}
-		mode := os.FileMode(hdr.Mode).Perm() //nolint:gosec // tar mode bits are bounded by Perm()
-		if err := writeFileFromTar(dest, tr, mode); err != nil {
-			return nil, err
-		}
-		files = append(files, pkg.File{HostPath: dest, GuestPath: strings.TrimPrefix(guestPath, "/")})
 	}
 	return files, nil
 }

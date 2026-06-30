@@ -342,6 +342,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	args = append(args, buildEnvArgs(cfg.Env)...)
 	args = append(args, buildNetworkCfgArgs(cfg)...)
 	args = append(args, buildVolumeArgs(cfg.Volumes)...)
+	args = append(args, buildMountArgs(cfg.Volumes)...)
 	if qmpAddr != "" {
 		// qmpAddr already carries its scheme ("unix:<path>" or "tcp:host:port").
 		args = append(args, "-qmp", qmpAddr+",server,nowait")
@@ -397,6 +398,26 @@ func buildVolumeArgs(vols []VolumeMount) []string {
 		args = append(args, "-drive", drive)
 	}
 	return args
+}
+
+// buildMountArgs encodes volume mount points as a QEMU fw_cfg entry. The guest
+// kernel reads "opt/uni/mounts" (mounts_inject_from_fw_cfg) and mounts each
+// volume — matched by its TFS label — at the requested guest path. Format: one
+// "LABEL:/path" entry per line. Volumes without a label or guest path are
+// attached as bare block devices only and skipped here.
+func buildMountArgs(vols []VolumeMount) []string {
+	var entries []string
+	for _, vol := range vols {
+		if vol.Label == "" || vol.GuestPath == "" {
+			continue
+		}
+		entries = append(entries, vol.Label+":"+vol.GuestPath)
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	encoded := strings.Join(entries, "\n")
+	return []string{"-fw_cfg", "name=opt/uni/mounts,string=" + escapeFwCfgValue(encoded)}
 }
 
 // buildEnvArgs encodes environment variables as QEMU fw_cfg entries.

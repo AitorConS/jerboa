@@ -27,6 +27,10 @@ type BuildConfig struct {
 	// Equivalent to RUN instructions in a Dockerfile — use for build steps like
 	// "npm run build", "nuxt build", "python manage.py collectstatic", etc.
 	Run []string `toml:"run"`
+	// DiskSize sets the minimum image file size passed to mkfs (e.g. "512M", "1G").
+	// Use when the default content-based image size leaves insufficient free space
+	// for runtime writes (e.g. database temp tablespaces, log files).
+	DiskSize string `toml:"disk_size"`
 }
 
 type RunConfig struct {

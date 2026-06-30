@@ -56,6 +56,10 @@ type BuildConfig struct {
 	// network config is injected at run time (fw_cfg / boot args), not baked
 	// into the manifest.
 	Port int
+	// DiskSize is the minimum image file size passed to mkfs (e.g. "512M", "1G").
+	// When non-empty, emitted as imagesize in the Nanos manifest so mkfs pads
+	// the image to at least that size, leaving free space for runtime writes.
+	DiskSize string
 	// Output is where mkfs subprocess output is written. Nil defaults to os.Stderr.
 	Output io.Writer
 }
@@ -202,12 +206,16 @@ func BuildManifest(cfg BuildConfig) string {
 	root.children["program"] = &manifestNode{hostPath: absBin}
 
 	for _, f := range cfg.PkgFiles {
-		abs, _ := filepath.Abs(f.HostPath)
 		guestPath := f.GuestPath
 		if guestPath == "" {
 			guestPath = filepath.Base(f.HostPath)
 		}
-		insertManifestFile(root, filepath.ToSlash(guestPath), abs)
+		if f.IsDir {
+			insertManifestDir(root, filepath.ToSlash(guestPath))
+		} else {
+			abs, _ := filepath.Abs(f.HostPath)
+			insertManifestFile(root, filepath.ToSlash(guestPath), abs)
+		}
 	}
 
 	var b strings.Builder
@@ -241,6 +249,9 @@ func BuildManifest(cfg BuildConfig) string {
 		}
 	}
 	b.WriteString(")\n")
+	if cfg.DiskSize != "" {
+		fmt.Fprintf(&b, "    imagesize:%s\n", cfg.DiskSize)
+	}
 	// Static network config is injected at run time from the daemon-assigned
 	// TAP IP — via QEMU fw_cfg (opt/uni/network → net_inject) or Firecracker
 	// boot args (en1.ipaddr=…). The old build-time "network:(ip:10.0.2.15…)"
@@ -273,6 +284,20 @@ func insertManifestFile(node *manifestNode, guestPath, hostPath string) {
 			}
 			cur = cur.children[part]
 		}
+	}
+}
+
+// insertManifestDir ensures a directory node exists at the given slash-separated
+// guest path. Called for empty directories from package sysroots so mkfs creates
+// them in the TFS image even when they contain no files.
+func insertManifestDir(node *manifestNode, guestPath string) {
+	parts := strings.FieldsFunc(guestPath, func(r rune) bool { return r == '/' })
+	cur := node
+	for _, part := range parts {
+		if cur.children[part] == nil {
+			cur.children[part] = newManifestNode()
+		}
+		cur = cur.children[part]
 	}
 }
 
