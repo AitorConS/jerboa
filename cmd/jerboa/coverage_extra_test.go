@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -31,25 +30,4 @@ func TestNeedsDaemon(t *testing.T) {
 func TestSigningStorePath(t *testing.T) {
 	require.True(t, strings.HasSuffix(signingStorePath(), ".jerboa"),
 		"signing store lives under the user's .jerboa directory")
-}
-
-func TestPrintServiceInfo(t *testing.T) {
-	// Exercises both the base fields and the optional replica-ID branch; output
-	// goes to stdout, so this just guards against a formatting panic.
-	require.NotPanics(t, func() {
-		printServiceInfo(api.ServiceInfoResult{
-			Name:            "web",
-			Image:           "nginx",
-			DesiredReplicas: 3,
-			ReadyReplicas:   2,
-			Strategy:        "rolling",
-			Health:          "healthy",
-			CreatedAt:       "now",
-			UpdatedAt:       "later",
-			ReplicaIDs:      []string{"r1", "r2"},
-		})
-	})
-	require.NotPanics(t, func() {
-		printServiceInfo(api.ServiceInfoResult{Name: "empty"})
-	})
 }

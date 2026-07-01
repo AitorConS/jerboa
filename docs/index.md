@@ -20,7 +20,7 @@ Unikernel engine for building, running, and orchestrating VM-based application i
 Jerboa is split into two parts:
 
 - `jerboa`: the CLI
-- `jerboad`: the daemon that owns builds, images, VM lifecycle, networks, services, and compose state
+- `jerboad`: the daemon that owns builds, images, VM lifecycle, networks, and compose state
 
 The daemon is Linux-only. On Windows, the CLI runs on the host and boots the daemon inside a dedicated WSL2 distro managed by `jerboa daemon`.
 
@@ -38,7 +38,6 @@ The daemon is Linux-only. On Windows, the CLI runs on the host and boots the dae
   - bridge networks with TAP-backed guest connectivity
   - internal DNS
   - compose stacks
-  - replicated services
 - Observe:
   - VM logs
   - live stats
@@ -61,7 +60,6 @@ The daemon is Linux-only. On Windows, the CLI runs on the host and boots the dae
 - `internal/vm/` - VM lifecycle, QEMU, Firecracker, stats, persistence
 - `internal/image/` - image store and build pipeline
 - `internal/network/` - bridge, TAP, IPAM, port forwarder
-- `internal/service/` - replicated service management
 - `internal/compose/` - compose parser and ordering
 - `internal/wsldistro/` and `internal/wslboot/` - Windows/WSL integration
 - `tests/integration/` and `tests/e2e/` - higher-level verification

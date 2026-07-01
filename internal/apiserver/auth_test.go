@@ -24,7 +24,7 @@ func startAuthServer(t *testing.T, token string) string {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 	store, err := image.NewStore(t.TempDir())
 	require.NoError(t, err)

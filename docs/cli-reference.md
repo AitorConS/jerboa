@@ -304,28 +304,6 @@ Notes:
 
 ---
 
-## Service Commands
-
-### `jerboa service run <name> <image>`
-
-Flags:
-
-- `--replicas`
-- `--memory`
-- `--cpus`
-- `--env`
-- `--network`
-- `--strategy`
-- `--health-timeout`
-
-### `jerboa service scale <name> <replicas>`
-### `jerboa service update <name> <image>`
-### `jerboa service ls`
-### `jerboa service inspect <name>`
-### `jerboa service rm <name>`
-
----
-
 ## Compose Commands
 
 ### `jerboa compose up <file>`
@@ -338,7 +316,6 @@ Current behavior to know:
 - top-level volumes are auto-created on `compose up`
 - declared networks are auto-created on `compose up`
 - `compose down --volumes` removes only volumes created by that stack
-- services with `replicas > 1` are deployed through the service manager
 - `compose logs` is snapshot-only; there is no follow mode today
 
 ---
@@ -460,7 +437,6 @@ Root commands currently exposed by the built CLI:
 - `rm`
 - `rmi`
 - `run`
-- `service`
 - `sign`
 - `stats`
 - `status`

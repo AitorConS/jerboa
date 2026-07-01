@@ -38,8 +38,6 @@ services:
       - data:/var/data
     health_check: "http:8080:/healthz"
     restart: "on-failure:5"
-    replicas: 3
-    strategy: RollingUpdate
 
 networks:
   app:
@@ -59,8 +57,6 @@ volumes:
 - `depends_on` targets must exist
 - referenced networks must exist in the top-level `networks` map
 - referenced named volumes must exist in the top-level `volumes` map
-- `replicas` must be non-negative
-- `strategy` must be `RollingUpdate` or `Recreate`
 
 ## Current Runtime Semantics
 
@@ -71,18 +67,6 @@ volumes:
 - top-level networks are auto-created during `compose up`
 - `compose down --volumes` removes only volumes created by that stack
 - stacks are tracked by a local state file named `.jerboa-compose-state.json` next to the compose file
-
-## Replicas
-
-`replicas > 1` switches the service from single-VM orchestration to the service manager.
-
-That means:
-
-- `compose up` uses `Service.Run`
-- `compose down` uses `Service.Remove`
-- the compose state tracks the scalable service separately
-
-Single-instance services still go through the VM API directly.
 
 ## Commands
 
@@ -97,7 +81,6 @@ Current limits:
 
 - `compose logs` is snapshot-only
 - there is no `compose logs -f`
-- health checks and restart config are applied directly only to single-instance services
 
 ## Ordering
 
