@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -624,20 +625,23 @@ func Ldd(binaryPath string) ([]string, error) {
 // built for rather than whatever happens to be installed on the build machine.
 // It runs the sysroot's own dynamic linker with --library-path pointed at the
 // sysroot lib dirs, and returns the resolved sysroot paths plus the interpreter
-// (the binary cannot boot without its loader). Only existing files are returned.
+// (the binary cannot boot without its loader). Libraries the loader resolved
+// from outside the sysroot (its built-in default search paths still hit the
+// host) are dropped, so a sysroot build never silently bundles host libraries.
+// Only existing files are returned.
 func LddSysroot(binaryPath, sysroot string) ([]string, error) {
-	loader, err := findLoader(sysroot)
+	loader, err := findLoader(sysroot, binaryPath)
 	if err != nil {
 		return nil, err
 	}
-	libDirs := sysrootLibDirs(sysroot)
-	cmd := exec.Command(loader, "--library-path", strings.Join(libDirs, ":"), "--list", binaryPath) //nolint:noctx // static utility call
-	// The loader exits non-zero on unresolved deps but still lists what it found.
-	out, _ := cmd.CombinedOutput()
+	out, err := runLoaderList(loader, sysrootLibDirs(sysroot), binaryPath)
+	if err != nil {
+		return nil, err
+	}
 
-	libs := parseLddLibs(string(out))
-	// The interpreter is not listed by --list; bundle it explicitly so the guest
-	// has the exact loader the binary references.
+	libs := parseLddLibs(out)
+	// The interpreter itself may not be listed by --list; bundle it explicitly so
+	// the guest has the exact loader the binary references.
 	libs = append(libs, loader)
 
 	seen := make(map[string]struct{}, len(libs))
@@ -647,34 +651,55 @@ func LddSysroot(binaryPath, sysroot string) ([]string, error) {
 			continue
 		}
 		seen[lib] = struct{}{}
+		// The loader's default search path can resolve a dependency from the host
+		// even with --library-path set; anything outside the sysroot is not part
+		// of this build and must not be bundled.
+		if !isUnderDir(sysroot, lib) {
+			continue
+		}
 		if _, statErr := os.Stat(lib); statErr == nil {
 			existing = append(existing, lib)
 		}
+	}
+	if len(existing) == 0 {
+		return nil, fmt.Errorf("no libraries resolved under sysroot %q for %s", sysroot, binaryPath)
 	}
 	return existing, nil
 }
 
 // LibMismatches runs the loader (host ldd, or the sysroot linker when sysroot is
-// non-empty) and returns the lines reporting unresolved or version-mismatched
-// dependencies ("=> not found", "version `X' not found"). An empty slice means
-// every dependency resolved cleanly. Used to warn before a package is built with
-// libraries that will not satisfy the binary at runtime.
+// non-empty) and returns the lines reporting dependencies that will not satisfy
+// the binary at runtime: unresolved or version-mismatched deps ("=> not found",
+// "version `X' not found"), plus — for a sysroot build — any dependency the
+// loader resolved from outside the sysroot. An empty slice means every
+// dependency resolved cleanly. A nil error with an empty slice is only returned
+// when the loader actually ran.
 func LibMismatches(binaryPath, sysroot string) ([]string, error) {
-	var out []byte
+	var out string
 	if sysroot != "" {
-		loader, err := findLoader(sysroot)
+		loader, err := findLoader(sysroot, binaryPath)
 		if err != nil {
 			return nil, err
 		}
-		cmd := exec.Command(loader, "--library-path", strings.Join(sysrootLibDirs(sysroot), ":"), "--list", binaryPath) //nolint:noctx // static utility call
-		out, _ = cmd.CombinedOutput()
+		o, err := runLoaderList(loader, sysrootLibDirs(sysroot), binaryPath)
+		if err != nil {
+			return nil, err
+		}
+		out = o
 	} else {
 		cmd := exec.Command("ldd", binaryPath) //nolint:noctx // static utility call
-		out, _ = cmd.CombinedOutput()
+		o, err := cmd.CombinedOutput()
+		// ldd exits non-zero when a dependency is unresolved but still prints the
+		// diagnostic lines; a non-ExitError means it could not run at all.
+		var exitErr *exec.ExitError
+		if err != nil && !errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("ldd %s: %w", binaryPath, err)
+		}
+		out = string(o)
 	}
 
 	var problems []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		l := strings.TrimSpace(line)
 		if l == "" {
 			continue
@@ -685,7 +710,40 @@ func LibMismatches(binaryPath, sysroot string) ([]string, error) {
 			problems = append(problems, l)
 		}
 	}
+	if sysroot != "" {
+		for _, lib := range parseLddLibs(out) {
+			if !isUnderDir(sysroot, lib) {
+				problems = append(problems, "resolved outside sysroot: "+lib)
+			}
+		}
+	}
 	return problems, nil
+}
+
+// runLoaderList runs "<loader> --library-path <dirs> --list <binary>" and returns
+// its combined output. The loader exits non-zero when a dependency is unresolved
+// yet still lists what it found, so an ExitError is tolerated; any other error
+// (the loader could not be executed) is returned so callers do not mistake a
+// failed inspection for a clean one.
+func runLoaderList(loader string, libDirs []string, binaryPath string) (string, error) {
+	cmd := exec.Command(loader, "--library-path", strings.Join(libDirs, ":"), "--list", binaryPath) //nolint:noctx // static utility call
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if err != nil && !errors.As(err, &exitErr) {
+		return "", fmt.Errorf("run loader %s: %w", loader, err)
+	}
+	return string(out), nil
+}
+
+// isUnderDir reports whether path is dir itself or nested inside it, after
+// cleaning both. It guards against the loader resolving a dependency from a host
+// path outside the intended sysroot.
+func isUnderDir(dir, path string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 // parseLddLibs extracts resolved library paths from ldd / "ld.so --list" output.
@@ -710,10 +768,9 @@ func parseLddLibs(output string) []string {
 				}
 			}
 		} else if strings.HasPrefix(line, "/") {
-			path := strings.TrimSpace(line)
-			if idx := strings.Index(path, " "); idx > 0 {
-				path = path[:idx]
-			}
+			// Bare interpreter line: "/path/ld-linux... (0xaddr)". Strip only the
+			// trailing address annotation so paths containing spaces survive.
+			path := strings.TrimSpace(trimLddAddress(line))
 			if path != "" {
 				libs = append(libs, path)
 			}
@@ -722,10 +779,19 @@ func parseLddLibs(output string) []string {
 	return libs
 }
 
-// findLoader locates the dynamic linker/interpreter inside sysroot. It checks the
-// conventional glibc loader locations for the common architectures; the first
-// existing match wins.
-func findLoader(sysroot string) (string, error) {
+// findLoader locates the dynamic linker/interpreter inside sysroot for binaryPath.
+// It first honours the exact interpreter the binary requests (its ELF PT_INTERP),
+// mapped into the sysroot, so multi-arch or nonstandard sysroots get the right
+// loader. It falls back to the conventional glibc loader locations only when the
+// binary's interpreter cannot be determined or is absent from the sysroot.
+func findLoader(sysroot, binaryPath string) (string, error) {
+	if interp, err := elfInterp(binaryPath); err == nil && interp != "" {
+		p := filepath.Join(sysroot, interp)
+		if _, statErr := os.Stat(p); statErr == nil {
+			return p, nil
+		}
+	}
+
 	candidates := []string{
 		"lib64/ld-linux-x86-64.so.2",
 		"lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
@@ -749,6 +815,29 @@ func findLoader(sysroot string) (string, error) {
 		return matches[0], nil
 	}
 	return "", fmt.Errorf("no dynamic linker found under sysroot %q", sysroot)
+}
+
+// elfInterp returns the interpreter (dynamic linker) path requested by an ELF
+// binary's PT_INTERP program header, e.g. "/lib64/ld-linux-x86-64.so.2". It
+// returns an empty string with a nil error for a static binary (no PT_INTERP).
+func elfInterp(binaryPath string) (string, error) {
+	f, err := elf.Open(binaryPath)
+	if err != nil {
+		return "", fmt.Errorf("open elf %s: %w", binaryPath, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	for _, p := range f.Progs {
+		if p.Type != elf.PT_INTERP {
+			continue
+		}
+		data := make([]byte, p.Filesz)
+		if _, err := p.ReadAt(data, 0); err != nil {
+			return "", fmt.Errorf("read PT_INTERP %s: %w", binaryPath, err)
+		}
+		return strings.TrimRight(string(data), "\x00"), nil
+	}
+	return "", nil
 }
 
 // sysrootLibDirs returns the conventional shared-library directories under

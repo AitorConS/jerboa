@@ -27,14 +27,23 @@ func TestFindLoader(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(sysroot, "lib64"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(sysroot, loaderRel), []byte("elf"), 0o755))
 
-	loader, err := findLoader(sysroot)
+	// A non-ELF binary path forces the conventional-candidate fallback.
+	loader, err := findLoader(sysroot, filepath.Join(t.TempDir(), "not-an-elf"))
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(sysroot, loaderRel), loader)
 }
 
 func TestFindLoader_NotFound(t *testing.T) {
-	_, err := findLoader(t.TempDir())
+	_, err := findLoader(t.TempDir(), filepath.Join(t.TempDir(), "not-an-elf"))
 	require.Error(t, err, "empty sysroot has no dynamic linker")
+}
+
+func TestIsUnderDir(t *testing.T) {
+	dir := filepath.Clean("/opt/sysroot")
+	require.True(t, isUnderDir(dir, filepath.Join(dir, "lib", "libc.so.6")))
+	require.True(t, isUnderDir(dir, dir), "the dir itself counts as under it")
+	require.False(t, isUnderDir(dir, filepath.Clean("/lib/libc.so.6")), "host path is not under the sysroot")
+	require.False(t, isUnderDir(dir, filepath.Clean("/opt/sysroot-evil/lib")), "sibling prefix is not under the sysroot")
 }
 
 func TestSysrootLibDirs(t *testing.T) {

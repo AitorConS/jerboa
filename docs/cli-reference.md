@@ -408,12 +408,25 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | Flag | Description |
 |---|---|
 | `-H, --host` | Listen endpoint |
-| `--auth-token` | Shared secret for `Auth.Hello` |
-| `--qemu` | QEMU binary path |
-| `--hypervisor` | `qemu` or `firecracker` |
-| `--fc-bin` | Firecracker binary path |
-| `--fc-kernel` | Firecracker-compatible kernel path |
-| `--tools-dir` | Toolchain cache/lookup directory |
+| `--auth-token` | Shared secret for `Auth.Hello` (env: `JERBOA_AUTH_TOKEN`); empty disables auth |
+| `--qemu` | QEMU binary path (default `qemu-system-x86_64`) |
+| `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |
+| `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
+| `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
+| `--tools-dir` | Toolchain cache/lookup directory (`mkfs`, `boot.img`, `kernel.img`); empty caches under `~/.jerboa/tools` |
+| `--store` | Image store root directory (default `~/.jerboa/images`) |
+| `--vm-store` | VM state store backend: `file` (default) or `sqlite` |
+| `--vm-log-max-bytes` | Max in-memory serial log bytes retained per VM (`0` = 4 MiB default) |
+| `--log-format` | Log format: `text` (default) or `json` |
+| `--metrics-addr` | HTTP address for Prometheus metrics (e.g. `:9090`); empty disables metrics |
+| `--ui-addr` | HTTP address for the web dashboard (e.g. `:8080`); empty disables it |
+| `--trace-addr` | OTLP gRPC address for trace export (e.g. `localhost:4317`); empty disables tracing |
+| `--cluster-addr` | HTTP address for the cluster gossip endpoint (e.g. `:7946`); empty disables cluster |
+| `--join` | Comma-separated seed node addresses to join (e.g. `10.0.0.2:7946,10.0.0.3:7946`) |
+
+Observability and store flags (`--metrics-addr`, `--ui-addr`, `--trace-addr`,
+`--log-format`, `--vm-log-max-bytes`, `--vm-store`) are covered in more detail in
+[Observability]({% link observability.md %}).
 | `--store` | Image store root |
 | `--vm-store` | `file` or `sqlite` |
 | `--vm-log-max-bytes` | Per-VM in-memory serial log retention; `0` uses the built-in 4 MiB default |

@@ -371,7 +371,11 @@ func newPkgCreateCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("pkg create: resolving sysroot: %w", err)
 				}
-				if info, statErr := os.Stat(sysroot); statErr != nil || !info.IsDir() {
+				info, statErr := os.Stat(sysroot)
+				if statErr != nil {
+					return fmt.Errorf("pkg create: sysroot not found: %s", sysroot)
+				}
+				if !info.IsDir() {
 					return fmt.Errorf("pkg create: sysroot not a directory: %s", sysroot)
 				}
 			}
