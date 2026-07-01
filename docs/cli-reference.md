@@ -232,6 +232,16 @@ Supported package sources:
 - `jerboa`
 - `ops`
 
+`pkg create` flags:
+
+- `--libs` — additional files to bundle (repeatable)
+- `--description`, `--runtime` — metadata
+- `--missing-files` — report shared libraries missing from the local filesystem
+- `--sysroot <dir>` — resolve shared libraries against `<dir>` (the rootfs the binary
+  was built for) instead of the host, avoiding version mismatch for foreign binaries.
+  When omitted, `pkg create` still warns if the host libraries do not satisfy the
+  binary's symbol versions.
+
 ---
 
 ## Network And DNS Commands

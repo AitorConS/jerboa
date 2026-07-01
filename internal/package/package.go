@@ -606,19 +606,97 @@ func FromDocker(image, containerPath string, extraLibs []string) ([]string, erro
 	return allFiles, nil
 }
 
-// Ldd analyses a binary with ldd and returns its shared library dependencies.
-// Returns the library paths as reported by ldd.
+// Ldd analyses a binary with ldd and returns its shared library dependencies as
+// resolved against the host filesystem. A non-zero exit (e.g. "not a dynamic
+// executable") is returned as an error; symbol-version mismatches do not fail
+// ldd (they are warnings on stderr) and are surfaced separately by LibMismatches.
 func Ldd(binaryPath string) ([]string, error) {
 	cmd := exec.Command("ldd", binaryPath) //nolint:noctx // ldd is a static utility call with no meaningful context
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("ldd %s: %w", binaryPath, err)
 	}
+	return parseLddLibs(string(output)), nil
+}
 
+// LddSysroot resolves a binary's shared library dependencies against sysroot
+// instead of the host, so libraries are picked from the distro the binary was
+// built for rather than whatever happens to be installed on the build machine.
+// It runs the sysroot's own dynamic linker with --library-path pointed at the
+// sysroot lib dirs, and returns the resolved sysroot paths plus the interpreter
+// (the binary cannot boot without its loader). Only existing files are returned.
+func LddSysroot(binaryPath, sysroot string) ([]string, error) {
+	loader, err := findLoader(sysroot)
+	if err != nil {
+		return nil, err
+	}
+	libDirs := sysrootLibDirs(sysroot)
+	cmd := exec.Command(loader, "--library-path", strings.Join(libDirs, ":"), "--list", binaryPath) //nolint:noctx // static utility call
+	// The loader exits non-zero on unresolved deps but still lists what it found.
+	out, _ := cmd.CombinedOutput()
+
+	libs := parseLddLibs(string(out))
+	// The interpreter is not listed by --list; bundle it explicitly so the guest
+	// has the exact loader the binary references.
+	libs = append(libs, loader)
+
+	seen := make(map[string]struct{}, len(libs))
+	var existing []string
+	for _, lib := range libs {
+		if _, dup := seen[lib]; dup {
+			continue
+		}
+		seen[lib] = struct{}{}
+		if _, statErr := os.Stat(lib); statErr == nil {
+			existing = append(existing, lib)
+		}
+	}
+	return existing, nil
+}
+
+// LibMismatches runs the loader (host ldd, or the sysroot linker when sysroot is
+// non-empty) and returns the lines reporting unresolved or version-mismatched
+// dependencies ("=> not found", "version `X' not found"). An empty slice means
+// every dependency resolved cleanly. Used to warn before a package is built with
+// libraries that will not satisfy the binary at runtime.
+func LibMismatches(binaryPath, sysroot string) ([]string, error) {
+	var out []byte
+	if sysroot != "" {
+		loader, err := findLoader(sysroot)
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command(loader, "--library-path", strings.Join(sysrootLibDirs(sysroot), ":"), "--list", binaryPath) //nolint:noctx // static utility call
+		out, _ = cmd.CombinedOutput()
+	} else {
+		cmd := exec.Command("ldd", binaryPath) //nolint:noctx // static utility call
+		out, _ = cmd.CombinedOutput()
+	}
+
+	var problems []string
+	for _, line := range strings.Split(string(out), "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" {
+			continue
+		}
+		// "libfoo => not found" and "libbar.so: version `X' not found" both
+		// contain "not found"; that single marker catches every mismatch class.
+		if strings.Contains(l, "not found") {
+			problems = append(problems, l)
+		}
+	}
+	return problems, nil
+}
+
+// parseLddLibs extracts resolved library paths from ldd / "ld.so --list" output.
+// Lines take the form "libfoo.so => /path (0xaddr)" or a bare "/path (0xaddr)"
+// for the interpreter; the linux-vdso pseudo-library and unresolved "not found"
+// entries are skipped.
+func parseLddLibs(output string) []string {
 	var libs []string
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "linux-vdso") {
 			continue
 		}
 		if strings.Contains(line, "=>") {
@@ -633,8 +711,7 @@ func Ldd(binaryPath string) ([]string, error) {
 			}
 		} else if strings.HasPrefix(line, "/") {
 			path := strings.TrimSpace(line)
-			idx := strings.Index(path, " ")
-			if idx > 0 {
+			if idx := strings.Index(path, " "); idx > 0 {
 				path = path[:idx]
 			}
 			if path != "" {
@@ -642,7 +719,59 @@ func Ldd(binaryPath string) ([]string, error) {
 			}
 		}
 	}
-	return libs, nil
+	return libs
+}
+
+// findLoader locates the dynamic linker/interpreter inside sysroot. It checks the
+// conventional glibc loader locations for the common architectures; the first
+// existing match wins.
+func findLoader(sysroot string) (string, error) {
+	candidates := []string{
+		"lib64/ld-linux-x86-64.so.2",
+		"lib/x86_64-linux-gnu/ld-linux-x86-64.so.2",
+		"lib/ld-linux-x86-64.so.2",
+		"lib/ld-linux-aarch64.so.1",
+		"lib/aarch64-linux-gnu/ld-linux-aarch64.so.1",
+	}
+	for _, c := range candidates {
+		p := filepath.Join(sysroot, c)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	// Fall back to a glob for any ld-linux*.so* under sysroot's lib dirs.
+	matches, _ := filepath.Glob(filepath.Join(sysroot, "lib*", "ld-linux*.so*"))
+	if len(matches) > 0 {
+		return matches[0], nil
+	}
+	matches, _ = filepath.Glob(filepath.Join(sysroot, "lib", "*", "ld-linux*.so*"))
+	if len(matches) > 0 {
+		return matches[0], nil
+	}
+	return "", fmt.Errorf("no dynamic linker found under sysroot %q", sysroot)
+}
+
+// sysrootLibDirs returns the conventional shared-library directories under
+// sysroot that exist, for use as the loader's --library-path.
+func sysrootLibDirs(sysroot string) []string {
+	rel := []string{
+		"lib",
+		"lib64",
+		"usr/lib",
+		"usr/lib64",
+		"lib/x86_64-linux-gnu",
+		"usr/lib/x86_64-linux-gnu",
+		"lib/aarch64-linux-gnu",
+		"usr/lib/aarch64-linux-gnu",
+	}
+	var dirs []string
+	for _, r := range rel {
+		p := filepath.Join(sysroot, r)
+		if info, err := os.Stat(p); err == nil && info.IsDir() {
+			dirs = append(dirs, p)
+		}
+	}
+	return dirs
 }
 
 // MissingFiles analyses a binary with ldd and returns library paths that are

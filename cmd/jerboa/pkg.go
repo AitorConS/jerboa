@@ -348,6 +348,7 @@ func newPkgCreateCmd() *cobra.Command {
 		description  string
 		runtimeName  string
 		missingFiles bool
+		sysroot      string
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>[:<version>] <binary>",
@@ -364,6 +365,15 @@ func newPkgCreateCmd() *cobra.Command {
 			}
 			if _, err := os.Stat(binaryPath); err != nil {
 				return fmt.Errorf("pkg create: binary not found: %s", binaryPath)
+			}
+			if sysroot != "" {
+				sysroot, err = filepath.Abs(sysroot)
+				if err != nil {
+					return fmt.Errorf("pkg create: resolving sysroot: %w", err)
+				}
+				if info, statErr := os.Stat(sysroot); statErr != nil || !info.IsDir() {
+					return fmt.Errorf("pkg create: sysroot not a directory: %s", sysroot)
+				}
 			}
 
 			if missingFiles {
@@ -382,8 +392,23 @@ func newPkgCreateCmd() *cobra.Command {
 				}
 			}
 
+			// Warn on version/unresolved mismatches before building. Without a
+			// sysroot, ldd resolves against the host, whose library versions may
+			// not match the binary's — the resulting package would boot broken.
+			if mismatches, mErr := pkg.LibMismatches(binaryPath, sysroot); mErr != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not check library compatibility: %v\n", mErr)
+			} else if len(mismatches) > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: shared library mismatch — the bundled libraries do not satisfy %s:\n", filepath.Base(binaryPath))
+				for _, m := range mismatches {
+					fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", m)
+				}
+				if sysroot == "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Resolve against the binary's own rootfs with --sysroot <dir>, use a static binary, or build from Docker (pkg from-docker).\n")
+				}
+			}
+
 			allLibs := libs
-			resolved, err := resolveLibsFromLdd(binaryPath)
+			resolved, err := resolveLibs(binaryPath, sysroot)
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not auto-resolve shared libs: %v\n", err)
 			} else {
@@ -406,10 +431,17 @@ func newPkgCreateCmd() *cobra.Command {
 	cmd.Flags().StringVar(&description, "description", "", "Package description")
 	cmd.Flags().StringVar(&runtimeName, "runtime", "", "Runtime family (e.g. node, python)")
 	cmd.Flags().BoolVar(&missingFiles, "missing-files", false, "Report shared library dependencies missing from the local filesystem")
+	cmd.Flags().StringVar(&sysroot, "sysroot", "", "Resolve shared libraries against this rootfs instead of the host (avoids version mismatch for foreign binaries)")
 	return cmd
 }
 
-func resolveLibsFromLdd(binaryPath string) ([]string, error) {
+// resolveLibs auto-resolves the binary's shared libraries. When sysroot is set,
+// libraries are picked from that rootfs (the distro the binary was built for);
+// otherwise they are resolved against the host filesystem.
+func resolveLibs(binaryPath, sysroot string) ([]string, error) {
+	if sysroot != "" {
+		return pkg.LddSysroot(binaryPath, sysroot)
+	}
 	libs, err := pkg.Ldd(binaryPath)
 	if err != nil {
 		return nil, err
