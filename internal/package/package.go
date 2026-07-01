@@ -726,7 +726,7 @@ func LibMismatches(binaryPath, sysroot string) ([]string, error) {
 // (the loader could not be executed) is returned so callers do not mistake a
 // failed inspection for a clean one.
 func runLoaderList(loader string, libDirs []string, binaryPath string) (string, error) {
-	cmd := exec.Command(loader, "--library-path", strings.Join(libDirs, ":"), "--list", binaryPath) //nolint:noctx // static utility call
+	cmd := exec.Command(loader, "--library-path", strings.Join(libDirs, ":"), "--list", binaryPath) //nolint:noctx,gosec // daemon-side call; loader/binary are operator-supplied package inputs
 	out, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {
@@ -780,7 +780,7 @@ func parseLddLibs(output string) []string {
 }
 
 // findLoader locates the dynamic linker/interpreter inside sysroot for binaryPath.
-// It first honours the exact interpreter the binary requests (its ELF PT_INTERP),
+// It first honors the exact interpreter the binary requests (its ELF PT_INTERP),
 // mapped into the sysroot, so multi-arch or nonstandard sysroots get the right
 // loader. It falls back to the conventional glibc loader locations only when the
 // binary's interpreter cannot be determined or is absent from the sysroot.
