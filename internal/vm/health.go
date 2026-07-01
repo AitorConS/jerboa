@@ -71,8 +71,15 @@ func (h *HealthChecker) Start(ctx context.Context, v *VM) {
 }
 
 func (h *HealthChecker) Stop(id string) {
+	// Delete the probe under the lock so Stop is idempotent: a second call (e.g.
+	// the stop path and then the remove path both stopping the same VM's probe)
+	// finds nothing and does not close an already-closed channel — which would
+	// panic and, before recovery was added, crash the daemon.
 	h.mu.Lock()
 	p, ok := h.probes[id]
+	if ok {
+		delete(h.probes, id)
+	}
 	h.mu.Unlock()
 	if ok && p.done != nil {
 		close(p.done)

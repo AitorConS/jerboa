@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -156,9 +157,20 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					params.BridgeName = netInfo.Bridge
 					params.GatewayIP = netInfo.Gateway
 					params.SubnetMask = extractMask(netInfo.Subnet)
-					ip, allocErr := client.NetworkAllocateIP(cmd.Context(), netName)
-					if allocErr != nil {
-						return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
+					ip := svc.IP
+					if ip == "" {
+						// No static IP requested: let the daemon's IPAM pick one.
+						allocated, allocErr := client.NetworkAllocateIP(cmd.Context(), netName)
+						if allocErr != nil {
+							return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
+						}
+						ip = allocated
+					} else if err := validateStaticIP(ip, netInfo.Subnet); err != nil {
+						// A static IP bypasses the daemon's IPAM, so validate it
+						// falls inside the network's subnet before use. (Collision
+						// with a dynamically allocated address is not tracked yet;
+						// operators must keep static IPs outside the DHCP-ish range.)
+						return fmt.Errorf("compose up: service %q static ip: %w", name, err)
 					}
 					params.IPAddress = ip
 					state.ServiceNetworks[name] = netName
@@ -182,6 +194,25 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 			return writeState(composeFile, state)
 		},
 	}
+}
+
+// validateStaticIP checks that a compose service's static IP is a valid address
+// inside the network's subnet (a CIDR like "10.100.0.0/24"). It does not detect
+// collisions with dynamically allocated addresses — the daemon's IPAM does not
+// track externally assigned IPs yet.
+func validateStaticIP(ip, subnet string) error {
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return fmt.Errorf("%q is not a valid IP address", ip)
+	}
+	_, ipNet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return fmt.Errorf("network subnet %q is not valid CIDR: %w", subnet, err)
+	}
+	if !ipNet.Contains(parsed) {
+		return fmt.Errorf("%q is outside the network subnet %s", ip, subnet)
+	}
+	return nil
 }
 
 func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {

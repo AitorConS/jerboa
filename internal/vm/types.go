@@ -121,10 +121,19 @@ type Config struct {
 	Memory string
 	// CPUs is the number of virtual CPUs; 0 uses QEMU default.
 	CPUs int
-	// NetworkName is the TAP interface name to attach; empty disables networking.
-	// Networking is TAP only (SLIRP is not supported), so PortMaps require a
-	// non-empty NetworkName.
+	// NetworkName is the logical network the VM joins; empty disables
+	// networking. Networking is TAP only (SLIRP is not supported), so PortMaps
+	// require a non-empty NetworkName. Several VMs can share one network (and
+	// its bridge), so this is NOT used as the host TAP device name — see
+	// TapName.
 	NetworkName string
+	// TapName is the host TAP interface name for this VM's network attachment.
+	// A TAP device can be enslaved to only one VM at a time, so every VM on a
+	// shared bridge needs its own uniquely named TAP. It is assigned per VM at
+	// start (derived from the VM ID); when empty, callers fall back to
+	// NetworkName for backward compatibility with configs/tests that predate
+	// the split. See Config.tapDevice.
+	TapName string
 	// PortMaps is the list of host-to-guest port forwarding rules, published by
 	// a userspace forwarder. Requires TAP networking (a non-empty NetworkName).
 	PortMaps []PortMap
@@ -161,6 +170,37 @@ type Config struct {
 	DiskIOPS uint64
 	// DiskBPS is the maximum bytes per second for the boot disk (QEMU throttle). 0 means no limit.
 	DiskBPS int64
+}
+
+// tapDevice returns the host TAP interface name for this VM's network
+// attachment. Each VM needs its own TAP device even when several VMs share a
+// bridge (a TAP can be enslaved to only one VM), so callers assign a per-VM
+// unique TapName. It falls back to NetworkName for configs/tests that predate
+// the TapName/NetworkName split, where the two were the same value.
+func (c Config) tapDevice() string {
+	if c.TapName != "" {
+		return c.TapName
+	}
+	return c.NetworkName
+}
+
+// tapDeviceName derives a unique, ifname-safe TAP device name from a VM ID.
+// Linux caps interface names at 15 bytes (IFNAMSIZ-1), so we use a short prefix
+// plus the VM's already-short hex ID (12 chars). Non-alphanumeric characters
+// are dropped so the result is always a valid interface name.
+func tapDeviceName(id string) string {
+	const prefix = "jt-"
+	safe := make([]byte, 0, len(id))
+	for i := 0; i < len(id); i++ {
+		ch := id[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') {
+			safe = append(safe, ch)
+		}
+	}
+	if maxLen := 15 - len(prefix); len(safe) > maxLen {
+		safe = safe[:maxLen]
+	}
+	return prefix + string(safe)
 }
 
 // process abstracts an OS process for testability.

@@ -94,6 +94,21 @@ func (r *Resolver) List(network string) []Record {
 	return r.records(network)
 }
 
+// NetworkForIP returns the network a running VM's IP belongs to, or "" if no
+// running VM currently holds that address. Used by the guest DNS server to
+// scope a query to the caller's own network from its source IP.
+func (r *Resolver) NetworkForIP(ip string) string {
+	if strings.TrimSpace(ip) == "" {
+		return ""
+	}
+	for _, rec := range r.records("") {
+		if rec.IP == ip {
+			return rec.Network
+		}
+	}
+	return ""
+}
+
 func (r *Resolver) records(network string) []Record {
 	vms := r.vms.List()
 	out := make([]Record, 0, len(vms))

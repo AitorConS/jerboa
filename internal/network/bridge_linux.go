@@ -4,6 +4,7 @@ package network
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 )
@@ -48,6 +49,36 @@ func EnsureBridge(cfg BridgeConfig) error {
 
 func bridgeExists(name string) bool {
 	return exec.Command("ip", "link", "show", name).Run() == nil
+}
+
+// EnsureDNSAddress assigns the reserved guest-DNS address to the loopback
+// interface so the daemon can answer DNS on it. Because it is a local address,
+// packets sent by any bridged guest (routed via its default gateway) are
+// delivered to the daemon regardless of which bridge they arrive on — a single
+// address serves every network. Idempotent: an existing address is success.
+func EnsureDNSAddress(ip string) error {
+	// Validate before shelling out. ip is an internal constant today
+	// (netconst.DNSAnycastIP), but parsing guards against a future caller
+	// passing tainted input into the exec.
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() == nil {
+		return fmt.Errorf("assign dns address: %q is not a valid IPv4 address", ip)
+	}
+	cidr := parsed.String() + "/32"
+	out, err := exec.Command("ip", "addr", "add", cidr, "dev", "lo").CombinedOutput() //nolint:gosec // cidr is built from a validated net.IP
+	if err != nil && !addrAlreadyAssigned(string(out)) {
+		return fmt.Errorf("assign dns address %s to lo: %w (output: %s)", ip, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// addrAlreadyAssigned reports whether an `ip addr add` failure just means the
+// address was already present (idempotent success). iproute2 wording varies by
+// version: older builds print "RTNETLINK answers: File exists", newer ones
+// "Error: ipv4: Address already assigned.".
+func addrAlreadyAssigned(out string) bool {
+	o := strings.ToLower(out)
+	return strings.Contains(o, "file exists") || strings.Contains(o, "already assigned")
 }
 
 // CreateTAPDevice creates a persistent TAP device by name. It is idempotent: a

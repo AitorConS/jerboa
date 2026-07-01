@@ -59,6 +59,23 @@ func TestResolverList(t *testing.T) {
 	require.Len(t, recs, 3)
 }
 
+func TestResolverNetworkForIP(t *testing.T) {
+	vms := []*vm.VM{
+		{ID: "vm-1", State: vm.StateRunning, Cfg: vm.Config{Name: "web", NetworkName: "app", IPAddress: "10.100.0.3"}, CreatedAt: time.Now()},
+		{ID: "vm-2", State: vm.StateRunning, Cfg: vm.Config{Name: "cache", NetworkName: "other", IPAddress: "10.200.0.5"}, CreatedAt: time.Now()},
+		{ID: "vm-3", State: vm.StateStopped, Cfg: vm.Config{Name: "old", NetworkName: "app", IPAddress: "10.100.0.9"}, CreatedAt: time.Now()},
+	}
+	r := NewResolver(&fakeSource{vms: vms})
+
+	require.Equal(t, "app", r.NetworkForIP("10.100.0.3"))
+	require.Equal(t, "other", r.NetworkForIP("10.200.0.5"))
+	// A stopped VM is not a live record.
+	require.Empty(t, r.NetworkForIP("10.100.0.9"))
+	// Unknown / empty addresses resolve to no network.
+	require.Empty(t, r.NetworkForIP("10.100.0.99"))
+	require.Empty(t, r.NetworkForIP(""))
+}
+
 func TestResolverResolveAmbiguous(t *testing.T) {
 	vms := []*vm.VM{
 		{ID: "vm-1", State: vm.StateRunning, Cfg: vm.Config{Name: "api", NetworkName: "app-a", IPAddress: "10.100.1.2"}, CreatedAt: time.Now()},

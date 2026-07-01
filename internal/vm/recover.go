@@ -8,11 +8,23 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime/debug"
 	"syscall"
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/network"
 )
+
+// recoverGoroutine logs and swallows a panic in a background VM goroutine (a
+// process monitor, adopt monitor, or network reconcile) so that one VM's
+// teardown can never crash the whole daemon. Use as `defer recoverGoroutine(...)`
+// at the top of such goroutines.
+func recoverGoroutine(what, vmID string) {
+	if r := recover(); r != nil {
+		slog.Error("vm: recovered panic in background goroutine",
+			"goroutine", what, "vm_id", vmID, "panic", r, "stack", string(debug.Stack()))
+	}
+}
 
 // adoptPollInterval is how often a re-adopted VM's process is polled for exit.
 const adoptPollInterval = 2 * time.Second
@@ -80,11 +92,19 @@ func recoverVM(s Store, v *VM, pid int) (needsSave bool) {
 // in-process userspace forwarder that dies with the daemon, leaving no host
 // state behind. Best-effort: failures are logged at debug level.
 func reconcileNetwork(vmID string, cfg Config) {
+	defer recoverGoroutine("reconcile network", vmID)
 	if cfg.NetworkName == "" {
 		return
 	}
+	// The TAP name is assigned per VM at start and may not have been persisted;
+	// fall back to deriving it from the VM ID (deterministic) so recovery
+	// detaches the same device Start created.
+	tap := cfg.tapDevice()
+	if tap == cfg.NetworkName {
+		tap = tapDeviceName(vmID)
+	}
 	if cfg.GatewayIP != "" {
-		if err := network.DetachTAP(cfg.NetworkName); err != nil {
+		if err := network.DetachTAP(tap); err != nil {
 			slog.Debug("reconcile: detach TAP", "vm_id", vmID, "err", err)
 		}
 	}
@@ -95,6 +115,7 @@ func reconcileNetwork(vmID string, cfg Config) {
 // exec.Cmd-based monitor, which is unavailable for a process the daemon did not
 // fork itself; automatic restart policies do not apply to adopted VMs.
 func adoptMonitor(s Store, v *VM) {
+	defer recoverGoroutine("adopt monitor", v.ID)
 	for {
 		time.Sleep(adoptPollInterval)
 		v.mu.RLock()

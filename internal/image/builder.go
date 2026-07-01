@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/netconst"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 )
 
@@ -116,6 +117,17 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
 
+	// Bake /etc/resolv.conf so the guest's libc resolver points at the daemon's
+	// guest DNS server, letting VMs resolve each other by name on their network.
+	// Without this the guest has no nameserver and every lookup fails.
+	// cleanup is always non-nil; defer it before the error check so a temp file
+	// created just before a WriteString/Close failure is still removed.
+	resolvCleanup, resolvErr := injectResolvConf(&cfg)
+	defer resolvCleanup()
+	if resolvErr != nil {
+		return Manifest{}, fmt.Errorf("build: %w", resolvErr)
+	}
+
 	manifest := BuildManifest(cfg)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
@@ -148,6 +160,35 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: store: %w", err)
 	}
 	return m, nil
+}
+
+// injectResolvConf writes a temporary /etc/resolv.conf pointing at the daemon's
+// guest DNS server and appends it to cfg.PkgFiles so mkfs bakes it into the
+// image. It returns a cleanup func (always non-nil) to remove the temp file.
+// If a package already ships /etc/resolv.conf it is left untouched.
+func injectResolvConf(cfg *BuildConfig) (cleanup func(), err error) {
+	cleanup = func() {}
+	for _, f := range cfg.PkgFiles {
+		if filepath.ToSlash(f.GuestPath) == "etc/resolv.conf" {
+			return cleanup, nil
+		}
+	}
+	tmp, err := os.CreateTemp("", "jerboa-resolv-*.conf")
+	if err != nil {
+		return cleanup, fmt.Errorf("create resolv.conf: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup = func() { _ = os.Remove(tmpPath) }
+	content := "nameserver " + netconst.DNSAnycastIP + "\n"
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		return cleanup, fmt.Errorf("write resolv.conf: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return cleanup, fmt.Errorf("close resolv.conf: %w", err)
+	}
+	cfg.PkgFiles = append(cfg.PkgFiles, pkg.File{HostPath: tmpPath, GuestPath: "etc/resolv.conf"})
+	return cleanup, nil
 }
 
 func validateBuildConfig(cfg BuildConfig) error {

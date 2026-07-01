@@ -1,0 +1,12 @@
+# Build + run spec for the Flask web front-end (PostgreSQL edition).
+#
+#   jerboa build . --name flask-postgres --pkg-source ops --port 8080
+#
+# Talks to the PostgreSQL VM over the compose network; see stack.yaml.
+
+[build]
+lang = "python"
+
+[run]
+memory = "256M"
+ports = ["8080:8080"]

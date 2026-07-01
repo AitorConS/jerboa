@@ -96,6 +96,13 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	qmpAddr := "unix:" + qmpSocketPath(v.ID)
 	removeQMPSocket(qmpAddr) // clear any stale socket from a previous run
 
+	// Give this VM its own uniquely named TAP device. Several VMs can share a
+	// network (and its bridge), but a TAP can be enslaved to only one VM, so the
+	// device name must be per-VM rather than per-network.
+	if v.Cfg.NetworkName != "" && v.Cfg.TapName == "" {
+		v.Cfg.TapName = tapDeviceName(v.ID)
+	}
+
 	cmd := m.buildCmd(ctx, v.Cfg, qmpAddr)
 
 	// Wire the tap into the bridge before launching QEMU. QEMU runs with
@@ -321,7 +328,16 @@ func (m *QEMUManager) List() []*VM {
 }
 
 func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) *exec.Cmd {
-	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio"
+	// snapshot=on makes the boot disk copy-on-write: QEMU keeps guest writes in a
+	// temporary overlay and discards them on exit, leaving the base image
+	// pristine. This matches the documented model — the root filesystem is
+	// ephemeral scratch space (lost on stop) and durable data belongs on a
+	// volume. It also lets the same image back several VMs at once (the base is
+	// opened read-only, so there is no write-lock contention), and it keeps
+	// runtime state like a database's postmaster.pid/lock files from persisting
+	// into the image and breaking the next boot. Attached volumes are separate
+	// -drive entries without snapshot, so their data still persists.
+	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio,snapshot=on"
 	if cfg.DiskIOPS > 0 {
 		driveArg += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
 	}
@@ -379,7 +395,7 @@ func buildNetArgs(cfg Config) []string {
 			// script=no/downscript=no: the daemon wires the tap into the bridge
 			// itself, so QEMU must not run /etc/qemu-ifup (which fails with
 			// "no bridge found"). Matches ops' TAP setup.
-			"-netdev", "tap,id=net0,ifname=" + cfg.NetworkName + ",script=no,downscript=no",
+			"-netdev", "tap,id=net0,ifname=" + cfg.tapDevice() + ",script=no,downscript=no",
 			"-device", dev,
 		}
 	}
@@ -457,6 +473,7 @@ func buildNetworkCfgArgs(cfg Config) []string {
 }
 
 func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
+	defer recoverGoroutine("qemu monitor", v.ID)
 	exitErr := cmd.Wait()
 	now := time.Now()
 	v.mu.Lock()
@@ -486,10 +503,11 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		// tap. The bridge is intentionally left in place — it may be shared by
 		// other VMs and (for `jerboa network`-managed bridges) is owned by the
 		// network's lifecycle, not the VM's.
-		if err := network.DetachTAP(v.Cfg.NetworkName); err != nil {
+		tap := v.Cfg.tapDevice()
+		if err := network.DetachTAP(tap); err != nil {
 			slog.Debug("qemu monitor: detach tap", "vm_id", v.ID, "err", err)
 		}
-		if err := network.DeleteTAPDevice(v.Cfg.NetworkName); err != nil {
+		if err := network.DeleteTAPDevice(tap); err != nil {
 			slog.Debug("qemu monitor: delete tap", "vm_id", v.ID, "err", err)
 		}
 	}

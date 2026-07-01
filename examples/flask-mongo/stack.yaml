@@ -1,0 +1,38 @@
+version: "1"
+
+# Flask + MongoDB, both as unikernels. The web app reaches MongoDB by service
+# name (`db`) over the daemon's guest DNS.
+#
+#   jerboa compose up stack.yaml
+#   # browse http://localhost:8080
+#   jerboa compose down stack.yaml
+
+services:
+  db:
+    image: mongodb:latest
+    memory: 512M
+    networks: [app]
+    ports:
+      - "27017:27017"
+    # Ephemeral data: mongod initializes the empty /data/db baked into the image
+    # on first start (the app's `people` collection is seeded on first request).
+    # For persistence, mount a volume at /data/db — see examples/mongodb.
+
+  web:
+    image: flask-mongo:latest
+    memory: 256M
+    depends_on: [db]
+    networks: [app]
+    ports:
+      - "8080:8080"
+    environment:
+      - MONGO_HOST=db          # resolved to the db VM by the guest DNS server
+      - MONGO_PORT=27017
+      - MONGO_DATABASE=demo
+    health_check: "tcp:8080"
+    restart: "on-failure:5"
+
+networks:
+  app:
+    driver: bridge
+    subnet: 10.100.0.0/24

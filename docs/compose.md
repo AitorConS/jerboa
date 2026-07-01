@@ -29,6 +29,7 @@ services:
     cpus: 1
     depends_on: [db]
     networks: [app]
+    ip: 10.100.0.10
     environment:
       - PORT=8080
     ports:
@@ -64,6 +65,8 @@ volumes:
 ## Current Runtime Semantics
 
 - only the first network in `networks:` is actually wired to a service instance
+- services reach each other by service name over the daemon's guest DNS (e.g. a `web` service connects to `db:5432`); see [Service Discovery]({% link getting-started.md %}#service-discovery-guest-dns)
+- `ip:` pins a service to a static address on its network; without it the daemon's IPAM allocates one. Name resolution works either way, so `ip:` is only needed when a fixed address is required
 - top-level volumes are auto-created during `compose up`
 - top-level networks are auto-created during `compose up`
 - `compose down --volumes` removes only volumes created by that stack
