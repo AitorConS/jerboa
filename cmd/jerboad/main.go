@@ -314,15 +314,32 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
 		slog.Warn("jerboad: guest dns address setup failed", "err", err)
 	}
+	// Upstream resolver for names the daemon does not own. Overridable so
+	// restricted/offline environments can point at their own resolver (or set
+	// it empty to disable forwarding).
+	dnsUpstream := "1.1.1.1:53"
+	if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
+		dnsUpstream = v
+	}
+	dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)
+	// Close the listener on shutdown so ListenAndServe returns cleanly, matching
+	// the cluster server teardown above.
+	go func() {
+		<-ctx.Done()
+		_ = dnsSrv.Close()
+	}()
 	go func() {
 		addr := net.JoinHostPort(netconst.DNSAnycastIP, strconv.Itoa(netconst.DNSPort))
-		dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), "1.1.1.1:53")
 		// A freshly restarted daemon can briefly race the previous process's
 		// UDP socket; retry the bind a few times before giving up.
 		for attempt := 0; attempt < 10; attempt++ {
 			err := dnsSrv.ListenAndServe(addr)
 			if err == nil {
 				return // clean shutdown (listener closed)
+			}
+			// Stop retrying once the daemon is shutting down.
+			if ctx.Err() != nil {
+				return
 			}
 			slog.Warn("jerboad: guest dns server bind failed; retrying", "attempt", attempt+1, "err", err)
 			time.Sleep(time.Second)

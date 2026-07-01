@@ -11,6 +11,7 @@ package dnsserver
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -26,6 +27,11 @@ import (
 // upstreamTimeout bounds a single forwarded query to an external resolver.
 const upstreamTimeout = 3 * time.Second
 
+// maxConcurrentQueries caps the number of queries handled in parallel. It backs
+// a semaphore so a UDP flood cannot spawn unbounded goroutines; excess packets
+// are dropped (DNS clients retry) rather than exhausting host memory/CPU.
+const maxConcurrentQueries = 64
+
 // Server answers guest DNS queries from the daemon's in-memory VM state.
 type Server struct {
 	resolver *scheduler.Resolver
@@ -33,12 +39,18 @@ type Server struct {
 	// does not own. Empty disables forwarding (unknown names return NXDOMAIN).
 	upstream string
 	conn     *net.UDPConn
+	// sem bounds concurrent query handlers (see maxConcurrentQueries).
+	sem chan struct{}
 }
 
 // New creates a Server backed by resolver, forwarding unknown names to upstream
 // (e.g. "1.1.1.1:53"). Pass an empty upstream to disable forwarding.
 func New(resolver *scheduler.Resolver, upstream string) *Server {
-	return &Server{resolver: resolver, upstream: upstream}
+	return &Server{
+		resolver: resolver,
+		upstream: upstream,
+		sem:      make(chan struct{}, maxConcurrentQueries),
+	}
 }
 
 // ListenAndServe binds addr ("ip:port") and serves until the connection is
@@ -59,8 +71,8 @@ func (s *Server) ListenAndServe(addr string) error {
 	for {
 		n, src, readErr := conn.ReadFromUDP(buf)
 		if readErr != nil {
-			// A closed connection ends the loop cleanly.
-			if strings.Contains(readErr.Error(), "use of closed network connection") {
+			// A closed connection (Close was called) ends the loop cleanly.
+			if errors.Is(readErr, net.ErrClosed) {
 				return nil
 			}
 			slog.Debug("dnsserver: read", "err", readErr)
@@ -68,7 +80,18 @@ func (s *Server) ListenAndServe(addr string) error {
 		}
 		query := make([]byte, n)
 		copy(query, buf[:n])
-		go s.handle(query, src)
+		// Bound concurrency: if the worker pool is saturated, drop the query
+		// rather than spawn an unbounded goroutine under a flood. DNS clients
+		// retry, so a dropped packet degrades gracefully.
+		select {
+		case s.sem <- struct{}{}:
+			go func() {
+				defer func() { <-s.sem }()
+				s.handle(query, src)
+			}()
+		default:
+			slog.Debug("dnsserver: worker pool saturated, dropping query", "src", src.IP)
+		}
 	}
 }
 
@@ -112,11 +135,16 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 	}
 
 	if q.Type == dnsmessage.TypeA {
-		name := strings.TrimSuffix(q.Name.String(), ".")
-		network := s.resolver.NetworkForIP(srcIP)
-		if rec, rErr := s.resolver.Resolve(name, network); rErr == nil {
-			if ip := net.ParseIP(rec.IP).To4(); ip != nil {
-				return s.answerA(hdr.ID, q, [4]byte{ip[0], ip[1], ip[2], ip[3]})
+		// Scope the lookup to the caller's own network. An empty network (source
+		// IP not held by any running VM) must NOT fall through to Resolve, which
+		// would search across every network and leak names between them; treat
+		// it as not-owned and forward/NXDOMAIN below instead.
+		if network := s.resolver.NetworkForIP(srcIP); network != "" {
+			name := strings.TrimSuffix(q.Name.String(), ".")
+			if rec, rErr := s.resolver.Resolve(name, network); rErr == nil {
+				if ip := net.ParseIP(rec.IP).To4(); ip != nil {
+					return s.answerA(hdr.ID, q, [4]byte{ip[0], ip[1], ip[2], ip[3]})
+				}
 			}
 		}
 	}

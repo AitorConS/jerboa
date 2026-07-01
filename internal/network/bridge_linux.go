@@ -4,6 +4,7 @@ package network
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 )
@@ -56,9 +57,15 @@ func bridgeExists(name string) bool {
 // delivered to the daemon regardless of which bridge they arrive on — a single
 // address serves every network. Idempotent: an existing address is success.
 func EnsureDNSAddress(ip string) error {
-	cidr := ip + "/32"
-	// ip is a compile-time constant (netconst.DNSAnycastIP), not user input.
-	out, err := exec.Command("ip", "addr", "add", cidr, "dev", "lo").CombinedOutput() //nolint:gosec // ip is a trusted internal constant
+	// Validate before shelling out. ip is an internal constant today
+	// (netconst.DNSAnycastIP), but parsing guards against a future caller
+	// passing tainted input into the exec.
+	parsed := net.ParseIP(ip)
+	if parsed == nil || parsed.To4() == nil {
+		return fmt.Errorf("assign dns address: %q is not a valid IPv4 address", ip)
+	}
+	cidr := parsed.String() + "/32"
+	out, err := exec.Command("ip", "addr", "add", cidr, "dev", "lo").CombinedOutput() //nolint:gosec // cidr is built from a validated net.IP
 	if err != nil && !addrAlreadyAssigned(string(out)) {
 		return fmt.Errorf("assign dns address %s to lo: %w (output: %s)", ip, err, strings.TrimSpace(string(out)))
 	}

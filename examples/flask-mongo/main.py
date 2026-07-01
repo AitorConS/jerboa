@@ -13,6 +13,7 @@ import os
 
 from flask import Flask, render_template_string
 from pymongo import MongoClient
+from pymongo.errors import PyMongoError
 
 app = Flask(__name__)
 
@@ -84,7 +85,7 @@ def index():
         collection = get_collection()
         ensure_seed(collection)
         people = list(collection.find({}, {"_id": 0}).sort("id"))
-    except Exception as exc:  # pymongo raises ServerSelectionTimeoutError etc.
+    except PyMongoError as exc:  # ServerSelectionTimeoutError etc. subclass this
         return (
             f"<h1>Database not ready</h1><p>{exc}</p>"
             f"<p>Retrying MongoDB at {DB_HOST}:{DB_PORT} &mdash; refresh in a moment.</p>",

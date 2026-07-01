@@ -120,11 +120,13 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	// Bake /etc/resolv.conf so the guest's libc resolver points at the daemon's
 	// guest DNS server, letting VMs resolve each other by name on their network.
 	// Without this the guest has no nameserver and every lookup fails.
+	// cleanup is always non-nil; defer it before the error check so a temp file
+	// created just before a WriteString/Close failure is still removed.
 	resolvCleanup, resolvErr := injectResolvConf(&cfg)
+	defer resolvCleanup()
 	if resolvErr != nil {
 		return Manifest{}, fmt.Errorf("build: %w", resolvErr)
 	}
-	defer resolvCleanup()
 
 	manifest := BuildManifest(cfg)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {

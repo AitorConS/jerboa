@@ -117,7 +117,7 @@ def index():
     try:
         ensure_schema()
         people = fetch_people()
-    except Exception as exc:  # pg8000 raises DatabaseError/InterfaceError subclasses
+    except pg8000.dbapi.Error as exc:  # DatabaseError/InterfaceError etc. subclass Error
         return (
             f"<h1>Database not ready</h1><p>{exc}</p>"
             f"<p>Retrying PostgreSQL at {DB_HOST}:{DB_PORT} &mdash; refresh in a moment.</p>",
