@@ -2,6 +2,12 @@
 lang = "raw"
 disk_size = "800M"
 
+# Create the empty data directory in the image. mongod requires --dbpath to
+# exist; this both provides an ephemeral location (root image, lost on stop) and
+# serves as the mount point when a persistent volume is attached at /data/db (a
+# volume can only mount onto a directory that already exists in the image).
+dirs = ["/data/db"]
+
 [program]
 path = "mongod"
 args = [

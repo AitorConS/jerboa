@@ -109,6 +109,29 @@ func TestHealthChecker_StartStop(t *testing.T) {
 	hc.Stop(v.ID)
 }
 
+func TestHealthChecker_Stop_Idempotent(t *testing.T) {
+	hc := NewHealthChecker()
+	v := &VM{
+		ID: "test-hc-idem",
+		Cfg: Config{
+			PortMaps:    []PortMap{{HostPort: 8080, GuestPort: 80, Protocol: ProtocolTCP}},
+			HealthCheck: &HealthCheckConfig{Type: "tcp", Port: 8080},
+		},
+		State: StateRunning,
+		done:  make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hc.Start(ctx, v)
+	// Stopping twice (as the stop path and then the remove path do) must not
+	// panic with "close of closed channel".
+	require.NotPanics(t, func() {
+		hc.Stop(v.ID)
+		hc.Stop(v.ID)
+	})
+}
+
 func TestProbeTargetAddsSlash(t *testing.T) {
 	v := &VM{Cfg: Config{}}
 	cfg := &HealthCheckConfig{Type: "http", Port: 8080, Path: "health"}

@@ -44,6 +44,10 @@ args = [
   "-D", "/db",
   "-p", "5432",
   "-c", "listen_addresses=*",
+  # Use the open pg_hba.conf copied into the image from this directory (see
+  # pg_hba.conf) so clients on a jerboa bridge network can connect. The baked
+  # data dir's own pg_hba only trusts localhost and the old SLIRP host.
+  "-c", "hba_file=/pg_hba.conf",
 ]
 
 [env]

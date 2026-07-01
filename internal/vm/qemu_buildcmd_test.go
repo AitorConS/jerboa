@@ -23,6 +23,24 @@ func TestBuildCmd_BasicFlags(t *testing.T) {
 	require.Contains(t, args, "-no-reboot")
 }
 
+func TestBuildCmd_BootDiskIsEphemeral(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M"})
+	didx := indexOf(args, "-drive")
+	// The boot disk is copy-on-write so guest writes are discarded on exit and
+	// the base image stays pristine (durable data belongs on a volume).
+	require.Contains(t, args[didx+1], "snapshot=on")
+}
+
+func TestBuildVolumeArgs_NotEphemeral(t *testing.T) {
+	// Volumes must persist, so they must NOT get snapshot=on.
+	args := buildVolumeArgs([]VolumeMount{
+		{DiskPath: "/vol/data.img", GuestPath: "/data", ReadOnly: false},
+	})
+	idx := indexOf(args, "-drive")
+	require.NotContains(t, args[idx+1], "snapshot=on")
+}
+
 func TestBuildCmd_DefaultCPUs(t *testing.T) {
 	mgr := NewQEMUManager("fake-qemu")
 	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M", CPUs: 0})

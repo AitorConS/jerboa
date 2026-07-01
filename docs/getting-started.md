@@ -207,6 +207,39 @@ Important:
 
 ---
 
+## Service Discovery (Guest DNS)
+
+VMs on the same network resolve each other by name. The daemon runs a small DNS
+server that answers from live VM state, so an app can connect to a peer by its
+VM/service name instead of a hardcoded IP:
+
+```bash
+jerboa network create app
+jerboa run mysql:latest   --network app --name db -p 3306:3306
+jerboa run myapp:latest   --network app --name web -p 8080:8080 -e DB_HOST=db
+# inside `web`, the hostname `db` resolves to the db VM's IP
+```
+
+How it works:
+
+- each image bakes an `/etc/resolv.conf` pointing at a fixed resolver address the
+  daemon owns; guests reach it through their default gateway
+- queries are scoped by source IP, so `db` resolves to the `db` VM **on the
+  caller's own network**
+- names the daemon does not own are forwarded to an upstream resolver, so
+  ordinary internet lookups still work
+- the same mechanism powers `compose` — services connect to each other by
+  service name (see [Compose]({% link compose.md %}))
+
+Inspect the records the resolver would return:
+
+```bash
+jerboa dns list --network app
+jerboa dns resolve db --network app
+```
+
+---
+
 ## Volumes
 
 ```bash

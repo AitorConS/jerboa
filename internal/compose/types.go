@@ -16,11 +16,16 @@ type File struct {
 
 // Service describes a single unikernel service.
 type Service struct {
-	Image       string   `yaml:"image"`
-	Memory      string   `yaml:"memory"`
-	CPUs        int      `yaml:"cpus"`
-	DependsOn   []string `yaml:"depends_on"`
-	Networks    []string `yaml:"networks"`
+	Image     string   `yaml:"image"`
+	Memory    string   `yaml:"memory"`
+	CPUs      int      `yaml:"cpus"`
+	DependsOn []string `yaml:"depends_on"`
+	Networks  []string `yaml:"networks"`
+	// IP pins the service to a static address on its (first) network instead of
+	// auto-allocating one. Lets other services reference it by a known address
+	// (guest-side name resolution is not wired yet). Must lie within the
+	// network's subnet.
+	IP          string   `yaml:"ip,omitempty"`
 	Environment []string `yaml:"environment"`
 	Ports       []string `yaml:"ports"`
 	Volumes     []string `yaml:"volumes"`

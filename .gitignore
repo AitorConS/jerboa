@@ -23,3 +23,6 @@ examples/flaskapp/__pycache__/
 *claude/*
 skills-lock.json
 docs/guia-jerboa.html
+examples/**/packages/
+# jerboa compose runtime state file, written next to the compose file
+.jerboa-compose-state.json

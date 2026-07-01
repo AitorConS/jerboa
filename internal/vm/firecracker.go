@@ -113,6 +113,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 
+	// Give this VM its own uniquely named TAP device. Several VMs can share a
+	// network (and its bridge), but a TAP can be enslaved to only one VM, so the
+	// device name must be per-VM rather than per-network.
+	if v.Cfg.NetworkName != "" && v.Cfg.TapName == "" {
+		v.Cfg.TapName = tapDeviceName(v.ID)
+	}
+
 	// Firecracker, unlike QEMU, does not create the tap or wire the bridge: it
 	// opens an existing tap by name. Set up the persistent tap + bridge here,
 	// before launching, so the guest is reachable on the host network.
@@ -320,7 +327,7 @@ func (m *FirecrackerManager) List() []*VM {
 // told script=no,downscript=no so it consumes this pre-made tap instead of
 // running /etc/qemu-ifup.)
 func setupTAPNetwork(cfg Config) error {
-	if err := network.CreateTAPDevice(cfg.NetworkName); err != nil {
+	if err := network.CreateTAPDevice(cfg.tapDevice()); err != nil {
 		return err
 	}
 	if cfg.GatewayIP == "" {
@@ -337,10 +344,11 @@ func setupTAPNetwork(cfg Config) error {
 	if err := network.EnsureBridge(network.BridgeConfig{Name: bridgeName, CIDR: cfg.GatewayIP + "/" + mask}); err != nil {
 		return err
 	}
-	return network.AttachTAP(cfg.NetworkName, bridgeName)
+	return network.AttachTAP(cfg.tapDevice(), bridgeName)
 }
 
 func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog string) {
+	defer recoverGoroutine("firecracker monitor", v.ID)
 	exitErr := cmd.Wait()
 	now := time.Now()
 	v.mu.Lock()
@@ -356,10 +364,11 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 		fwd.Close()
 	}
 	if v.Cfg.NetworkName != "" {
-		if err := network.DetachTAP(v.Cfg.NetworkName); err != nil {
+		tap := v.Cfg.tapDevice()
+		if err := network.DetachTAP(tap); err != nil {
 			slog.Debug("firecracker monitor: detach tap", "vm_id", v.ID, "err", err)
 		}
-		if err := network.DeleteTAPDevice(v.Cfg.NetworkName); err != nil {
+		if err := network.DeleteTAPDevice(tap); err != nil {
 			slog.Debug("firecracker monitor: delete tap", "vm_id", v.ID, "err", err)
 		}
 	}
@@ -485,7 +494,7 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config) (string, error
 		fcCfg.NetworkInterfaces = []fcNetworkInterface{
 			{
 				IfaceID:     "eth0",
-				HostDevName: cfg.NetworkName,
+				HostDevName: cfg.tapDevice(),
 				// Firecracker leaves the guest NIC MAC unset otherwise, and Nanos
 				// ends up with an all-zero MAC that bridges drop (ARP never
 				// resolves). Assign a stable locally-administered MAC, like ops.

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -113,19 +114,32 @@ func (s *Server) Serve(ctx context.Context) error {
 }
 
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
+	dec := json.NewDecoder(conn)
+	enc := json.NewEncoder(conn)
+	// currentReqID is the ID of the request being processed; the panic handler
+	// uses it to address the error response. Safe without synchronization: the
+	// loop below and the deferred recover run in the same goroutine.
+	var currentReqID int64
+	// A panic in any handler must never crash the daemon: recover here, log the
+	// stack, and try to return an error to the client instead of resetting the
+	// connection (which surfaces to the CLI as "decode response: EOF"). The
+	// deferred conn.Close still runs.
 	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("api server: recovered panic in handler", "panic", r, "stack", string(debug.Stack()))
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: currentReqID, Error: &api.RPCError{Code: -32603, Message: fmt.Sprintf("internal error: %v", r)}})
+		}
 		if err := conn.Close(); err != nil {
 			slog.Warn("api server close conn", "err", err)
 		}
 	}()
-	dec := json.NewDecoder(conn)
-	enc := json.NewEncoder(conn)
 	authed := s.authToken == ""
 	for dec.More() {
 		var req api.Request
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
+		currentReqID = req.ID
 		if !authed {
 			// Until authenticated, only Auth.Hello is accepted. Any failure
 			// closes the connection.

@@ -50,6 +50,28 @@ func bridgeExists(name string) bool {
 	return exec.Command("ip", "link", "show", name).Run() == nil
 }
 
+// EnsureDNSAddress assigns the reserved guest-DNS address to the loopback
+// interface so the daemon can answer DNS on it. Because it is a local address,
+// packets sent by any bridged guest (routed via its default gateway) are
+// delivered to the daemon regardless of which bridge they arrive on — a single
+// address serves every network. Idempotent: an existing address is success.
+func EnsureDNSAddress(ip string) error {
+	out, err := exec.Command("ip", "addr", "add", ip+"/32", "dev", "lo").CombinedOutput()
+	if err != nil && !addrAlreadyAssigned(string(out)) {
+		return fmt.Errorf("assign dns address %s to lo: %w (output: %s)", ip, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// addrAlreadyAssigned reports whether an `ip addr add` failure just means the
+// address was already present (idempotent success). iproute2 wording varies by
+// version: older builds print "RTNETLINK answers: File exists", newer ones
+// "Error: ipv4: Address already assigned.".
+func addrAlreadyAssigned(out string) bool {
+	o := strings.ToLower(out)
+	return strings.Contains(o, "file exists") || strings.Contains(o, "already assigned")
+}
+
 // CreateTAPDevice creates a persistent TAP device by name. It is idempotent: a
 // device that already exists is treated as success. Firecracker requires the tap
 // to exist before it opens it; unlike QEMU it does not create taps itself.

@@ -1,0 +1,18 @@
+# unikernel.toml — build + run spec for the Flask web front-end.
+#
+# The python driver pip-installs requirements.txt into ./packages (Linux/x86_64
+# wheels) and runs main.py with PYTHONPATH=/packages. Build it with:
+#
+#   jerboa build . --name flask-mysql --pkg-source ops --port 8080
+#
+# It talks to the MySQL VM over the compose network; see stack.yaml.
+
+[build]
+# Build driver: go | node | python | rust | raw.
+lang = "python"
+
+[run]
+# Defaults baked into the image manifest, inherited by `jerboa run` / compose
+# unless a flag or compose field overrides them.
+memory = "256M"
+ports = ["8080:8080"]

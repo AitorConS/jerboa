@@ -156,9 +156,14 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					params.BridgeName = netInfo.Bridge
 					params.GatewayIP = netInfo.Gateway
 					params.SubnetMask = extractMask(netInfo.Subnet)
-					ip, allocErr := client.NetworkAllocateIP(cmd.Context(), netName)
-					if allocErr != nil {
-						return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
+					ip := svc.IP
+					if ip == "" {
+						// No static IP requested: let the daemon's IPAM pick one.
+						allocated, allocErr := client.NetworkAllocateIP(cmd.Context(), netName)
+						if allocErr != nil {
+							return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
+						}
+						ip = allocated
 					}
 					params.IPAddress = ip
 					state.ServiceNetworks[name] = netName

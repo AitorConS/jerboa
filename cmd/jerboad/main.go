@@ -6,10 +6,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -17,9 +19,12 @@ import (
 	"github.com/AitorConS/jerboa/internal/apiserver"
 	"github.com/AitorConS/jerboa/internal/cluster"
 	"github.com/AitorConS/jerboa/internal/config"
+	"github.com/AitorConS/jerboa/internal/dnsserver"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/metrics"
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
+	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/service"
 	"github.com/AitorConS/jerboa/internal/slogformat"
 	"github.com/AitorConS/jerboa/internal/tools"
@@ -299,6 +304,31 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		slog.Info("jerboad: resolving mkfs toolchain for volume seed", "tools_dir", toolsDir)
 		return tools.ResolveVolumeSeeder(rctx, toolsDir, "")
 	})
+
+	// Start the guest DNS server so VMs can resolve each other by name on their
+	// network. The reserved address is bound to loopback and reached by guests
+	// through their default gateway; queries are scoped by source IP. Address
+	// setup is best-effort (it is idempotent and usually already in place from a
+	// prior run), and the server starts regardless so a benign "already
+	// assigned" never disables name resolution.
+	if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
+		slog.Warn("jerboad: guest dns address setup failed", "err", err)
+	}
+	go func() {
+		addr := net.JoinHostPort(netconst.DNSAnycastIP, strconv.Itoa(netconst.DNSPort))
+		dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), "1.1.1.1:53")
+		// A freshly restarted daemon can briefly race the previous process's
+		// UDP socket; retry the bind a few times before giving up.
+		for attempt := 0; attempt < 10; attempt++ {
+			err := dnsSrv.ListenAndServe(addr)
+			if err == nil {
+				return // clean shutdown (listener closed)
+			}
+			slog.Warn("jerboad: guest dns server bind failed; retrying", "attempt", attempt+1, "err", err)
+			time.Sleep(time.Second)
+		}
+		slog.Error("jerboad: guest dns server gave up starting")
+	}()
 
 	slog.Info("jerboad listening", "endpoint", endpoint, "hypervisor", hypervisor)
 
