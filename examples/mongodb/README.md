@@ -23,6 +23,5 @@ the volume's contents are what persist.
 
 To start fresh, `jerboa volume rm mongodata`.
 
-See `../mysql/README.md` for the general volume model (TFS label matching,
-QEMU `opt/uni/mounts` fw_cfg vs. Firecracker boot args, and seeding databases
-that need an explicit init step).
+See `../postgresql/README.md` for the general volume-seeding model (TFS label
+matching, QEMU `opt/uni/mounts` fw_cfg vs. Firecracker boot args).

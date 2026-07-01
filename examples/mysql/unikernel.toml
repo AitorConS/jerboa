@@ -1,11 +1,35 @@
+# unikernel.toml — full build + run spec for a MySQL unikernel.
+#
+# A single file describes how the image is assembled (like a Dockerfile) and the
+# defaults used when it runs (like a compose service). Build it with:
+#
+#   jerboa build . --name mysql --pkg eyberg/mysql:5.7.29 --pkg-source ops
+#
+# Select a different file with -f/--file:
+#
+#   jerboa build . -f ./unikernel.toml --pkg eyberg/mysql:5.7.29 --pkg-source ops
+
 [build]
+# Build driver: go | node | python | rust | raw.
+# "raw" performs no compilation — the binary comes from a --pkg package and is
+# named by [program] below. Use it for prebuilt runtimes (databases, the JVM…).
 lang = "raw"
+
+# Minimum image size passed to mkfs. Reserves scratch space *inside the root
+# image* (lost on stop) for runtime writes — logs, sockets, and the database
+# files themselves under /var/lib/mysql (see --datadir below).
 disk_size = "512M"
-# Mount point for the mysql data volume (-v <volume>:/var/lib/mysql).
-dirs = ["/var/lib/mysql"]
 
 [program]
+# raw-only: the runtime binary, resolved from the --pkg files by exact guest
+# path, path suffix, or basename. The eyberg/mysql package ships a single
+# mysqld binary at the image root, so the bare basename resolves unambiguously.
 path = "mysqld"
+
+# argv[1..] passed to the program (argv[0] is the program path itself).
+# The eyberg/mysql package ships a PRE-INITIALISED data directory baked into
+# the image at /var/lib/mysql (system tables already created), so no
+# `mysqld --initialize` step is needed. Point --datadir at that directory.
 args = [
   "--datadir=/var/lib/mysql",
   "--user=root",
@@ -15,5 +39,17 @@ args = [
 ]
 
 [run]
-memory = "512M"
-ports = ["3306:3306"]
+# Defaults baked into the image manifest and inherited by `jerboa run` unless a
+# flag overrides them. Precedence: run flag > [run] value > built-in default.
+memory = "512M"          # inherited unless `jerboa run --memory ...` is given
+ports = ["3306:3306"]    # host:guest publish maps; applied when the VM joins a
+                         # network (jerboa run --network ...) and no -p is given
+
+# Persistence: /var/lib/mysql in the root image is ephemeral. For data that
+# survives recreating the VM, seed a TFS volume with the initialized data
+# directory once and mount it at /var/lib/mysql (the volume shadows the baked
+# copy):
+#
+#   jerboa volume create mysqldata --size 512M
+#   jerboa volume seed   mysqldata --pkg eyberg/mysql:5.7.29 --pkg-source ops --src /var/lib/mysql
+#   jerboa run mysql -v mysqldata:/var/lib/mysql --network mynet -p 3306:3306
