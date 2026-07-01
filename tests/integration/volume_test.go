@@ -68,7 +68,7 @@ func TestVolumePersistence(t *testing.T) {
 	mgr := vm.NewQEMUManager(defaultQEMU)
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, defaultSocket, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, defaultSocket, nil, "", nil)
 	require.NoError(t, err)
 	srv.EnableVolumeFormatResolver(func(context.Context) (volume.Formatter, error) {
 		return volFmt, nil

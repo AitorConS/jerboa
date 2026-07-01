@@ -25,7 +25,6 @@ import (
 	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/scheduler"
-	"github.com/AitorConS/jerboa/internal/service"
 	"github.com/AitorConS/jerboa/internal/slogformat"
 	"github.com/AitorConS/jerboa/internal/tools"
 	"github.com/AitorConS/jerboa/internal/tracing"
@@ -179,12 +178,6 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		return fmt.Errorf("jerboad: network store: %w", err)
 	}
 
-	svcStore, err := service.NewFileStore(servicesDir())
-	if err != nil {
-		return fmt.Errorf("jerboad: service store: %w", err)
-	}
-	svcMgr := service.NewManager(mgr, svcStore)
-
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
@@ -254,7 +247,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		clusterLister = &clusterMemberAdapter{cluster: swimCluster}
 	}
 
-	vmSrv, err := apiserver.NewServer(mgr, netStore, svcMgr, endpoint, stop, version, clusterLister)
+	vmSrv, err := apiserver.NewServer(mgr, netStore, endpoint, stop, version, clusterLister)
 	if err != nil {
 		return fmt.Errorf("jerboad: vm server: %w", err)
 	}
@@ -405,14 +398,6 @@ func networksDir() string {
 		return ".jerboa/networks"
 	}
 	return home + "/.jerboa/networks"
-}
-
-func servicesDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ".jerboa/services"
-	}
-	return home + "/.jerboa/services"
 }
 
 func setupLogger(format string) {

@@ -250,14 +250,7 @@ jerboa volume inspect data
 
 ---
 
-## Services And Compose
-
-Replicated service:
-
-```bash
-jerboa service run api api:latest --replicas 3 --network app
-jerboa service ls
-```
+## Compose
 
 Compose stack:
 

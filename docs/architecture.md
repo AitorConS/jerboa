@@ -50,7 +50,7 @@ Responsibilities:
 - manage image builds
 - manage image storage
 - manage VM lifecycle
-- manage networks, services, compose workflows, and cluster membership
+- manage networks, compose workflows, and cluster membership
 - expose observability endpoints
 
 ### VM Layer
@@ -104,19 +104,6 @@ Important constraints:
 - no SLIRP fallback
 - `-p` requires `--network`
 - UDP mappings are parsed but not forwarded yet
-
-### Services
-
-Path: `internal/service/`
-
-The service manager keeps a named desired replica set and can:
-
-- create
-- scale
-- update
-- remove
-
-Compose uses this path for services with `replicas > 1`.
 
 ### Compose
 
@@ -180,7 +167,6 @@ Daemon-owned state:
 - image store
 - VM registry
 - network store
-- service store
 
 VM persistence backends:
 

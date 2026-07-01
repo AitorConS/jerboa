@@ -24,7 +24,6 @@ What exists today:
 - internal DNS
 - volumes
 - compose stacks
-- replicated services
 - daemon-side metrics, traces, stats, and dashboard
 - Windows support through a dedicated WSL2 distro hosting the daemon
 
@@ -91,7 +90,6 @@ The short version:
 - `internal/vm/` - VM lifecycle and hypervisor backends
 - `internal/image/` - image store and build path
 - `internal/network/` - bridge, TAP, IPAM, and port forwarding
-- `internal/service/` - replicated services
 - `internal/compose/` - compose parser and ordering
 - `internal/wslboot/`, `internal/wsldistro/` - Windows/WSL support
 - `tests/integration/`, `tests/e2e/` - higher-level tests

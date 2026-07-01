@@ -33,7 +33,7 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -143,7 +143,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(false)))
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -183,7 +183,7 @@ func TestServer_UnknownMethod(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -412,7 +412,7 @@ func TestServer_DaemonVersion(t *testing.T) {
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
 
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "test-v1.2.3", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "test-v1.2.3", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -441,7 +441,7 @@ func TestServer_DaemonShutdown(t *testing.T) {
 	var shutdownCalled atomic.Bool
 	shutdownFn := func() { shutdownCalled.Store(true) }
 
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, shutdownFn, "", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, shutdownFn, "", nil)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -649,7 +649,7 @@ func TestServer_NodeList_WithCluster(t *testing.T) {
 		},
 	}
 
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "", lister)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", lister)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

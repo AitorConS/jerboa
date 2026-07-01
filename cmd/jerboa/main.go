@@ -97,7 +97,6 @@ func newRootCmd() *cobra.Command {
 		newDNSCmd(&endpoint, &outputFmt),
 		newStatsCmd(&endpoint, &outputFmt),
 		newNodeCmd(&endpoint, &outputFmt),
-		newServiceCmd(&endpoint, &outputFmt),
 		newConfigCmd(),
 	)
 	// The daemon command group manages the dedicated WSL2 distro that hosts

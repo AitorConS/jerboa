@@ -105,37 +105,16 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 			}
 
 			state := compose.State{
-				Project:          filepath.Base(filepath.Dir(composeFile)),
-				Services:         make(map[string]string, len(f.Services)),
-				ServiceNetworks:  make(map[string]string, len(f.Services)),
-				ServiceIPs:       make(map[string]string, len(f.Services)),
-				CreatedVolumes:   createdVolumes,
-				CreatedNetworks:  createdNetworks,
-				ScalableServices: make(map[string]string, len(f.Services)),
+				Project:         filepath.Base(filepath.Dir(composeFile)),
+				Services:        make(map[string]string, len(f.Services)),
+				ServiceNetworks: make(map[string]string, len(f.Services)),
+				ServiceIPs:      make(map[string]string, len(f.Services)),
+				CreatedVolumes:  createdVolumes,
+				CreatedNetworks: createdNetworks,
 			}
 
 			for _, name := range order {
 				svc := f.Services[name]
-
-				if svc.Replicas > 1 {
-					serviceInfo, svcErr := client.ServiceRun(cmd.Context(), api.ServiceRunParams{
-						Name:        name,
-						Image:       svc.Image,
-						Replicas:    svc.Replicas,
-						Memory:      svc.Memory,
-						CPUs:        svc.CPUs,
-						Env:         svc.Environment,
-						NetworkName: firstNetwork(svc.Networks),
-						Strategy:    svc.Strategy,
-					})
-					if svcErr != nil {
-						return fmt.Errorf("compose up: service %q: %w", name, svcErr)
-					}
-					state.Services[name] = serviceInfo.Name
-					state.ScalableServices[name] = name
-					fmt.Fprintf(cmd.OutOrStdout(), "started service %s (%d replicas)\n", name, svc.Replicas)
-					continue
-				}
 
 				mem := svc.Memory
 				if mem == "" {
@@ -241,21 +220,6 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 			names := stateServiceNames(state)
 			for i := len(names) - 1; i >= 0; i-- {
 				name := names[i]
-
-				if _, scalable := state.ScalableServices[name]; scalable {
-					if rmErr := client.ServiceRemove(cmd.Context(), name); rmErr != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove service %s: %v\n", name, rmErr)
-						continue
-					}
-					fmt.Fprintf(cmd.OutOrStdout(), "removed service %s\n", name)
-					releaseNetwork := state.ServiceNetworks[name]
-					if releaseNetwork != "" {
-						if relErr := client.NetworkRemove(cmd.Context(), releaseNetwork); relErr != nil {
-							fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove network %s: %v\n", releaseNetwork, relErr)
-						}
-					}
-					continue
-				}
 
 				id := state.Services[name]
 				releaseNetwork := state.ServiceNetworks[name]
@@ -519,11 +483,4 @@ func waitForHealthy(cmd *cobra.Command, client *api.Client, id, name string, tim
 		time.Sleep(healthCheckInterval)
 	}
 	return fmt.Errorf("timed out waiting for %s to become healthy", name)
-}
-
-func firstNetwork(networks []string) string {
-	if len(networks) > 0 {
-		return networks[0]
-	}
-	return ""
 }

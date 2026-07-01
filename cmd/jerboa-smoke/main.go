@@ -18,7 +18,6 @@ import (
 	"github.com/AitorConS/jerboa/internal/apiserver"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/network"
-	"github.com/AitorConS/jerboa/internal/service"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
 
@@ -79,16 +78,9 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (create network store): %v\n", err)
 		return 2
 	}
-	svcStore, err := service.NewFileStore(filepath.Join(homePath, ".jerboa", "services"))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "smoke setup failed (create service store): %v\n", err)
-		return 2
-	}
-
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
-	svcMgr := service.NewManager(mgr, svcStore)
 	clusterLister := staticClusterLister{}
-	srv, err := apiserver.NewServer(mgr, netStore, svcMgr, socketPath, nil, "smoke", clusterLister)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "smoke", clusterLister)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "smoke setup failed (start api server): %v\n", err)
 		return 2
@@ -160,16 +152,8 @@ func run() int {
 	addCmd(runUni, add, "volume inspect", "volume", "inspect", "smoke-vol")
 	addCmd(runUni, add, "volume rm", "volume", "rm", "smoke-vol")
 
-	addCmd(runUni, add, "network create (svc)", "network", "create", "svc-net")
-	addCmd(runUni, add, "service run", "service", "run", "web", "hello:latest", "--replicas", "2", "--network", "svc-net")
-	addCmd(runUni, add, "service ls", "service", "ls")
-	addCmd(runUni, add, "service inspect", "service", "inspect", "web")
-	addCmd(runUni, add, "service scale", "service", "scale", "web", "1")
-	addCmd(runUni, add, "service update", "service", "update", "web", "hello:latest")
 	skip("dns resolve-all", "requires DNS records with assigned VM IPs")
 	skip("dns resolve", "requires DNS records with assigned VM IPs")
-	addCmd(runUni, add, "service rm", "service", "rm", "web")
-	addCmd(runUni, add, "network rm (svc)", "network", "rm", "svc-net")
 
 	addCmd(runUni, add, "dns list", "dns", "list")
 	addCmd(runUni, add, "node ls", "node", "ls")

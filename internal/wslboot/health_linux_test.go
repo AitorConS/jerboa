@@ -18,7 +18,7 @@ func TestHealthy(t *testing.T) {
 	mgr := vm.NewQEMUManager("fake-qemu")
 	netStore, err := network.NewStore(t.TempDir())
 	require.NoError(t, err)
-	srv, err := apiserver.NewServer(mgr, netStore, nil, socketPath, nil, "test", nil)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "test", nil)
 	require.NoError(t, err)
 
 	ctx := t.Context()

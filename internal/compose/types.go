@@ -32,8 +32,6 @@ type Service struct {
 	Volumes     []string `yaml:"volumes"`
 	HealthCheck string   `yaml:"health_check,omitempty"`
 	Restart     string   `yaml:"restart,omitempty"`
-	Replicas    int      `yaml:"replicas,omitempty"`
-	Strategy    string   `yaml:"strategy,omitempty"`
 }
 
 // Network describes a logical network.
@@ -65,7 +63,4 @@ type State struct {
 	ServiceIPs      map[string]string `json:"service_ips,omitempty"`
 	CreatedVolumes  []string          `json:"created_volumes,omitempty"`
 	CreatedNetworks []string          `json:"created_networks,omitempty"`
-	// ScalableServices tracks services deployed via Service.Run (replicas > 1).
-	// Key is service name, value is the service name (same as key).
-	ScalableServices map[string]string `json:"scalable_services,omitempty"`
 }

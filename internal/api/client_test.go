@@ -102,18 +102,6 @@ func TestClient_AllMethods(t *testing.T) {
 	_, err = c.DNSList(ctx, "net")
 	require.NoError(t, err)
 
-	_, err = c.ServiceRun(ctx, api.ServiceRunParams{Name: "web"})
-	require.NoError(t, err)
-	_, err = c.ServiceScale(ctx, "web", 3)
-	require.NoError(t, err)
-	_, err = c.ServiceUpdate(ctx, "web", "img:v2", 0)
-	require.NoError(t, err)
-	_, err = c.ServiceList(ctx)
-	require.NoError(t, err)
-	_, err = c.ServiceGet(ctx, "web")
-	require.NoError(t, err)
-	require.NoError(t, c.ServiceRemove(ctx, "web"))
-
 	_, err = c.ImageList(ctx)
 	require.NoError(t, err)
 	_, err = c.ImageGet(ctx, "hello:latest")
