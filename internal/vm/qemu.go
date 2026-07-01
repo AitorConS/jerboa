@@ -37,12 +37,18 @@ func WithStore(s Store) Option {
 	return func(m *QEMUManager) { m.store = s }
 }
 
+// WithMetrics injects a sink for VM lifecycle counters (auto-restarts, errors).
+func WithMetrics(s MetricsSink) Option {
+	return func(m *QEMUManager) { m.metrics = s }
+}
+
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
 	store    Store
 	qemuBin  string
 	mkCmd    CommandFunc
 	hchecker *HealthChecker
+	metrics  MetricsSink
 }
 
 // NewQEMUManager returns a QEMUManager using qemuBin as the QEMU executable.
@@ -564,11 +570,18 @@ func (m *QEMUManager) restartVM(old *VM) {
 	slog.Info("monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 
+	if m.metrics != nil {
+		m.metrics.RecordRestart()
+	}
+
 	ctx := context.Background()
 	cfg := old.Cfg
 	newVM, err := m.store.Create(cfg)
 	if err != nil {
 		slog.Error("monitor: failed to create replacement vm", "vm_id", old.ID, "err", err)
+		if m.metrics != nil {
+			m.metrics.RecordError()
+		}
 		return
 	}
 	newVM.mu.Lock()
@@ -578,6 +591,9 @@ func (m *QEMUManager) restartVM(old *VM) {
 
 	if err := m.Start(ctx, newVM.ID); err != nil {
 		slog.Error("monitor: failed to start replacement vm", "vm_id", newVM.ID, "err", err)
+		if m.metrics != nil {
+			m.metrics.RecordError()
+		}
 		return
 	}
 	slog.Info("monitor: replacement vm started", "old_id", old.ID, "new_id", newVM.ID)

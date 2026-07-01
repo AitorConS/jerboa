@@ -153,6 +153,12 @@ func NewCollectors(version string) *Collectors {
 	return c
 }
 
+// RecordRestart increments the VM restart counter. Satisfies vm.MetricsSink.
+func (c *Collectors) RecordRestart() { c.VMRestartsTotal.Inc() }
+
+// RecordError increments the VM error counter. Satisfies vm.MetricsSink.
+func (c *Collectors) RecordError() { c.VMErrorsTotal.Inc() }
+
 // Handler returns an http.Handler that serves Prometheus metrics.
 func (c *Collectors) Handler() http.Handler {
 	return promhttp.HandlerFor(c.registry, promhttp.HandlerOpts{

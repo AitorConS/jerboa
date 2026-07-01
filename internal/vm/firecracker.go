@@ -36,6 +36,11 @@ func WithFCCommandFunc(fn CommandFunc) FCOption {
 	return func(m *FirecrackerManager) { m.mkCmd = fn }
 }
 
+// WithFCMetrics injects a sink for VM lifecycle counters (auto-restarts, errors).
+func WithFCMetrics(s MetricsSink) FCOption {
+	return func(m *FirecrackerManager) { m.metrics = s }
+}
+
 // FirecrackerManager implements Manager by spawning firecracker processes
 // configured via a JSON config file and managed via the Firecracker REST API
 // over a per-VM Unix socket.
@@ -61,6 +66,7 @@ type FirecrackerManager struct {
 	rewriteConfigPaths func(cfg *fcVMConfig)             // rewrites paths inside the FC JSON config
 	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
+	metrics            MetricsSink
 }
 
 // NewFirecrackerManager returns a FirecrackerManager.
@@ -427,10 +433,17 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	slog.Info("firecracker monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 
+	if m.metrics != nil {
+		m.metrics.RecordRestart()
+	}
+
 	ctx := context.Background()
 	newVM, err := m.store.Create(old.Cfg)
 	if err != nil {
 		slog.Error("firecracker monitor: failed to create replacement vm", "vm_id", old.ID, "err", err)
+		if m.metrics != nil {
+			m.metrics.RecordError()
+		}
 		return
 	}
 	newVM.mu.Lock()
@@ -440,6 +453,9 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 
 	if err := m.Start(ctx, newVM.ID); err != nil {
 		slog.Error("firecracker monitor: failed to start replacement vm", "vm_id", newVM.ID, "err", err)
+		if m.metrics != nil {
+			m.metrics.RecordError()
+		}
 		return
 	}
 	slog.Info("firecracker monitor: replacement vm started", "old_id", old.ID, "new_id", newVM.ID)

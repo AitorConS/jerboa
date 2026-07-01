@@ -7,22 +7,26 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
 
-// VMStateUpdater periodically polls a vm.Manager and updates Prometheus gauges
-// with the current count of VMs in each state.
+// VMStateUpdater periodically polls a vm.Manager and an image.Store and
+// updates Prometheus gauges with the current VM state counts and image count.
 type VMStateUpdater struct {
 	collectors *Collectors
 	mgr        vm.Manager
+	imgStore   *image.Store
 	interval   time.Duration
 }
 
-// NewVMStateUpdater creates an updater that polls the manager at the given interval.
-func NewVMStateUpdater(collectors *Collectors, mgr vm.Manager, interval time.Duration) *VMStateUpdater {
+// NewVMStateUpdater creates an updater that polls the manager (and, if
+// non-nil, the image store) at the given interval.
+func NewVMStateUpdater(collectors *Collectors, mgr vm.Manager, imgStore *image.Store, interval time.Duration) *VMStateUpdater {
 	return &VMStateUpdater{
 		collectors: collectors,
 		mgr:        mgr,
+		imgStore:   imgStore,
 		interval:   interval,
 	}
 }
@@ -66,5 +70,13 @@ func (u *VMStateUpdater) update() {
 	u.collectors.VMRunning.Set(float64(running))
 	u.collectors.VMStopping.Set(float64(stopping))
 	u.collectors.VMStopped.Set(float64(stopped))
-	u.collectors.ImagesTotal.Set(float64(len(vms)))
+
+	if u.imgStore != nil {
+		manifests, err := u.imgStore.List()
+		if err != nil {
+			slog.Warn("metrics: list images", "err", err)
+		} else {
+			u.collectors.ImagesTotal.Set(float64(len(manifests)))
+		}
+	}
 }
