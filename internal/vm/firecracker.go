@@ -135,10 +135,22 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		}
 	}
 
+	// Boot off a private per-VM copy of the base image. Firecracker opens the
+	// root drive read-write with no copy-on-write, so pointing several VMs at the
+	// shared store image would corrupt it; the copy gives each VM ephemeral
+	// scratch space and leaves the base pristine (mirrors QEMU's snapshot=on).
+	// Attached volumes stay shared and persistent — only the rootfs is copied.
+	rootfs := fcRootfsPath(id)
+	if err := copyFile(rootfs, v.Cfg.ImagePath); err != nil {
+		_ = v.transition(StateStopped)
+		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
+	}
+
 	sockPath := m.vmSockPath(id)
-	cfgPath, err := m.writeFCConfig(id, v.Cfg)
+	cfgPath, err := m.writeFCConfig(id, v.Cfg, rootfs)
 	if err != nil {
 		_ = v.transition(StateStopped)
+		_ = os.Remove(rootfs)
 		return fmt.Errorf("firecracker start %s: write config: %w", id, err)
 	}
 
@@ -152,6 +164,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if err := ensureFile(vmmLog); err != nil {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(cfgPath)
+		_ = os.Remove(rootfs)
 		return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
 	}
 	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", m.cfgPathForProcess(cfgPath), "--log-path", vmmLog)
@@ -171,6 +184,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if err := cmd.Start(); err != nil {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(cfgPath)
+		_ = os.Remove(rootfs)
 		return fmt.Errorf("firecracker start %s: launch: %w", id, err)
 	}
 
@@ -197,7 +211,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		}
 	}
 
-	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog)
+	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
 	m.hchecker.Start(ctx, v)
 	return nil
 }
@@ -353,7 +367,7 @@ func setupTAPNetwork(cfg Config) error {
 	return network.AttachTAP(cfg.tapDevice(), bridgeName)
 }
 
-func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog string) {
+func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog, rootfs string) {
 	defer recoverGoroutine("firecracker monitor", v.ID)
 	exitErr := cmd.Wait()
 	now := time.Now()
@@ -391,6 +405,7 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 	_ = os.Remove(sockPath)
 	_ = os.Remove(cfgPath)
 	_ = os.Remove(vmmLog)
+	_ = os.Remove(rootfs)
 
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("firecracker monitor: transition to stopped", "vm_id", v.ID, "err", err)
@@ -466,7 +481,7 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 
 // writeFCConfig generates and writes the Firecracker JSON config file for v.
 // Returns the path to the written file.
-func (m *FirecrackerManager) writeFCConfig(id string, cfg Config) (string, error) {
+func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath string) (string, error) {
 	memMiB, err := parseMiB(cfg.Memory)
 	if err != nil {
 		return "", fmt.Errorf("parse memory %q: %w", cfg.Memory, err)
@@ -486,7 +501,7 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config) (string, error
 		Drives: []fcDrive{
 			{
 				DriveID:      "rootfs",
-				PathOnHost:   cfg.ImagePath,
+				PathOnHost:   rootfsPath,
 				IsRootDevice: true,
 				IsReadOnly:   false,
 			},
@@ -697,6 +712,38 @@ func fcSocketPath(id string) string {
 
 func fcConfigPath(id string) string {
 	return filepath.Join(os.TempDir(), "fc-"+id+"-config.json")
+}
+
+// fcRootfsPath returns the per-VM ephemeral root disk path. Firecracker has no
+// QEMU-style snapshot=on copy-on-write, so each VM boots off a private copy of
+// the base image instead of the shared store image. This keeps the base image
+// pristine and lets several VMs run from the same image at once without both
+// guests writing to the same backing file (silent filesystem corruption).
+func fcRootfsPath(id string) string {
+	return filepath.Join(os.TempDir(), "fc-"+id+"-rootfs.img")
+}
+
+// copyFile copies src to dst, truncating dst if it exists. The copy is the
+// Firecracker equivalent of QEMU's ephemeral snapshot overlay: guest writes go
+// to this private file and it is deleted when the VM stops.
+func copyFile(dst, src string) error {
+	in, err := os.Open(src) //nolint:gosec // daemon-owned image store path
+	if err != nil {
+		return fmt.Errorf("open source %s: %w", src, err)
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create dest %s: %w", dst, err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close dest %s: %w", dst, err)
+	}
+	return nil
 }
 
 // Firecracker VM config JSON types.
