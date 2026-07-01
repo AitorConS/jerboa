@@ -12,8 +12,10 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/apiserver"
+	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/vm"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,6 +57,77 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 		cancel()
 	})
 	return client, cancel
+}
+
+// startTestServerWithCollectors mirrors startTestServer but attaches
+// Prometheus collectors so VM lifecycle RPCs can be asserted against.
+func startTestServerWithCollectors(t *testing.T) (*api.Client, *metrics.Collectors) {
+	t.Helper()
+	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
+	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd(true)))
+	netStore, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv, err := apiserver.NewServer(mgr, netStore, socketPath, nil, "", nil)
+	require.NoError(t, err)
+	collectors := metrics.NewCollectors("test")
+	srv.SetCollectors(collectors)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		if err := srv.Serve(ctx); err != nil {
+			t.Logf("server stopped: %v", err)
+		}
+	}()
+
+	var client *api.Client
+	require.Eventually(t, func() bool {
+		var dialErr error
+		client, dialErr = api.Dial(socketPath)
+		return dialErr == nil
+	}, 2*time.Second, 10*time.Millisecond, "server did not start")
+
+	t.Cleanup(func() {
+		_ = client.Close()
+		cancel()
+	})
+	return client, collectors
+}
+
+func TestServer_Run_IncrementsStartCounter(t *testing.T) {
+	client, collectors := startTestServerWithCollectors(t)
+
+	_, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	require.InDelta(t, float64(1), testutil.ToFloat64(collectors.VMStartsTotal), 0)
+}
+
+func TestServer_Stop_IncrementsStopCounter(t *testing.T) {
+	client, collectors := startTestServerWithCollectors(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	require.NoError(t, client.Stop(context.Background(), info.ID, false))
+	require.InDelta(t, float64(1), testutil.ToFloat64(collectors.VMStopsTotal), 0)
+}
+
+func TestServer_Kill_IncrementsStopCounter(t *testing.T) {
+	client, collectors := startTestServerWithCollectors(t)
+
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+
+	require.NoError(t, client.Kill(context.Background(), info.ID))
+	require.InDelta(t, float64(1), testutil.ToFloat64(collectors.VMStopsTotal), 0)
+}
+
+func TestServer_Kill_NotFound_IncrementsErrorCounter(t *testing.T) {
+	client, collectors := startTestServerWithCollectors(t)
+
+	err := client.Kill(context.Background(), "nonexistent")
+	require.Error(t, err)
+	require.InDelta(t, float64(1), testutil.ToFloat64(collectors.VMErrorsTotal), 0)
 }
 
 func TestServer_Run(t *testing.T) {

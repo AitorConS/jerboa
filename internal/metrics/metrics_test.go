@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/AitorConS/jerboa/internal/vm"
 )
 
 func TestNewCollectorsRegistersMetrics(t *testing.T) {
@@ -118,6 +120,27 @@ func TestCollectorsPushPullCounters(t *testing.T) {
 	require.Contains(t, body, "jerboa_pull_total 10")
 	require.Contains(t, body, "jerboa_push_errors_total 1")
 	require.Contains(t, body, "jerboa_pull_errors_total 2")
+}
+
+func TestCollectorsSatisfyVMMetricsSink(t *testing.T) {
+	var _ vm.MetricsSink = NewCollectors("test-version")
+}
+
+func TestCollectorsRecordRestartAndError(t *testing.T) {
+	c := NewCollectors("test-version")
+
+	c.RecordRestart()
+	c.RecordRestart()
+	c.RecordError()
+
+	handler := c.Handler()
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	require.Contains(t, body, "jerboa_vm_restarts_total 2")
+	require.Contains(t, body, "jerboa_vm_errors_total 1")
 }
 
 func TestServeHealthEndpoint(t *testing.T) {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
+	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/vm"
@@ -62,6 +63,13 @@ type Server struct {
 	volSeedResol func(context.Context) (volume.Seeder, error)
 	volSeedCache volume.Seeder
 	authToken    string
+	collectors   *metrics.Collectors
+}
+
+// SetCollectors attaches Prometheus collectors so VM start/stop/kill RPCs
+// increment lifecycle counters. Optional: nil-safe when metrics are disabled.
+func (s *Server) SetCollectors(c *metrics.Collectors) {
+	s.collectors = c
 }
 
 // SetAuthToken requires every connection to authenticate via an Auth.Hello
@@ -378,10 +386,15 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 	v, err := s.mgr.Create(ctx, cfg)
 	if err != nil {
+		s.recordVMError()
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	if err := s.mgr.Start(ctx, v.ID); err != nil {
+		s.recordVMError()
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	if s.collectors != nil {
+		s.collectors.VMStartsTotal.Inc()
 	}
 	if p.AutoRemove {
 		go s.autoRemove(ctx, v)
@@ -393,6 +406,13 @@ func (s *Server) autoRemove(ctx context.Context, v *vm.VM) {
 	<-v.Done()
 	if err := s.mgr.Remove(ctx, v.ID); err != nil {
 		slog.Debug("auto-remove vm", "vm_id", v.ID, "err", err)
+	}
+}
+
+// recordVMError increments the VM error counter, if metrics are enabled.
+func (s *Server) recordVMError() {
+	if s.collectors != nil {
+		s.collectors.VMErrorsTotal.Inc()
 	}
 }
 
@@ -408,7 +428,11 @@ func (s *Server) handleStop(ctx context.Context, params json.RawMessage) (any, *
 		err = s.mgr.Stop(ctx, p.ID)
 	}
 	if err != nil {
+		s.recordVMError()
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	if s.collectors != nil {
+		s.collectors.VMStopsTotal.Inc()
 	}
 	return map[string]string{"status": "ok"}, nil
 }
@@ -419,7 +443,11 @@ func (s *Server) handleKill(ctx context.Context, params json.RawMessage) (any, *
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	if err := s.mgr.Kill(ctx, p.ID); err != nil {
+		s.recordVMError()
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	if s.collectors != nil {
+		s.collectors.VMStopsTotal.Inc()
 	}
 	return map[string]string{"status": "ok"}, nil
 }

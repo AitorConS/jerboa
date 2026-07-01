@@ -136,6 +136,10 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		return fmt.Errorf("jerboad: vm store: %w", err)
 	}
 
+	// Created early (no dependencies beyond version) so hypervisor managers
+	// below can be wired with WithMetrics/WithFCMetrics for lifecycle counters.
+	collectors := metrics.NewCollectors(version)
+
 	// Resolve hypervisor: flag > config file > default "qemu".
 	if hypervisor == "" {
 		cfg, err := config.Load(config.DefaultPath())
@@ -166,9 +170,9 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 			}
 		}
 		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
-		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore))
+		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors))
 	case "qemu":
-		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore))
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors))
 	default:
 		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
@@ -176,6 +180,15 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	netStore, err := network.NewStore(networksDir())
 	if err != nil {
 		return fmt.Errorf("jerboad: network store: %w", err)
+	}
+
+	// Opened early so the metrics updater below can poll the real image count.
+	// Nil-safe: the updater and Server.SetImageStore both tolerate a nil store.
+	var imgStore *image.Store
+	if store, ierr := image.NewStore(storePath); ierr != nil {
+		slog.Warn("jerboad: image store unavailable", "err", ierr)
+	} else {
+		imgStore = store
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)
@@ -191,15 +204,13 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		}
 	}()
 
-	collectors := metrics.NewCollectors(version)
-
 	if metricsAddr != "" {
 		go func() {
 			if err := metrics.Serve(ctx, metricsAddr, collectors); err != nil {
 				slog.Error("metrics server", "err", err)
 			}
 		}()
-		go metrics.NewVMStateUpdater(collectors, mgr, 5*time.Second).Run(ctx)
+		go metrics.NewVMStateUpdater(collectors, mgr, imgStore, 5*time.Second).Run(ctx)
 	}
 
 	if uiAddr != "" {
@@ -251,6 +262,7 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 	if err != nil {
 		return fmt.Errorf("jerboad: vm server: %w", err)
 	}
+	vmSrv.SetCollectors(collectors)
 
 	// Require a token on every connection when one is configured. A TCP
 	// endpoint without a token is reachable by any local process, so warn.
@@ -261,11 +273,9 @@ func serve(ctx context.Context, endpoint, authToken, qemuBin, storePath, vmStore
 		slog.Warn("jerboad: TCP endpoint without --auth-token is reachable by any local process; set a token")
 	}
 
-	// Attach the daemon's image store so it can resolve image references for
-	// VM.Run and serve Image.List/Image.Remove.
-	if imgStore, err := image.NewStore(storePath); err != nil {
-		slog.Warn("jerboad: image store unavailable", "err", err)
-	} else {
+	// Attach the daemon's image store (opened earlier, above) so it can
+	// resolve image references for VM.Run and serve Image.List/Image.Remove.
+	if imgStore != nil {
 		vmSrv.SetImageStore(imgStore)
 		// Enable server-side image builds (Image.Build) with a lazy mkfs
 		// resolver: the kernel toolchain is downloaded (and cached) on the first
