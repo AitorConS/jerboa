@@ -70,10 +70,10 @@ func TestResolverNetworkForIP(t *testing.T) {
 	require.Equal(t, "app", r.NetworkForIP("10.100.0.3"))
 	require.Equal(t, "other", r.NetworkForIP("10.200.0.5"))
 	// A stopped VM is not a live record.
-	require.Equal(t, "", r.NetworkForIP("10.100.0.9"))
+	require.Empty(t, r.NetworkForIP("10.100.0.9"))
 	// Unknown / empty addresses resolve to no network.
-	require.Equal(t, "", r.NetworkForIP("10.100.0.99"))
-	require.Equal(t, "", r.NetworkForIP(""))
+	require.Empty(t, r.NetworkForIP("10.100.0.99"))
+	require.Empty(t, r.NetworkForIP(""))
 }
 
 func TestResolverResolveAmbiguous(t *testing.T) {

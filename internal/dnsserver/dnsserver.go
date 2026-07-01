@@ -75,7 +75,9 @@ func (s *Server) ListenAndServe(addr string) error {
 // Close stops the server.
 func (s *Server) Close() error {
 	if s.conn != nil {
-		return s.conn.Close()
+		if err := s.conn.Close(); err != nil {
+			return fmt.Errorf("dnsserver: close: %w", err)
+		}
 	}
 	return nil
 }
@@ -139,13 +141,13 @@ func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, 
 	})
 	b.EnableCompression()
 	if err := b.StartQuestions(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start questions: %w", err)
 	}
 	if err := b.Question(q); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("add question: %w", err)
 	}
 	if err := b.StartAnswers(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start answers: %w", err)
 	}
 	err := b.AResource(dnsmessage.ResourceHeader{
 		Name:  q.Name,
@@ -154,9 +156,13 @@ func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, 
 		TTL:   30,
 	}, dnsmessage.AResource{A: ip})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("add A resource: %w", err)
 	}
-	return b.Finish()
+	resp, err := b.Finish()
+	if err != nil {
+		return nil, fmt.Errorf("finish response: %w", err)
+	}
+	return resp, nil
 }
 
 func (s *Server) nxdomain(id uint16, q dnsmessage.Question) ([]byte, error) {
@@ -168,12 +174,16 @@ func (s *Server) nxdomain(id uint16, q dnsmessage.Question) ([]byte, error) {
 		RCode:              dnsmessage.RCodeNameError,
 	})
 	if err := b.StartQuestions(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("start questions: %w", err)
 	}
 	if err := b.Question(q); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("add question: %w", err)
 	}
-	return b.Finish()
+	resp, err := b.Finish()
+	if err != nil {
+		return nil, fmt.Errorf("finish response: %w", err)
+	}
+	return resp, nil
 }
 
 // forward relays the raw query to the upstream resolver and returns its raw
@@ -184,18 +194,18 @@ func (s *Server) forward(query []byte) ([]byte, error) {
 	var d net.Dialer
 	conn, err := d.DialContext(ctx, "udp", s.upstream)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("dial upstream: %w", err)
 	}
 	defer conn.Close()
 	deadline, _ := ctx.Deadline()
 	_ = conn.SetDeadline(deadline)
 	if _, err := conn.Write(query); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("write upstream: %w", err)
 	}
 	resp := make([]byte, 512)
 	n, err := conn.Read(resp)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read upstream: %w", err)
 	}
 	return resp[:n], nil
 }

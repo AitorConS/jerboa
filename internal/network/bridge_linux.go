@@ -56,7 +56,9 @@ func bridgeExists(name string) bool {
 // delivered to the daemon regardless of which bridge they arrive on — a single
 // address serves every network. Idempotent: an existing address is success.
 func EnsureDNSAddress(ip string) error {
-	out, err := exec.Command("ip", "addr", "add", ip+"/32", "dev", "lo").CombinedOutput()
+	cidr := ip + "/32"
+	// ip is a compile-time constant (netconst.DNSAnycastIP), not user input.
+	out, err := exec.Command("ip", "addr", "add", cidr, "dev", "lo").CombinedOutput() //nolint:gosec // ip is a trusted internal constant
 	if err != nil && !addrAlreadyAssigned(string(out)) {
 		return fmt.Errorf("assign dns address %s to lo: %w (output: %s)", ip, err, strings.TrimSpace(string(out)))
 	}
