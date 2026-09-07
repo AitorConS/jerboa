@@ -12,9 +12,17 @@ import tarfile
 import tempfile
 import urllib.request
 
+
+def urlopen(url, timeout):
+    # releases.jerboa.dev sits behind Cloudflare, which 403s the default
+    # Python-urllib User-Agent. Send a descriptive one so the fetch is allowed.
+    request = urllib.request.Request(url, headers={"User-Agent": "jerboa-release-verify/1.0"})
+    return urllib.request.urlopen(request, timeout=timeout)
+
+
 manifest_path, base, expected = sys.argv[1:4]
 manifest_bytes = pathlib.Path(manifest_path).read_bytes()
-with urllib.request.urlopen(base.rstrip("/") + "/channels/stable.json", timeout=60) as response:
+with urlopen(base.rstrip("/") + "/channels/stable.json", timeout=60) as response:
     if json.loads(response.read()) != json.loads(manifest_bytes):
         raise SystemExit("Public channel does not match the signed release manifest")
 manifest = json.loads(manifest_bytes)
@@ -27,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix="jerboa-release-check-") as temp:
         assets = component.get("platforms") or component.get("files") or {"rootfs": component}
         for platform, asset in assets.items():
             target = root / (component_name + "-" + platform)
-            with urllib.request.urlopen(asset["url"], timeout=120) as response, target.open("wb") as output:
+            with urlopen(asset["url"], timeout=120) as response, target.open("wb") as output:
                 digest = hashlib.sha256()
                 while chunk := response.read(1024 * 1024):
                     digest.update(chunk)
