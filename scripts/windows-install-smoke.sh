@@ -12,7 +12,7 @@
 #
 # Assertions avoid Windows->WSL2 host networking (published ports land on the
 # daemon host inside the distro, not on localhost of the Windows runner): we
-# read VM/service state from the daemon itself via `jerboa ps` / `compose ps`.
+# read VM state and health from the daemon itself via `jerboa ps`.
 #
 # Required environment:
 #   JERBOA_BIN       dir holding the installed jerboa.exe (unix path form)
@@ -29,29 +29,32 @@ export PATH="${JERBOA_BIN}:${PATH}"
 log()  { echo "==> $*"; }
 fail() { echo "SMOKE FAILED: $*" >&2; exit 1; }
 
-# state_of <state-line-producer...> : print the STATE column (3rd) of the row
-# whose first column equals KEY. Works for both `ps` (ID NAME STATE ...) — no,
-# so callers pass the right table; here we match on a named column index.
-# Usage: pick_state <col-of-key> <key> <table-file>
-pick_state() {
-  awk -v kc="$1" -v key="$2" 'NR>1 && $kc==key {print $3; exit}' "$3"
-}
-
-# wait_state <desc> <col-of-key> <key> <cmd...> : poll `cmd` (which prints a
-# table) until the keyed row's STATE is running|healthy, or time out.
-wait_state() {
-  local desc="$1" kc="$2" key="$3"; shift 3
+# wait_healthy <name...>: require every named VM to be running AND healthy
+# in the same successful ps response. STATE alone says nothing about readiness.
+wait_healthy() {
   local tmp; tmp="$(mktemp)"
-  local st=""
+  local ready name
   for _ in $(seq 1 30); do
-    "$@" >"$tmp" 2>/dev/null || true
-    st="$(pick_state "$kc" "$key" "$tmp")"
-    case "$st" in running|healthy) rm -f "$tmp"; return 0 ;; esac
+    ready=true
+    if jerboa ps >"$tmp" 2>/dev/null; then
+      for name in "$@"; do
+        # ps columns: ID NAME STATE HEALTH IMAGE.
+        if ! awk -v name="$name" '
+          NR>1 && $2==name && $3=="running" && $4=="healthy" { found=1 }
+          END { exit !found }
+        ' "$tmp"; then
+          ready=false
+        fi
+      done
+    else
+      ready=false
+    fi
+    if [ "$ready" = true ]; then rm -f "$tmp"; return 0; fi
     sleep 2
   done
-  echo "--- last state table for ${desc} ---" >&2; cat "$tmp" >&2 || true
+  echo "--- last state/health table for $* ---" >&2; cat "$tmp" >&2 || true
   rm -f "$tmp"
-  fail "${desc} never reached running/healthy (last state: '${st:-none}')"
+  fail "$* never reached running AND healthy"
 }
 
 log "jerboa version"; jerboa version
@@ -85,9 +88,9 @@ log "[2/3] flask-postgres (compose: web + db)"
 jerboa build "${EXAMPLES}/postgresql"     --name postgresql                          || fail "postgresql build"
 jerboa build "${EXAMPLES}/flask-postgres" --name flask-postgres --pkg-source ops --port 8080 || fail "flask-postgres build"
 jerboa compose up "${EXAMPLES}/flask-postgres/stack.yaml"                             || fail "compose up"
-# web declares health_check: tcp:8080 in stack.yaml, so a passing check surfaces
-# as STATE=healthy; the daemon evaluates it inside the distro.
-wait_state "flask-postgres/web" 1 web jerboa compose ps "${EXAMPLES}/flask-postgres/stack.yaml"
+# The web HTTP check queries PostgreSQL; require both VMs to be healthy.
+# compose up only warns on failed health checks, so enforce them here.
+wait_healthy web db
 jerboa compose down "${EXAMPLES}/flask-postgres/stack.yaml" || true
 
 # ── 3. mongodb — persistent volume + bridge network, detached ─────────────────
@@ -97,7 +100,8 @@ jerboa volume  create mongodata --size 800M >/dev/null 2>&1 || true
 jerboa build "${EXAMPLES}/mongodb" --name mongodb || fail "mongodb build"
 # --port requires --network; publish 27017 so a real mongod bind is exercised.
 jerboa run mongodb:latest --name mongo -d \
-  -v mongodata:/data/db --network mynet -p 27017:27017 || fail "mongodb run"
-wait_state "mongodb" 2 mongo jerboa ps   # ps columns: ID NAME STATE HEALTH IMAGE
+  -v mongodata:/data/db --network mynet -p 27017:27017 \
+  --health-check tcp:27017 || fail "mongodb run"
+wait_healthy mongo
 
 log "OK — all three unikernels validated against the installed CLI"

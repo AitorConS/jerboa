@@ -120,7 +120,7 @@ jobs:
               *) CODE=true ;;
             esac
             case "$f" in
-              cmd/*|internal/*|distro/*|kernel/*|examples/*|scripts/windows-install-smoke.sh|.github/workflows/main.yml) INSTALLER=true ;;
+              cmd/*|internal/*|distro/*|kernel/*|examples/*|scripts/windows-install-smoke*.sh|.github/workflows/main.yml) INSTALLER=true ;;
             esac
             if [ "$f" = "VERSION.md" ]; then VERSION_CHANGED=true; fi
           done <<< "$FILES"
@@ -672,6 +672,9 @@ jobs:
       - name: Read version
         run: echo "CLI_VERSION=v$(cat VERSION.md | tr -d '[:space:]')" >> "$GITHUB_ENV"
 
+      - name: Test installer smoke assertions
+        run: bash scripts/windows-install-smoke-test.sh
+
       - name: Build Windows CLI
         env:
           GOOS: windows
@@ -757,6 +760,11 @@ jobs:
       - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
         with:
           node-version: '22'
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.25.13'
+          cache: true
 
       - name: Download freshly-built Windows CLI
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
