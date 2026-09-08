@@ -733,7 +733,7 @@ jobs:
       # leave a registered distro, the install dir, or host config behind. Wipe
       # all of it so every run starts from a pristine machine.
       - name: Pre-clean leftover jerboa state
-        shell: pwsh
+        shell: powershell
         run: |
           Start-Process -Wait -FilePath 'C:\jerboa-desktop\Uninstall Jerboa Desktop.exe' -ArgumentList '/S' -ErrorAction SilentlyContinue
           wsl --unregister jerboa 2>$null
@@ -792,7 +792,7 @@ jobs:
           npx electron-builder --win --publish never
 
       - name: Silent-install the desktop app
-        shell: pwsh
+        shell: powershell
         run: |
           $installer = Get-ChildItem desktop/dist/jerboa-desktop-setup-*.exe | Select-Object -First 1
           if (-not $installer) { throw "installer .exe not found in desktop/dist" }
@@ -824,7 +824,7 @@ jobs:
       #   C:\jerboa-desktop        the app install dir
       - name: Cleanup — uninstall, unregister distro, wipe host state
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           $uninst = 'C:\jerboa-desktop\Uninstall Jerboa Desktop.exe'
           if (Test-Path $uninst) {
