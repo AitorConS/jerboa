@@ -743,7 +743,11 @@ jobs:
           if (Test-Path $uninst) {
             Start-Process -Wait -FilePath $uninst -ArgumentList '/S' -ErrorAction SilentlyContinue
           }
-          wsl --unregister jerboa 2>$null
+          # WSL may be absent on this host. Run through cmd with its own
+          # redirection so the wsl stub's "not installed" message never becomes
+          # a PowerShell NativeCommandError that fails the step; there's simply
+          # nothing to unregister then.
+          cmd /c "wsl.exe --unregister jerboa >nul 2>nul"
           Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
             'C:\jerboa-desktop', "$env:USERPROFILE\.jerboa", "$env:LOCALAPPDATA\jerboa"
           exit 0
@@ -838,7 +842,11 @@ jobs:
             Start-Process -Wait -FilePath $uninst -ArgumentList '/S' -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 3   # NSIS uninstaller relaunches from temp; let it finish
           }
-          wsl --unregister jerboa 2>$null
+          # WSL may be absent on this host. Run through cmd with its own
+          # redirection so the wsl stub's "not installed" message never becomes
+          # a PowerShell NativeCommandError that fails the step; there's simply
+          # nothing to unregister then.
+          cmd /c "wsl.exe --unregister jerboa >nul 2>nul"
           Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
             'C:\jerboa-desktop', "$env:USERPROFILE\.jerboa", "$env:LOCALAPPDATA\jerboa"
           exit 0
