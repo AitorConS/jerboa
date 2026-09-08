@@ -727,7 +727,11 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        shell: bash
+        # Pin Git Bash explicitly. `shell: bash` resolves `bash` off PATH, where
+        # C:\Windows\System32\bash.exe (the WSL launcher) shadows Git Bash and
+        # fails ("no distributions installed") since WSL here has no distro by
+        # design — jerboa imports its own with `wsl --import`.
+        shell: 'C:\Program Files\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
     steps:
       # Persistent self-hosted runner: a prior run that crashed mid-way could
       # leave a registered distro, the install dir, or host config behind. Wipe
