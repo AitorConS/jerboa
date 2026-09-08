@@ -735,7 +735,14 @@ jobs:
       - name: Pre-clean leftover jerboa state
         shell: powershell
         run: |
-          Start-Process -Wait -FilePath 'C:\jerboa-desktop\Uninstall Jerboa Desktop.exe' -ArgumentList '/S' -ErrorAction SilentlyContinue
+          # A pristine machine has nothing installed, so the uninstaller may be
+          # absent. Start-Process raises a *terminating* error on a missing
+          # -FilePath that -ErrorAction can't swallow, so guard with Test-Path
+          # (same as the Cleanup step) instead of relying on SilentlyContinue.
+          $uninst = 'C:\jerboa-desktop\Uninstall Jerboa Desktop.exe'
+          if (Test-Path $uninst) {
+            Start-Process -Wait -FilePath $uninst -ArgumentList '/S' -ErrorAction SilentlyContinue
+          }
           wsl --unregister jerboa 2>$null
           Remove-Item -Recurse -Force -ErrorAction SilentlyContinue `
             'C:\jerboa-desktop', "$env:USERPROFILE\.jerboa", "$env:LOCALAPPDATA\jerboa"
