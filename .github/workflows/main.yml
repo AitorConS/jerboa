@@ -772,10 +772,8 @@ jobs:
         with:
           node-version: '22'
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.25.13'
-          cache: true
+      # Go is pre-installed on the self-hosted windows-virt runner; setup-go was
+      # removed because it hung for ~20 min downloading the toolchain there.
 
       - name: Download freshly-built Windows CLI
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
