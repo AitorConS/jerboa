@@ -727,12 +727,19 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        # Pin Git Bash explicitly. `shell: bash` resolves `bash` off PATH, where
-        # C:\Windows\System32\bash.exe (the WSL launcher) shadows Git Bash and
-        # fails ("no distributions installed") since WSL here has no distro by
-        # design — jerboa imports its own with `wsl --import`.
-        shell: 'C:\Program Files\Git\bin\bash.exe --noprofile --norc -eo pipefail {0}'
+        shell: bash
     steps:
+      # `shell: bash` resolves `bash` off PATH, where C:\Windows\System32\
+      # bash.exe (the WSL launcher) shadows Git Bash and fails ("no
+      # distributions installed") — WSL has no distro here by design, jerboa
+      # imports its own with `wsl --import`. Prepend Git's bin via GITHUB_PATH
+      # so every later bash step resolves to Git Bash. Done through PATH (not a
+      # custom shell string) because a shell path with spaces breaks the
+      # runner's shell parser.
+      - name: Put Git Bash ahead of WSL bash on PATH
+        shell: powershell
+        run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files\Git\bin'
+
       # Persistent self-hosted runner: a prior run that crashed mid-way could
       # leave a registered distro, the install dir, or host config behind. Wipe
       # all of it so every run starts from a pristine machine.
