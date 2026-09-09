@@ -23,7 +23,7 @@ Every `jerboa` command accepts:
 |---|---|
 | `-H, --host` | Daemon endpoint override |
 | `--store` | Local client-side store root used by commands that touch client-owned state |
-| `--output table|json` | Output format |
+| `--output table\|json` | Output format |
 | `-V, --verbose` | Show raw build/download output |
 | `-v, --version` | Show CLI version |
 
