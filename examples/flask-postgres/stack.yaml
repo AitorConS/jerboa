@@ -10,6 +10,7 @@ version: "1"
 services:
   db:
     image: postgresql:latest
+    health_check: "tcp:5432"
     memory: 512M
     networks: [app]
     ports:
@@ -31,7 +32,8 @@ services:
       - PGPORT=5432
       - PGUSER=eyberg          # superuser baked into the eyberg/postgresql data dir
       - PGDATABASE=postgres
-    health_check: "tcp:8080"
+    # The index queries PostgreSQL, so readiness includes the database connection.
+    health_check: "http:8080:/"
     restart: "on-failure:5"
 
 networks:
