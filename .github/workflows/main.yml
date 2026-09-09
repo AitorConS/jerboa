@@ -883,8 +883,8 @@ jobs:
       (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
     timeout-minutes: 15
-    # Publishes the freshly built cli/daemon/distro (and the current desktop
-    # release) straight to the R2 origin as a minisign-signed channel manifest —
+    # Publishes the freshly built cli/daemon/distro and references the existing
+    # desktop release in a minisign-signed channel manifest —
     # no GitHub Releases round-trip. The kernel component is carried forward from
     # the existing signed manifest: its artifacts (incl. kernel-fc.img, which no
     # workflow rebuilds) already live in R2 under kernel/<ver>/ and are re-hashed
@@ -961,19 +961,35 @@ jobs:
              kern/mkfs-linux-amd64 kern/dump-linux-amd64 "pub/kernel/$KVER/"
 
           # The desktop app publishes independently (JerboaDesktop release.yml) to
-          # the R2 desktop/ channel. Mirror its current version into the signed
-          # manifest so `jerboa version` can report it. Optional: omit when absent.
+          # the R2 desktop/ channel. Hash its existing installer for the signed
+          # manifest, but never upload or copy desktop artifacts to another key.
+          # Desktop release.yml is the only publisher of desktop/*.
           DESKTOP_JSON=""
           if curl -fsSL "$BASE_URL/desktop/latest.yml" -o desktop-latest.yml 2>/dev/null; then
             DVER="v$(sed -n 's/^version:[[:space:]]*//p' desktop-latest.yml | tr -d '[:space:]')"
             DFILE="$(sed -n 's/^path:[[:space:]]*//p' desktop-latest.yml | tr -d '[:space:]')"
-            if [ -n "$DVER" ] && [ -n "$DFILE" ] && curl -fsSL "$BASE_URL/desktop/$DFILE" -o desktop-installer 2>/dev/null; then
-              mkdir -p "pub/desktop/$DVER"
-              cp desktop-installer "pub/desktop/$DVER/$DFILE"
-              DESKTOP_JSON="\"desktop\": { \"version\": \"$DVER\", \"platforms\": { \"windows-amd64\": \"pub/desktop/$DVER/$DFILE\" } },"
-            else
-              echo "Desktop latest.yml present but incomplete; omitting desktop component."
+            if [[ ! "$DVER" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || [ "$DFILE" != "jerboa-desktop-setup-${DVER#v}.exe" ]; then
+              echo "::error::invalid desktop stable channel metadata"; exit 1
             fi
+            mkdir -p pub/desktop
+            curl -fsSL "$BASE_URL/desktop/$DFILE" -o "pub/desktop/$DFILE"
+            # Verify the updater metadata before signing a SHA-256 of the same
+            # bytes. A failed download or checksum must not silently drop Desktop.
+            python3 - "$DFILE" <<'PY'
+          import base64, hashlib, pathlib, re, sys
+          metadata = pathlib.Path('desktop-latest.yml').read_text()
+          match = re.search(r'^sha512: (\S+)\s*$', metadata, re.MULTILINE)
+          if not match:
+              raise SystemExit('Desktop channel is missing sha512')
+          expected = base64.b64decode(match[1], validate=True)
+          digest = hashlib.sha512()
+          with (pathlib.Path('pub/desktop') / sys.argv[1]).open('rb') as artifact:
+              for chunk in iter(lambda: artifact.read(1024 * 1024), b''):
+                  digest.update(chunk)
+          if digest.digest() != expected:
+              raise SystemExit('Desktop installer sha512 mismatch')
+          PY
+            DESKTOP_JSON="\"desktop\": { \"version\": \"$DVER\", \"platforms\": { \"windows-amd64\": \"pub/desktop/$DFILE\" } },"
           else
             echo "No desktop channel published yet; omitting desktop component."
           fi
@@ -1037,6 +1053,7 @@ jobs:
           aws s3 sync pub/ "s3://$BUCKET/" \
             --endpoint-url "$ENDPOINT" \
             --exclude 'channels/*' \
+            --exclude 'desktop/*' \
             --cache-control 'public, max-age=31536000, immutable'
           aws s3 cp pub/channels/stable.json "s3://$BUCKET/channels/stable.json" \
             --endpoint-url "$ENDPOINT" \

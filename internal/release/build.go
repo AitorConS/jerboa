@@ -16,7 +16,9 @@ import (
 // Spec is the input to manifest generation: it names each component's version
 // and the local files that make it up. The generator hashes those files and
 // derives their published URLs from the bucket convention
-// <base>/<component>/<version>/<basename>.
+// <base>/<component>/<version>/<basename>. Desktop uses
+// <base>/desktop/<basename>: electron-updater already uses versioned filenames
+// in that directory, owned exclusively by the Desktop release pipeline.
 type Spec struct {
 	Channel    string                   `json:"channel"`
 	Base       string                   `json:"base"`
@@ -61,6 +63,9 @@ func BuildManifest(spec Spec) (*Manifest, error) {
 			KernelVer: sc.KernelVer,
 		}
 		remoteDir := base + "/" + name + "/" + sc.Version
+		if name == ComponentDesktop {
+			remoteDir = base + "/desktop"
+		}
 
 		switch {
 		case sc.File != "":

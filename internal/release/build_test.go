@@ -20,6 +20,7 @@ func TestBuildManifest(t *testing.T) {
 	cliLin := write("jerboa-linux-amd64", "LINUX-CLI")
 	kimg := write("kernel.img", "KERNEL")
 	rootfs := write("jerboa-rootfs-amd64.tar.gz", "ROOTFS")
+	desktop := write("jerboa-desktop-setup-0.2.0.exe", "DESKTOP")
 
 	spec := Spec{
 		Channel: "stable",
@@ -31,6 +32,9 @@ func TestBuildManifest(t *testing.T) {
 			}},
 			"kernel": {Version: "v0.2.1", Files: map[string]string{"kernel.img": kimg}},
 			"distro": {Version: "v0.4.0", File: rootfs, KernelVer: "v0.2.1"},
+			"desktop": {Version: "v0.2.0", Platforms: map[string]string{
+				"windows-amd64": desktop,
+			}},
 		},
 	}
 
@@ -56,6 +60,18 @@ func TestBuildManifest(t *testing.T) {
 	distro, _ := parsed.Component(ComponentDistro)
 	assert.Equal(t, "v0.2.1", distro.KernelVer)
 	assert.Equal(t, "https://releases.jerboa.dev/distro/v0.4.0/jerboa-rootfs-amd64.tar.gz", distro.URL)
+
+	// The signed manifest must reference the updater's existing installer,
+	// rather than requiring a second copy in desktop/<version>/.
+	desk, ok := parsed.Component(ComponentDesktop)
+	require.True(t, ok)
+	installer, err := desk.Asset("windows", "amd64")
+	require.NoError(t, err)
+	assert.Equal(t, "https://releases.jerboa.dev/desktop/jerboa-desktop-setup-0.2.0.exe", installer.URL)
+	sum, size, err := hashFile(desktop)
+	require.NoError(t, err)
+	assert.Equal(t, sum, installer.SHA256)
+	assert.Equal(t, size, installer.Size)
 }
 
 func TestBuildManifestMissingFile(t *testing.T) {
