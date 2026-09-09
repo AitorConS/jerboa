@@ -33,8 +33,8 @@ fail() { echo "SMOKE FAILED: $*" >&2; exit 1; }
 # in the same successful ps response. STATE alone says nothing about readiness.
 wait_healthy() {
   local tmp; tmp="$(mktemp)"
-  local ready name
-  for _ in $(seq 1 30); do
+  local ready name id
+  for _ in $(seq 1 60); do
     ready=true
     if jerboa ps >"$tmp" 2>/dev/null; then
       for name in "$@"; do
@@ -53,6 +53,15 @@ wait_healthy() {
     sleep 2
   done
   echo "--- last state/health table for $* ---" >&2; cat "$tmp" >&2 || true
+  # Dump each VM's serial console so an unhealthy service explains itself (e.g. a
+  # web app that can't reach its database) instead of failing blind. ID is the
+  # first ps column; jerboa logs takes it.
+  for name in "$@"; do
+    id="$(awk -v n="$name" 'NR>1 && $2==n { print $1; exit }' "$tmp")"
+    [ -n "$id" ] || continue
+    echo "--- serial console: $name ($id) ---" >&2
+    jerboa logs "$id" >&2 2>&1 || true
+  done
   rm -f "$tmp"
   fail "$* never reached running AND healthy"
 }
