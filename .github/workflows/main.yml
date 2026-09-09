@@ -286,11 +286,11 @@ jobs:
       - name: Install cross-compiler toolchain
         run: |
           # The GitHub ubuntu image ships a Google Chrome apt source that
-          # periodically serves a corrupt index ("Hash Sum mismatch"), which
-          # fails apt-get update. We only need Ubuntu-archive packages, so drop
-          # that third-party source first (leaving ubuntu.sources intact).
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update -q
+          # periodically serves a corrupt index ("Hash Sum mismatch"), failing
+          # apt-get update. Our packages are all in the Ubuntu archive, whose
+          # indices do refresh, so tolerate a failed update and let the install
+          # resolve from the lists that updated fine.
+          sudo apt-get update -q || true
           sudo apt-get install -y gcc-multilib nasm qemu-utils
 
       - name: Build kernel
@@ -568,11 +568,11 @@ jobs:
       - name: Install kernel toolchain deps
         run: |
           # The GitHub ubuntu image ships a Google Chrome apt source that
-          # periodically serves a corrupt index ("Hash Sum mismatch"), which
-          # fails apt-get update. We only need Ubuntu-archive packages, so drop
-          # that third-party source first (leaving ubuntu.sources intact).
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update -q
+          # periodically serves a corrupt index ("Hash Sum mismatch"), failing
+          # apt-get update. Our packages are all in the Ubuntu archive, whose
+          # indices do refresh, so tolerate a failed update and let the install
+          # resolve from the lists that updated fine.
+          sudo apt-get update -q || true
           sudo apt-get install -y gcc-multilib nasm qemu-utils
 
       - name: Build kernel and tools
@@ -697,11 +697,11 @@ jobs:
       - name: Install kernel toolchain deps
         run: |
           # The GitHub ubuntu image ships a Google Chrome apt source that
-          # periodically serves a corrupt index ("Hash Sum mismatch"), which
-          # fails apt-get update. We only need Ubuntu-archive packages, so drop
-          # that third-party source first (leaving ubuntu.sources intact).
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update -q
+          # periodically serves a corrupt index ("Hash Sum mismatch"), failing
+          # apt-get update. Our packages are all in the Ubuntu archive, whose
+          # indices do refresh, so tolerate a failed update and let the install
+          # resolve from the lists that updated fine.
+          sudo apt-get update -q || true
           sudo apt-get install -y gcc-multilib nasm qemu-utils
 
       - name: Build kernel and tools
