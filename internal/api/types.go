@@ -70,6 +70,7 @@ type VolumeMountSpec struct {
 
 // RunParams are the parameters for the VM.Run method.
 type RunParams struct {
+	EmulateX86 bool `json:"emulate_x86,omitempty"`
 	// Image is a name:tag (or sha) reference resolved against the daemon's
 	// image store. When set it takes precedence over ImagePath.
 	Image string `json:"image,omitempty"`
@@ -142,6 +143,8 @@ type VMInfo struct {
 
 // VMDetail is the full serialisable representation of a VM.
 type VMDetail struct {
+	Architecture    string            `json:"architecture,omitempty"`
+	Emulated        bool              `json:"emulated,omitempty"`
 	ID              string            `json:"id"`
 	State           string            `json:"state"`
 	Image           string            `json:"image"`

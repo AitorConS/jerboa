@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	pkg "github.com/AitorConS/jerboa/internal/package"
@@ -262,6 +263,9 @@ func setupOpsResolveServer(t *testing.T, list pkg.OpsPackageList, archives map[s
 		w.Write(idxData)
 	})
 	for path, data := range archives {
+		if pkg.ArchSlug() == "arm64" {
+			path = strings.TrimSuffix(path, ".tar.gz") + "/arm64.tar.gz"
+		}
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/gzip")
 			w.Write(data)
@@ -284,7 +288,7 @@ func TestResolveOpsPackages_DownloadExtractList(t *testing.T) {
 	setupOpsResolveServer(t, pkg.OpsPackageList{
 		Version: 1,
 		Packages: []pkg.OpsPackage{
-			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha, Arch: pkg.ArchSlug()},
 		},
 	}, map[string][]byte{
 		"/eyberg/node/v16.5.0.tar.gz": archiveData,
@@ -328,7 +332,7 @@ func TestResolveOpsPackages_AlreadyDownloaded(t *testing.T) {
 	setupOpsResolveServer(t, pkg.OpsPackageList{
 		Version: 1,
 		Packages: []pkg.OpsPackage{
-			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha, Arch: pkg.ArchSlug()},
 		},
 	}, map[string][]byte{
 		"/eyberg/node/v16.5.0.tar.gz": archiveData,

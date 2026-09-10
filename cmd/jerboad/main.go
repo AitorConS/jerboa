@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package main
 
@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -109,7 +110,7 @@ func newRootCmd() *cobra.Command {
 		"shared secret required from clients via Auth.Hello (env: JERBOA_AUTH_TOKEN); empty disables auth")
 	root.Flags().BoolVar(&allowInsecure, "insecure", false,
 		"allow serving a TCP endpoint without an auth token (unsafe; a Unix socket needs no token)")
-	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
+	root.Flags().StringVar(&qemuBin, "qemu", vm.DefaultQEMUBinary(),
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
 		"Hypervisor backend: qemu or firecracker (overrides ~/.jerboa/config.toml)")
@@ -183,6 +184,9 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	}
 	switch hypervisor {
 	case "firecracker":
+		if runtime.GOOS != "linux" {
+			return fmt.Errorf("Firecracker requires Linux/KVM; use qemu on macOS")
+		}
 		if fcKernelPath == "" {
 			slog.Info("jerboad: ensuring Firecracker kernel is available", "dir", toolsDir)
 			dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -196,7 +200,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors))
 	case "qemu":
-		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors))
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")))
 	default:
 		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
@@ -247,11 +251,23 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		}()
 	}
 
+	if qm, ok := mgr.(*vm.QEMUManager); ok {
+		dnsUpstream := "1.1.1.1:53"
+		if upstream, exists := os.LookupEnv("JERBOA_DNS_UPSTREAM"); exists {
+			dnsUpstream = upstream
+		}
+		vm.WithGuestDNS(dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream).Answer)(qm)
+	}
 	store := mgr.Store()
 	if err := store.Restore(); err != nil {
 		slog.Warn("jerboad: failed to restore VMs from disk", "err", err)
 	}
 
+	if qm, ok := mgr.(*vm.QEMUManager); ok {
+		if err := qm.RestoreHostRuntime(ctx); err != nil {
+			return fmt.Errorf("restore native runtime: %w", err)
+		}
+	}
 	var clusterLister apiserver.ClusterMemberLister
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {
@@ -335,47 +351,50 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		return tools.ResolveVolumeSeeder(rctx, toolsDir, "")
 	})
 
-	// Start the guest DNS server so VMs can resolve each other by name on their
-	// network. The reserved address is bound to loopback and reached by guests
-	// through their default gateway; queries are scoped by source IP. Address
-	// setup is best-effort (it is idempotent and usually already in place from a
-	// prior run), and the server starts regardless so a benign "already
-	// assigned" never disables name resolution.
-	if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
-		slog.Warn("jerboad: guest dns address setup failed", "err", err)
-	}
-	// Upstream resolver for names the daemon does not own. Overridable so
-	// restricted/offline environments can point at their own resolver (or set
-	// it empty to disable forwarding).
-	dnsUpstream := "1.1.1.1:53"
-	if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
-		dnsUpstream = v
-	}
-	dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)
-	// Close the listener on shutdown so ListenAndServe returns cleanly, matching
-	// the cluster server teardown above.
-	go func() {
-		<-ctx.Done()
-		_ = dnsSrv.Close()
-	}()
-	go func() {
-		addr := net.JoinHostPort(netconst.DNSAnycastIP, strconv.Itoa(netconst.DNSPort))
-		// A freshly restarted daemon can briefly race the previous process's
-		// UDP socket; retry the bind a few times before giving up.
-		for attempt := 0; attempt < 10; attempt++ {
-			err := dnsSrv.ListenAndServe(addr)
-			if err == nil {
-				return // clean shutdown (listener closed)
-			}
-			// Stop retrying once the daemon is shutting down.
-			if ctx.Err() != nil {
-				return
-			}
-			slog.Warn("jerboad: guest dns server bind failed; retrying", "attempt", attempt+1, "err", err)
-			time.Sleep(time.Second)
+	if runtime.GOOS == "linux" {
+		// Start the guest DNS server so VMs can resolve each other by name on their
+		// network. The reserved address is bound to loopback and reached by guests
+		// through their default gateway; queries are scoped by source IP. Address
+		// setup is best-effort (it is idempotent and usually already in place from a
+		// prior run), and the server starts regardless so a benign "already
+		// assigned" never disables name resolution.
+		if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
+			slog.Warn("jerboad: guest dns address setup failed", "err", err)
 		}
-		slog.Error("jerboad: guest dns server gave up starting")
-	}()
+		// Upstream resolver for names the daemon does not own. Overridable so
+		// restricted/offline environments can point at their own resolver (or set
+		// it empty to disable forwarding).
+		dnsUpstream := "1.1.1.1:53"
+		if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
+			dnsUpstream = v
+		}
+		dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)
+		// Close the listener on shutdown so ListenAndServe returns cleanly, matching
+		// the cluster server teardown above.
+		go func() {
+			<-ctx.Done()
+			_ = dnsSrv.Close()
+		}()
+		go func() {
+			addr := net.JoinHostPort(netconst.DNSAnycastIP, strconv.Itoa(netconst.DNSPort))
+			// A freshly restarted daemon can briefly race the previous process's
+			// UDP socket; retry the bind a few times before giving up.
+			for attempt := 0; attempt < 10; attempt++ {
+				err := dnsSrv.ListenAndServe(addr)
+				if err == nil {
+					return // clean shutdown (listener closed)
+				}
+				// Stop retrying once the daemon is shutting down.
+				if ctx.Err() != nil {
+					return
+				}
+				slog.Warn("jerboad: guest dns server bind failed; retrying", "attempt", attempt+1, "err", err)
+				time.Sleep(time.Second)
+			}
+			slog.Error("jerboad: guest dns server gave up starting")
+		}()
+
+	}
 
 	slog.Info("jerboad listening", "endpoint", endpoint, "hypervisor", hypervisor)
 

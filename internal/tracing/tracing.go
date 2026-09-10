@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 // Package tracing provides OpenTelemetry tracing for the unikernel engine daemon.
 package tracing

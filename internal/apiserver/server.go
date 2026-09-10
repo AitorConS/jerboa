@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package apiserver
 
@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -394,6 +395,20 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		return nil, rerr
 	}
 
+	architecture := ""
+	if runtime.GOOS == "darwin" && (p.ImagePath != "" || looksLikePath(p.Image)) {
+		architecture = "arm64"
+		if p.EmulateX86 {
+			architecture = "amd64"
+		}
+	}
+	if m := resolvedManifest; m != nil {
+		architecture = m.Architecture
+		if runtime.GOOS == "darwin" && m.Architecture != "arm64" && !p.EmulateX86 {
+			return nil, &api.RPCError{Code: -32000, Message: "native macOS requires an ARM64 image; rebuild with --platform linux/arm64 or explicitly use --emulate-x86"}
+		}
+	}
+
 	// The daemon owns each reservation until creation succeeds, rolling it back on failure.
 	assignedIP := ""
 	if p.NetworkName != "" {
@@ -444,7 +459,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		}
 		// Baked ports only publish when the VM joins a network; without one
 		// there is nothing to forward through, so leave them inert.
-		if len(portMaps) == 0 && p.NetworkName != "" && len(m.Config.Ports) > 0 {
+		if len(portMaps) == 0 && (p.NetworkName != "" || runtime.GOOS == "darwin") && len(m.Config.Ports) > 0 {
 			if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
 				portMaps = portMapsFromSpec(specs)
 			}
@@ -461,25 +476,27 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 
 	cfg := vm.Config{
-		ImagePath:   imagePath,
-		ImageDigest: imageDigest,
-		ImageRef:    p.Image,
-		Memory:      memory,
-		CPUs:        cpus,
-		NetworkName: p.NetworkName,
-		PortMaps:    portMaps,
-		Env:         p.Env,
-		Name:        p.Name,
-		Volumes:     volumeMountsFromSpec(p.Volumes),
-		Attach:      p.Attach,
-		IPAddress:   p.IPAddress,
-		GatewayIP:   p.GatewayIP,
-		BridgeName:  p.BridgeName,
-		SubnetMask:  p.SubnetMask,
-		CPUShares:   p.CPUShares,
-		MemoryMax:   p.MemoryMax,
-		DiskIOPS:    p.DiskIOPS,
-		DiskBPS:     p.DiskBPS,
+		EmulateX86:   p.EmulateX86,
+		Architecture: architecture,
+		ImagePath:    imagePath,
+		ImageDigest:  imageDigest,
+		ImageRef:     p.Image,
+		Memory:       memory,
+		CPUs:         cpus,
+		NetworkName:  p.NetworkName,
+		PortMaps:     portMaps,
+		Env:          p.Env,
+		Name:         p.Name,
+		Volumes:      volumeMountsFromSpec(p.Volumes),
+		Attach:       p.Attach,
+		IPAddress:    p.IPAddress,
+		GatewayIP:    p.GatewayIP,
+		BridgeName:   p.BridgeName,
+		SubnetMask:   p.SubnetMask,
+		CPUShares:    p.CPUShares,
+		MemoryMax:    p.MemoryMax,
+		DiskIOPS:     p.DiskIOPS,
+		DiskBPS:      p.DiskBPS,
 	}
 	if p.HealthCheck != nil {
 		cfg.HealthCheck = &vm.HealthCheckConfig{
@@ -1105,9 +1122,13 @@ func (s *Server) handleNetworkReleaseIP(params json.RawMessage) (any, *api.RPCEr
 }
 
 func networkToInfo(n *network.Network) api.NetworkInfo {
+	driver := n.Driver
+	if runtime.GOOS == "darwin" {
+		driver = "userspace"
+	}
 	return api.NetworkInfo{
 		Name:      n.Name,
-		Driver:    n.Driver,
+		Driver:    driver,
 		Subnet:    n.Subnet,
 		Gateway:   n.Gateway,
 		Bridge:    n.Bridge,

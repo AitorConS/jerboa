@@ -2,12 +2,14 @@ package image
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -107,6 +109,24 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
+	architecture := ""
+	if runtime.GOOS == "darwin" {
+		f, err := elf.Open(cfg.BinaryPath)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("ARM64 ELF: %w", err)
+		}
+		machine := f.Machine
+		_ = f.Close()
+		switch machine {
+		case elf.EM_AARCH64:
+			architecture = "arm64"
+		case elf.EM_X86_64:
+			architecture = "amd64"
+		default:
+			return Manifest{}, fmt.Errorf("macOS supports Linux ARM64 or x86_64 ELF; got %s", machine)
+		}
+	}
+
 	tmp, err := os.CreateTemp("", "jerboa-build-*.img")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build: create temp image: %w", err)
@@ -140,6 +160,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 
 	m := Manifest{
 		SchemaVersion: SchemaVersion,
+		Architecture:  architecture,
 		Name:          cfg.Name,
 		Tag:           cfg.Tag,
 		Created:       time.Now().UTC(),
@@ -178,6 +199,9 @@ func injectResolvConf(cfg *BuildConfig) (cleanup func(), err error) {
 	tmpPath := tmp.Name()
 	cleanup = func() { _ = os.Remove(tmpPath) }
 	content := "nameserver " + netconst.DNSAnycastIP + "\n"
+	if runtime.GOOS == "darwin" {
+		content = "nameserver 10.0.2.3\n"
+	}
 	if _, err := tmp.WriteString(content); err != nil {
 		_ = tmp.Close()
 		return cleanup, fmt.Errorf("write resolv.conf: %w", err)

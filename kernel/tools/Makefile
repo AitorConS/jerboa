@@ -34,7 +34,9 @@ SRCS-mkfs= \
 	$(SRCDIR)/fs/tlog.c \
 	$(SRCDIR)/unix_process/unix_process_runtime.c
 
+ifneq ($(UNAME_s),Darwin)
 LDFLAGS-mkfs=	-static
+endif
 
 SRCS-vdsogen=	$(CURDIR)/vdsogen.c
 

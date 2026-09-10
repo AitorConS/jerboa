@@ -12,6 +12,8 @@ const SchemaVersion = 1
 
 // Manifest describes a unikernel disk image.
 type Manifest struct {
+	// Architecture is the guest ISA. Empty legacy manifests are x86_64.
+	Architecture string `json:"architecture,omitempty"`
 	// SchemaVersion must equal SchemaVersion (1).
 	SchemaVersion int `json:"schemaVersion"`
 	// Name is the image name (e.g. "hello").

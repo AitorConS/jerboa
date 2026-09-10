@@ -52,6 +52,10 @@ type DaemonConfig struct {
 // talks to a daemon running inside WSL2 over loopback TCP; other platforms use
 // a local Unix socket.
 func DefaultEndpoint() string {
+	if runtime.GOOS == "darwin" {
+		home, _ := os.UserHomeDir()
+		return "unix://" + filepath.Join(home, ".jerboa", "jerboad.sock")
+	}
 	if runtime.GOOS == "windows" {
 		return "tcp://127.0.0.1:7890"
 	}

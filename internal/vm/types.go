@@ -1,12 +1,14 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package vm
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"slices"
 	"sync"
@@ -117,7 +119,11 @@ type HealthCheckConfig struct {
 
 // Config holds the parameters used to create a VM.
 type Config struct {
-	ImageDigest string `json:"image_digest,omitempty"`
+	EmulateX86   bool `json:"emulate_x86,omitempty"`
+	nativeSocket string
+	nativeMAC    string
+	Architecture string `json:"architecture,omitempty"`
+	ImageDigest  string `json:"image_digest,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
 	// ImageRef is the image reference the VM was created from (e.g.
@@ -305,13 +311,14 @@ type RuntimeStats struct {
 // If no stats provider is available, it returns a minimal snapshot.
 func (v *VM) Stats() RuntimeStats {
 	v.mu.RLock()
-	defer v.mu.RUnlock()
-	if v.statsProvider != nil {
-		return v.statsProvider()
+	provider, state := v.statsProvider, v.State
+	v.mu.RUnlock()
+	if provider != nil {
+		return provider()
 	}
 	return RuntimeStats{
 		ID:        v.ID,
-		State:     string(v.State),
+		State:     string(state),
 		Timestamp: time.Now(),
 		Source:    "fallback",
 	}
@@ -357,6 +364,10 @@ type VM struct {
 	logPipeWriter *io.PipeWriter
 	explicitStop  bool
 	statsProvider func() RuntimeStats
+	hostCleanup   func()
+	healthDial    func(context.Context, string, string) (net.Conn, error)
+	healthAddress string
+	networkStats  func() (int64, int64)
 	cgroupMgr     *CgroupManager
 	portFwd       *network.Forwarder // userspace host→guest port publisher; nil when no PortMaps
 	qmpAddr       string             // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped

@@ -330,7 +330,7 @@ func TestOpsStore_Download_AlreadyDownloaded(t *testing.T) {
 
 	pkgDir := store.PackageDir("eyberg", "node", "v16.5.0")
 	require.NoError(t, os.MkdirAll(pkgDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "amd64.tar.gz"), []byte("fake"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ArchSlug()+".tar.gz"), []byte("fake"), 0o644))
 
 	err = store.Download("eyberg", "node", "v16.5.0", "")
 	require.NoError(t, err)
@@ -459,7 +459,7 @@ func TestOpsStore_IsExtracted_MissingBinary(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(pkgDir, "sysroot", "lib"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "package.manifest"),
 		[]byte(`{"Program":"node_v20.0.0/node","Version":"20.0.0"}`), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "amd64.tar.gz"), []byte("fake"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ArchSlug()+".tar.gz"), []byte("fake"), 0o644))
 
 	// sysroot/ exists but the program binary ("node") does not — should return false.
 	require.False(t, store.IsExtracted("eyberg", "node", "v20.0.0"))
@@ -497,7 +497,7 @@ func TestOpsStore_Extract_Idempotent(t *testing.T) {
 	archiveData := createOpsPackageArchive(t, map[string]string{
 		"node": "fake elf",
 	})
-	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, "amd64.tar.gz"), archiveData, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(pkgDir, ArchSlug()+".tar.gz"), archiveData, 0o644))
 
 	require.NoError(t, store.Extract("eyberg", "node", "v16.5.0"))
 	require.NoError(t, store.Extract("eyberg", "node", "v16.5.0"))
@@ -530,4 +530,14 @@ func createOpsPackageArchive(t *testing.T, files map[string]string) []byte {
 	buf, err := io.ReadAll(pr)
 	require.NoError(t, err)
 	return buf
+}
+
+func TestLookupArchSeparatesChecksums(t *testing.T) {
+	list := &OpsPackageList{Packages: []OpsPackage{
+		{Namespace: "test", Name: "runtime", Version: "1", Arch: "x86_64", SHA256: "x86"},
+		{Namespace: "test", Name: "runtime", Version: "1", Arch: "arm64", SHA256: "arm"},
+	}}
+	require.Equal(t, "arm", list.LookupArch("test", "runtime", "1", "arm64").SHA256)
+	require.Equal(t, "x86", list.LookupArch("test", "runtime", "1", "amd64").SHA256)
+	require.Nil(t, list.LookupArch("test", "runtime", "1", "riscv64"))
 }

@@ -196,14 +196,38 @@ void reclaim_regions(void)
 {
 }
 
+/* Dedicated PCI status channel: guest console output cannot forge a failure.
+ * QEMU's panic=exit-failure action preserves nonzero guest exits under HVF,
+ * where the Angel semihosting trap is not intercepted. */
+static struct pci_bar pvpanic_bar;
+static boolean pvpanic_present;
+
+closure_func_basic(pci_probe, boolean, pvpanic_probe, pci_dev d)
+{
+    if (pci_get_vendor(d) != 0x1b36 || pci_get_device(d) != 0x0011)
+        return false;
+    pci_bar_init(d, &pvpanic_bar, 0, 0, -1);
+    pci_enable_io_and_memory(d);
+    pvpanic_present = true;
+    return true;
+}
+
 closure_func_basic(halt_handler, void, psci_vm_halt,
                    int status)
 {
-    psci_shutdown();
+    vm_shutdown(status != 0);
 }
 
 void vm_shutdown(u8 code)
 {
+    if (pvpanic_present) {
+        if (code && (pci_bar_read_1(&pvpanic_bar, 0) & 1)) {
+            pci_bar_write_1(&pvpanic_bar, 0, 1);
+            /* Wait for QEMU to process the panic before any PSCI shutdown. */
+            while (1);
+        }
+        psci_shutdown();
+    }
     angel_shutdown(code);
     while (1);
 }
@@ -490,6 +514,7 @@ void detect_devices(kernel_heaps kh, storage_attach sa)
         gpio_irq_enable(U64_FROM_BIT(gpio_key_power));
     }
     init_acpi(kh);
+    register_pci_driver(closure_func(heap_locked(kh), pci_probe, pvpanic_probe), 0);
     init_virtio_network(kh);
     init_gve(kh);
     init_virtio_blk(kh, sa);

@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package vm
 
@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -116,6 +117,9 @@ func (m *FirecrackerManager) Create(_ context.Context, cfg Config) (*VM, error) 
 // Start writes a Firecracker config file and launches the firecracker process.
 // The VM boots immediately upon process start (no separate InstanceStart call needed).
 func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("Firecracker requires Linux/KVM; use QEMU/HVF on macOS")
+	}
 	v, err := m.store.Resolve(id)
 	if err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)

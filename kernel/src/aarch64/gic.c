@@ -1,6 +1,8 @@
 #include <kernel.h>
 #include <drivers/acpi.h>
 #include <gic.h>
+#include <devicetree/devicetree.h>
+#include <boot/uefi.h>
 
 #define GIC_LPI_ENABLE  0x01
 
@@ -549,48 +551,62 @@ int init_gic(void)
         halt("%s: gic type %d from ID_AA64PFR0_EL1 not supported\n", func_ss, gic_iface);
     }
 
+    /* HVF virtualizes a GIC even when the Apple CPU ID advertises only
+     * its native AIC. The device tree describes the actual virtual hardware. */
+    if (!gic.v3_iface && !boot_params.mem_map.map) {
+        void *dtb = pointer_from_u64(DEVICETREE_BLOB_BASE + kernel_phys_offset);
+        dt_node node = dtb_find_node_by_path(dtb, ss("/intc@8000000"));
+        if (node != INVALID_ADDRESS && node) {
+            dt_value compat = dt_get_prop_value(dtb, node, ss("compatible"));
+            if ((compat.type == DT_VALUE_STRING || compat.type == DT_VALUE_STRINGLIST) &&
+                compat.dlen >= 10 && !runtime_memcmp(compat.data, "arm,gic-v3", 10))
+                gic.v3_iface = true;
+        }
+    }
+
     if (gic.v3_iface) {
         gicr_get_base();
         u64 icc_ctlr = read_psr_s(ICC_CTLR_EL1);
         gic.intid_mask = (field_from_u64(icc_ctlr, ICC_CTLR_EL1_IDbits) ==
                           ICC_CTLR_EL1_IDbits_24) ? MASK(24) : MASK(16);
-        gic_msi_vector_base = GIC_LPI_INTS_START;
-        u64 typer = gicd_read_32(TYPER);
-        u8 num_lpis = field_from_u64(typer, GICD_num_LPIs);
-        if (num_lpis == 0)
-            gic_msi_vector_num = U32_FROM_BIT(field_from_u64(typer, GICD_IDbits) + 1) -
-                                 gic_msi_vector_base;
-        else
-            gic_msi_vector_num = U32_FROM_BIT(num_lpis + 1);
+        if (gic.its_base) {
+            gic_msi_vector_base = GIC_LPI_INTS_START;
+            u64 typer = gicd_read_32(TYPER);
+            u8 num_lpis = field_from_u64(typer, GICD_num_LPIs);
+            if (num_lpis == 0)
+                gic_msi_vector_num = U32_FROM_BIT(field_from_u64(typer, GICD_IDbits) + 1) -
+                                     gic_msi_vector_base;
+            else
+                gic_msi_vector_num = U32_FROM_BIT(num_lpis + 1);
 
-        /* Set up a page-sized LPI configuration table. */
-        gic_msi_vector_num = MAX(gic_msi_vector_num, PAGESIZE); /* 1 byte per LPI */
-        kernel_heaps kh = get_kernel_heaps();
-        backed_heap backed = heap_linear_backed(kh);
-        u64 pa;
-        gic.lpi_cfg_table = alloc_map(backed, PAGESIZE, &pa);
-        assert(gic.lpi_cfg_table != INVALID_ADDRESS);
-        zero(gic.lpi_cfg_table, PAGESIZE);
-        u64 id_bits = find_order(gic_msi_vector_base + gic_msi_vector_num) - 1;
-        gic.redist.propbase = pa | id_bits;
-        gicr_write_64(PROPBASER, gic.redist.propbase);
+            /* Set up a page-sized LPI configuration table. */
+            gic_msi_vector_num = MAX(gic_msi_vector_num, PAGESIZE); /* 1 byte per LPI */
+            kernel_heaps kh = get_kernel_heaps();
+            backed_heap backed = heap_linear_backed(kh);
+            u64 pa;
+            gic.lpi_cfg_table = alloc_map(backed, PAGESIZE, &pa);
+            assert(gic.lpi_cfg_table != INVALID_ADDRESS);
+            zero(gic.lpi_cfg_table, PAGESIZE);
+            u64 id_bits = find_order(gic_msi_vector_base + gic_msi_vector_num) - 1;
+            gic.redist.propbase = pa | id_bits;
+            gicr_write_64(PROPBASER, gic.redist.propbase);
 
-        /* Set up LPI pending table, which must be aligned to 64 KB. */
-        void *lpi_pending_table = alloc_map(backed, 64 * KB, &pa);
-        assert(lpi_pending_table != INVALID_ADDRESS);
-        zero(lpi_pending_table, 64 * KB);
-        gic.redist.pendbase = GICR_PENDBASER_PTZ | pa;
-        gicr_write_64(PENDBASER, gic.redist.pendbase);
+            /* Set up LPI pending table, which must be aligned to 64 KB. */
+            void *lpi_pending_table = alloc_map(backed, 64 * KB, &pa);
+            assert(lpi_pending_table != INVALID_ADDRESS);
+            zero(lpi_pending_table, 64 * KB);
+            gic.redist.pendbase = GICR_PENDBASER_PTZ | pa;
+            gicr_write_64(PENDBASER, gic.redist.pendbase);
 
-        gicr_write_32(CTLR, GICR_CTLR_EnableLPIs);
-        if (gic.its_base)
+            gicr_write_32(CTLR, GICR_CTLR_EnableLPIs);
             init_gits(kh);
+        }
     } else {
         gic.intid_mask = MASK(10);
 
-        /* virt is currently the only aarch64 platform, so we trust that gicv2
-           implies v2m - but really this should consult the dev tree or acpi
-           before probing. */
+    }
+    /* HVF GICv3 uses a V2M frame for PCI MSI, not an ITS/LPI domain. */
+    if (!gic.its_base) {
         u64 typer = mmio_read_32(GIC_V2M_MSI_TYPER);
         gic_msi_vector_base = field_from_u64(typer, GIC_V2M_MSI_TYPER_BASE);
         gic_msi_vector_num = field_from_u64(typer, GIC_V2M_MSI_TYPER_NUM);
@@ -598,18 +614,19 @@ int init_gic(void)
 
     init_gicd();
     init_gicc();
-    return (gic.v3_iface ? gic_msi_vector_base + gic_msi_vector_num : GIC_MAX_INT);
+    return (gic.its_base ? gic_msi_vector_base + gic_msi_vector_num : GIC_MAX_INT);
 }
 
 void gic_percpu_init(void)
 {
     if (gic.v3_iface) {
         gicr_get_base();
-        gicr_write_64(PROPBASER, gic.redist.propbase);
-        gicr_write_64(PENDBASER, gic.redist.pendbase);
-        gicr_write_32(CTLR, GICR_CTLR_EnableLPIs);
-        if (gic.its_base)
+        if (gic.its_base) {
+            gicr_write_64(PROPBASER, gic.redist.propbase);
+            gicr_write_64(PENDBASER, gic.redist.pendbase);
+            gicr_write_32(CTLR, GICR_CTLR_EnableLPIs);
             gits_percpu_init();
+        }
     }
     init_gicd_percpu();
     init_gicc();

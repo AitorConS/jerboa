@@ -58,6 +58,11 @@ func newRootCmd() *cobra.Command {
 			if tok := config.ResolveToken(); tok != "" {
 				_ = os.Setenv("JERBOA_AUTH_TOKEN", tok)
 			}
+			if runtime.GOOS == "darwin" && config.ResolveToken() == "" && endpoint == config.DefaultEndpoint() {
+				if tok, _, err := wslboot.LoadDaemonFile(daemonJSONPath()); err == nil && tok != "" {
+					_ = os.Setenv("JERBOA_AUTH_TOKEN", tok)
+				}
+			}
 			// On Windows the daemon lives in the dedicated WSL2 distro: auto-start
 			// it for any daemon-backed command, like Docker Desktop, and dial the
 			// distro's VM IP (loopback does not reach a secondary distro).
@@ -112,7 +117,7 @@ func newRootCmd() *cobra.Command {
 	// The daemon command group manages the dedicated WSL2 distro that hosts
 	// jerboad on Windows (import/start/stop). On Linux jerboad runs natively
 	// (see scripts/install.sh), so the group has nothing to do and is hidden.
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		root.AddCommand(newDaemonCmd())
 	}
 	return root

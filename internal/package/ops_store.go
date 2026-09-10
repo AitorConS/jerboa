@@ -27,16 +27,20 @@ import (
 // Ops packages preserve their native format: package.manifest + sysroot/ +
 // top-level binary, stored at root/<namespace>/<name>_<version>/.
 type OpsStore struct {
+	arch string
 	root string
 	mu   sync.RWMutex
 }
 
 // NewOpsStore creates an OpsStore rooted at dir, creating it if needed.
 func NewOpsStore(dir string) (*OpsStore, error) {
+	if ArchSlug() != "amd64" {
+		dir = filepath.Join(dir, ArchSlug())
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("ops store mkdir %s: %w", dir, err)
 	}
-	return &OpsStore{root: dir}, nil
+	return &OpsStore{root: dir, arch: ArchSlug()}, nil
 }
 
 // PackageDir returns the local directory for an ops package.
@@ -67,7 +71,7 @@ func (s *OpsStore) IsDownloaded(namespace, name, version string) bool {
 		return false
 	}
 	dir := s.PackageDir(namespace, name, version)
-	archive := filepath.Join(dir, ArchSlug()+".tar.gz")
+	archive := filepath.Join(dir, s.arch+".tar.gz")
 	info, err := os.Stat(archive)
 	return err == nil && !info.IsDir()
 }
@@ -120,7 +124,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 		return fmt.Errorf("ops download mkdir %s: %w", dir, err)
 	}
 
-	archSlug := ArchSlug()
+	archSlug := s.arch
 	archivePath := filepath.Join(dir, archSlug+".tar.gz")
 	if _, err := os.Stat(archivePath); err == nil {
 		slog.Info("ops package already downloaded", "namespace", namespace, "name", name, "version", version)
@@ -204,7 +208,7 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 	}
 
 	dir := s.PackageDir(namespace, name, version)
-	archivePath := filepath.Join(dir, ArchSlug()+".tar.gz")
+	archivePath := filepath.Join(dir, s.arch+".tar.gz")
 
 	// A failed extraction must not leave a half-written tree behind: with no
 	// package.manifest to check the binary against, IsExtracted would report

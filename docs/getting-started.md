@@ -24,8 +24,8 @@ Jerboa currently runs in two supported ways:
 
 Notes:
 
-- `jerboad` is Linux-only.
-- Native VM execution depends on Linux hypervisor support.
+- Stable daemon releases target Linux. A [native macOS Apple Silicon preview]({% link macos.md %}) can be built from source.
+- Linux VM execution uses KVM; the macOS preview uses QEMU/HVF.
 - Windows support is built around WSL2, not native Windows virtualization.
 
 ## Prerequisites

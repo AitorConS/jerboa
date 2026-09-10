@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/release"
@@ -47,6 +48,13 @@ func TestDownloadKernelFromManifest(t *testing.T) {
 
 	cl := &release.Client{HTTP: srv.Client()}
 	toolsDir := t.TempDir()
+	if runtime.GOOS == "darwin" {
+		err := DownloadKernelFromManifest(context.Background(), cl, toolsDir, k)
+		require.ErrorContains(t, err, "macOS ARM64")
+		_, statErr := os.Stat(filepath.Join(toolsDir, "mkfs"))
+		require.True(t, os.IsNotExist(statErr))
+		return
+	}
 	require.NoError(t, DownloadKernelFromManifest(context.Background(), cl, toolsDir, k))
 
 	// Every file lands under its local name, and the version is recorded.
