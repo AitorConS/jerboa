@@ -22,7 +22,7 @@ func newVolumeCmd(endpoint *string, storePath *string, outputFmt *string, verbos
 	cmd.AddCommand(
 		newVolumeCreateCmd(endpoint, storePath, verbose),
 		newVolumeLsCmd(storePath, outputFmt),
-		newVolumeRmCmd(storePath),
+		newVolumeRmCmd(endpoint, storePath),
 		newVolumeInspectCmd(storePath),
 		newVolumeSeedCmd(endpoint, storePath, verbose),
 	)
@@ -246,7 +246,7 @@ func newVolumeLsCmd(storePath *string, outputFmt *string) *cobra.Command {
 	}
 }
 
-func newVolumeRmCmd(storePath *string) *cobra.Command {
+func newVolumeRmCmd(endpoint, storePath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "rm <name>",
 		Aliases: []string{"remove"},
@@ -257,7 +257,16 @@ func newVolumeRmCmd(storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("volume rm: %w", err)
 			}
-			if err := store.Remove(args[0]); err != nil {
+			vol, err := store.Get(args[0])
+			if err != nil {
+				return err
+			}
+			client, err := api.Dial(*endpoint)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			if err := client.VolumeRemove(cmd.Context(), args[0], hostPathForDaemon(vol.DiskPath)); err != nil {
 				return fmt.Errorf("volume rm: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), args[0])

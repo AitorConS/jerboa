@@ -720,20 +720,10 @@ Examples:
 				if err != nil {
 					return fmt.Errorf("pkg load: %w", err)
 				}
-				name, _ := parsePkgRef(args[0])
-				pkgStore, storeErr := pkg.NewStore(pkgStorePath())
-				if storeErr != nil {
-					return fmt.Errorf("pkg load: %w", storeErr)
+				if len(pkgFiles) == 0 {
+					return fmt.Errorf("pkg load: no extracted files")
 				}
-				files, listErr := pkgStore.ExtractedFiles(name, "")
-				if listErr != nil || len(files) == 0 {
-					latestErr := fmt.Errorf("no extracted files found for %s", name)
-					if listErr != nil {
-						latestErr = listErr
-					}
-					return fmt.Errorf("pkg load: %w", latestErr)
-				}
-				binaryPath = files[0]
+				binaryPath = pkgFiles[0].HostPath
 			}
 
 			// Stream the package to the daemon, which assembles the image with
@@ -757,15 +747,18 @@ Examples:
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Built image %s:%s (%s)\n", res.Name, res.Tag, res.DiskDigest)
 
+			info, err := client.Run(cmd.Context(), api.RunParams{Image: res.DiskDigest, Attach: !detach})
+			if err != nil {
+				return fmt.Errorf("pkg load run: %w", err)
+			}
 			if detach {
+				fmt.Fprintln(cmd.OutOrStdout(), info.ID)
 				return nil
 			}
-
-			fmt.Fprintln(cmd.OutOrStdout(), "Run with: jerboa run pkg-load:latest")
-			return nil
+			return client.Attach(cmd.Context(), info.ID, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
-	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "build only, don't print run instructions")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "run in the background")
 	return cmd
 }

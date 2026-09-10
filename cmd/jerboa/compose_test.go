@@ -77,7 +77,7 @@ func TestComposeUp_StartsServices(t *testing.T) {
 	require.Contains(t, out, "started frontend")
 
 	// state file should exist
-	stateData, err := os.ReadFile(filepath.Join(filepath.Dir(composeFile), stateFileName))
+	stateData, err := os.ReadFile(stateFilePath(composeFile))
 	require.NoError(t, err)
 	require.Contains(t, string(stateData), "backend")
 
@@ -160,7 +160,7 @@ func TestComposeDown_StopsServices(t *testing.T) {
 	execRoot(t, socketPath, storePath, "compose", "down", "--force", composeFile)
 
 	// state file should be removed
-	_, statErr := os.Stat(filepath.Join(filepath.Dir(composeFile), stateFileName))
+	_, statErr := os.Stat(stateFilePath(composeFile))
 	require.True(t, os.IsNotExist(statErr))
 }
 
@@ -206,8 +206,7 @@ func TestComposeDown_NoState(t *testing.T) {
 	composeFile := filepath.Join(t.TempDir(), "jerboa-compose.yaml")
 	require.NoError(t, os.WriteFile(composeFile, testComposeYAML, 0o600))
 
-	msg := execRootExpectError(t, socketPath, storePath, "compose", "down", composeFile)
-	require.Contains(t, msg, "compose down")
+	execRoot(t, socketPath, storePath, "compose", "down", composeFile)
 }
 
 func TestComposeUp_InvalidFile(t *testing.T) {

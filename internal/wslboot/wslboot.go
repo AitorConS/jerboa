@@ -54,7 +54,7 @@ type Config struct {
 	HealthTimeout time.Duration
 	// Observability turns on the managed daemon's metrics/UI/tracing/log-format,
 	// which are otherwise reachable only by hand-launching jerboad inside the
-	// distro (E2E finding F-022). Persisted in config so both `daemon start` and
+	// distro. Persisted in config so both `daemon start` and
 	// the auto-boot path enable them.
 	Observability Observability
 }

@@ -123,6 +123,7 @@ type Config struct {
 	nativeSocket string
 	nativeMAC    string
 	Architecture string `json:"architecture,omitempty"`
+	ImageDigest  string `json:"image_digest,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
 	// ImageRef is the image reference the VM was created from (e.g.

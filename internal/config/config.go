@@ -16,7 +16,7 @@ type Config struct {
 	// `config set hypervisor`) does not materialize a [daemon] table full of
 	// empty endpoint/token/distro strings — which read as "explicitly set to
 	// blank" and risked shadowing the real rendezvous in ~/.jerboa/daemon.json
-	// (E2E finding F-002).
+	//.
 	Daemon DaemonConfig `toml:"daemon,omitempty"`
 }
 
@@ -39,7 +39,7 @@ type DaemonConfig struct {
 
 	// Observability flags below are forwarded to the managed daemon at launch so
 	// metrics/UI/tracing/structured logs can be enabled through the CLI rather
-	// than by hand-launching jerboad inside the distro (E2E finding F-022).
+	// than by hand-launching jerboad inside the distro.
 	// Persisting them here means both `jerboa daemon start` and the auto-boot path
 	// honor them. Empty leaves the daemon's own default.
 	MetricsAddr string `toml:"metrics_addr,omitempty"`

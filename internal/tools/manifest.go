@@ -33,7 +33,7 @@ func EnsureKernelTools(ctx context.Context, toolsDir string) error {
 		if runtime.GOOS == "darwin" {
 			return ValidateNativeTools(toolsDir)
 		}
-		return nil
+		return executableTools(toolsDir)
 	}
 	cl, err := release.Default()
 	if err != nil {
@@ -70,8 +70,7 @@ func ensureFCKernelFromManifest(ctx context.Context, dest string) error {
 }
 
 // KernelComponentFromManifest fetches and verifies the signed channel manifest
-// and returns its kernel component. Errors (including no published manifest yet)
-// let callers fall back to the legacy GitHub path during the migration.
+// and returns its kernel component. Manifest errors abort the download.
 func KernelComponentFromManifest(ctx context.Context, cl *release.Client, channel string) (release.Component, error) {
 	m, err := cl.FetchManifest(ctx, channel)
 	if err != nil {
@@ -127,6 +126,9 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 			return fmt.Errorf("tools: download kernel %s: %w", f.local, err)
 		}
 	}
+	if err := executableTools(staging); err != nil {
+		return err
+	}
 	for _, f := range plan {
 		dst := filepath.Join(toolsDir, f.local)
 		_ = os.Remove(dst) // Windows rename fails when dst already exists.
@@ -135,4 +137,17 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 		}
 	}
 	return SaveLocalVersion(toolsDir, k.Version)
+}
+
+func executableTools(dir string) error {
+	for _, name := range []string{"mkfs", "dump"} {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); os.IsNotExist(err) && name == "dump" {
+			continue
+		}
+		if err := os.Chmod(p, 0o755); err != nil {
+			return fmt.Errorf("tools: executable %s: %w", name, err)
+		}
+	}
+	return nil
 }

@@ -87,11 +87,7 @@ type RunParams struct {
 	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
 	Attach      bool              `json:"attach,omitempty"`
 	IPAddress   string            `json:"ip_address,omitempty"`
-	// StaticIP marks IPAddress as a user-requested static address (the --ip flag),
-	// as opposed to one the client pre-allocated from the daemon's IPAM. The
-	// daemon reserves and conflict-checks static IPs; a pre-allocated address is
-	// already reserved, so it is accepted as-is. Distinguishing them lets the
-	// daemon reject a duplicate static IP without rejecting the normal flow.
+	// StaticIP records whether the client explicitly chose the address. All supplied addresses are reserved by the daemon.
 	StaticIP    bool             `json:"static_ip,omitempty"`
 	GatewayIP   string           `json:"gateway_ip,omitempty"`
 	BridgeName  string           `json:"bridge_name,omitempty"`
@@ -189,7 +185,7 @@ type IDParams struct {
 // negotiate it in the Auth.Hello handshake and refuse to talk across a mismatch,
 // so a stale binary on either side fails fast with a clear message instead of
 // misbehaving mid-session. Bump it on any breaking change to the RPC wire format.
-const ProtoVersion = 1
+const ProtoVersion = 2
 
 // AuthParams is the payload of the Auth.Hello handshake. When the daemon is
 // configured with a token, the first request on every connection must be
@@ -339,4 +335,9 @@ type ImageManifestResult struct {
 	DiskDigest string `json:"disk_digest"`
 	DiskSize   int64  `json:"disk_size"`
 	Created    string `json:"created"`
+}
+
+type VolumeRemoveParams struct {
+	Name     string `json:"name"`
+	DiskPath string `json:"disk_path"`
 }

@@ -144,7 +144,23 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 			cleanup()
 		}
 	}()
-	cmd := m.buildCmd(ctx, v.Cfg, qmpAddr)
+	bootCfg := v.Cfg
+	if bootCfg.ImageDigest != "" {
+		private, err := os.CreateTemp("", "jerboa-boot-*.img")
+		if err != nil {
+			_ = v.transition(StateStopped)
+			return fmt.Errorf("qemu boot image: %w", err)
+		}
+		bootPath := private.Name()
+		_ = private.Close()
+		go func(done <-chan struct{}) { <-done; _ = os.Remove(bootPath) }(v.Done())
+		if err := copyBootImage(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest); err != nil {
+			_ = v.transition(StateStopped)
+			return fmt.Errorf("qemu boot image: %w", err)
+		}
+		bootCfg.ImagePath = bootPath
+	}
+	cmd := m.buildCmd(ctx, bootCfg, qmpAddr)
 
 	// Wire the tap into the bridge before launching QEMU. QEMU runs with
 	// script=no,downscript=no, so it will not create or bridge the tap itself;
@@ -377,7 +393,7 @@ func (m *QEMUManager) Remove(_ context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("qemu remove %s: %w", id, err)
 	}
-	if st := v.GetState(); st != StateStopped {
+	if st := v.GetState(); st != StateStopped && st != StateCreated {
 		return fmt.Errorf("qemu remove %s: vm is %s, must be stopped first", id, st)
 	}
 	m.hchecker.Stop(v.ID)

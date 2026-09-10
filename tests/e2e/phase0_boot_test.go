@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,12 +47,13 @@ func buildHelloWorld(t *testing.T) string {
 
 func buildImage(t *testing.T, binaryPath string) string {
 	t.Helper()
-	mkfs := "kernel/output/tools/bin/mkfs"
+	mkfs := "../../kernel/output/tools/bin/mkfs"
 	if _, err := os.Stat(mkfs); err != nil {
 		t.Skipf("kernel not built: %s not found (run make kernel && make mkfs first)", mkfs)
 	}
 	out := t.TempDir() + "/test.img"
-	cmd := exec.Command(mkfs, out, binaryPath)
+	cmd := exec.Command(mkfs, "-b", "../../kernel/output/platform/pc/boot/boot.img", "-k", "../../kernel/output/platform/pc/bin/kernel.img", out)
+	cmd.Stdin = strings.NewReader(image.BuildManifest(image.BuildConfig{BinaryPath: binaryPath}))
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	require.NoError(t, cmd.Run(), "mkfs failed")

@@ -156,9 +156,11 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 	// `jerboa run -v` attaches. On Windows the volume lives on the host filesystem
 	// (reachable by the daemon under /mnt/<drive>/…) and is absent from the
 	// daemon's own volume store, so re-resolving it there fails and made seeding
-	// impossible on the only supported Windows path (E2E finding F-012). When the
+	// impossible on the only supported Windows path. When the
 	// daemon DOES own the volume (Linux-native, shared store) the paths are
 	// cross-checked so a client cannot redirect the seed onto another volume's disk.
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
 	diskPath := p.DiskPath
 	if vol, err := s.volStore.Get(p.VolumeName); err == nil {
 		if filepath.Clean(p.DiskPath) != filepath.Clean(vol.DiskPath) {
@@ -179,6 +181,11 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 		return
 	}
 
+	if err := s.volumeUnused(diskPath); err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
+		return
+	}
 	seeder, err := s.resolveVolumeSeeder(ctx)
 	if err != nil {
 		drain(stream)

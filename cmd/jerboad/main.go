@@ -156,7 +156,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		toolsDir = defaultToolsPath()
 	}
 
-	vmStore, err := newVMStore(vmStoreType, vmsDir(storePath))
+	vmStore, err := newVMStore(vmStoreType, vmsDir())
 	if err != nil {
 		return fmt.Errorf("jerboad: vm store: %w", err)
 	}
@@ -440,7 +440,7 @@ func newVMStore(storeType, dir string) (vm.Store, error) {
 	}
 }
 
-func vmsDir(_ string) string { //nolint:unparam // storePath reserved for configurable store locations
+func vmsDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".jerboa/vms"

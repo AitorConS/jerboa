@@ -45,11 +45,11 @@ var defaultLibDirs = []string{
 // must land at exactly those paths in the image. The previous implementation
 // packaged every file under its basename at the image root, which made preflight
 // reject the image ("interpreter … is not in the image") for essentially every
-// real Docker binary. See the E2E finding F-024.
+// real Docker binary.
 //
 // Extraction reads the container's exported filesystem (docker export) instead of
 // running cat/ldd inside a temporary container, so it works on scratch and
-// distroless images that ship no shell or coreutils (F-030), and it never creates
+// distroless images that ship no shell or coreutils, and it never creates
 // a symlink on the host — symlinks are followed logically against an in-memory
 // index, which matters on Windows where creating symlinks needs privileges.
 //

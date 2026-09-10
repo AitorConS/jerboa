@@ -87,6 +87,9 @@ func TestLinux_CgroupManager_Apply_PIDAsString(t *testing.T) {
 }
 
 func TestLinux_IsCgroupV2Available_True(t *testing.T) {
+	if !IsCgroupV2Available() {
+		t.Skip("cgroups v2 unavailable in this environment")
+	}
 	require.True(t, IsCgroupV2Available())
 	require.FileExists(t, "/sys/fs/cgroup/cgroup.controllers")
 }

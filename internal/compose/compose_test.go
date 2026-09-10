@@ -272,7 +272,7 @@ volumes:
   nocolon:
 `)
 	_, err := compose.Parse(data)
-	require.ErrorContains(t, err, "name:guestpath")
+	require.ErrorContains(t, err, "name:/guestpath")
 }
 
 func TestParse_InvalidVolumeThirdField(t *testing.T) {

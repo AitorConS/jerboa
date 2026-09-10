@@ -193,37 +193,6 @@ func (s *Store) HasKeyPair() bool {
 	return err == nil
 }
 
-// SaveSignature writes a signature file next to the image manifest in the image store.
-// The signature file is stored at <imageDir>/manifest.json.sig.
-func (s *Store) SaveSignature(imageDir string, sig *Signature) error {
-	data, err := json.MarshalIndent(sig, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal signature: %w", err)
-	}
-	path := filepath.Join(imageDir, "manifest.json"+sigExt)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write signature: %w", err)
-	}
-	return nil
-}
-
-// LoadSignature reads a signature file from the image store directory.
-func (s *Store) LoadSignature(imageDir string) (*Signature, error) {
-	path := filepath.Join(imageDir, "manifest.json"+sigExt)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read signature: %w", err)
-	}
-	var sig Signature
-	if err := json.Unmarshal(data, &sig); err != nil {
-		return nil, fmt.Errorf("parse signature: %w", err)
-	}
-	return &sig, nil
-}
-
 const sigDirName = "signatures"
 
 // signaturePath returns the on-disk path for a content digest's signature,
@@ -294,81 +263,6 @@ func (s *Store) VerifyDigest(digest string) (*Signature, error) {
 		return &sig, fmt.Errorf("verify digest: %w", err)
 	}
 	return &sig, nil
-}
-
-// SignManifest signs the manifest digest using the stored key pair and saves the signature.
-// imageDir is the directory containing the manifest (typically <store>/images/<hex-digest>).
-// If no key pair exists, it generates one first.
-func (s *Store) SignManifest(digest, imageDir string) (*Signature, error) {
-	var kp *KeyPair
-	var err error
-	if s.HasKeyPair() {
-		kp, err = s.LoadKeyPair()
-	} else {
-		kp, err = s.GenerateAndSave()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("sign manifest: %w", err)
-	}
-	sig, err := Sign(kp, digest)
-	if err != nil {
-		return nil, fmt.Errorf("sign manifest: %w", err)
-	}
-	if err := s.SaveSignature(imageDir, sig); err != nil {
-		return nil, fmt.Errorf("sign manifest: %w", err)
-	}
-	return sig, nil
-}
-
-// VerifyManifest verifies the signature for a manifest in the image store.
-// Returns nil if signature is valid, an error if invalid, and (nil, nil) if
-// no signature exists.
-func (s *Store) VerifyManifest(imageDir string) (*Signature, error) {
-	sig, err := s.LoadSignature(imageDir)
-	if err != nil {
-		return nil, err
-	}
-	if sig == nil {
-		return nil, nil
-	}
-	kp, err := s.LoadKeyPair()
-	if err != nil {
-		return nil, fmt.Errorf("verify: load key pair: %w", err)
-	}
-	if err := Verify(kp.PublicKey, sig); err != nil {
-		return sig, fmt.Errorf("verify: %w", err)
-	}
-	return sig, nil
-}
-
-// PublicKeyPEM exports the public key as PEM-encoded bytes.
-func (s *Store) PublicKeyPEM() ([]byte, error) {
-	kp, err := s.LoadKeyPair()
-	if err != nil {
-		return nil, err
-	}
-	block := &pem.Block{Type: "ED25519 PUBLIC KEY", Bytes: kp.PublicKey}
-	return pem.EncodeToMemory(block), nil
-}
-
-// ImportPublicKey imports a PEM-encoded public key for verification.
-// The key is stored as a separate verification key file.
-func (s *Store) ImportPublicKey(pemData []byte) error {
-	block, _ := pem.Decode(pemData)
-	if block == nil || block.Type != "ED25519 PUBLIC KEY" {
-		return fmt.Errorf("import: invalid PEM block, expected ED25519 PUBLIC KEY")
-	}
-	pub := ed25519.PublicKey(block.Bytes)
-	dir := filepath.Join(s.root, keyDirName)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("import mkdir: %w", err)
-	}
-	verificationKeyID := keyIDFromPublic(pub)
-	verificationPath := filepath.Join(dir, verificationKeyID+".pub")
-	if err := os.WriteFile(verificationPath, pemData, 0o644); err != nil {
-		return fmt.Errorf("import: write key: %w", err)
-	}
-	return nil
 }
 
 func keyIDFromPublic(pub ed25519.PublicKey) string {

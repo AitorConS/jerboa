@@ -89,10 +89,8 @@ func TestHandleRun_RejectsDuplicateStaticIP(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "reserve ip")
 }
 
-func TestHandleRun_AcceptsClientPreAllocatedIP(t *testing.T) {
-	// The CLI pre-allocates a dynamic IP (reserving it) and passes it as a
-	// non-static address. The daemon sees it already reserved and must accept it,
-	// not mistake it for a duplicate.
+func TestHandleRun_RejectsAlreadyAllocatedIP(t *testing.T) {
+	// All supplied IP addresses must be free, including requests from old clients.
 	s, _, netStore := newBugServer(t)
 	ctx := context.Background()
 	_, err := netStore.Create("testnet", "10.100.0.0/24", "bridge")
@@ -104,7 +102,7 @@ func TestHandleRun_AcceptsClientPreAllocatedIP(t *testing.T) {
 		ImagePath: "/tmp/a.img", Memory: "256M",
 		NetworkName: "testnet", IPAddress: ip.String(), StaticIP: false, Name: "dyn",
 	}))
-	require.Nil(t, rpcErr, "a client-pre-allocated dynamic IP must be accepted, not rejected as a duplicate")
+	require.NotNil(t, rpcErr, "an existing reservation cannot be claimed by a new run")
 }
 
 func TestHandleRun_ReleasesReservedIPOnCreateFailure(t *testing.T) {

@@ -570,7 +570,7 @@ func (s *Store) Create(name, version, binaryPath string, extraFiles []string, de
 // the directory layout instead of flattening to basenames, so a dynamically
 // linked binary's interpreter (/lib64/ld-linux-…) and libraries (/lib/…) land
 // where the ELF references them — without this a from-docker package fails
-// preflight for essentially every real Docker image (E2E finding F-024). A
+// preflight for essentially every real Docker image. A
 // File with IsDir set creates an empty directory in the image.
 func (s *Store) CreateFromFiles(name, version string, files []File, description, runtimeName string) error {
 	if err := validatePackageRef(name, version); err != nil {
@@ -774,6 +774,7 @@ func (s *Store) Push(name, version string, indexURL string) error {
 // package's program automatically: what the container would run (Entrypoint +
 // Cmd) and the environment it expects.
 type DockerImageConfig struct {
+	WorkingDir string   `json:"WorkingDir"`
 	Entrypoint []string `json:"Entrypoint"`
 	Cmd        []string `json:"Cmd"`
 	Env        []string `json:"Env"`
@@ -858,23 +859,44 @@ func IsShellLauncher(program string) bool {
 
 // ResolveDockerProgramPath resolves a program name from an image's config to an
 // absolute path inside the container (e.g. "node" → "/usr/local/bin/node"),
-// using the container's own PATH via `command -v`. Absolute inputs are returned
+// using the exported filesystem and OCI PATH. Absolute inputs are returned
 // as-is.
 func ResolveDockerProgramPath(image, program string) (string, error) {
 	if strings.HasPrefix(program, "/") {
 		return program, nil
 	}
-	cmd := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, //nolint:noctx // interactive CLI call
-		"-c", "command -v -- "+shellescape(program))
-	out, err := cmd.Output()
+	cfg, err := InspectDockerImage(image)
 	if err != nil {
-		return "", fmt.Errorf("resolve %q in %s: %w", program, image, err)
+		return "", err
 	}
-	resolved := strings.TrimSpace(string(out))
-	if resolved == "" {
-		return "", fmt.Errorf("program %q not found on PATH inside %s", program, image)
+	fs, cleanup, err := exportContainerFS(image)
+	if err != nil {
+		return "", err
 	}
-	return resolved, nil
+	defer cleanup()
+	return resolveDockerProgram(fs, cfg, program)
+}
+
+func resolveDockerProgram(fs *containerFS, cfg *DockerImageConfig, program string) (string, error) {
+	searchPath := "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	for _, env := range cfg.Env {
+		if strings.HasPrefix(env, "PATH=") {
+			searchPath = strings.TrimPrefix(env, "PATH=")
+		}
+	}
+	for _, dir := range strings.Split(searchPath, ":") {
+		candidate := path.Join("/", cfg.WorkingDir, dir, program)
+		if strings.HasPrefix(dir, "/") {
+			candidate = path.Join(dir, program)
+		}
+		if strings.Contains(program, "/") {
+			candidate = path.Join("/", cfg.WorkingDir, program)
+		}
+		if resolved, err := fs.resolve(candidate); err == nil {
+			return resolved, nil
+		}
+	}
+	return "", fmt.Errorf("program %q not found on container PATH", program)
 }
 
 // Ldd analyses a binary with ldd and returns its shared library dependencies as
@@ -1159,11 +1181,6 @@ func trimLddAddress(s string) string {
 		return s[:idx]
 	}
 	return s
-}
-
-// shellescape single-quote-escapes s for safe use in a POSIX shell command string.
-func shellescape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 func pushMultipart(metaJSON, archiveData []byte) (*bytes.Buffer, string, error) {

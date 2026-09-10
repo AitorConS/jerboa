@@ -2,7 +2,6 @@ package signing
 
 import (
 	"crypto/ed25519"
-	"encoding/pem"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,7 +140,7 @@ func TestStoreLoadKeyPairNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestStoreSignAndVerifyManifest(t *testing.T) {
+func TestStoreSignAndVerifyDigest(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
 	require.NoError(t, err)
@@ -149,18 +148,18 @@ func TestStoreSignAndVerifyManifest(t *testing.T) {
 	imageDir := filepath.Join(dir, "images", "abc123def456")
 	require.NoError(t, os.MkdirAll(imageDir, 0o755))
 
-	sig, err := s.SignManifest("sha256:abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890", imageDir)
+	sig, err := s.SignDigest("sha256:abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890")
 	require.NoError(t, err)
 	require.Equal(t, "sha256:abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890", sig.Digest)
 
-	verified, err := s.VerifyManifest(imageDir)
+	verified, err := s.VerifyDigest("sha256:abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890")
 	require.NoError(t, err)
 	require.NotNil(t, verified)
 	require.Equal(t, sig.Digest, verified.Digest)
 	require.Equal(t, sig.KeyID, verified.KeyID)
 }
 
-func TestStoreVerifyManifestNoSignature(t *testing.T) {
+func TestStoreVerifyDigestNoSignature(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
 	require.NoError(t, err)
@@ -168,12 +167,12 @@ func TestStoreVerifyManifestNoSignature(t *testing.T) {
 	imageDir := filepath.Join(dir, "images", "nosig")
 	require.NoError(t, os.MkdirAll(imageDir, 0o755))
 
-	sig, err := s.VerifyManifest(imageDir)
+	sig, err := s.VerifyDigest("sha256:abc123def4567890abcdef1234567890abcdef1234567890abcdef1234567890")
 	require.NoError(t, err)
 	require.Nil(t, sig)
 }
 
-func TestStoreSignManifestAutoGenerateKey(t *testing.T) {
+func TestStoreSignDigestAutoGenerateKey(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir)
 	require.NoError(t, err)
@@ -183,57 +182,7 @@ func TestStoreSignManifestAutoGenerateKey(t *testing.T) {
 	imageDir := filepath.Join(dir, "images", "autodigest")
 	require.NoError(t, os.MkdirAll(imageDir, 0o755))
 
-	_, err = s.SignManifest("sha256:autodigest1234567890abcdef1234567890abcdef1234567890abcdef12", imageDir)
+	_, err = s.SignDigest("sha256:autodigest1234567890abcdef1234567890abcdef1234567890abcdef12")
 	require.NoError(t, err)
 	require.True(t, s.HasKeyPair())
-}
-
-func TestPublicKeyPEM(t *testing.T) {
-	dir := t.TempDir()
-	s, err := NewStore(dir)
-	require.NoError(t, err)
-
-	_, err = s.GenerateAndSave()
-	require.NoError(t, err)
-
-	pemBytes, err := s.PublicKeyPEM()
-	require.NoError(t, err)
-	require.Contains(t, string(pemBytes), "ED25519 PUBLIC KEY")
-
-	block, _ := pem.Decode(pemBytes)
-	require.NotNil(t, block)
-	require.Equal(t, "ED25519 PUBLIC KEY", block.Type)
-	require.Len(t, block.Bytes, ed25519.PublicKeySize)
-}
-
-func TestImportPublicKey(t *testing.T) {
-	dir := t.TempDir()
-	s1, err := NewStore(dir)
-	require.NoError(t, err)
-
-	kp, err := s1.GenerateAndSave()
-	require.NoError(t, err)
-
-	pemBytes, err := s1.PublicKeyPEM()
-	require.NoError(t, err)
-
-	dir2 := t.TempDir()
-	s2, err := NewStore(dir2)
-	require.NoError(t, err)
-
-	err = s2.ImportPublicKey(pemBytes)
-	require.NoError(t, err)
-
-	verificationPath := filepath.Join(dir2, keyDirName, kp.KeyID+".pub")
-	_, err = os.Stat(verificationPath)
-	require.NoError(t, err)
-}
-
-func TestImportPublicKeyInvalidPEM(t *testing.T) {
-	dir := t.TempDir()
-	s, err := NewStore(dir)
-	require.NoError(t, err)
-
-	err = s.ImportPublicKey([]byte("not a pem"))
-	require.Error(t, err)
 }

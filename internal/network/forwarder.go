@@ -31,10 +31,11 @@ type PortForward struct {
 // host cannot reach it). A userspace listener is a normal socket: reachable
 // from the host itself and mirrored by WSL2 to the Windows side.
 type Forwarder struct {
-	mu        sync.Mutex
-	listeners []net.Listener
-	wg        sync.WaitGroup
-	closed    bool
+	mu          sync.Mutex
+	listeners   []net.Listener
+	wg          sync.WaitGroup
+	closed      bool
+	connections map[net.Conn]struct{}
 }
 
 // dialTimeout bounds how long a proxied connection waits to reach the guest.
@@ -78,9 +79,21 @@ func (f *Forwarder) serve(ln net.Listener, target string) {
 		if err != nil {
 			return // listener closed: stop serving
 		}
+		f.mu.Lock()
+		if f.closed {
+			f.mu.Unlock()
+			_ = client.Close()
+			return
+		}
+		if f.connections == nil {
+			f.connections = make(map[net.Conn]struct{})
+		}
+		f.connections[client] = struct{}{}
 		f.wg.Add(1)
+		f.mu.Unlock()
 		go func() {
 			defer f.wg.Done()
+			defer func() { f.mu.Lock(); delete(f.connections, client); f.mu.Unlock() }()
 			proxyConn(client, target)
 		}()
 	}
@@ -129,10 +142,17 @@ func (f *Forwarder) Close() {
 	f.closed = true
 	listeners := f.listeners
 	f.listeners = nil
+	clients := make([]net.Conn, 0, len(f.connections))
+	for client := range f.connections {
+		clients = append(clients, client)
+	}
 	f.mu.Unlock()
 
 	for _, ln := range listeners {
 		_ = ln.Close()
+	}
+	for _, client := range clients {
+		_ = client.Close()
 	}
 	f.wg.Wait()
 }

@@ -90,7 +90,7 @@ func handleWrite(w http.ResponseWriter, r *http.Request) {
 	// matters as much as a write failure: a deferred close would hide it and
 	// still answer 200. Report whichever occurred, or both.
 	_, writeErr := f.WriteString(line)
-	if err := errors.Join(writeErr, f.Close()); err != nil {
+	if err := errors.Join(writeErr, f.Sync(), f.Close()); err != nil {
 		http.Error(w, fmt.Sprintf("write/close error: %v", err), http.StatusInternalServerError)
 		return
 	}

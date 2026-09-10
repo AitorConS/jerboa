@@ -2,9 +2,9 @@ package compose
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/volume"
 	"gopkg.in/yaml.v3"
 )
@@ -82,79 +82,8 @@ func validate(f File) error {
 	return nil
 }
 
-// validatePortSpec checks that s is a valid host:guest[/proto] spec.
-func validatePortSpec(s string) error {
-	// Strip optional protocol suffix.
-	if idx := strings.LastIndex(s, "/"); idx >= 0 {
-		proto := strings.ToLower(s[idx+1:])
-		if proto != "tcp" && proto != "udp" {
-			return fmt.Errorf("port %q: unknown protocol %q", s, proto)
-		}
-		s = s[:idx]
-	}
-	parts := strings.SplitN(s, ":", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("port %q: expected host:guest format", s)
-	}
-	for _, p := range parts {
-		if p == "" {
-			return fmt.Errorf("port %q: port number must not be empty", s)
-		}
-	}
-	return nil
-}
+func validatePortSpec(s string) error   { _, err := api.ParsePortMap(s); return err }
+func validateVolumeSpec(s string) error { _, _, _, err := api.ParseVolumeMount(s); return err }
 
-// validateVolumeSpec checks that s is a valid name:guestpath[:ro] spec.
-func validateVolumeSpec(s string) error {
-	parts := strings.Split(s, ":")
-	if len(parts) < 2 || len(parts) > 3 {
-		return fmt.Errorf("volume %q: expected name:guestpath[:ro]", s)
-	}
-	if parts[0] == "" {
-		return fmt.Errorf("volume %q: name must not be empty", s)
-	}
-	if parts[1] == "" {
-		return fmt.Errorf("volume %q: guest path must not be empty", s)
-	}
-	if len(parts) == 3 && !strings.EqualFold(parts[2], "ro") {
-		return fmt.Errorf("volume %q: third field must be \"ro\" if present", s)
-	}
-	return nil
-}
-
-// validateHealthCheckSpec accepts the same grammar as the `jerboa run
-// --health-check` parser (parseHealthCheck): "tcp:PORT" or "http:PORT:/path".
-// It must stay in lockstep with that parser — an earlier split-on-2 version
-// rejected the documented "http:PORT:/path" form that the parser accepts, so a
-// valid compose health_check failed at parse time with "port must be a number".
-func validateHealthCheckSpec(s string) error {
-	parts := strings.SplitN(s, ":", 3)
-	if len(parts) < 2 {
-		return fmt.Errorf("expected tcp:PORT or http:PORT:/path")
-	}
-	hcType := strings.ToLower(parts[0])
-	if hcType != "tcp" && hcType != "http" {
-		return fmt.Errorf("type must be tcp or http, got %q", hcType)
-	}
-	if _, err := strconv.Atoi(parts[1]); err != nil {
-		return fmt.Errorf("port must be a number")
-	}
-	if hcType == "http" && len(parts) == 3 && !strings.HasPrefix(parts[2], "/") {
-		return fmt.Errorf("http path must start with /")
-	}
-	return nil
-}
-
-func validateRestartSpec(s string) error {
-	parts := strings.SplitN(s, ":", 2)
-	policy := strings.ToLower(parts[0])
-	if policy != "never" && policy != "on-failure" && policy != "always" {
-		return fmt.Errorf("must be never, on-failure, or always, got %q", policy)
-	}
-	if len(parts) == 2 {
-		if _, err := strconv.Atoi(parts[1]); err != nil {
-			return fmt.Errorf("max-retries must be a number")
-		}
-	}
-	return nil
-}
+func validateHealthCheckSpec(s string) error { _, err := api.ParseHealthCheck(s); return err }
+func validateRestartSpec(s string) error     { _, err := api.ParseRestartPolicy(s); return err }

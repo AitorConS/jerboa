@@ -1,6 +1,7 @@
 name: Package Build
 
 on:
+  workflow_call:
   workflow_dispatch:
     inputs:
       package:
@@ -16,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: packages-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -176,6 +177,8 @@ jobs:
 
   publish-index:
     name: Update Package Index
+    permissions:
+      contents: write
     needs: [build-package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -190,9 +193,23 @@ jobs:
         with:
           pattern: package-*
           path: dist/packages/
-          merge-multiple: true
+          merge-multiple: false
 
-      - name: Rebuild package index
+      - name: Publish archives and index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          echo "Package index rebuild is manual until the index server is deployed."
-          echo "Artifacts are available in this workflow run for manual upload."
+          set -euo pipefail
+          mkdir -p dist/publish
+          if gh release view pkg-index >/dev/null 2>&1; then
+            gh release download pkg-index --pattern packages.json --dir dist/publish
+          else
+            gh release create pkg-index --title "Package index" --notes "Runtime package archives and index."
+          fi
+          python3 scripts/package-index.py dist/packages dist/publish "$GH_REPO"
+          find dist/publish -name '*.tar.gz' -exec gh release upload pkg-index {} --clobber \;
+          gh release upload pkg-index dist/publish/packages.json --clobber
+          curl --fail --location --retry 5 --retry-all-errors \
+            "https://github.com/$GH_REPO/releases/download/pkg-index/packages.json" -o dist/public-index.json
+          python3 -c 'import json; a=json.load(open("dist/publish/packages.json")); b=json.load(open("dist/public-index.json")); assert a==b'

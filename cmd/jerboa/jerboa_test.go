@@ -436,7 +436,7 @@ func TestBuildEnv_FlagsAndFile(t *testing.T) {
 
 	got, err := buildEnv([]string{"INLINE=1"}, f.Name())
 	require.NoError(t, err)
-	require.Equal(t, []string{"INLINE=1", "FROM_FILE=yes"}, got)
+	require.Equal(t, []string{"FROM_FILE=yes", "INLINE=1"}, got)
 }
 
 func TestBuildEnv_MissingFile(t *testing.T) {

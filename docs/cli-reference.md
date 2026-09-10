@@ -23,7 +23,7 @@ Every `jerboa` command accepts:
 |---|---|
 | `-H, --host` | Daemon endpoint override |
 | `--store` | Local client-side store root used by commands that touch client-owned state |
-| `--output table|json` | Output format |
+| `--output table\|json` | Output format |
 | `-V, --verbose` | Show raw build/download output |
 | `-v, --version` | Show CLI version |
 
@@ -64,7 +64,7 @@ Key flags:
 | `--cpus` | vCPU count, default `1` |
 | `-p, --port` | Port mapping `[bindaddr:]host:guest[/tcp\|udp]`; without a bind address the port publishes on all interfaces, `127.0.0.1:host:guest` restricts it to localhost |
 | `-e, --env` | Repeatable environment variable |
-| `--env-file` | Read env vars from file |
+| `--env-file` | Read env vars from file; explicit `-e` flags override matching keys |
 | `--name` | Human-readable VM name |
 | `--rm` | Auto-remove after stop |
 | `-v, --volume` | Named volume mount `name:path[:ro]` |
@@ -225,15 +225,16 @@ Build driver behavior to know:
 - Go builds add `-trimpath` and `-ldflags "-s -w"` by default to reduce guest
   binary and image size. If custom build args include `-ldflags`, those args are
   appended after the defaults and take precedence.
-- Node builds install production dependencies only when `node_modules` is
-  missing. If `package-lock.json` exists, the driver uses
+- Node builds reinstall production dependencies when manifests, lockfiles, runtime
+  version or host platform change, or when `node_modules` is missing. If `package-lock.json` exists, the driver uses
   `npm ci --omit=dev --no-audit --no-fund`; otherwise it uses
   `npm install --omit=dev --no-audit --no-fund`.
 - Python builds cache dependency installs. `pip install` runs only when
   `requirements.txt` or the Python version changes, tracked by
   `packages/.jerboa-deps-stamp`. Delete `packages/` or that stamp file to force
-  a dependency reinstall. In the Flask example project, this reduces unchanged
-  rebuilds from about 22s to about 9s.
+  a dependency reinstall. Changed dependencies are installed into a clean staging
+  directory, then replace the old set only after installation succeeds. Removed
+  requirements therefore disappear from the rebuilt image.
 
 Newly built images reserve a 4 MiB embedded boot filesystem partition instead
 of the previous 12 MiB layout, so they are about 8 MiB smaller (for example,
@@ -266,6 +267,8 @@ List images stored by the daemon.
 Remove an image from the daemon store. Refused with an error if any VM (running
 or stopped) still references the image; remove those VMs first. This mirrors
 `docker rmi` and prevents leaving a VM pointing at a disk that no longer exists.
+Removing by digest removes all tags pointing to that image. Ambiguous digest
+prefixes are rejected.
 
 ### `jerboa sign <image>`
 
@@ -273,7 +276,10 @@ Resolve the image through the daemon and sign its disk digest with the default E
 
 ### `jerboa verify <image>`
 
-Resolve the image through the daemon and verify its stored signature.
+Resolve the image through the daemon, hash its actual disk contents, and verify the
+signature against that digest. `run --verify enforce` pins the verified digest;
+each hypervisor verifies the bytes while writing its private boot copy and starts
+the VM only if the digest matches.
 
 ---
 
@@ -292,7 +298,7 @@ Subcommands:
 | `pkg create <name>[:version] <binary>` | Create a local package |
 | `pkg from-docker <name>[:version] <image>` | Extract a binary and libraries from a Docker image |
 | `pkg push <name>:<version> <index-url>` | Push a local package to a remote index |
-| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` builds only) |
+| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` runs in the background) |
 
 Supported package sources (`--source`, default `ops`):
 
@@ -412,6 +418,9 @@ Notes:
 ### `jerboa volume inspect <name>`
 ### `jerboa volume rm <name>`
 
+Volume removal and seeding are rejected while any VM references the volume,
+including stopped VMs. Remove those VMs first.
+
 ---
 
 ## Compose Commands
@@ -428,6 +437,8 @@ Current behavior to know:
 - `compose down` stops **and removes** the stack's service VMs (no stopped
   remnants left behind), and removes the networks it created
 - `compose down --volumes` additionally removes volumes created by that stack
+- each compose file has its own state, identified by its canonical path
+- partial deployments retain state for cleanup; repeated `compose down` is safe
 - `compose logs` is snapshot-only; there is no follow mode today
 - a service `health_check` uses the same grammar as `run --health-check`:
   `tcp:PORT` or `http:PORT:/path` (e.g. `"tcp:8080"`, `"http:8080:/healthz"`)
@@ -494,7 +505,10 @@ These commands exist only on Windows.
 
 ### `jerboa daemon install`
 
-Import the dedicated WSL2 distro.
+Import the dedicated WSL2 distro. Before replacing an existing installation,
+the CLI downloads and validates the replacement and exports a recovery backup.
+The backup path is printed and retained if replacement fails. Local `--rootfs`
+archives are also validated before any unregister operation.
 
 Flags:
 

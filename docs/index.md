@@ -68,7 +68,7 @@ Stable daemon releases target Linux. The [native macOS ARM64 preview]({% link ma
 
 ## Versions In This Repo
 
-- CLI version source: `VERSION`
+- CLI version source: `VERSION.md`
 - Kernel version source: `kernel/VERSION`
 
 Current released versions (regenerated from those files on every docs deploy):

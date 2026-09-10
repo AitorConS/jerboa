@@ -144,6 +144,7 @@ func TestQEMUManager_Remove_not_stopped(t *testing.T) {
 	mgr := fakeManager(false)
 	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
 	require.NoError(t, err)
+	require.NoError(t, v.transition(StateStarting))
 	require.Error(t, mgr.Remove(context.Background(), v.ID))
 }
 

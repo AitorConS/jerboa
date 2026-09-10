@@ -82,21 +82,41 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 	return m, nil
 }
 
-// Get returns the manifest and disk image path for ref (name:tag or sha256:<hex>).
+// Get returns the manifest and disk path after verifying the actual disk contents.
 func (s *Store) Get(ref string) (Manifest, string, error) {
+	m, diskPath, err := s.Resolve(ref)
+	if err != nil {
+		return Manifest{}, "", err
+	}
+	digest, err := fileSHA256(diskPath)
+	if err != nil {
+		return Manifest{}, "", err
+	}
+	if digest != m.DiskDigest {
+		return Manifest{}, "", fmt.Errorf("image integrity mismatch: %s", ref)
+	}
+	return m, diskPath, nil
+}
+
+// Resolve pins a reference to its manifest and content-addressed disk path.
+// It checks the manifest against the address, but does not read the disk.
+// Boot callers must verify the bytes copied to their private boot image before
+// launching a VM. Use Get when verified disk contents are needed immediately.
+func (s *Store) Resolve(ref string) (Manifest, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-
 	sha, err := s.resolveRef(ref)
 	if err != nil {
-		return Manifest{}, "", fmt.Errorf("image store get %s: %w", ref, err)
+		return Manifest{}, "", fmt.Errorf("image store resolve %s: %w", ref, err)
 	}
 	m, err := s.readManifest(sha)
 	if err != nil {
-		return Manifest{}, "", fmt.Errorf("image store get %s: %w", ref, err)
+		return Manifest{}, "", fmt.Errorf("image store resolve %s: %w", ref, err)
 	}
-	diskPath := filepath.Join(s.root, sha, "disk.img")
-	return m, diskPath, nil
+	if m.DiskDigest != "sha256:"+sha {
+		return Manifest{}, "", fmt.Errorf("image integrity mismatch: %s", ref)
+	}
+	return m, filepath.Join(s.root, sha, "disk.img"), nil
 }
 
 // List returns all unique manifests in the store.
@@ -148,7 +168,15 @@ func (s *Store) Remove(ref string) error {
 	if !ok {
 		return fmt.Errorf("image store remove: %s not found", ref)
 	}
-	delete(refs, ref)
+	if _, named := refs[ref]; named {
+		delete(refs, ref)
+	} else {
+		for name, digest := range refs {
+			if digest == sha {
+				delete(refs, name)
+			}
+		}
+	}
 	if err := s.writeRefs(refs); err != nil {
 		return fmt.Errorf("image store remove write refs: %w", err)
 	}
@@ -196,12 +224,16 @@ func (s *Store) resolveRef(ref string) (string, error) {
 
 func (s *Store) findBySHA(refs map[string]string, ref string) (string, bool) {
 	needle := strings.TrimPrefix(ref, "sha256:")
+	match := ""
 	for _, sha := range refs {
 		if sha == needle || strings.HasPrefix(sha, needle) {
-			return sha, true
+			if match != "" && match != sha {
+				return "", false
+			}
+			match = sha
 		}
 	}
-	return "", false
+	return match, match != ""
 }
 
 func (s *Store) readManifest(sha string) (Manifest, error) {

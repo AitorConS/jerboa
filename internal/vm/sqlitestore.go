@@ -105,6 +105,8 @@ func (s *SQLiteStore) Create(cfg Config) (*VM, error) {
 }
 
 func (s *SQLiteStore) Remove(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := s.MemoryStore.Remove(id); err != nil {
 		return err
 	}
@@ -219,6 +221,9 @@ func (s *SQLiteStore) writeVM(v *VM) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if _, err := s.Get(v.ID); err != nil {
+		return nil
+	}
 	v.mu.RLock()
 	cfg, err := json.Marshal(v.Cfg)
 	if err != nil {

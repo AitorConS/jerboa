@@ -16,6 +16,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/apiserver"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/network"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/tools"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/AitorConS/jerboa/internal/volume"
@@ -49,6 +50,7 @@ func TestVolumePersistence(t *testing.T) {
 		Name:       "voltest",
 		Tag:        "latest",
 		BinaryPath: voltestBin,
+		PkgFiles:   []pkg.File{{GuestPath: "data", IsDir: true}},
 		MkfsRun:    mkfsRun,
 		Memory:     "256M",
 		CPUs:       1,
@@ -108,7 +110,8 @@ func TestVolumePersistence(t *testing.T) {
 		t.Fatal("voltest HTTP server did not become ready on first run")
 	}
 
-	resp, err := http.Post("http://127.0.0.1:18080/write?msg=hello", "", nil)
+	marker := fmt.Sprintf("audit-persistence-%d", time.Now().UnixNano())
+	resp, err := http.Post("http://127.0.0.1:18080/write?msg="+marker, "", nil)
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -152,9 +155,9 @@ func TestVolumePersistence(t *testing.T) {
 	body := make([]byte, 1024)
 	n, _ := resp.Body.Read(body)
 	_ = resp.Body.Close()
-	require.Contains(t, string(body[:n]), "hello")
+	require.Contains(t, string(body[:n]), marker)
 
-	_ = client.Stop(ctx, info2.ID, false)
+	require.NoError(t, client.Stop(ctx, info2.ID, true))
 	require.Eventually(t, func() bool {
 		g, err := client.Get(ctx, info2.ID)
 		return err == nil && g.State == "stopped"

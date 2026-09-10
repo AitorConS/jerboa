@@ -343,6 +343,9 @@ jerboa compose down stack.yaml --volumes
 
 ## Updating
 
+Update CLI and daemon together for 0.51.2: this release uses wire protocol 2.
+Before upgrading existing Compose stacks, follow the [stack migration instructions]({% link compose.md %}#upgrading-existing-stacks).
+
 The CLI has no self-update command. How you update depends on the platform:
 
 - **Windows** — update through the **Jerboa Desktop app**, which bundles the CLI

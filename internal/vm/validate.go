@@ -12,6 +12,8 @@ import (
 
 // networkNameRe matches valid Linux network interface names: 1–15 characters
 // from a conservative set. IFNAMSIZ caps interface names at 15 bytes.
+var logicalNetworkNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,128}$`)
+
 var networkNameRe = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
 
 // memoryRe matches QEMU memory strings: a positive integer with an optional
@@ -53,13 +55,18 @@ func validateVMConfig(cfg Config) error {
 		return fmt.Errorf("validate config: CPUs must be >= 0, got %d", cfg.CPUs)
 	}
 
-	if cfg.NetworkName != "" && !networkNameRe.MatchString(cfg.NetworkName) {
-		return fmt.Errorf("validate config: NetworkName %q is invalid (1-15 chars, [a-zA-Z0-9_.:-])", cfg.NetworkName)
+	if cfg.NetworkName != "" && !logicalNetworkNameRe.MatchString(cfg.NetworkName) {
+		return fmt.Errorf("validate config: NetworkName %q is invalid (1-128 chars, [a-zA-Z0-9_.:-])", cfg.NetworkName)
 	}
 	if cfg.BridgeName != "" && !networkNameRe.MatchString(cfg.BridgeName) {
 		return fmt.Errorf("validate config: BridgeName %q is invalid (1-15 chars, [a-zA-Z0-9_.:-])", cfg.BridgeName)
 	}
 
+	if hc := cfg.HealthCheck; hc != nil {
+		if (hc.Type != "tcp" && hc.Type != "http") || hc.Port < 1 || hc.Port > 65535 {
+			return fmt.Errorf("invalid health check: expected tcp/http and port 1-65535")
+		}
+	}
 	for i, pm := range cfg.PortMaps {
 		if pm.Protocol != "" && pm.Protocol != ProtocolTCP && pm.Protocol != ProtocolUDP {
 			return fmt.Errorf("validate config: PortMaps[%d] protocol %q invalid (want tcp or udp)", i, pm.Protocol)

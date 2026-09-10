@@ -199,6 +199,7 @@ func (s *Store) readMeta(name string) (*Volume, error) {
 	if err := json.Unmarshal(data, &v); err != nil {
 		return nil, fmt.Errorf("volume %q corrupt meta: %w", name, err)
 	}
+	v.DiskPath = filepath.Join(dir, "disk.img")
 	return &v, nil
 }
 

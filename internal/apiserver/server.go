@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -70,7 +69,8 @@ type Server struct {
 	starting     map[string]struct{}
 	// nameMu serializes the VM-name uniqueness check with VM creation so two
 	// concurrent runs cannot both register the same name.
-	nameMu sync.Mutex
+	nameMu     sync.Mutex
+	resourceMu sync.Mutex
 }
 
 // createUnique registers a VM, rejecting a name already held by another VM
@@ -304,6 +304,8 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleNetworkGet(req.Params)
 	case "Network.Remove":
 		return s.handleNetworkRemove(req.Params)
+	case "Volume.Remove":
+		return s.handleVolumeRemove(req.Params)
 	case "Network.AllocateIP":
 		return s.handleNetworkAllocateIP(req.Params)
 	case "Network.ReleaseIP":
@@ -349,7 +351,7 @@ func (s *Server) resolveImageRef(image string) (string, error) {
 // image reference. name:tag values contain a ':' but no path separators and no
 // Windows drive prefix.
 func looksLikePath(s string) bool {
-	return strings.ContainsAny(s, "/\\") || (len(s) >= 2 && s[1] == ':')
+	return strings.ContainsAny(s, "/\\") || (len(s) >= 3 && s[1] == ':' && (s[2] == '/' || s[2] == '\\'))
 }
 
 // maskFromCIDR returns the prefix length of a CIDR subnet ("10.100.0.0/24" →
@@ -366,30 +368,48 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
 	imagePath := p.ImagePath
+	imageDigest := ""
+	var resolvedManifest *image.Manifest
 	if p.Image != "" {
-		resolved, rerr := s.resolveImageRef(p.Image)
-		if rerr != nil {
-			return nil, &api.RPCError{Code: -32000, Message: rerr.Error()}
+		if s.imgStore != nil && !looksLikePath(p.Image) {
+			m, disk, err := s.imgStore.Resolve(p.Image)
+			if err != nil {
+				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+			}
+			resolvedManifest = &m
+			imagePath = disk
+			imageDigest = m.DiskDigest
+			p.Image = imageDigest
+		} else {
+			resolved, err := s.resolveImageRef(p.Image)
+			if err != nil {
+				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+			}
+			imagePath = resolved
 		}
-		imagePath = resolved
 	}
 	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
 		return nil, rerr
 	}
 
-	// Reconcile the request's IP with the network's IPAM. A networked run without
-	// a guest IP can never work (the guest configures no address, the tap is never
-	// bridged, the forwarder has no dial target), so the daemon allocates one when
-	// the client left it empty. When the client DID supply an IP, it is reserved
-	// so a duplicate static address is rejected instead of silently colliding on
-	// the bridge — unless it is an address the client already pre-allocated from
-	// this same IPAM (StaticIP=false), which is expected to be reserved already.
-	//
-	// assignedIP tracks an address the daemon added to the pool for this run so it
-	// can be returned if Create fails. Ad-hoc networks not registered in the store
-	// keep working when specified in full: the store lookup fails and IPAM is
-	// skipped entirely.
+	architecture := ""
+	if runtime.GOOS == "darwin" && (p.ImagePath != "" || looksLikePath(p.Image)) {
+		architecture = "arm64"
+		if p.EmulateX86 {
+			architecture = "amd64"
+		}
+	}
+	if m := resolvedManifest; m != nil {
+		architecture = m.Architecture
+		if runtime.GOOS == "darwin" && m.Architecture != "arm64" && !p.EmulateX86 {
+			return nil, &api.RPCError{Code: -32000, Message: "native macOS requires an ARM64 image; rebuild with --platform linux/arm64 or explicitly use --emulate-x86"}
+		}
+	}
+
+	// The daemon owns each reservation until creation succeeds, rolling it back on failure.
 	assignedIP := ""
 	if p.NetworkName != "" {
 		n, nerr := s.netStore.Get(p.NetworkName)
@@ -410,11 +430,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 				p.IPAddress = ip.String()
 				assignedIP = p.IPAddress
 			} else if rerr := s.netStore.ReserveIP(p.NetworkName, p.IPAddress); rerr != nil {
-				// A client-pre-allocated dynamic IP is already reserved — accept it.
-				// A duplicate static IP, or one outside the subnet, fails the run.
-				if p.StaticIP || !errors.Is(rerr, network.ErrIPAlreadyAllocated) {
-					return nil, &api.RPCError{Code: -32000, Message: "reserve ip: " + rerr.Error()}
-				}
+				return nil, &api.RPCError{Code: -32000, Message: "reserve ip: " + rerr.Error()}
 			} else {
 				assignedIP = p.IPAddress
 			}
@@ -432,33 +448,20 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 
 	// Inherit defaults baked into the image manifest ([run] in unikernel.toml)
 	// for any run parameter the client left unset. Explicit run flags always win.
-	architecture := ""
-	if runtime.GOOS == "darwin" && (p.ImagePath != "" || looksLikePath(p.Image)) {
-		architecture = "arm64"
-		if p.EmulateX86 {
-			architecture = "amd64"
-		}
-	}
 	memory, cpus := p.Memory, p.CPUs
 	portMaps := portMapsFromSpec(p.PortMaps)
-	if p.Image != "" && !looksLikePath(p.Image) && s.imgStore != nil {
-		if m, _, err := s.imgStore.Get(p.Image); err == nil {
-			architecture = m.Architecture
-			if runtime.GOOS == "darwin" && m.Architecture != "arm64" && !p.EmulateX86 {
-				return nil, &api.RPCError{Code: -32000, Message: "native macOS requires an ARM64 image; rebuild with --platform linux/arm64"}
-			}
-			if memory == "" {
-				memory = m.Config.Memory
-			}
-			if cpus == 0 {
-				cpus = m.Config.CPUs
-			}
-			// Baked ports only publish when the VM joins a network; without one
-			// there is nothing to forward through, so leave them inert.
-			if len(portMaps) == 0 && (p.NetworkName != "" || runtime.GOOS == "darwin") && len(m.Config.Ports) > 0 {
-				if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
-					portMaps = portMapsFromSpec(specs)
-				}
+	if m := resolvedManifest; m != nil {
+		if memory == "" {
+			memory = m.Config.Memory
+		}
+		if cpus == 0 {
+			cpus = m.Config.CPUs
+		}
+		// Baked ports only publish when the VM joins a network; without one
+		// there is nothing to forward through, so leave them inert.
+		if len(portMaps) == 0 && (p.NetworkName != "" || runtime.GOOS == "darwin") && len(m.Config.Ports) > 0 {
+			if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
+				portMaps = portMapsFromSpec(specs)
 			}
 		}
 	}
@@ -476,6 +479,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		EmulateX86:   p.EmulateX86,
 		Architecture: architecture,
 		ImagePath:    imagePath,
+		ImageDigest:  imageDigest,
 		ImageRef:     p.Image,
 		Memory:       memory,
 		CPUs:         cpus,
@@ -513,9 +517,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	v, err := s.createUnique(ctx, cfg)
 	if err != nil {
 		// The VM was never registered, so nothing references any IP the daemon
-		// assigned above (allocated or reserved); return it to the pool. After
-		// Create succeeds the IP stays allocated even if Start fails: the stopped
-		// VM keeps it in its config for a later VM.Start.
+		// assigned above (allocated or reserved); return it to the pool.
 		if assignedIP != "" {
 			if relErr := s.netStore.ReleaseIP(p.NetworkName, assignedIP); relErr != nil {
 				slog.Debug("run: release ip after create failure", "network", p.NetworkName, "ip", assignedIP, "err", relErr)
@@ -525,6 +527,14 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	if err := s.mgr.Start(ctx, v.ID); err != nil {
+		if removeErr := s.mgr.Remove(ctx, v.ID); removeErr != nil {
+			return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("%v; cleanup VM %s: %v", err, v.ID, removeErr)}
+		}
+		if assignedIP != "" {
+			if releaseErr := s.netStore.ReleaseIP(p.NetworkName, assignedIP); releaseErr != nil {
+				return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("%v; release IP: %v", err, releaseErr)}
+			}
+		}
 		s.recordVMError()
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
@@ -580,6 +590,8 @@ func (s *Server) releaseStart(id string) {
 // registry entry. The response carries the replacement's (new) ID. A VM still
 // in "created" (registered but never started) is started in place.
 func (s *Server) handleStart(ctx context.Context, params json.RawMessage) (any, *api.RPCError) {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
 	var p api.IDParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
@@ -894,6 +906,9 @@ func (s *Server) ensureVolumesFormatted(ctx context.Context, specs []api.VolumeM
 		label := sp.Label
 		if label == "" {
 			label = volume.SanitizeLabel(filepath.Base(filepath.Dir(sp.DiskPath)))
+		}
+		if err := s.volumeUnused(sp.DiskPath); err != nil {
+			return &api.RPCError{Code: -32000, Message: err.Error()}
 		}
 		if err := volume.EnsureFormatted(ctx, sp.DiskPath, label, 0, formatter); err != nil {
 			return &api.RPCError{Code: -32000, Message: err.Error()}

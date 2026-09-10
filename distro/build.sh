@@ -19,8 +19,8 @@ out="${1:-${root}/jerboa-rootfs-amd64.tar.gz}"
 # Version stamped into the baked jerboad so `jerboa status` reports the real
 # release, not "dev". Source order: $VERSION > repo VERSION file > git > "dev".
 version="${VERSION:-}"
-if [ -z "${version}" ] && [ -f "${root}/VERSION" ]; then
-    version="v$(tr -d '[:space:]' < "${root}/VERSION")"
+if [ -z "${version}" ] && [ -f "${root}/VERSION.md" ]; then
+    version="v$(tr -d '[:space:]' < "${root}/VERSION.md")"
 fi
 if [ -z "${version}" ]; then
     version="$(git -C "${root}" rev-parse --short HEAD 2>/dev/null || echo dev)"

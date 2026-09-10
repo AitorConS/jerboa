@@ -528,3 +528,7 @@ func (c *Client) call(method string, params any, out any) error {
 	}
 	return nil
 }
+
+func (c *Client) VolumeRemove(ctx context.Context, name, disk string) error {
+	return c.call("Volume.Remove", VolumeRemoveParams{Name: name, DiskPath: disk}, nil)
+}

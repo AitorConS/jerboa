@@ -1,11 +1,15 @@
 package main
 
 import (
+	"archive/tar"
+	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -66,7 +70,7 @@ type daemonOpts struct {
 func (o *daemonOpts) bind(c *cobra.Command) {
 	c.Flags().StringVar(&o.hypervisor, "hypervisor", "",
 		"hypervisor to run (qemu or firecracker); defaults to config")
-	// Observability passthrough (E2E finding F-022): these enable the managed
+	// Observability passthrough: these enable the managed
 	// daemon's metrics/UI/tracing/log-format, which previously required
 	// hand-launching jerboad inside the distro. A provided value is persisted so
 	// subsequent auto-boots enable the same endpoints.
@@ -169,9 +173,6 @@ func newDaemonInstallCmd() *cobra.Command {
 					fmt.Fprintf(cmd.OutOrStdout(), "distro %q already installed (use --force to reimport)\n", wsldistro.Name)
 					return nil
 				}
-				if uerr := wsldistro.Unregister(); uerr != nil {
-					return uerr
-				}
 			}
 
 			tarPath := rootfs
@@ -184,9 +185,26 @@ func newDaemonInstallCmd() *cobra.Command {
 				defer func() { _ = os.Remove(p) }()
 			}
 
+			if err := validateRootfs(tarPath); err != nil {
+				return err
+			}
+			backup := ""
+			if exists {
+				backup, err = backupDistro(cmd)
+				if err != nil {
+					return err
+				}
+				if err := wsldistro.Unregister(); err != nil {
+					return err
+				}
+			}
+
 			fmt.Fprintf(cmd.OutOrStdout(), "importing %q from %s ...\n", wsldistro.Name, tarPath)
 			if err := wsldistro.Import(wsldistro.DefaultInstallDir(), tarPath); err != nil {
 				return err
+			}
+			if backup != "" {
+				_ = os.Remove(backup)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "installed. start it with: jerboa daemon start\n")
 			return nil
@@ -245,6 +263,13 @@ func newDaemonReinstallCmd() *cobra.Command {
 				defer func() { _ = os.Remove(p) }()
 			}
 
+			if err := validateRootfs(tarPath); err != nil {
+				return err
+			}
+			fullBackup, err := backupDistro(cmd)
+			if err != nil {
+				return err
+			}
 			// Stop the daemon so nothing writes to the data dirs during the swap.
 			if err := wslboot.Stop(wcfg.Distro, wcfg.User); err != nil && !errors.Is(err, wslboot.ErrNoDaemon) {
 				return err
@@ -293,6 +318,7 @@ func newDaemonReinstallCmd() *cobra.Command {
 			if dataPath != "" {
 				_ = os.Remove(dataPath)
 			}
+			_ = os.Remove(fullBackup)
 			return nil
 		},
 	}
@@ -706,4 +732,68 @@ func daemonLogName() string {
 		return "jerboad.log"
 	}
 	return "jerboad-wsl.log"
+}
+
+// validateRootfs reads the entire archive before an installed distro is changed.
+func validateRootfs(name string) error {
+	f, err := os.Open(name)
+	if err != nil {
+		return fmt.Errorf("rootfs: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("rootfs: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("rootfs must be a regular tar file")
+	}
+	r := bufio.NewReader(f)
+	var input io.Reader = r
+	magic, _ := r.Peek(2)
+	if len(magic) == 2 && magic[0] == 0x1f && magic[1] == 0x8b {
+		gz, err := gzip.NewReader(r)
+		if err != nil {
+			return fmt.Errorf("rootfs: %w", err)
+		}
+		defer func() { _ = gz.Close() }()
+		input = gz
+	}
+	tr := tar.NewReader(input)
+	entries := 0
+	for {
+		_, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("invalid rootfs: %w", err)
+		}
+		entries++
+		if _, err := io.Copy(io.Discard, tr); err != nil {
+			return fmt.Errorf("rootfs: %w", err)
+		}
+	}
+	if entries == 0 {
+		return fmt.Errorf("rootfs archive is empty")
+	}
+	if _, err := io.Copy(io.Discard, input); err != nil {
+		return fmt.Errorf("rootfs: %w", err)
+	}
+	return nil
+}
+func backupDistro(cmd *cobra.Command) (string, error) {
+	f, err := os.CreateTemp("", "jerboa-recovery-*.tar")
+	if err != nil {
+		return "", fmt.Errorf("backup distro: %w", err)
+	}
+	name := f.Name()
+	_ = f.Close()
+	out, err := exec.CommandContext(cmd.Context(), "wsl", "--export", wsldistro.Name, name).CombinedOutput() //nolint:gosec // fixed executable and distro; destination is an owned temporary file
+	if err != nil {
+		_ = os.Remove(name)
+		return "", fmt.Errorf("backup distro: %w: %s", err, out)
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Recovery backup: %s (kept if replacement fails; restore with wsl --import)\n", name)
+	return name, nil
 }

@@ -2,7 +2,10 @@
 
 package vm
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateVMConfig(t *testing.T) {
 	base := Config{ImagePath: "img.raw", Memory: "256M"}
@@ -27,7 +30,7 @@ func TestValidateVMConfig(t *testing.T) {
 		{"memory plain int", func(c *Config) { c.Memory = "512" }, false},
 		{"negative cpus", func(c *Config) { c.CPUs = -1 }, true},
 		{"bad network name chars", func(c *Config) { c.NetworkName = "tap 0!" }, true},
-		{"network name too long", func(c *Config) { c.NetworkName = "abcdefghijklmnop" }, true},
+		{"network name too long", func(c *Config) { c.NetworkName = "a" + strings.Repeat("b", 128) }, true},
 		{"bad protocol", func(c *Config) {
 			c.PortMaps = []PortMap{{HostPort: 80, GuestPort: 80, Protocol: "icmp"}}
 		}, true},

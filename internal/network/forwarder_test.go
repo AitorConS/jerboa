@@ -129,3 +129,31 @@ func TestForwarderSkipsUDP(t *testing.T) {
 		t.Fatalf("expected no listeners for UDP-only map, got %d", len(fwd.listeners))
 	}
 }
+
+func TestForwarderCloseWithIdleConnection(t *testing.T) {
+	host, port, stop := startEchoServer(t)
+	defer stop()
+	f, err := StartForwarder(host, []PortForward{{HostPort: 0, GuestPort: port, BindAddr: "127.0.0.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", f.listeners[0].Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 1)
+	if _, err := io.ReadFull(conn, b); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { f.Close(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked on idle connection")
+	}
+}

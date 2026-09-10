@@ -53,6 +53,13 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("run: %w", err)
 			}
 
+			if verify != "off" && imageRef != "" {
+				digest, err := imageDigest(cmd, socketPath, imageRef)
+				if err != nil {
+					return err
+				}
+				imageRef = digest
+			}
 			if err := verifyImageSignature(cmd, socketPath, imageRef, verify); err != nil {
 				return err
 			}
@@ -127,20 +134,6 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 
-			// Allocate the guest IP client-side for compatibility with older
-			// daemons. On failure ipAddr stays empty on purpose: the daemon's
-			// VM.Run fills in the IP (and gateway/bridge/mask) from its network
-			// store whenever the request leaves them unset.
-			if network != "" && ipAddr == "" {
-				allocatedIP, allocErr := client.NetworkAllocateIP(cmd.Context(), network)
-				if allocErr == nil {
-					ipAddr = allocatedIP
-					if gwIP == "" {
-						gwIP = gatewayIP(ipAddr)
-					}
-				}
-			}
-
 			// Leave Memory/CPUs unset unless the user passed the flag, so the
 			// daemon can inherit the image's baked [run] defaults. An explicit
 			// flag always wins; absent that, the manifest value applies; absent
@@ -168,8 +161,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				Attach:      !detach,
 				IPAddress:   ipAddr,
 				// A user-supplied --ip is a static address the daemon must reserve
-				// and conflict-check; an address the client pre-allocated above is
-				// already reserved and must not be re-flagged as static.
+				// and conflict-check. Dynamic addresses are allocated by the daemon.
 				StaticIP:   cmd.Flags().Changed("ip"),
 				GatewayIP:  gwIP,
 				BridgeName: bridgeNm,
@@ -188,7 +180,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if diskIOPS > 0 {
 				params.DiskIOPS = diskIOPS
 			}
-			if diskBPS != "" {
+			if diskBPS != "" && diskBPS != "0" {
 				bps, err := parseMemoryMax(diskBPS)
 				if err != nil {
 					return fmt.Errorf("run: disk-bps: %w", err)
@@ -302,10 +294,9 @@ func isFilePath(s string) bool {
 // File lines starting with # or empty are ignored.
 func buildEnv(envFlags []string, envFile string) ([]string, error) {
 	result := make([]string, 0, len(envFlags))
-	result = append(result, envFlags...)
 
 	if envFile == "" {
-		return result, nil
+		return mergeEnv(envFlags), nil
 	}
 	f, err := os.Open(envFile)
 	if err != nil {
@@ -324,7 +315,22 @@ func buildEnv(envFlags []string, envFile string) ([]string, error) {
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("read env-file %s: %w", envFile, err)
 	}
-	return result, nil
+	return mergeEnv(append(result, envFlags...)), nil
+}
+
+func mergeEnv(values []string) []string {
+	out := []string{}
+	positions := map[string]int{}
+	for _, value := range values {
+		key, _, _ := strings.Cut(value, "=")
+		if i, ok := positions[key]; ok {
+			out[i] = value
+		} else {
+			positions[key] = len(out)
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 // resolveVolumes converts "-v name:guestpath[:ro]" specs to VolumeMountSpec.
@@ -352,13 +358,10 @@ func resolveVolumes(specs []string, storePath string) ([]api.VolumeMountSpec, er
 
 // parseVolumeSpec parses "name:guestpath" or "name:guestpath:ro".
 func parseVolumeSpec(spec string, store *volume.Store) (api.VolumeMountSpec, error) {
-	parts := strings.Split(spec, ":")
-	if len(parts) < 2 || len(parts) > 3 {
-		return api.VolumeMountSpec{}, fmt.Errorf("volume spec %q: expected name:guestpath[:ro]", spec)
+	name, guestPath, readOnly, err := api.ParseVolumeMount(spec)
+	if err != nil {
+		return api.VolumeMountSpec{}, err
 	}
-	name := parts[0]
-	guestPath := parts[1]
-	readOnly := len(parts) == 3 && strings.EqualFold(parts[2], "ro")
 
 	vol, err := store.Get(name)
 	if err != nil {
@@ -418,51 +421,8 @@ func extractMask(cidr string) string {
 	return "24"
 }
 
-func parseHealthCheck(spec string) (api.HealthCheckSpec, error) {
-	parts := strings.SplitN(spec, ":", 3)
-	if len(parts) < 2 {
-		return api.HealthCheckSpec{}, fmt.Errorf("health check format: tcp:PORT or http:PORT:/path")
-	}
-	hcType := strings.ToLower(parts[0])
-	port, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return api.HealthCheckSpec{}, fmt.Errorf("health check port must be a number: %w", err)
-	}
-	if hcType != "tcp" && hcType != "http" {
-		return api.HealthCheckSpec{}, fmt.Errorf("health check type must be tcp or http, got %q", hcType)
-	}
-	hc := api.HealthCheckSpec{
-		Type: hcType,
-		Port: port,
-	}
-	if hcType == "http" && len(parts) == 3 {
-		hc.Path = parts[2]
-		if !strings.HasPrefix(hc.Path, "/") {
-			hc.Path = "/" + hc.Path
-		}
-	}
-	return hc, nil
-}
-
-func parseRestartPolicy(spec string) (api.RestartSpec, error) {
-	parts := strings.SplitN(spec, ":", 2)
-	policy := strings.ToLower(parts[0])
-	if policy != "never" && policy != "on-failure" && policy != "always" {
-		return api.RestartSpec{}, fmt.Errorf("restart policy must be never, on-failure, or always, got %q", policy)
-	}
-	rs := api.RestartSpec{Policy: policy}
-	if len(parts) == 2 {
-		maxRetries, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return api.RestartSpec{}, fmt.Errorf("restart max-retries must be a number: %w", err)
-		}
-		if maxRetries < 0 {
-			return api.RestartSpec{}, fmt.Errorf("restart max-retries must be >= 0, got %d", maxRetries)
-		}
-		rs.MaxRetries = maxRetries
-	}
-	return rs, nil
-}
+func parseHealthCheck(s string) (api.HealthCheckSpec, error) { return api.ParseHealthCheck(s) }
+func parseRestartPolicy(s string) (api.RestartSpec, error)   { return api.ParseRestartPolicy(s) }
 
 // verifyImageSignature checks the signature of a daemon-stored image (by its
 // disk digest) according to the policy. File-path runs (empty imageRef) have no

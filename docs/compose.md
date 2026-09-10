@@ -66,7 +66,9 @@ volumes:
 - top-level volumes are auto-created during `compose up`
 - top-level networks are auto-created during `compose up`
 - `compose down --volumes` removes only volumes created by that stack
-- stacks are tracked by a local state file named `.jerboa-compose-state.json` next to the compose file
+- stacks are tracked by separate `.jerboa-compose-<hash>.json` files next to their compose files; the hash identifies the full canonical compose path
+- state is written atomically as resources are created, so a failed `up` can be cleaned with `down`
+- repeated `down` is safe; failed cleanup retains the remaining resources in state
 
 ## Commands
 
@@ -86,4 +88,16 @@ Current limits:
 
 Startup order is computed with topological sort from `depends_on`.
 
-Shutdown order is the reverse of the recorded startup ordering.
+Services are removed in alphabetical order. Startup dependencies do not currently
+determine shutdown ordering.
+
+## Upgrading Existing Stacks
+
+Before upgrading from 0.51.1, stop existing stacks with the old CLI. Version
+0.51.2 does not automatically assign a legacy `.jerboa-compose-state.json` file
+to a project because that file cannot identify which compose definition owns it.
+
+If you have already upgraded, inspect the service VM IDs recorded in the legacy
+file and stop and remove those VMs explicitly. Inspect its recorded networks and volumes before
+removing any resources you no longer need. Then deploy with `compose up` to
+create the new state. Preserve volumes that hold data you want to keep.

@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -29,14 +31,12 @@ func removeWhenStopped(ctx context.Context, client *api.Client, id string) error
 			return nil
 		}
 		if !strings.Contains(err.Error(), "must be stopped first") {
-			return err
+			return fmt.Errorf("compose: %w", err)
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return err
+	return fmt.Errorf("compose: %w", err)
 }
-
-const stateFileName = ".jerboa-compose-state.json"
 
 func newComposeCmd(socketPath, storePath, outputFmt *string) *cobra.Command {
 	cmd := &cobra.Command{
@@ -57,7 +57,7 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 		Use:   "up <compose-file>",
 		Short: "Start all services defined in a compose file",
 		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			composeFile := args[0]
 			data, err := os.ReadFile(composeFile)
 			if err != nil {
@@ -78,7 +78,20 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("compose up: open volume store: %w", err)
 			}
 
-			var createdVolumes []string
+			if _, err := os.Stat(stateFilePath(composeFile)); err == nil {
+				return fmt.Errorf("compose project already has state; run down first")
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("compose: %w", err)
+			}
+			state := compose.State{Project: stateFilePath(composeFile), Services: map[string]string{}, ServiceNetworks: map[string]string{}, ServiceIPs: map[string]string{}}
+			if err := writeState(composeFile, state); err != nil {
+				return fmt.Errorf("compose: %w", err)
+			}
+			defer func() {
+				if err := writeState(composeFile, state); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("persist compose state: %w", err))
+				}
+			}()
 			for volName, volCfg := range f.Volumes {
 				if _, getErr := volStore.Get(volName); getErr == nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, skipping\n", volName)
@@ -91,7 +104,10 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				if _, createErr := volStore.Create(volName, sizeBytes); createErr != nil {
 					return fmt.Errorf("compose up: create volume %q: %w", volName, createErr)
 				}
-				createdVolumes = append(createdVolumes, volName)
+				state.CreatedVolumes = append(state.CreatedVolumes, volName)
+				if err := writeState(composeFile, state); err != nil {
+					return fmt.Errorf("compose: %w", err)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "created volume %s\n", volName)
 			}
 
@@ -105,7 +121,6 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 
-			var createdNetworks []string
 			for netName, netCfg := range f.Networks {
 				driver := netCfg.Driver
 				if driver == "" {
@@ -120,17 +135,11 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				if createErr != nil {
 					return fmt.Errorf("compose up: create network %q: %w", netName, createErr)
 				}
-				createdNetworks = append(createdNetworks, netName)
+				state.CreatedNetworks = append(state.CreatedNetworks, netName)
+				if err := writeState(composeFile, state); err != nil {
+					return fmt.Errorf("compose: %w", err)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "created network %s\n", netName)
-			}
-
-			state := compose.State{
-				Project:         filepath.Base(filepath.Dir(composeFile)),
-				Services:        make(map[string]string, len(f.Services)),
-				ServiceNetworks: make(map[string]string, len(f.Services)),
-				ServiceIPs:      make(map[string]string, len(f.Services)),
-				CreatedVolumes:  createdVolumes,
-				CreatedNetworks: createdNetworks,
 			}
 
 			for _, name := range order {
@@ -157,23 +166,14 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					params.GatewayIP = netInfo.Gateway
 					params.SubnetMask = extractMask(netInfo.Subnet)
 					ip := svc.IP
-					if ip == "" {
-						// No static IP requested: let the daemon's IPAM pick one.
-						allocated, allocErr := client.NetworkAllocateIP(cmd.Context(), netName)
-						if allocErr != nil {
-							return fmt.Errorf("compose up: service %q allocate ip: %w", name, allocErr)
+					if ip != "" {
+						if err := validateStaticIP(ip, netInfo.Subnet); err != nil {
+							return fmt.Errorf("compose: %w", err)
 						}
-						ip = allocated
-					} else if err := validateStaticIP(ip, netInfo.Subnet); err != nil {
-						// A static IP bypasses the daemon's IPAM, so validate it
-						// falls inside the network's subnet before use. (Collision
-						// with a dynamically allocated address is not tracked yet;
-						// operators must keep static IPs outside the DHCP-ish range.)
-						return fmt.Errorf("compose up: service %q static ip: %w", name, err)
 					}
 					params.IPAddress = ip
 					// A compose-declared static IP is reserved and conflict-checked
-					// by the daemon; a dynamically allocated one is already reserved.
+					// by the daemon, which also allocates dynamic addresses.
 					params.StaticIP = svc.IP != ""
 					state.ServiceNetworks[name] = netName
 					state.ServiceIPs[name] = ip
@@ -184,6 +184,9 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					return fmt.Errorf("compose up: service %q: %w", name, runErr)
 				}
 				state.Services[name] = info.ID
+				if err := writeState(composeFile, state); err != nil {
+					return fmt.Errorf("compose: %w", err)
+				}
 				fmt.Fprintf(cmd.OutOrStdout(), "started %s → %s\n", name, info.ID)
 
 				if svc.HealthCheck != "" {
@@ -227,6 +230,9 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			state, err := readState(args[0])
 			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					return nil
+				}
 				return fmt.Errorf("compose down: %w", err)
 			}
 
@@ -240,61 +246,63 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 
-			names := stateServiceNames(state)
-			for i := len(names) - 1; i >= 0; i-- {
-				name := names[i]
-
+			var failures []error
+			for _, name := range stateServiceNames(state) {
 				id := state.Services[name]
-				releaseNetwork := state.ServiceNetworks[name]
-				releaseIP := state.ServiceIPs[name]
-				if releaseNetwork == "" || releaseIP == "" {
-					rec, dnsErr := client.DNSResolve(cmd.Context(), name, "")
-					if dnsErr == nil {
-						releaseNetwork = rec.Network
-						releaseIP = rec.IP
-					}
-				}
-				if stopErr := client.Stop(cmd.Context(), id, force); stopErr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: stop %s (%s): %v\n", name, id, stopErr)
-					continue
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
-				if releaseNetwork != "" && releaseIP != "" {
-					if relErr := client.NetworkReleaseIP(cmd.Context(), releaseNetwork, releaseIP); relErr != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "warning: release ip for %s (%s): %v\n", name, releaseIP, relErr)
-					}
-				}
-				// Remove the VM from the daemon registry so `compose down` leaves no
-				// stopped remnants behind, matching `docker compose down`. A graceful
-				// Stop can return while the VM is still transitioning through
-				// "stopping" (the monitor flips it to "stopped" once the process
-				// exits), so retry Remove briefly until it settles.
-				if rmErr := removeWhenStopped(cmd.Context(), client, id); rmErr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove %s (%s): %v\n", name, id, rmErr)
-				}
-			}
-
-			if removeVolumes && len(state.CreatedVolumes) > 0 {
-				volPath := volumeStorePath(*storePath)
-				volStore, volErr := volume.NewStore(volPath)
-				if volErr != nil {
-					return fmt.Errorf("compose down: open volume store: %w", volErr)
-				}
-				for _, volName := range state.CreatedVolumes {
-					if rmErr := volStore.Remove(volName); rmErr != nil {
-						fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove volume %s: %v\n", volName, rmErr)
+				if _, err := client.Get(cmd.Context(), id); err != nil {
+					if !strings.Contains(err.Error(), "not found") {
+						failures = append(failures, err)
 						continue
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "removed volume %s\n", volName)
+				} else {
+					if err := client.Stop(cmd.Context(), id, force); err != nil {
+						failures = append(failures, err)
+						continue
+					}
+					if err := removeWhenStopped(cmd.Context(), client, id); err != nil {
+						failures = append(failures, err)
+						continue
+					}
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
+				delete(state.Services, name)
+				delete(state.ServiceIPs, name)
+				delete(state.ServiceNetworks, name)
+				if err := writeState(args[0], state); err != nil {
+					return fmt.Errorf("compose: %w", err)
 				}
 			}
-
-			for _, netName := range state.CreatedNetworks {
-				if rmErr := client.NetworkRemove(cmd.Context(), netName); rmErr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove network %s: %v\n", netName, rmErr)
-					continue
+			if removeVolumes {
+				store, err := volume.NewStore(volumeStorePath(*storePath))
+				if err != nil {
+					return fmt.Errorf("compose: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "removed network %s\n", netName)
+				remaining := []string{}
+				for _, name := range state.CreatedVolumes {
+					vol, err := store.Get(name)
+					if err == nil {
+						err = client.VolumeRemove(cmd.Context(), name, hostPathForDaemon(vol.DiskPath))
+					}
+					if err != nil && !os.IsNotExist(err) {
+						remaining = append(remaining, name)
+						failures = append(failures, err)
+					}
+				}
+				state.CreatedVolumes = remaining
+			}
+			remaining := []string{}
+			for _, name := range state.CreatedNetworks {
+				if err := client.NetworkRemove(cmd.Context(), name); err != nil && !strings.Contains(err.Error(), "not found") {
+					remaining = append(remaining, name)
+					failures = append(failures, err)
+				}
+			}
+			state.CreatedNetworks = remaining
+			if err := writeState(args[0], state); err != nil {
+				return fmt.Errorf("compose: %w", err)
+			}
+			if len(failures) > 0 {
+				return errors.Join(failures...)
 			}
 
 			return removeState(args[0])
@@ -395,7 +403,15 @@ func newComposeLogsCmd(socketPath *string) *cobra.Command {
 // --- state helpers ---
 
 func stateFilePath(composeFile string) string {
-	return filepath.Join(filepath.Dir(composeFile), stateFileName)
+	canonical, err := filepath.Abs(composeFile)
+	if err != nil {
+		canonical = filepath.Clean(composeFile)
+	}
+	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = resolved
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return filepath.Join(filepath.Dir(canonical), fmt.Sprintf(".jerboa-compose-%x.json", sum[:16]))
 }
 
 func writeState(composeFile string, state compose.State) error {
@@ -403,8 +419,25 @@ func writeState(composeFile string, state compose.State) error {
 	if err != nil {
 		return fmt.Errorf("compose: marshal state: %w", err)
 	}
-	if err := os.WriteFile(stateFilePath(composeFile), data, 0o600); err != nil {
-		return fmt.Errorf("compose: write state: %w", err)
+	target := stateFilePath(composeFile)
+	f, err := os.CreateTemp(filepath.Dir(target), ".compose-state-*")
+	if err != nil {
+		return fmt.Errorf("compose: %w", err)
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("compose: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("compose: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("compose: %w", err)
+	}
+	if err := os.Rename(f.Name(), target); err != nil {
+		return fmt.Errorf("compose: %w", err)
 	}
 	return nil
 }

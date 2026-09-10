@@ -105,7 +105,7 @@ force it with `--lang` / `[build] lang`:
 |---|---|---|
 | `go` | `go.mod` | `go build` with `CGO_ENABLED=0`, `GOOS=linux`, `-trimpath`, stripped symbols → static ELF |
 | `rust` | `Cargo.toml` | `cargo build --release --target x86_64-unknown-linux-musl` → static ELF (install the target once: `rustup target add x86_64-unknown-linux-musl`) |
-| `node` | `package.json` | `npm ci --omit=dev` when `node_modules/` is absent; ships your sources plus the Node runtime package (version from `engines.node`, default 20) |
+| `node` | `package.json` | Install production dependencies when manifests, lockfiles, runtime or platform change, or `node_modules/` is absent; ships your sources plus the Node runtime package (version from `engines.node`, default 20) |
 | `python` | `pyproject.toml` or `requirements.txt` | `pip install` into `packages/` as **Linux x86_64 wheels** (whatever your host OS is); ships sources plus the Python runtime package (version from `requires-python`, default 3.12); sets `PYTHONPATH=/packages` |
 | `raw` | never auto-detected | no compilation; the program comes from a package (see below) |
 
