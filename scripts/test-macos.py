@@ -30,7 +30,7 @@ func main(){
  if err=f.Sync();err!=nil{panic(err)};f.Close()
  fmt.Println("NATIVE_SMOKE_READY",n,os.Getenv("NATIVE_MARKER"))
  http.HandleFunc("/",func(w http.ResponseWriter,r *http.Request){
- fmt.Fprintf(w,`{"arch":%q,"marker":%q,"count":%d}`,runtime.GOARCH,os.Getenv("NATIVE_MARKER"),n)
+ fmt.Fprintf(w,`{"arch":%q,"marker":%q,"count":%d,"cpus":%d}`,runtime.GOARCH,os.Getenv("NATIVE_MARKER"),n,runtime.NumCPU())
  })
  if err=http.ListenAndServe(":8080",nil);err!=nil{panic(err)}
 }'''
@@ -70,7 +70,7 @@ def main():
                 with socket.socket() as probe:
                     probe.bind(('127.0.0.1',0)); port=probe.getsockname()[1]
                 for expected in (1,2):
-                    vm=cli('run','native-smoke:latest','--cpus','2','-p',f'127.0.0.1:{port}:8080','-e','NATIVE_MARKER=hvf-arm64','-v','native-data:/data')
+                    vm=cli('run','native-smoke:latest','--cpus','4','-p',f'127.0.0.1:{port}:8080','-e','NATIVE_MARKER=hvf-arm64','-v','native-data:/data')
                     deadline=time.monotonic()+20
                     while True:
                         try:
@@ -80,8 +80,8 @@ def main():
                         except (OSError,ValueError):
                             if time.monotonic()>deadline: raise RuntimeError('HTTP never became ready: '+cli('logs',vm))
                             time.sleep(.1)
-                    assert result=={'arch':'arm64','marker':'hvf-arm64','count':expected}, result
-                    print(f'HVF boot {expected}: ARM64, environment, HTTP and volume counter={expected} OK',flush=True)
+                    assert result=={'arch':'arm64','marker':'hvf-arm64','count':expected,'cpus':4}, result
+                    print(f'HVF boot {expected}: ARM64, 4 CPUs, environment, HTTP and volume counter={expected} OK',flush=True)
                     cli('stop',vm)
                     cli('rm',vm)
                     vm=None
