@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		detach      bool
 		ipAddr      string
 		network     string
+		emulateX86  bool
 		healthCheck string
 		restart     string
 		verify      string
@@ -59,7 +61,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
 			}
-			if len(portMaps) > 0 && network == "" {
+			if len(portMaps) > 0 && network == "" && runtime.GOOS != "darwin" {
 				return fmt.Errorf("run: --port requires --network <name> (create one with 'jerboa network create'); SLIRP user-mode networking is no longer supported")
 			}
 			// A VM needs at least one CPU. Rejecting an explicit non-positive value
@@ -153,6 +155,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			}
 
 			params := api.RunParams{
+				EmulateX86:  emulateX86,
 				Image:       imageRef,
 				ImagePath:   imagePath,
 				Memory:      reqMemory,
@@ -243,11 +246,12 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
 	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'jerboa network'; Linux only)")
+	cmd.Flags().BoolVar(&emulateX86, "emulate-x86", false, "explicitly emulate an x86 image on macOS (TCG, slower than ARM64/HVF)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
 	cmd.Flags().StringVar(&verify, "verify", "off", "image signature verification: off, warn, enforce")
-	cmd.Flags().Uint64Var(&cpuShares, "cpu-shares", 0, "cgroup v2 CPU weight (1-10000, 0=no limit, Linux only)")
-	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "cgroup v2 memory hard limit (e.g. 512M, 1G, Linux only)")
+	cmd.Flags().Uint64Var(&cpuShares, "cpu-shares", 0, "CPU weight (1-10000; Linux cgroup, macOS scheduler priority)")
+	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "memory limit (e.g. 512M; Linux hard limit, macOS RSS watchdog)")
 	cmd.Flags().Uint64Var(&diskIOPS, "disk-iops", 0, "disk I/O throttle: max IOPS for boot disk (0=no limit)")
 	cmd.Flags().StringVar(&diskBPS, "disk-bps", "", "disk I/O throttle: max bytes/sec for boot disk (e.g. 10M, 0=no limit)")
 	return cmd

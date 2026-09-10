@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/AitorConS/jerboa/internal/release"
 )
@@ -29,6 +30,9 @@ var optionalKernelFiles = map[string]bool{"dump": true, "kernel-fc.img": true}
 // truth — there is no GitHub fallback.
 func EnsureKernelTools(ctx context.Context, toolsDir string) error {
 	if Exist(toolsDir) {
+		if runtime.GOOS == "darwin" {
+			return ValidateNativeTools(toolsDir)
+		}
 		return nil
 	}
 	cl, err := release.Default()
@@ -84,6 +88,9 @@ func KernelComponentFromManifest(ctx context.Context, cl *release.Client, channe
 // signature-verified) manifest component into toolsDir and records the version.
 // Each artifact is SHA-256 verified against the signed manifest.
 func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDir string, k release.Component) error {
+	if runtime.GOOS == "darwin" {
+		return fmt.Errorf("macOS ARM64 kernel toolsets must be built locally; the published kernel files target Linux/x86_64")
+	}
 	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
 		return fmt.Errorf("tools: create tools dir: %w", err)
 	}

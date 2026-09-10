@@ -29,7 +29,7 @@ func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
 		if parseErr != nil {
 			continue
 		}
-		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		target := manifest.LookupArch(id.Namespace, id.Name, id.Version, pkg.ArchSlug())
 		if target == nil {
 			continue
 		}
@@ -85,7 +85,7 @@ func loadOpsProgramDefaults(pkgRefs []string) (path string, args []string) {
 		if parseErr != nil {
 			continue
 		}
-		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		target := manifest.LookupArch(id.Namespace, id.Name, id.Version, pkg.ArchSlug())
 		if target == nil {
 			continue
 		}
@@ -183,7 +183,7 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, erro
 			return nil, fmt.Errorf("parse ops package %q: %w", ref, err)
 		}
 
-		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		target := manifest.LookupArch(id.Namespace, id.Name, id.Version, pkg.ArchSlug())
 		if target == nil {
 			return nil, fmt.Errorf("ops package %q not found in manifest", ref)
 		}
@@ -349,7 +349,7 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.O
 	namespaces := []string{"eyberg", "nanovms", "myuniverse"}
 	for _, alias := range names {
 		for _, ns := range namespaces {
-			if t := manifest.Lookup(ns, alias, version); t != nil {
+			if t := manifest.LookupArch(ns, alias, version, pkg.ArchSlug()); t != nil {
 				return t
 			}
 		}
@@ -361,7 +361,7 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.O
 		for _, ns := range namespaces {
 			for i := range manifest.Packages {
 				p := &manifest.Packages[i]
-				if p.Namespace != ns || p.Name != alias {
+				if p.Namespace != ns || p.Name != alias || (p.Arch != "" && p.Arch != pkg.ArchSlug() && !(p.Arch == "x86_64" && pkg.ArchSlug() == "amd64")) || (p.Arch == "" && pkg.ArchSlug() != "amd64") {
 					continue
 				}
 				pv := strings.TrimPrefix(p.Version, "v")
@@ -398,7 +398,7 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 			if pkgVer != "" && pkgVer != "latest" {
 				id.Version = pkgVer
 			}
-			target = manifest.Lookup(id.Namespace, id.Name, id.Version)
+			target = manifest.LookupArch(id.Namespace, id.Name, id.Version, pkg.ArchSlug())
 		} else {
 			target = lookupOpsPackage(manifest, pkgName, pkgVer)
 		}

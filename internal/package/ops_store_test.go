@@ -217,6 +217,9 @@ func TestDefaultOpsStore(t *testing.T) {
 
 	store, err := DefaultOpsStore()
 	require.NoError(t, err)
+	if ArchSlug() != "amd64" {
+		want = filepath.Join(want, ArchSlug())
+	}
 	require.Equal(t, want, store.root)
 
 	info, err := os.Stat(want)

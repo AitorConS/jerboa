@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 // Package dnsserver implements a small UDP DNS server that lets guest VMs
 // resolve each other by name. Guests send queries to a fixed address the daemon
@@ -119,6 +119,10 @@ func (s *Server) handle(query []byte, src *net.UDPAddr) {
 	if _, err := s.conn.WriteToUDP(resp, src); err != nil {
 		slog.Debug("dnsserver: write", "src", src.IP, "err", err)
 	}
+}
+
+func (s *Server) Answer(query []byte, srcIP string) ([]byte, error) {
+	return s.buildResponse(query, srcIP)
 }
 
 // buildResponse parses a query, answers A questions the daemon owns from

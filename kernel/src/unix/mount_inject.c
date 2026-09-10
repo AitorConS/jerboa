@@ -21,7 +21,7 @@
  */
 #include <unix_internal.h>
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #include <drivers/fw_cfg.h>
 #endif
 
@@ -29,10 +29,10 @@
  * and merge a "mounts" tuple into the root tuple. Returns true if at least one
  * mount entry was added (so the caller knows to (re-)apply the mount points).
  *
- * x86-only: on other architectures this is a no-op stub returning false. */
+ * x86/ARM64: on other architectures this is a no-op stub returning false. */
 boolean mounts_inject_from_fw_cfg(tuple root)
 {
-#if !defined(__x86_64__)
+#if !defined(__x86_64__) && !defined(__aarch64__)
     (void)root;
     return false;
 #else

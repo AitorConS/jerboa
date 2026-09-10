@@ -314,7 +314,7 @@ func pkgGetOps(cmd *cobra.Command, ref string) error {
 		return fmt.Errorf("pkg get ops: fetch manifest: %w", err)
 	}
 
-	target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+	target := manifest.LookupArch(id.Namespace, id.Name, id.Version, pkg.ArchSlug())
 	if target == nil {
 		return fmt.Errorf("pkg get ops: package %q not found in ops manifest", ref)
 	}

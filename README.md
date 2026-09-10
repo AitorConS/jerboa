@@ -5,7 +5,7 @@ Jerboa is a unikernel engine for building, running, and orchestrating VM-based a
 It is built around two binaries:
 
 - `jerboa`: CLI
-- `jerboad`: Linux daemon
+- `jerboad`: daemon (Linux; native macOS ARM64 development preview)
 
 The current project state is best described as **public beta**:
 
@@ -35,15 +35,17 @@ What this is not yet:
 
 ## Platform Model
 
-Jerboa runs in two supported modes:
+Jerboa provides these host modes:
 
 - **Linux host**: `jerboa` talks to a native `jerboad`
+- **macOS Apple Silicon (preview)**: native ARM64 CLI/daemon with QEMU/HVF, userspace networks and optional explicit x86 emulation
 - **Windows host**: `jerboa.exe` talks to `jerboad` running inside a dedicated WSL2 distro managed by `jerboa daemon`
 
 Important:
 
-- `jerboad` is Linux-only
-- native VM execution depends on Linux virtualization support
+- Native macOS ARM64 development preview: see [macOS Apple Silicon](docs/macos.md)
+- Stable releases currently target Linux and Windows/WSL2
+- Linux uses KVM when available; macOS ARM64 uses HVF
 - Windows support is WSL2-based, not a native Windows daemon port
 
 ## Quick Start

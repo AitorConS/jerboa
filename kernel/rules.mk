@@ -165,8 +165,8 @@ msg_contgen=	CONTGEN	$@
 cmd_contgen=	$(CONTGEN) 10 10 >$@
 
 msg_vendor=	VENDOR	$@
-cmd_vendor=	$(RM) -r $(@D) && $(GIT) clone $(GITFLAGS) $(@D) && $(TOUCH) $@ && \
-	([ ! -f $(PATCHDIR)/$(notdir $(@D)).patch ] || (patch -p1 -d$(@D) < $(PATCHDIR)/$(notdir $(@D)).patch))
+cmd_vendor=	$(RM) -r $(@D) && $(GIT) clone $(GITFLAGS) $(@D) && \
+	([ ! -f $(PATCHDIR)/$(notdir $(@D)).patch ] || (tr -d '\r' < $(PATCHDIR)/$(notdir $(@D)).patch | patch -p1 -d$(@D))) && $(TOUCH) $@
 
 ##############################################################################
 # build a program

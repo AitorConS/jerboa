@@ -22,7 +22,7 @@ Jerboa is split into two parts:
 - `jerboa`: the CLI
 - `jerboad`: the daemon that owns builds, images, VM lifecycle, networks, and compose state
 
-The daemon is Linux-only. On Windows, the CLI runs on the host and boots the daemon inside a dedicated WSL2 distro managed by `jerboa daemon`.
+Stable daemon releases target Linux. The [native macOS ARM64 preview]({% link macos.md %}) is available from source. On Windows, the CLI runs on the host and boots the daemon inside a dedicated WSL2 distro managed by `jerboa daemon`.
 
 ## Current Capabilities
 

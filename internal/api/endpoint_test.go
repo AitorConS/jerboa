@@ -48,7 +48,16 @@ func TestListenUnixSocketOwnerOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix sockets are not supported on Windows")
 	}
-	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
+	dir := t.TempDir()
+	if runtime.GOOS == "darwin" {
+		short, err := os.MkdirTemp("/tmp", "jerboa-socket-test-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(short) })
+		dir = short
+	}
+	socketPath := filepath.Join(dir, "jerboad.sock")
 	l, err := Listen("unix://" + socketPath)
 	if err != nil {
 		t.Fatalf("Listen() error = %v", err)

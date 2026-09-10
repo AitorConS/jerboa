@@ -14,7 +14,7 @@
  */
 #include <unix_internal.h>
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #include <drivers/fw_cfg.h>
 #endif
 
@@ -74,10 +74,10 @@ static buffer cidr_to_netmask(heap h, int cidr)
 /* net_inject_from_fw_cfg — read opt/uni/network from QEMU fw_cfg (if present)
  * and inject static network configuration into the root tuple.
  *
- * x86-only: on other architectures this is a no-op stub. */
+ * x86/ARM64: on other architectures this is a no-op stub. */
 void net_inject_from_fw_cfg(tuple root)
 {
-#if !defined(__x86_64__)
+#if !defined(__x86_64__) && !defined(__aarch64__)
     (void)root;
     return;
 #else

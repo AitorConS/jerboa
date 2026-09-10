@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 // Package metrics provides Prometheus metrics collection for the unikernel engine daemon.
 package metrics

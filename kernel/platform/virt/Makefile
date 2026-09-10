@@ -18,21 +18,17 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/aarch64/elf64.c \
 	$(SRCDIR)/aarch64/gic.c \
 	$(SRCDIR)/aarch64/gpio.c \
-	$(SRCDIR)/aarch64/hyperv.c \
 	$(SRCDIR)/aarch64/interrupt.c \
 	$(SRCDIR)/aarch64/kernel_machine.c \
 	$(SRCDIR)/aarch64/page.c \
 	$(SRCDIR)/aarch64/rtc.c \
 	$(SRCDIR)/aarch64/serial.c \
 	$(SRCDIR)/aarch64/unix_machine.c \
-	$(SRCDIR)/aws/ena/ena.c \
-	$(SRCDIR)/aws/ena/ena_com/ena_com.c \
-	$(SRCDIR)/aws/ena/ena_com/ena_eth_com.c \
-	$(SRCDIR)/aws/ena/ena_datapath.c \
 	$(SRCDIR)/devicetree/devicetree.c \
 	$(SRCDIR)/drivers/acpi.c \
 	$(SRCDIR)/drivers/console.c \
 	$(SRCDIR)/drivers/dmi.c \
+	$(SRCDIR)/drivers/fw_cfg.c \
 	$(SRCDIR)/drivers/gve.c \
 	$(SRCDIR)/drivers/netconsole.c \
 	$(SRCDIR)/drivers/ns16550.c \
@@ -41,17 +37,6 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/gdb/gdbtcp.c \
 	$(SRCDIR)/gdb/gdbutil.c \
 	$(SRCDIR)/http/http.c \
-	$(SRCDIR)/hyperv/netvsc/hv_net_vsc.c \
-	$(SRCDIR)/hyperv/netvsc/hv_rndis_filter.c \
-	$(SRCDIR)/hyperv/netvsc/netvsc.c \
-	$(SRCDIR)/hyperv/storvsc/storvsc.c \
-	$(SRCDIR)/hyperv/utilities/vmbus_ic.c \
-	$(SRCDIR)/hyperv/utilities/vmbus_shutdown.c \
-	$(SRCDIR)/hyperv/vmbus/hyperv.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_br.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_chan.c \
-	$(SRCDIR)/hyperv/vmbus/vmbus_xact.c \
 	$(SRCDIR)/kernel/elf.c \
 	$(SRCDIR)/kernel/clock.c \
 	$(SRCDIR)/kernel/flush.c \
@@ -85,6 +70,8 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/unix/blockq.c \
 	$(SRCDIR)/unix/coredump.c \
 	$(SRCDIR)/unix/env_inject.c \
+	$(SRCDIR)/unix/net_inject.c \
+	$(SRCDIR)/unix/mount_inject.c \
 	$(SRCDIR)/unix/exec.c \
 	$(SRCDIR)/unix/eventfd.c \
 	$(SRCDIR)/unix/filesystem.c \
@@ -170,7 +157,6 @@ INCLUDES=\
 	-I$(SRCDIR)/net \
 	-I$(SRCDIR)/runtime \
 	-I$(SRCDIR)/fs \
-	-I$(SRCDIR)/hyperv/include \
 	-I$(SRCDIR)/unix \
 	-I$(SRCDIR)/unix_process \
 	-I$(SRCDIR)/xen/public \

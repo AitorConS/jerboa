@@ -27,6 +27,11 @@ const daemonLaunchUser = "root"
 // newDaemonCmd builds the `jerboa daemon` command group, which manages the
 // jerboad daemon hosted in the dedicated jerboa WSL2 distro.
 func newDaemonCmd() *cobra.Command {
+	if runtime.GOOS == "darwin" {
+		c := &cobra.Command{Use: "daemon", Short: "Manage the native macOS ARM64 daemon"}
+		c.AddCommand(newDaemonStartCmd(), newDaemonStopCmd(), newDaemonRestartCmd(), newDaemonStatusCmd(), newDaemonLogsCmd())
+		return c
+	}
 	cmd := &cobra.Command{
 		Use:   "daemon",
 		Short: "Manage the jerboad daemon running in the dedicated WSL2 distro",
@@ -384,9 +389,12 @@ func newDaemonStartCmd() *cobra.Command {
 	var o daemonOpts
 	c := &cobra.Command{
 		Use:   "start",
-		Short: "Start the jerboad daemon in the jerboa WSL2 distro",
+		Short: "Start the managed jerboad daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS == "darwin" {
+				return nativeDaemonCommand(cmd, "start", o)
+			}
 			if runtime.GOOS != "windows" {
 				return errNotWindows("start")
 			}
@@ -412,9 +420,12 @@ func newDaemonRestartCmd() *cobra.Command {
 	var o daemonOpts
 	c := &cobra.Command{
 		Use:   "restart",
-		Short: "Restart the jerboad daemon in the jerboa WSL2 distro",
+		Short: "Restart the managed jerboad daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS == "darwin" {
+				return nativeDaemonCommand(cmd, "restart", o)
+			}
 			if runtime.GOOS != "windows" {
 				return errNotWindows("restart")
 			}
@@ -439,9 +450,12 @@ func newDaemonRestartCmd() *cobra.Command {
 func newDaemonStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
-		Short: "Stop the jerboad daemon in the jerboa WSL2 distro",
+		Short: "Stop the managed jerboad daemon",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS == "darwin" {
+				return nativeDaemonCommand(cmd, "stop", daemonOpts{})
+			}
 			if runtime.GOOS != "windows" {
 				return errNotWindows("stop")
 			}
@@ -508,7 +522,7 @@ func newDaemonLogsCmd() *cobra.Command {
 	var follow bool
 	c := &cobra.Command{
 		Use:   "logs",
-		Short: "Show the WSL2 daemon launch log",
+		Short: "Show the daemon launch log",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := daemonLogPath()
@@ -684,5 +698,12 @@ func daemonLogPath() string {
 	if err != nil {
 		return filepath.Join(".jerboa", "jerboad-wsl.log")
 	}
-	return filepath.Join(home, ".jerboa", "jerboad-wsl.log")
+	return filepath.Join(home, ".jerboa", daemonLogName())
+}
+
+func daemonLogName() string {
+	if runtime.GOOS == "darwin" {
+		return "jerboad.log"
+	}
+	return "jerboad-wsl.log"
 }

@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package vm
 
@@ -115,17 +115,41 @@ func (h *HealthChecker) probe(p *healthProbe) {
 	probeCtx, cancel := context.WithTimeout(context.Background(), p.cfg.Timeout)
 	defer cancel()
 
+	p.vm.mu.RLock()
+	dial := p.vm.healthDial
+	p.vm.mu.RUnlock()
 	var ok bool
-	switch p.cfg.Type {
-	case "tcp":
-		ok = probeTCP(probeCtx, p.target)
-	case "http":
-		ok = probeHTTP(probeCtx, p.target)
-	default:
-		p.vm.SetHealthStatus(HealthUnknown)
-		return
-	}
+	if dial != nil {
+		if p.cfg.Type == "tcp" {
+			c, err := dial(probeCtx, "tcp", p.target)
+			ok = err == nil
+			if c != nil {
+				c.Close()
+			}
+		} else if p.cfg.Type == "http" {
+			transport := &http.Transport{DialContext: dial}
+			defer transport.CloseIdleConnections()
+			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, p.target, nil)
+			if err == nil {
+				resp, err := (&http.Client{Transport: transport}).Do(req)
+				if err == nil {
+					ok = resp.StatusCode >= 200 && resp.StatusCode < 400
+					resp.Body.Close()
+				}
+			}
+		}
+	} else {
+		switch p.cfg.Type {
+		case "tcp":
+			ok = probeTCP(probeCtx, p.target)
+		case "http":
+			ok = probeHTTP(probeCtx, p.target)
+		default:
+			p.vm.SetHealthStatus(HealthUnknown)
+			return
+		}
 
+	}
 	if ok {
 		p.failures = 0
 		p.vm.SetHealthStatus(HealthHealthy)
@@ -153,6 +177,19 @@ func (h *HealthChecker) probe(p *healthProbe) {
 // host loopback, mapping the guest port to its published host port when one
 // exists, so a purely local port can still be checked.
 func probeTarget(v *VM, cfg *HealthCheckConfig) string {
+	v.mu.RLock()
+	nativeIP := v.healthAddress
+	v.mu.RUnlock()
+	if nativeIP != "" {
+		port := cfg.Port
+		if port == 0 && len(v.Cfg.PortMaps) > 0 {
+			port = int(v.Cfg.PortMaps[0].GuestPort)
+		}
+		if port == 0 {
+			return ""
+		}
+		return formatProbeTarget(cfg, nativeIP, port)
+	}
 	if len(v.Cfg.PortMaps) == 0 && cfg.Port == 0 {
 		return ""
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"io"
 	"os"
@@ -73,6 +74,37 @@ project markers (go.mod, package.json, etc.).`,
 			if err != nil {
 				return fmt.Errorf("build: stat %s: %w", srcPath, err)
 			}
+
+			// Package architecture must follow the requested guest, including
+			// binary builds, rather than the architecture of this CLI process.
+			packageArch := pkg.ArchSlug()
+			if platform != "" {
+				target, err := builder.ParsePlatform(platform)
+				if err != nil {
+					return err
+				}
+				packageArch = target.Arch
+			} else if !info.IsDir() {
+				if f, err := elf.Open(srcPath); err == nil {
+					if f.Machine == elf.EM_X86_64 {
+						packageArch = "amd64"
+					} else if f.Machine == elf.EM_AARCH64 {
+						packageArch = "arm64"
+					}
+					f.Close()
+				}
+			}
+			previous, hadPrevious := os.LookupEnv("JERBOA_PACKAGE_ARCH")
+			if err := os.Setenv("JERBOA_PACKAGE_ARCH", packageArch); err != nil {
+				return err
+			}
+			defer func() {
+				if hadPrevious {
+					_ = os.Setenv("JERBOA_PACKAGE_ARCH", previous)
+				} else {
+					_ = os.Unsetenv("JERBOA_PACKAGE_ARCH")
+				}
+			}()
 
 			// Writers for build output: info messages and subprocess output.
 			infoW := io.Writer(io.Discard)

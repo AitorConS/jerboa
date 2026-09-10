@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package vm
 
@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,18 +39,32 @@ func WithStore(s Store) Option {
 	return func(m *QEMUManager) { m.store = s }
 }
 
-// WithMetrics injects a sink for VM lifecycle counters (auto-restarts, errors).
+// WithKernel selects the ARM64 kernel used for direct boot.
+func WithKernel(path string) Option {
+	return func(m *QEMUManager) { m.kernelPath = path }
+}
+
+// WithGuestDNS supplies network-scoped responses for native guest DNS.
+func WithGuestDNS(fn func([]byte, string) ([]byte, error)) Option {
+	return func(m *QEMUManager) { m.guestDNS = fn }
+}
+
+// WithMetrics injects a sink for VM lifecycle counters.
 func WithMetrics(s MetricsSink) Option {
 	return func(m *QEMUManager) { m.metrics = s }
 }
 
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
-	store    Store
-	qemuBin  string
-	mkCmd    CommandFunc
-	hchecker *HealthChecker
-	metrics  MetricsSink
+	nativeMu    sync.Mutex
+	nativeState nativeNetworkState
+	guestDNS    func([]byte, string) ([]byte, error)
+	store       Store
+	qemuBin     string
+	kernelPath  string
+	mkCmd       CommandFunc
+	hchecker    *HealthChecker
+	metrics     MetricsSink
 	// applyLimits places the hypervisor process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -94,6 +109,9 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
+	if err := validateHostConfig(v.Cfg, m.kernelPath); err != nil {
+		return fmt.Errorf("qemu start %s: %w", id, err)
+	}
 	if err := validatePortNetwork(v.Cfg); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
@@ -115,6 +133,17 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		v.Cfg.TapName = tapDeviceName(v.ID)
 	}
 
+	cleanup, err := m.prepareHostVM(v)
+	if err != nil {
+		_ = v.transition(StateStopped)
+		return fmt.Errorf("qemu native setup: %w", err)
+	}
+	launched := false
+	defer func() {
+		if !launched && cleanup != nil {
+			cleanup()
+		}
+	}()
 	cmd := m.buildCmd(ctx, v.Cfg, qmpAddr)
 
 	// Wire the tap into the bridge before launching QEMU. QEMU runs with
@@ -123,7 +152,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	// the time the guest brings its interface online. Doing this after
 	// cmd.Start() raced QEMU's own tap creation and left the tap down and
 	// unbridged, so the guest's static IP was never reachable.
-	if v.Cfg.NetworkName != "" {
+	if v.Cfg.NetworkName != "" && runtime.GOOS == "linux" {
 		if err := setupTAPNetwork(v.Cfg); err != nil {
 			slog.Warn("qemu start: tap network setup failed", "vm_id", id, "err", err)
 		}
@@ -153,6 +182,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		}
 		return fmt.Errorf("qemu start %s: launch: %w", id, err)
 	}
+	launched = true
 	now := time.Now()
 	v.mu.Lock()
 	v.proc = &osProcess{cmd.Process}
@@ -161,9 +191,8 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	v.qmpAddr = qmpAddr
 	v.mu.Unlock()
 	if newStatsCollector != nil {
-		v.SetStatsProvider(func() RuntimeStats {
-			return newStatsCollector(cmd.Process.Pid, v).Collect()
-		})
+		collector := newStatsCollector(cmd.Process.Pid, v)
+		v.SetStatsProvider(collector.Collect)
 	}
 
 	// abort tears down a process whose post-launch setup failed, before the VM is
@@ -199,7 +228,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	// start failure (host port already in use, permission denied, …) FAILS the
 	// run instead of leaving a "running" VM whose published port silently does
 	// not work.
-	if len(v.Cfg.PortMaps) > 0 {
+	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS != "darwin" {
 		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
@@ -373,6 +402,9 @@ func (m *QEMUManager) List() []*VM {
 }
 
 func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) *exec.Cmd {
+	if runtime.GOOS == "darwin" {
+		return m.buildNativeCmd(ctx, cfg, qmpAddr)
+	}
 	// snapshot=on makes the boot disk copy-on-write: QEMU keeps guest writes in a
 	// temporary overlay and discards them on exit, leaving the base image
 	// pristine. This matches the documented model — the root filesystem is
@@ -452,6 +484,9 @@ func kvmAccelArgs() []string {
 // dial target. Failing here surfaces the misconfiguration at Start instead
 // of booting a VM whose published ports silently never listen.
 func validatePortNetwork(cfg Config) error {
+	if runtime.GOOS == "darwin" {
+		return nil
+	}
 	if len(cfg.PortMaps) == 0 {
 		return nil
 	}
@@ -569,10 +604,15 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	}
 	explicitStop := v.explicitStop
 	qmpAddr := v.qmpAddr
+	cleanup := v.hostCleanup
+	v.hostCleanup = nil
 	fwd := v.portFwd
 	v.portFwd = nil
 	v.mu.Unlock()
 	removeQMPSocket(qmpAddr)
+	if cleanup != nil {
+		cleanup()
+	}
 	if fwd != nil {
 		fwd.Close()
 	}
@@ -584,7 +624,7 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 			slog.Warn("qemu monitor: cgroup remove failed", "vm_id", v.ID, "err", err)
 		}
 	}
-	if v.Cfg.NetworkName != "" {
+	if v.Cfg.NetworkName != "" && runtime.GOOS == "linux" {
 		// Mirror setupTAPNetwork's creation: detach and delete the persistent
 		// tap. The bridge is intentionally left in place — it may be shared by
 		// other VMs and (for `jerboa network`-managed bridges) is owned by the
@@ -617,7 +657,11 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	case RestartOnFailure:
 		// qemuErrBuf holds QEMU's own stderr, used to disambiguate a guest
 		// exit(0) from QEMU's own exit(1) (both surface as process status 1).
-		shouldRestart = isFailureExit(exitErr, string(v.qemuErrBuf.Bytes()))
+		if runtime.GOOS == "darwin" && !v.Cfg.EmulateX86 {
+			shouldRestart = exitErr != nil
+		} else {
+			shouldRestart = isFailureExit(exitErr, string(v.qemuErrBuf.Bytes()))
+		}
 	}
 	if !shouldRestart {
 		slog.Info("monitor: vm exited normally, not restarting", "vm_id", v.ID, "policy", v.Cfg.Restart.Policy)

@@ -28,14 +28,18 @@ func TestDaemonCmd_Structure(t *testing.T) {
 	for _, c := range newDaemonCmd().Commands() {
 		names[c.Name()] = true
 	}
-	for _, want := range []string{"install", "reinstall", "uninstall", "start", "stop", "restart", "status", "logs"} {
+	wantCommands := []string{"install", "reinstall", "uninstall", "start", "stop", "restart", "status", "logs"}
+	if runtime.GOOS == "darwin" {
+		wantCommands = []string{"start", "stop", "restart", "status", "logs"}
+	}
+	for _, want := range wantCommands {
 		require.True(t, names[want], "missing subcommand %q", want)
 	}
 }
 
 func TestDaemonWindowsOnly_ErrorsOffWindows(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("on Windows these run the real WSL path")
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		t.Skip("managed lifecycle is exercised by platform-specific tests")
 	}
 	for _, name := range []string{"install", "reinstall", "uninstall", "start", "stop", "restart"} {
 		cmd := daemonSubcommand(t, name)
@@ -140,7 +144,7 @@ func TestPreserveDataBackup(t *testing.T) {
 }
 
 func TestDaemonLogPath(t *testing.T) {
-	require.Contains(t, daemonLogPath(), filepath.Join(".jerboa", "jerboad-wsl.log"))
+	require.Contains(t, daemonLogPath(), filepath.Join(".jerboa", daemonLogName()))
 }
 
 func TestEnsureNestedVirtualization_AnnouncesChange(t *testing.T) {
