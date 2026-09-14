@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "next": "16.3.4",
-    "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   },
   "//": "next pins postcss exactly and constrains sharp to ^0.34, so neither can pick up its security fixes on its own. Drop these overrides once a next release ships the patched versions.",
   "overrides": {
