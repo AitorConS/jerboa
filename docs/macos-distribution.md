@@ -16,44 +16,48 @@ immutable release inputs.
 ## CI and the public R2 release channel
 
 The main workflow builds native macOS releases when `VERSION.md` changes or
-when a maintainer dispatches a publication. `build-macos-release` is a required
-dependency of `publish-r2`: a failed build, VM regression, signature or
-notarization check prevents the release channel from advancing.
-
-Provision a dedicated runner with labels `self-hosted`, `macOS`, `ARM64` and
-`hvf-macos26`. It needs macOS 26+, usable Hypervisor.framework, Apple Command
-Line Tools, ARM64 ELF binutils on PATH, and Cargo/rustup. CI installs Go 1.27.1
-and selects Rust 1.97.0. The fork is checked out at immutable commit
+when a maintainer dispatches a publication. `build-macos` is a required
+dependency of `publish-r2` and runs on the GitHub-hosted `macos-26` Apple
+Silicon runner. It installs ARM64 ELF binutils with Homebrew, Go 1.27.1 and
+Rust 1.97.0. The fork is checked out at immutable commit
 `6750fc374d4758a8181d75e5299e7137a110dd41`; update that pin together with the
 integration tests when changing the fork API. Native dependencies are built
 from the fork's SHA-256-locked sources and bundled with their licenses.
 
-The runner's signing Keychain must contain Developer ID Application and
-Developer ID Installer identities, and a stored notarytool profile. Configure
-repository variables `MACOS_APPLICATION_IDENTITY`, `MACOS_INSTALLER_IDENTITY`
-and `MACOS_NOTARY_PROFILE` to name them. Keep their private keys and Apple
-credentials in the runner Keychain. These prerequisites are checked before
-building; no ad-hoc package is published as a stable release.
+The job builds the kernel, native tools and Firecracker, runs the Go tests and
+installer/package regressions, then packages the relocatable bundle and verifies
+it in ad-hoc mode. It stages the same native build and Firecracker package into
+JerboaDesktop (checked out with the `DESKTOP_REPO_TOKEN` secret), builds the
+self-contained DMG and checks the packaged app: a valid seal, Firecracker's
+intact Hypervisor entitlement, the bundled engine version, and `--version` of
+the CLI, daemon and Firecracker run from inside `Contents/Resources`.
 
-CI builds the kernel and native tools, runs Go tests and installer/package
-regressions, and exercises boot, shared networking and snapshots using the
-relocated bundle. It then signs, notarizes, staples and verifies the installer
-payload. R2 receives:
+GitHub-hosted macOS runners expose no Hypervisor.framework, so CI boots no VMs.
+Before bumping `VERSION.md`, run the Firecracker functional suites
+(`test-firecracker-macos.py`, `test-firecracker-network.py`,
+`test-firecracker-stats.py` and `test-jerboa-snapshots.py`) locally on macOS 26
+against a relocated bundle, as described under [Verification](#verification).
+
+Releases are not Developer ID signed or notarized yet. Every Mach-O keeps its
+ad-hoc signature and the DMG is unsigned, so Gatekeeper blocks the first launch
+of a downloaded copy until it is allowed in System Settings → Privacy &
+Security. No installer package is published, so the macOS path of `install.sh`
+rejects these releases. R2 receives:
 
 | Object | Purpose |
 | --- | --- |
-| `cli/vVERSION/jerboa-darwin-arm64` | Signed native CLI |
-| `daemon/vVERSION/jerboad-darwin-arm64` | Signed native daemon |
-| `macos/vVERSION/jerboa-VERSION-macos-arm64.pkg` | Complete native runtime and dependencies |
+| `cli/vVERSION/jerboa-darwin-arm64` | Native CLI (ad-hoc signed) |
+| `daemon/vVERSION/jerboad-darwin-arm64` | Native daemon (ad-hoc signed) |
+| `desktop/vVERSION/jerboa-desktop-VERSION-macos-arm64.dmg` | Self-contained Desktop app with the complete runtime |
 | `releases/vVERSION/manifest.json` and `.minisig` | Signed metadata for pinned installations |
 | `channels/stable.json` and `.minisig` | Signed current release metadata |
 
-The `macos.platforms.darwin-arm64` asset identifies the complete package.
-Install that package for local VM execution: the standalone CLI and daemon
-assets do not include Firecracker, its libraries or the kernel toolset.
-All versioned artifacts are uploaded before the stable channel is updated.
-The post-publication check downloads and hashes macOS artifacts alongside
-Linux/Windows artifacts. A successful PR check alone does not publish to R2.
+The standalone CLI and daemon assets do not include Firecracker, its libraries
+or the kernel toolset; the DMG's app does. The Windows installer is mirrored
+into the `desktop` component only when its channel already points at the
+release version. All versioned artifacts are uploaded before the stable channel
+is updated, and the post-publication check downloads and hashes every published
+artifact. A successful PR check alone does not publish to R2.
 
 ## Development bundle
 
