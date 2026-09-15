@@ -61,10 +61,7 @@ func ValidateFiles(files []File, platform string) error {
 	seen := map[string][]byte{}
 	dirs := map[string]bool{}
 	for _, f := range files {
-		gp := f.GuestPath
-		if gp == "" {
-			gp = filepath.Base(f.HostPath)
-		}
+		gp := guestPathOf(f)
 		for _, c := range strings.Split(filepath.ToSlash(gp), "/") {
 			if c == ".." {
 				return fmt.Errorf("invalid guest path %q", gp)
@@ -109,6 +106,48 @@ func ValidateFiles(files []File, platform string) error {
 	return nil
 }
 
+// ApplyContextPrecedence resolves the one kind of guest-path collision that has
+// an obvious reading: a build-context file — the project's own source — shadows
+// a package file at the same path, the way a COPY shadows what the base image
+// left there. The shadowed package entry is dropped, so a project that ships its
+// own README.md on top of a package carrying one still builds, with the
+// project's copy in the image.
+//
+// Collisions with no such ordering — two package files, or two context files, at
+// one guest path — are left in place for ValidateFiles to reject: there the
+// caller really has asked for two different things at one path.
+func ApplyContextPrecedence(files []File) []File {
+	shadowed := map[string]bool{}
+	for _, f := range files {
+		if !f.FromContext || f.IsDir {
+			continue
+		}
+		if gp := tarEntryName(guestPathOf(f)); gp != "" {
+			shadowed[gp] = true
+		}
+	}
+	if len(shadowed) == 0 {
+		return files
+	}
+	out := make([]File, 0, len(files))
+	for _, f := range files {
+		if !f.FromContext && !f.IsDir && shadowed[tarEntryName(guestPathOf(f))] {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// guestPathOf returns the path a File is placed at inside the image, before
+// normalization: its GuestPath, or the host basename when none was given.
+func guestPathOf(f File) string {
+	if f.GuestPath != "" {
+		return f.GuestPath
+	}
+	return filepath.Base(f.HostPath)
+}
+
 // ValidateImage reuses the import resolver against only the files going onto disk.
 func ValidateImage(binary, program string, files []File, platform string) (string, error) {
 	actual, err := ELFPlatform(binary)
@@ -131,10 +170,7 @@ func ValidateImage(binary, program string, files []File, platform string) (strin
 	c := &containerFS{index: map[string]cfsEntry{}, hosts: map[string]string{}}
 	for _, f := range all {
 		if !f.IsDir {
-			gp := f.GuestPath
-			if gp == "" {
-				gp = filepath.Base(f.HostPath)
-			}
+			gp := guestPathOf(f)
 			c.index[absClean(gp)] = cfsEntry{typeflag: '0'}
 			c.hosts[absClean(gp)] = f.HostPath
 		}

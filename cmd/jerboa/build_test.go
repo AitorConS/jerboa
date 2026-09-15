@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -145,4 +146,38 @@ func TestFindProgramBinaryDirOnlyMatchFails(t *testing.T) {
 	}
 	_, _, err := findProgramBinary(pkgFiles, "data")
 	require.Error(t, err)
+}
+
+// The project's own files enter the image as build-context files, so they take
+// precedence over a package file at the same guest path — the collision that
+// `jerboa build examples/postgresql` hits, where the project and the
+// eyberg/postgresql package each ship a README.md.
+func TestSourceFilesShadowPackageFilesAtSamePath(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("project docs"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.py"), []byte("print('hi')\n"), 0o644))
+
+	srcFiles, err := sourceFiles(dir)
+	require.NoError(t, err)
+	require.Len(t, srcFiles, 2)
+	for _, f := range srcFiles {
+		require.True(t, f.FromContext, "source file %q must be marked as build context", f.GuestPath)
+	}
+
+	pkgDir := t.TempDir()
+	pkgReadme := filepath.Join(pkgDir, "README.md")
+	pkgBinary := filepath.Join(pkgDir, "postgres")
+	require.NoError(t, os.WriteFile(pkgReadme, []byte("package docs"), 0o644))
+	require.NoError(t, os.WriteFile(pkgBinary, []byte("not really an ELF"), 0o755))
+	merged := append([]pkg.File{
+		{HostPath: pkgBinary, GuestPath: "postgres"},
+		{HostPath: pkgReadme, GuestPath: "README.md"},
+	}, srcFiles...)
+
+	resolved := pkg.ApplyContextPrecedence(merged)
+	require.Len(t, resolved, 3)
+	for _, f := range resolved {
+		require.NotEqual(t, pkgReadme, f.HostPath, "the package README must be shadowed by the project's")
+	}
+	require.NoError(t, pkg.ValidateFiles(resolved, "linux/amd64"))
 }

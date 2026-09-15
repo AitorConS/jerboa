@@ -224,3 +224,68 @@ func TestLocalProgramSymlinkStaysInsideSysroot(t *testing.T) {
 	_, _, err = LocalFiles(input, root, "opt/service", nil)
 	require.Error(t, err)
 }
+
+// A project that ships its own README.md on top of an ops package carrying one
+// (eyberg/postgresql, eyberg/python3 and eyberg/mongodb all do) must still
+// build: the project's copy wins and the package entry is dropped.
+func TestContextFileShadowsPackageFileAtSamePath(t *testing.T) {
+	root := t.TempDir()
+	pkgReadme := putFixture(t, root, "pkg/README.md", []byte("package docs"))
+	srcReadme := putFixture(t, root, "src/README.md", []byte("project docs"))
+	files := []File{
+		{HostPath: pkgReadme, GuestPath: "README.md"},
+		{HostPath: srcReadme, GuestPath: "README.md", FromContext: true},
+	}
+	require.ErrorContains(t, ValidateFiles(files, "linux/arm64"), "different content collides at /README.md")
+
+	resolved := ApplyContextPrecedence(files)
+	require.Len(t, resolved, 1)
+	require.Equal(t, srcReadme, resolved[0].HostPath)
+	require.NoError(t, ValidateFiles(resolved, "linux/arm64"))
+}
+
+func TestContextPrecedenceLeavesGenuineCollisions(t *testing.T) {
+	root := t.TempDir()
+	one := putFixture(t, root, "one/conf", []byte("one"))
+	two := putFixture(t, root, "two/conf", []byte("two"))
+	other := putFixture(t, root, "one/other", []byte("other"))
+
+	// Two packages at one path: no precedence to apply, so the collision stands.
+	pkgs := []File{{HostPath: one, GuestPath: "conf"}, {HostPath: two, GuestPath: "conf"}}
+	require.Equal(t, pkgs, ApplyContextPrecedence(pkgs))
+	require.ErrorContains(t, ValidateFiles(pkgs, "linux/arm64"), "different content collides at /conf")
+
+	// Two context files at one path: likewise the caller's own conflict.
+	ctx := []File{
+		{HostPath: one, GuestPath: "conf", FromContext: true},
+		{HostPath: two, GuestPath: "conf", FromContext: true},
+	}
+	require.Equal(t, ctx, ApplyContextPrecedence(ctx))
+	require.ErrorContains(t, ValidateFiles(ctx, "linux/arm64"), "different content collides at /conf")
+
+	// Shadowing is per guest path: untouched package files and the directory
+	// entries that mkfs needs all survive, in order.
+	mixed := []File{
+		{HostPath: one, GuestPath: "conf"},
+		{HostPath: other, GuestPath: "other"},
+		{GuestPath: "db", IsDir: true},
+		{HostPath: two, GuestPath: "./conf", FromContext: true},
+	}
+	resolved := ApplyContextPrecedence(mixed)
+	require.Equal(t, []File{mixed[1], mixed[2], mixed[3]}, resolved)
+	require.NoError(t, ValidateFiles(resolved, "linux/arm64"))
+}
+
+// Guest paths default to the host basename, and that is the path shadowing has
+// to compare on — the ops store maps a package's top-level files that way.
+func TestContextPrecedenceUsesEffectiveGuestPath(t *testing.T) {
+	root := t.TempDir()
+	pkgReadme := putFixture(t, root, "pkg/README.md", []byte("package docs"))
+	srcReadme := putFixture(t, root, "src/README.md", []byte("project docs"))
+	resolved := ApplyContextPrecedence([]File{
+		{HostPath: pkgReadme},
+		{HostPath: srcReadme, GuestPath: "/README.md", FromContext: true},
+	})
+	require.Len(t, resolved, 1)
+	require.Equal(t, srcReadme, resolved[0].HostPath)
+}

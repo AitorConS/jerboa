@@ -204,6 +204,8 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
 
 // sourceFiles collects application source files from dir for inclusion in the image.
 // It reads .unignore patterns and excludes matching files and directories.
+// Every file is marked FromContext, so it shadows a package file that would
+// otherwise land at the same guest path (see pkg.ApplyContextPrecedence).
 func sourceFiles(dir string) ([]pkg.File, error) {
 	ignore, err := builder.LoadIgnoreFile(dir)
 	if err != nil {
@@ -232,7 +234,7 @@ func sourceFiles(dir string) ([]pkg.File, error) {
 		// FIFO/socket/device entry would otherwise be tarred as TypeReg and then
 		// block or fail during os.Open/io.Copy.
 		if info.Mode().IsRegular() {
-			files = append(files, pkg.File{HostPath: path, GuestPath: rel})
+			files = append(files, pkg.File{HostPath: path, GuestPath: rel, FromContext: true})
 		} else if !info.IsDir() {
 			return fmt.Errorf("unsupported non-regular source file %q", rel)
 		}

@@ -616,6 +616,10 @@ type File struct {
 	GuestPath string
 	// IsDir marks an empty directory to create inside the image (no host file).
 	IsDir bool
+	// FromContext marks a file taken from the build context — the project's own
+	// sources — rather than from a package. Context files sit on top: they
+	// shadow package files at the same guest path (see ApplyContextPrecedence).
+	FromContext bool
 }
 
 // opsRuntimeBloatDir reports whether a slash-separated package-relative path

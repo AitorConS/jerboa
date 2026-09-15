@@ -238,6 +238,15 @@ project markers (go.mod, package.json, etc.).`,
 				runPorts = cfg.Run.Ports
 			}
 
+			// Build-context precedence: the project's own files shadow package
+			// files at the same guest path. Resolve it here, before anything
+			// looks at the list, so validation, preflight and the uploaded tar
+			// all see exactly what lands in the image. Provenance is read first:
+			// a package whose files end up fully shadowed still took part in the
+			// build and stays recorded in the manifest.
+			pkgRefs := packageReferences(pkgFiles)
+			pkgFiles = pkg.ApplyContextPrecedence(pkgFiles)
+
 			// Preflight: catch at build time what would otherwise be a cryptic
 			// boot failure inside the guest (dynamic binary without its loader,
 			// missing shared libraries, absent entrypoint script...).
@@ -266,7 +275,7 @@ project markers (go.mod, package.json, etc.).`,
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
 				Name:     name,
-				Platform: "linux/" + packageArchFor(cmd.Context()), Packages: packageReferences(pkgFiles),
+				Platform: "linux/" + packageArchFor(cmd.Context()), Packages: pkgRefs,
 				Tag:         tag,
 				Program:     buildProgramPath,
 				ProgramPath: programPath,
