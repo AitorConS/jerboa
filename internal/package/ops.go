@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"runtime"
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
@@ -177,5 +179,26 @@ func opsVersionMatch(pkgVersion, queryVersion string) bool {
 
 // ArchSlug returns the architecture suffix used by ops packages.
 func ArchSlug() string {
+	if arch := os.Getenv("JERBOA_PACKAGE_ARCH"); arch == "arm64" || arch == "amd64" {
+		return arch
+	}
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return "arm64"
+	}
 	return "amd64"
+}
+
+// LookupArch never reuses an x86 checksum or binary for an ARM package.
+func (l *OpsPackageList) LookupArch(namespace, name, version, arch string) *OpsPackage {
+	for i := range l.Packages {
+		p := &l.Packages[i]
+		pa := p.Arch
+		if pa == "" || pa == "x86_64" {
+			pa = "amd64"
+		}
+		if pa == arch && p.Namespace == namespace && p.Name == name && (version == "" || version == "latest" || opsVersionMatch(p.Version, version)) {
+			return p
+		}
+	}
+	return nil
 }

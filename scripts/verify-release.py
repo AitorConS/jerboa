@@ -28,7 +28,7 @@ with urlopen(base.rstrip("/") + "/channels/stable.json", timeout=60) as response
 manifest = json.loads(manifest_bytes)
 with tempfile.TemporaryDirectory(prefix="jerboa-release-check-") as temp:
     root = pathlib.Path(temp)
-    for component_name in ("cli", "daemon", "distro", "kernel"):
+    for component_name in ("cli", "daemon", "distro", "kernel", "macos"):
         component = manifest["components"][component_name]
         if component_name != "kernel" and component["version"] != expected:
             raise SystemExit(f"Version mismatch: {component_name}")

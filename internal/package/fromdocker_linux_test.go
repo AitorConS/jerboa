@@ -49,7 +49,7 @@ func TestElfClosure_RealDynamicBinary(t *testing.T) {
 	}
 	libGuestPaths := map[string]bool{}
 	for _, soname := range info.needed {
-		for _, dir := range []string{"/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu", "/lib64", "/usr/lib64", "/lib", "/usr/lib"} {
+		for _, dir := range defaultLibDirs {
 			hp := filepath.Join(dir, soname)
 			if st, statErr := os.Stat(hp); statErr == nil && !st.IsDir() {
 				gp := strings.TrimPrefix(hp, "/")

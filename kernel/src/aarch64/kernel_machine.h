@@ -280,7 +280,8 @@ extern struct uefi_boot_params boot_params;
 static inline cpuinfo current_cpu(void)
 {
     register u64 r;
-    asm("mov %0, x18" : "=r"(r));
+    /* A suspended context can resume on another CPU: never cache x18. */
+    asm volatile("mov %0, x18" : "=r"(r));
     return (cpuinfo)pointer_from_u64(r);
 }
 

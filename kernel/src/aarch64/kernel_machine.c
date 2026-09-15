@@ -133,7 +133,7 @@ void psci_reset(void)
 
 BSS_RO_AFTER_INIT static buffer mpid_map;
 static struct spinlock ap_lock;
-static void (*init_mmu_target)(void);
+static void (*init_mmu_target)(void) __attribute__((used));
 
 vector cpus_init_ids(heap h)
 {
@@ -160,15 +160,17 @@ static int cpuid_from_mpid(u64 mpid)
 
 static void ap_start_newstack(int cpuid)
 {
-    total_processors++;
-    spin_unlock(&ap_lock);
     cpu_init(cpuid);
     run_percpu_init();
+    /* Publish the CPU only after its context and interrupt interface are ready. */
+    __atomic_add_fetch(&total_processors, 1, __ATOMIC_RELEASE);
+    spin_unlock(&ap_lock);
     kernel_sleep();
 }
 
-static void ap_start(void)
+static void __attribute__((used)) ap_start(void)
 {
+    spin_lock(&ap_lock);
     int cpuid = cpuid_from_mpid(read_mpid());
     assert(cpuid >= 0);
     cpuinfo ci = init_cpuinfo(heap_locked(get_kernel_heaps()), cpuid);
@@ -177,22 +179,47 @@ static void ap_start(void)
     switch_stack_1(frame_get_stack_top(f), ap_start_newstack, cpuid);
 }
 
-static void ap_start_nommu(void)
+/* Separate bootstrap stacks: exclusive accesses require normal memory (MMU on). */
+static void __attribute__((naked, used)) ap_start_mmu(void)
 {
-    asm volatile("bl aarch64_cpu_init");
-    spin_lock(&ap_lock);    /* so that all APs can use the same temporary stack */
-    enable_mmu(u64_from_pointer(init_mmu_target));
+    asm volatile("mov sp, x19; b ap_start");
+}
+static void __attribute__((naked)) ap_start_nommu(void)
+{
+    asm volatile("mov x20, x0; bl aarch64_cpu_init; "
+                 "ldr x19, [x20]; add sp, x20, #4096; "
+                 "adrp x8, init_mmu_target; ldr x0, [x8, :lo12:init_mmu_target]; "
+                 "b enable_mmu");
 }
 
 #define AP_START_TIMEOUT_MS 500
 void start_secondary_cores(kernel_heaps kh)
 {
     init_flush(heap_locked(kh));
-    for (int i = 1; i < present_processors; i++)
-        arm_hvc(PSCI_FN64_CPU_ON, mpid_from_cpuid(i),
-                u64_from_pointer((void *)ap_start_nommu - kas_kern_offset + kernel_phys_offset), 0);
-    for (u64 to = 0; (total_processors != present_processors) && (to < AP_START_TIMEOUT_MS); to++)
+    heap bh = (heap)heap_page_backed(kh);
+    vector bootstrap_stacks = allocate_vector(heap_general(kh), present_processors);
+    assert(bootstrap_stacks != INVALID_ADDRESS);
+    for (int i = 1; i < present_processors; i++) {
+        void *stack = allocate(bh, PAGESIZE);
+        assert(stack != INVALID_ADDRESS);
+        *(u64 *)stack = u64_from_pointer(stack + PAGESIZE);
+        vector_push(bootstrap_stacks, stack);
+        struct arm_hvc_ret ret = arm_hvc(PSCI_FN64_CPU_ON, mpid_from_cpuid(i),
+                u64_from_pointer((void *)ap_start_nommu - kas_kern_offset + kernel_phys_offset),
+                physical_from_virtual(stack));
+        if (ret.x0 != 0)
+            halt("PSCI CPU_ON failed for CPU %d: %ld\n", i, ret.x0);
+    }
+    for (u64 to = 0; (__atomic_load_n(&total_processors, __ATOMIC_ACQUIRE) != present_processors) && (to < AP_START_TIMEOUT_MS); to++)
         kernel_delay(milliseconds(1));
+
+    if (__atomic_load_n(&total_processors, __ATOMIC_ACQUIRE) != present_processors)
+        halt("SMP startup timed out: %ld of %ld CPUs started\n",
+             total_processors, present_processors);
+    void *stack;
+    vector_foreach(bootstrap_stacks, stack)
+        deallocate(bh, stack, PAGESIZE);
+    deallocate_vector(bootstrap_stacks);
 
     /* The MMU has been enabled on secondary cores: unmap the temporary identity map. */
     unmap(PHYSMEM_BASE + kernel_phys_offset, INIT_IDENTITY_SIZE);
@@ -217,7 +244,7 @@ void count_cpus_present(void)
         acpi_walk_madt(stack_closure_func(madt_handler, count_cpus_handler));
     if (present_processors > 1) {
         spin_lock_init(&ap_lock);
-        init_mmu_target = ap_start;
+        init_mmu_target = ap_start_mmu;
     } else {
         deallocate_buffer(mpid_map);
         mpid_map = 0;

@@ -27,16 +27,24 @@ import (
 // Ops packages preserve their native format: package.manifest + sysroot/ +
 // top-level binary, stored at root/<namespace>/<name>_<version>/.
 type OpsStore struct {
+	arch string
 	root string
 	mu   sync.RWMutex
 }
 
 // NewOpsStore creates an OpsStore rooted at dir, creating it if needed.
-func NewOpsStore(dir string) (*OpsStore, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("ops store mkdir %s: %w", dir, err)
+func NewOpsStore(dir string) (*OpsStore, error) { return NewOpsStoreArch(dir, ArchSlug()) }
+func NewOpsStoreArch(dir, arch string) (*OpsStore, error) {
+	if err := ValidatePlatform("linux/" + arch); err != nil {
+		return nil, err
 	}
-	return &OpsStore{root: dir}, nil
+	if arch != "amd64" {
+		dir = filepath.Join(dir, arch)
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("ops_store operation: %w", err)
+	}
+	return &OpsStore{root: dir, arch: arch}, nil
 }
 
 // PackageDir returns the local directory for an ops package.
@@ -67,7 +75,7 @@ func (s *OpsStore) IsDownloaded(namespace, name, version string) bool {
 		return false
 	}
 	dir := s.PackageDir(namespace, name, version)
-	archive := filepath.Join(dir, ArchSlug()+".tar.gz")
+	archive := filepath.Join(dir, s.arch+".tar.gz")
 	info, err := os.Stat(archive)
 	return err == nil && !info.IsDir()
 }
@@ -120,7 +128,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 		return fmt.Errorf("ops download mkdir %s: %w", dir, err)
 	}
 
-	archSlug := ArchSlug()
+	archSlug := s.arch
 	archivePath := filepath.Join(dir, archSlug+".tar.gz")
 	if _, err := os.Stat(archivePath); err == nil {
 		slog.Info("ops package already downloaded", "namespace", namespace, "name", name, "version", version)
@@ -204,7 +212,7 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 	}
 
 	dir := s.PackageDir(namespace, name, version)
-	archivePath := filepath.Join(dir, ArchSlug()+".tar.gz")
+	archivePath := filepath.Join(dir, s.arch+".tar.gz")
 
 	// A failed extraction must not leave a half-written tree behind: with no
 	// package.manifest to check the binary against, IsExtracted would report
@@ -603,10 +611,15 @@ func copyFileContents(src, dst string, perm fs.FileMode) error {
 // File represents a file to be included in a unikernel image, with both
 // its host path (on the build machine) and its guest path (inside the image).
 type File struct {
+	Reference *Reference `json:"-"`
 	HostPath  string
 	GuestPath string
 	// IsDir marks an empty directory to create inside the image (no host file).
 	IsDir bool
+	// FromContext marks a file taken from the build context — the project's own
+	// sources — rather than from a package. Context files sit on top: they
+	// shadow package files at the same guest path (see ApplyContextPrecedence).
+	FromContext bool
 }
 
 // opsRuntimeBloatDir reports whether a slash-separated package-relative path
@@ -953,4 +966,25 @@ func isELFFile(path string) bool {
 		return false
 	}
 	return magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'
+}
+
+// ArchiveSHA256 identifies the actual archive used, including cached packages.
+func (s *OpsStore) ArchiveSHA256(namespace, name, version, expected string) (string, error) {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return "", err
+	}
+	f, err := os.Open(filepath.Join(s.PackageDir(namespace, name, version), s.arch+".tar.gz"))
+	if err != nil {
+		return "", fmt.Errorf("ops_store operation: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("ops_store operation: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if expected != "" && !strings.EqualFold(got, expected) {
+		return "", ErrChecksumMismatch
+	}
+	return got, nil
 }

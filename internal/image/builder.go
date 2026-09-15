@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +24,8 @@ type MkfsFunc func(ctx context.Context, imgPath, binaryPath string, manifest str
 
 // BuildConfig holds the parameters for building a unikernel image.
 type BuildConfig struct {
+	Platform string
+	Packages []pkg.Reference
 	// Name is the image name (e.g. "hello").
 	Name string
 	// Tag is the image tag (default "latest" if empty).
@@ -107,6 +110,15 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
+	platform, err := pkg.ValidateImage(cfg.BinaryPath, cfg.ProgramPath, cfg.PkgFiles, cfg.Platform)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("build: %w", err)
+	}
+	architecture := strings.TrimPrefix(platform, "linux/")
+	if err := pkg.ValidateReferences(cfg.Packages, platform); err != nil {
+		return Manifest{}, err
+	}
+
 	tmp, err := os.CreateTemp("", "jerboa-build-*.img")
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build: create temp image: %w", err)
@@ -128,6 +140,16 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: %w", resolvErr)
 	}
 
+	// Include daemon-injected files in the final path/collision check.
+	validationProgram := cfg.ProgramPath
+	if validationProgram == "" {
+		validationProgram = "program"
+	}
+	finalFiles := append(append([]pkg.File{}, cfg.PkgFiles...), pkg.File{HostPath: cfg.BinaryPath, GuestPath: validationProgram})
+	if err := pkg.ValidateFiles(finalFiles, platform); err != nil {
+		return Manifest{}, err
+	}
+
 	manifest := BuildManifest(cfg)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
@@ -140,6 +162,9 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 
 	m := Manifest{
 		SchemaVersion: SchemaVersion,
+		Architecture:  architecture,
+		Platform:      platform,
+		Packages:      cfg.Packages,
 		Name:          cfg.Name,
 		Tag:           cfg.Tag,
 		Created:       time.Now().UTC(),
@@ -167,7 +192,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 func injectResolvConf(cfg *BuildConfig) (cleanup func(), err error) {
 	cleanup = func() {}
 	for _, f := range cfg.PkgFiles {
-		if filepath.ToSlash(f.GuestPath) == "etc/resolv.conf" {
+		if strings.TrimPrefix(filepath.ToSlash(f.GuestPath), "/") == "etc/resolv.conf" {
 			return cleanup, nil
 		}
 	}
@@ -178,6 +203,9 @@ func injectResolvConf(cfg *BuildConfig) (cleanup func(), err error) {
 	tmpPath := tmp.Name()
 	cleanup = func() { _ = os.Remove(tmpPath) }
 	content := "nameserver " + netconst.DNSAnycastIP + "\n"
+	if runtime.GOOS == "darwin" {
+		content = "nameserver 10.0.2.3\n"
+	}
 	if _, err := tmp.WriteString(content); err != nil {
 		_ = tmp.Close()
 		return cleanup, fmt.Errorf("write resolv.conf: %w", err)

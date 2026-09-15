@@ -16,7 +16,9 @@
  */
 #include <kernel.h>
 #include "fw_cfg.h"
+#if defined(__x86_64__)
 #include <io.h>
+#endif
 
 #define FW_CFG_PORT_SEL     0x510
 #define FW_CFG_PORT_DATA    0x511
@@ -47,14 +49,23 @@ static u16 be16_to_cpu(u16 v)
 
 static void fw_cfg_select(u16 entry)
 {
+#if defined(__aarch64__)
+    /* virt exposes fw_cfg as MMIO; selector is big endian at offset 8. */
+    mmio_write_16(mmio_base_addr(FW_CFG) + 8, be16_to_cpu(entry));
+#else
     out16(FW_CFG_PORT_SEL, entry);
+#endif
 }
 
 static void fw_cfg_read(void *buf, u32 len)
 {
     u8 *p = buf;
     for (u32 i = 0; i < len; i++)
+#if defined(__aarch64__)
+        p[i] = mmio_read_8(mmio_base_addr(FW_CFG));
+#else
         p[i] = in8(FW_CFG_PORT_DATA);
+#endif
 }
 
 boolean fw_cfg_present(void)

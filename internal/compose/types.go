@@ -2,6 +2,7 @@ package compose
 
 // File is a parsed jerboa compose file.
 type File struct {
+	ImplicitDefault bool `yaml:"-"`
 	// Version must be "1".
 	Version string `yaml:"version"`
 	// Services maps service name to its definition.
@@ -21,6 +22,7 @@ type Service struct {
 	CPUs      int      `yaml:"cpus"`
 	DependsOn []string `yaml:"depends_on"`
 	Networks  []string `yaml:"networks"`
+	Aliases   []string `yaml:"aliases,omitempty"`
 	// IP pins the service to a static address on its (first) network instead of
 	// auto-allocating one, giving other services a fixed address to reach it at.
 	// Services can also resolve each other by name via the guest DNS server, so

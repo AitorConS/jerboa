@@ -22,6 +22,7 @@ PROGRAMS= \
 	random_test \
 	rbtree_test \
 	table_test \
+	tiny_heap_test \
 	tuple_test \
 	udp_test \
 	vector_test
@@ -117,6 +118,12 @@ SRCS-tuple_test= \
 	$(CURDIR)/tuple_test.c \
 	$(RUNTIME)\
 	$(SRCDIR)/unix_process/unix_process_runtime.c
+
+SRCS-tiny_heap_test= \
+	$(CURDIR)/tiny_heap_test.c \
+	$(RUNTIME) \
+	$(SRCDIR)/unix_process/unix_process_runtime.c \
+	$(SRCDIR)/unix_process/tiny_heap.c
 
 SRCS-udp_test= \
 	$(CURDIR)/udp_test.c \

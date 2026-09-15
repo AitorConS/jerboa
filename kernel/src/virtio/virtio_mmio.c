@@ -7,6 +7,8 @@
 
 #ifdef __x86_64__
 #include <apic.h>
+#else
+#include <gic.h>
 #endif
 
 #include "virtio_internal.h"
@@ -49,6 +51,16 @@ closure_function(1, 1, void, vtmmio_new_dev,
     assert(dev->vq_handlers != INVALID_ADDRESS);
     vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_RESET);
     list_push_back(&vtmmio_devices, &dev->l);
+}
+
+void virtio_mmio_register_device(kernel_heaps kh, u64 membase, u64 memsize, int irq)
+{
+    struct acpi_mmio_dev adev = {
+        .membase = membase,
+        .memsize = memsize,
+        .irq = irq,
+    };
+    apply(stack_closure(vtmmio_new_dev, kh), &adev);
 }
 
 closure_function(1, 2, void, vtmmio_cmdline_parse,
@@ -193,13 +205,19 @@ closure_func_basic(thunk, void, vtmmio_irq)
 
 static void vtmmio_irq_setup(vtmmio dev, range cpu_affinity)
 {
+#ifdef __x86_64__
     u64 irq_vector = allocate_mmio_interrupt();
     assert(irq_vector != INVALID_PHYSICAL);
     register_interrupt(irq_vector, init_closure_func(&dev->irq_handler, thunk, vtmmio_irq),
                        ss("vtmmio"));
     dev->irq_vector = irq_vector;
-#ifdef __x86_64__
     ioapic_set_int(dev->irq, irq_vector, irq_get_target_cpu(cpu_affinity));
+#else
+    u64 irq_vector = GIC_SPI_INTS_START + dev->irq;
+    irq_register_handler(irq_vector,
+        init_closure_func(&dev->irq_handler, thunk, vtmmio_irq), ss("vtmmio"),
+        cpu_affinity);
+    dev->irq_vector = irq_vector;
 #endif
 }
 

@@ -22,7 +22,7 @@ Jerboa is split into two parts:
 - `jerboa`: the CLI
 - `jerboad`: the daemon that owns builds, images, VM lifecycle, networks, and compose state
 
-The daemon is Linux-only. On Windows, the CLI runs on the host and boots the daemon inside a dedicated WSL2 distro managed by `jerboa daemon`.
+Stable daemon releases target Linux. The [native macOS ARM64 preview]({% link macos.md %}) is available from source. On Windows, the CLI runs on the host and boots the daemon inside a dedicated WSL2 distro managed by `jerboa daemon`.
 
 ## Current Capabilities
 
@@ -47,11 +47,11 @@ The daemon is Linux-only. On Windows, the CLI runs on the host and boots the dae
 
 ## Important Runtime Constraints
 
-- Native VM execution requires Linux.
+- Native VM execution supports Linux and macOS Apple Silicon (preview).
 - Port publishing requires a managed network (`--network`).
 - TCP publishing works today through a userspace forwarder.
 - UDP port mappings parse and persist, but the current forwarder skips them with a warning.
-- The daemon binary is built only for Linux; Windows uses WSL2.
+- Native macOS uses the Firecracker/HVF fork or QEMU; Windows uses WSL2.
 
 ## Repo Shape
 

@@ -13,7 +13,7 @@
  */
 #include <unix_internal.h>
 
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #include <drivers/fw_cfg.h>
 #endif
 
@@ -75,10 +75,10 @@ static boolean inject_pair(tuple env, buffer b, bytes start, bytes len)
 
 /* env_inject_from_fw_cfg — read opt/uni/env from QEMU fw_cfg (if any) and
  * merge into root[environment]. Safe no-op if the device is absent or the
- * entry is empty. fw_cfg is x86-only; on other architectures this is a stub. */
+ * entry is empty. fw_cfg is x86/ARM64; on other architectures this is a stub. */
 void env_inject_from_fw_cfg(tuple root)
 {
-#if !defined(__x86_64__)
+#if !defined(__x86_64__) && !defined(__aarch64__)
     (void)root;
     return;
 #else

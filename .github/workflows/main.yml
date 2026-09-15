@@ -142,7 +142,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Check go.mod / go.sum are tidy
@@ -166,13 +166,16 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          # golangci-lint supports the toolchain it was built with and the one
+          # before it, so a Go bump needs a linter that knows the new release:
+          # v2.12.2 predates Go 1.27 and cannot read its export data.
+          version: v2.13.2
 
   unit-tests:
     name: Unit Tests
@@ -187,7 +190,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Run unit tests
@@ -195,6 +198,9 @@ jobs:
         # dependency between tests (shared global, execution-order coupling)
         # surfaces here instead of intermittently in production.
         run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
+
+      - name: Installer platform and verification regressions
+        run: python3 scripts/test-install.py
 
       - name: Coverage summary
         run: go tool cover -func=coverage.out | tail -1
@@ -227,7 +233,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: govulncheck
@@ -248,7 +254,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Fuzz every target for a short burst
@@ -309,7 +315,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -339,7 +345,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -372,7 +378,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -562,7 +568,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Install kernel toolchain deps
@@ -616,7 +622,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Read version
@@ -676,7 +682,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Read version
@@ -875,10 +881,111 @@ jobs:
             'C:\jerboa-desktop', "$env:USERPROFILE\.jerboa", "$env:LOCALAPPDATA\jerboa"
           exit 0
 
+  build-macos-release:
+    name: Native macOS Firecracker distribution
+    runs-on: [self-hosted, macOS, ARM64, hvf-macos26]
+    needs: [changes, lint, unit-tests]
+    if: >-
+      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '26.0'
+      MACOS_APPLICATION_IDENTITY: ${{ vars.MACOS_APPLICATION_IDENTITY }}
+      MACOS_INSTALLER_IDENTITY: ${{ vars.MACOS_INSTALLER_IDENTITY }}
+      MACOS_NOTARY_PROFILE: ${{ vars.MACOS_NOTARY_PROFILE }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          path: jerboa
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AitorConS/firecracker-macos
+          # Includes generic Ethernet transport, snapshots and graceful shutdown.
+          ref: 6750fc374d4758a8181d75e5299e7137a110dd41
+          persist-credentials: false
+          path: firecracker-macos
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: false
+      - name: Check release runner prerequisites
+        working-directory: jerboa
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(sw_vers -productVersion | cut -d. -f1)" -ge 26
+          for tool in aarch64-elf-as aarch64-elf-ld aarch64-elf-objcopy cargo rustup codesign; do
+            command -v "$tool"
+          done
+          : "${MACOS_APPLICATION_IDENTITY:?Set the Developer ID Application identity}"
+          : "${MACOS_INSTALLER_IDENTITY:?Set the Developer ID Installer identity}"
+          : "${MACOS_NOTARY_PROFILE:?Set the runner Keychain notary profile}"
+          rustup toolchain install 1.97.0 --profile minimal
+      - name: Build pinned Firecracker and relocatable dependencies
+        working-directory: firecracker-macos
+        run: |
+          set -euo pipefail
+          python3 experiments/hvf/distribution/build-native-deps.py
+          GLIB_PREFIX="$PWD/experiments/hvf/build/distribution/native" sh experiments/hvf/build-native.sh
+          python3 experiments/hvf/distribution/package.py "$RUNNER_TEMP/firecracker-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Build and test native Jerboa
+        working-directory: jerboa
+        run: |
+          set -euo pipefail
+          sh scripts/build-macos.sh --with-x86
+          go test -race ./cmd/... ./internal/...
+          python3 scripts/test_macos_distribution.py
+          python3 scripts/test-install.py
+      - name: Package and test relocated runtime
+        working-directory: jerboa
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION.md)"
+          python3 scripts/package-macos-distribution.py --jerboa-dir dist/macos-arm64 \
+            --tools-dir dist/macos-arm64/tools \
+            --firecracker-package "$RUNNER_TEMP/firecracker-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --output-dir dist/macos-distribution --version "$VERSION" \
+            --source-date-epoch "$(git show -s --format=%ct HEAD)"
+          BUNDLE="$PWD/dist/macos-distribution/jerboa-$VERSION-macos-arm64"
+          python3 scripts/verify-macos-distribution.py "$BUNDLE" --mode adhoc
+          export JERBOA_TEST_BIN="$BUNDLE/bin" JERBOA_FIRECRACKER_BIN="$BUNDLE/bin/firecracker"
+          python3 scripts/test-firecracker-macos.py
+          python3 scripts/test-firecracker-network.py
+          JERBOA_TEST_GO="$(command -v go)" JERBOA_TEST_OUTPUT="$RUNNER_TEMP/stats-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            python3 scripts/test-firecracker-stats.py
+          python3 scripts/test-jerboa-snapshots.py --bin-dir "$BUNDLE/bin" \
+            --firecracker-bin "$BUNDLE/bin/firecracker" --tools-dir "$BUNDLE/bin/tools" \
+            --go-bin "$(command -v go)" --output-dir "$RUNNER_TEMP/snapshots-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+      - name: Sign, notarize and verify release package
+        working-directory: jerboa
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION.md)"
+          BUNDLE="$PWD/dist/macos-distribution/jerboa-$VERSION-macos-arm64"
+          mkdir -p dist/macos-release
+          PKG="$PWD/dist/macos-release/jerboa-$VERSION-macos-arm64.pkg"
+          sh scripts/sign-notarize-macos.sh --input "$BUNDLE" --output "$BUNDLE-signed" \
+            --application-identity "$MACOS_APPLICATION_IDENTITY" \
+            --pkg "$PKG" --installer-identity "$MACOS_INSTALLER_IDENTITY" \
+            --notarize --notary-profile "$MACOS_NOTARY_PROFILE"
+          python3 scripts/verify-macos-distribution.py "$BUNDLE-signed" --mode release --installer-pkg "$PKG"
+          cp "$BUNDLE-signed/bin/jerboa" dist/macos-release/jerboa-darwin-arm64
+          cp "$BUNDLE-signed/bin/jerboad" dist/macos-release/jerboad-darwin-arm64
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binaries-macos
+          path: jerboa/dist/macos-release/*
+          if-no-files-found: error
+      - name: Remove staged dependency package
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/firecracker-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
   publish-r2:
     name: Publish to R2
     runs-on: ubuntu-latest
-    needs: [changes, build-release, build-distro, windows-installer-smoke]
+    needs: [changes, build-release, build-distro, build-macos-release, windows-installer-smoke]
     if: >-
       (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
@@ -908,7 +1015,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Build release tooling
@@ -951,7 +1058,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "pub/cli/$TAG" "pub/daemon/$TAG" "pub/distro/$TAG" \
-                   "pub/kernel/$KVER" pub/channels
+                   "pub/kernel/$KVER" "pub/macos/$TAG" "pub/releases/$TAG" pub/channels
+          cp dist/jerboa-darwin-arm64 "pub/cli/$TAG/"
+          cp dist/jerboad-darwin-arm64 "pub/daemon/$TAG/"
+          cp "dist/jerboa-${TAG#v}-macos-arm64.pkg" "pub/macos/$TAG/"
           cp dist/jerboa-linux-amd64        "pub/cli/$TAG/"
           cp dist/jerboa-linux-arm64        "pub/cli/$TAG/"
           cp dist/jerboa-windows-amd64.exe  "pub/cli/$TAG/"
@@ -988,12 +1098,18 @@ jobs:
                 "platforms": {
                   "windows-amd64": "pub/cli/$TAG/jerboa-windows-amd64.exe",
                   "linux-amd64":   "pub/cli/$TAG/jerboa-linux-amd64",
-                  "linux-arm64":   "pub/cli/$TAG/jerboa-linux-arm64"
+                  "linux-arm64":   "pub/cli/$TAG/jerboa-linux-arm64",
+                  "darwin-arm64":  "pub/cli/$TAG/jerboa-darwin-arm64"
                 }
               },
               "daemon": {
                 "version": "$TAG",
-                "platforms": { "linux-amd64": "pub/daemon/$TAG/jerboad-linux-amd64" }
+                "platforms": { "linux-amd64": "pub/daemon/$TAG/jerboad-linux-amd64",
+                               "darwin-arm64": "pub/daemon/$TAG/jerboad-darwin-arm64" }
+              },
+              "macos": {
+                "version": "$TAG",
+                "platforms": { "darwin-arm64": "pub/macos/$TAG/jerboa-${TAG#v}-macos-arm64.pkg" }
               },
               "distro": {
                 "version": "$TAG", "kernel": "$KVER",
@@ -1024,6 +1140,8 @@ jobs:
           ./bin/jerboa-sign -in pub/channels/stable.json \
             -key-id "$KEY_ID" \
             -comment "channel:stable tag:$TAG"
+          cp pub/channels/stable.json "pub/releases/$TAG/manifest.json"
+          cp pub/channels/stable.json.minisig "pub/releases/$TAG/manifest.json.minisig"
           cat pub/channels/stable.json
 
       - name: Sync to R2
@@ -1068,7 +1186,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Download coverage artifact

@@ -1,13 +1,12 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package vm
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"syscall"
 	"time"
@@ -43,13 +42,6 @@ func processAlive(pid int) bool {
 // for vmID, guarding against PID reuse after the original process died. The
 // VM's QMP socket path is unique per VM and appears on the QEMU command line,
 // so matching it confirms ownership.
-func processOwnsVM(pid int, vmID string) bool {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil {
-		return false
-	}
-	return bytes.Contains(data, []byte(qmpSocketPath(vmID)))
-}
 
 // recoverVM decides how to restore a VM the store recorded as running/starting.
 //
@@ -93,7 +85,7 @@ func recoverVM(s Store, v *VM, pid int) (needsSave bool) {
 // state behind. Best-effort: failures are logged at debug level.
 func reconcileNetwork(vmID string, cfg Config) {
 	defer recoverGoroutine("reconcile network", vmID)
-	if cfg.NetworkName == "" {
+	if runtime.GOOS == "darwin" || cfg.NetworkName == "" {
 		return
 	}
 	// The TAP name is assigned per VM at start and may not have been persisted;
@@ -124,6 +116,12 @@ func adoptMonitor(s Store, v *VM) {
 		v.mu.RUnlock()
 		if processAlive(pid) {
 			continue
+		}
+		v.mu.RLock()
+		cleanup := v.hostCleanup
+		v.mu.RUnlock()
+		if cleanup != nil {
+			cleanup()
 		}
 		removeQMPSocket(qmpAddr)
 		// The adopted process is gone; tear down its (bridge-safe) network

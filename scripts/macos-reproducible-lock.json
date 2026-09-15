@@ -1,0 +1,65 @@
+{
+  "fingerprint": {
+    "files": {
+      "binutils/aarch64-elf-as": "b0908c96b6f938db5e864fb1208328bcc2a084473f5ebf5cf2e0d735eed8ee4c",
+      "binutils/aarch64-elf-ld": "7be783c065413bf20e6d27ac5e7ac2f74026c1ef39a1776f5fb7ac9f16b4cda6",
+      "binutils/aarch64-elf-objcopy": "fa17976eb8ab2b7fd436d924eb45939def5ed9a9bde9b23d4e25fe72d5e32361",
+      "binutils/aarch64-elf-objdump": "767f211953e5d4143885850a94e9af21c79d5b29754c6f558e5bbe30f16ddb62",
+      "binutils/aarch64-elf-strip": "f74fa7ce67ad83df45c936c7ecacc5b202926450a59f33796548ba6f5b430d29",
+      "clt/SDKSettings.json": "f8d005f09381389167f9e0aeaa169bc9e7dff162ef22ca2fd8e98df7ff1acafe",
+      "clt/ar": "d26c671be515802ff5a18edde5ca73c6bcaaf87048ef192025f00002be515794",
+      "clt/clang": "f30550eab15fdf5ab8c0dc54c52679711241e5d4b636b027e18c09fef531775d",
+      "clt/codesign_allocate": "eeddb75f487c98a42489fd4fa39c2392f805aac3a35ead20ad5d2929deb33eb4",
+      "clt/install_name_tool": "74910a46431a563a560041fbf64ae922ef458c6c22f14b8c80e2e95ccab42758",
+      "clt/ld": "28d85b9af18c923db12e0b4ce70b80ee217f2b7cade0e872baa9e8ddc396c08d",
+      "clt/libtool": "4189d552f0ee7efbd013a56baf1ab8f2865eaa972acc0fc3de6686a7498db393",
+      "clt/otool": "61ff2c63cf68eeeadf9c4700dadb8271740ff4960f98500f30db82b31521c0de",
+      "clt/strip": "238415edaac7fee82bf54d38d2605c2f294221adc89b253c3e3214b70cb095d9",
+      "go/bin/go": "ae2238c208f2f1f5a8faa3287acf5ced5d6b3c396dbf75e8f446e47905b0a75d",
+      "go/pkg/tool/darwin_arm64/asm": "c1573ea5fcf4231d109fa42053e1ba192c2b67c04ef7e676afeff5d6328900c6",
+      "go/pkg/tool/darwin_arm64/cgo": "689ac96e59e1b2c87f49c175cc78b5dc2c4b611a129a97601153b4378b09231b",
+      "go/pkg/tool/darwin_arm64/compile": "aadfb44acd59779509de6c3f172cbdaadfb478811abf067bc80f10cdd51ea8fc",
+      "go/pkg/tool/darwin_arm64/link": "078a25a98d5855ee9a30ebc3a8fa58dae36f855320a589c9bacd557c10f4dea5",
+      "rust/bin/cargo": "ab0f670cc50bc74a6f79bc2250a9310515f71ab81d513748ce5a7f309808b3bf",
+      "rust/bin/rustc": "54c9e14255b2861a31bece6b5de29ef3fa715d0e87e27c440d05ed258bb24bf4",
+      "rust/lib/librustc_driver-22cdaff06538ddcd.dylib": "dfbd6091699a94ede874d3778782ebb83b2e9e60a8c23bab6d2d586027e88258",
+      "system/awk": "74eca1b2aa59d4af94ad0ba8294ddb544f7db9f1a68d4b0ade2a70ea6c533940",
+      "system/codesign": "844d30a12929b59c9f2215e2a308c3e1db572831a478f35906e452a54025603e",
+      "system/make": "b8763cf250e607a778bb4603cecb5b90338814d0a3dfcba0d57b1de242f610e9",
+      "system/tar": "f96200d5be4a3f99cdbc88892a2e26f14d501d354c72b224472462cc67fa271d",
+      "system/xxd": "6946875a996e81be42440d1767006a3091c194bed2fbfd4f6ad5f389f9f5a324"
+    },
+    "host": {
+      "build_version": "25G83",
+      "machine": "arm64",
+      "product_version": "26.6.2"
+    },
+    "versions": {
+      "clang": "Apple clang version 21.0.0 (clang-2100.1.1.101)\nTarget: arm64-apple-darwin25.6.0\nThread model: posix\nInstalledDir: /Library/Developer/CommandLineTools/usr/bin",
+      "go": "go version go1.26.0 darwin/arm64",
+      "python3": "Python 3.9.6",
+      "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: aarch64-apple-darwin\nrelease: 1.97.0\nLLVM version: 22.1.6",
+      "sdk_build": "25F70",
+      "sdk_version": "26.5"
+    },
+    "x86_tools": {
+      "boot.img": "c63c7a87c9617a6ab42547b383b62de596504a12408ad57fddaa81a088496fd2",
+      "kernel-version.txt": "fb31663e843d506f2c2bb375bb125b8e99e8692482d903e7fdcf5aad1f5f72b2",
+      "kernel.img": "4a43d44a15465de25a16d8b236a7da1e5e3c4e62c818abf059911fc7a20cfdf7"
+    }
+  },
+  "format_version": 1,
+  "macosx_deployment_target": "26.0",
+  "native_prefix": "/opt/jerboa-hvf-native",
+  "paths": {
+    "aarch64_elf_binutils": "/opt/homebrew/opt/aarch64-elf-binutils/bin",
+    "cargo_dependency_home": "../firecracker-macos/experiments/hvf/build/cargo",
+    "go_module_download_cache": "~/go/pkg/mod/cache/download",
+    "go_root": "../firecracker-macos/experiments/hvf/build/guest-tools/go",
+    "rustup_home": "../firecracker-macos/experiments/hvf/build/rustup",
+    "x86_tools": "dist/claude-closure/reproducibilidad/pinned-inputs/tools-x86"
+  },
+  "rust_toolchain": "1.97.0",
+  "scope": "Bit-for-bit reproducibility is claimed only on macOS ARM64 with exactly these toolchain bytes, SDK and host build; other environments are unverified.",
+  "x86_tools_provenance": "prebuilt signed Jerboa release kernel/boot images fetched by scripts/fetch-x86-tools.go; not rebuilt here (no x86_64 guest cross toolchain is pinned); preserved by hash"
+}

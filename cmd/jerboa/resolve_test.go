@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	pkg "github.com/AitorConS/jerboa/internal/package"
@@ -60,6 +61,13 @@ func setupResolveServer(t *testing.T, makeIndex func(tsURL string) pkg.Index, ar
 	ts.Config.Handler = tmpMux
 
 	idx := makeIndex(ts.URL)
+	// These are data-only fixtures; declare their target rather than using legacy inference.
+	for name, versions := range idx.Packages {
+		for i := range versions {
+			versions[i].Platform = "linux/" + pkg.ArchSlug()
+		}
+		idx.Packages[name] = versions
+	}
 	idxData, err := json.Marshal(idx)
 	require.NoError(t, err)
 
@@ -262,6 +270,9 @@ func setupOpsResolveServer(t *testing.T, list pkg.OpsPackageList, archives map[s
 		w.Write(idxData)
 	})
 	for path, data := range archives {
+		if pkg.ArchSlug() == "arm64" {
+			path = strings.TrimSuffix(path, ".tar.gz") + "/arm64.tar.gz"
+		}
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/gzip")
 			w.Write(data)
@@ -284,7 +295,7 @@ func TestResolveOpsPackages_DownloadExtractList(t *testing.T) {
 	setupOpsResolveServer(t, pkg.OpsPackageList{
 		Version: 1,
 		Packages: []pkg.OpsPackage{
-			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha, Arch: pkg.ArchSlug()},
 		},
 	}, map[string][]byte{
 		"/eyberg/node/v16.5.0.tar.gz": archiveData,
@@ -328,7 +339,7 @@ func TestResolveOpsPackages_AlreadyDownloaded(t *testing.T) {
 	setupOpsResolveServer(t, pkg.OpsPackageList{
 		Version: 1,
 		Packages: []pkg.OpsPackage{
-			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha},
+			{Name: "node", Version: "v16.5.0", Namespace: "eyberg", Language: "node", SHA256: sha, Arch: pkg.ArchSlug()},
 		},
 	}, map[string][]byte{
 		"/eyberg/node/v16.5.0.tar.gz": archiveData,
@@ -343,4 +354,15 @@ func TestResolveOpsPackages_AlreadyDownloaded(t *testing.T) {
 	files2, err := resolveOpsPackages(context.Background(), []string{"eyberg/node:v16.5.0"})
 	require.NoError(t, err)
 	require.Len(t, files2, len(files))
+}
+
+func TestResolvedReferencesOnlyContributingFiles(t *testing.T) {
+	a := pkg.Reference{Source: "jerboa", Name: "a", Version: "1.2.3", Platform: "linux/arm64", SHA256: strings.Repeat("a", 64)}
+	b := pkg.Reference{Source: "jerboa", Name: "b", Version: "2.3.4", Platform: "linux/arm64", SHA256: strings.Repeat("b", 64)}
+	files := []pkg.File{{Reference: &a}, {Reference: &a}, {Reference: &b}, {}}
+	require.Equal(t, []pkg.Reference{a, b}, packageReferences(files))
+	require.Equal(t, []pkg.Reference{b}, packageReferences(files[2:]))
+	ctx := context.WithValue(context.Background(), packagePlatformKey{}, "arm64")
+	require.Equal(t, "arm64", packageArchFor(ctx))
+	require.Equal(t, pkg.ArchSlug(), packageArchFor(context.Background()))
 }

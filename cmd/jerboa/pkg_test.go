@@ -58,6 +58,12 @@ func startPkgServer(t *testing.T) (*httptest.Server, func(idx pkg.Index, archive
 	t.Cleanup(func() { pkg.IndexURL = origURL })
 
 	configure := func(idx pkg.Index, archives map[string][]byte) {
+		for name, versions := range idx.Packages {
+			for i := range versions {
+				versions[i].Platform = "linux/" + pkg.ArchSlug()
+			}
+			idx.Packages[name] = versions
+		}
 		idxData, err := json.Marshal(idx)
 		require.NoError(t, err)
 
@@ -292,7 +298,7 @@ func TestPkgCreateCmd(t *testing.T) {
 	storePath := t.TempDir()
 
 	binaryPath := filepath.Join(t.TempDir(), "myapp")
-	require.NoError(t, os.WriteFile(binaryPath, []byte("fake binary"), 0o755))
+	require.NoError(t, os.WriteFile(binaryPath, validPackageELF(), 0o755))
 
 	out := execRoot(t, socketPath, storePath, "pkg", "create", "myapp:1.0.0", binaryPath, "--description", "My test app")
 	require.Contains(t, out, "myapp:1.0.0")
@@ -311,7 +317,7 @@ func TestPkgCreateCmd_DefaultVersion(t *testing.T) {
 	storePath := t.TempDir()
 
 	binaryPath := filepath.Join(t.TempDir(), "myapp2")
-	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+	require.NoError(t, os.WriteFile(binaryPath, validPackageELF(), 0o755))
 
 	out := execRoot(t, socketPath, storePath, "pkg", "create", "myapp2", binaryPath)
 	require.Contains(t, out, "myapp2:1.0.0")
@@ -401,7 +407,7 @@ func TestPkg_Get_AlreadyDownloaded(t *testing.T) {
 	require.Contains(t, out, "cachedpkg")
 
 	out = execRoot(t, socketPath, storePath, "pkg", "get", "cachedpkg", "--source", "jerboa")
-	require.Contains(t, out, "already downloaded")
+	require.Contains(t, out, "installed")
 }
 
 func TestPkg_Get_LatestVersion(t *testing.T) {
@@ -486,7 +492,7 @@ func TestPkgCreateCmd_WithLibs(t *testing.T) {
 	storePath := t.TempDir()
 
 	binaryPath := filepath.Join(t.TempDir(), "myapp")
-	require.NoError(t, os.WriteFile(binaryPath, []byte("binary content"), 0o755))
+	require.NoError(t, os.WriteFile(binaryPath, validPackageELF(), 0o755))
 
 	libPath := filepath.Join(t.TempDir(), "libmyapp.so")
 	require.NoError(t, os.WriteFile(libPath, []byte("lib content"), 0o644))
@@ -508,7 +514,7 @@ func TestPkgCreateCmd_Duplicate(t *testing.T) {
 	storePath := t.TempDir()
 
 	binaryPath := filepath.Join(t.TempDir(), "dupapp")
-	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+	require.NoError(t, os.WriteFile(binaryPath, validPackageELF(), 0o755))
 
 	execRoot(t, socketPath, storePath, "pkg", "create", "duppkg:1.0.0", binaryPath)
 
@@ -805,4 +811,17 @@ func TestLoadOpsProgramDefaultsAndEnvs(t *testing.T) {
 	require.Equal(t, "/", env["HOME"])
 	require.Equal(t, "C", env["LANG"])
 	require.Nil(t, loadOpsPackageEnvs([]string{"eyberg/missing:1.0"}))
+}
+
+func validPackageELF() []byte {
+	b := make([]byte, 64)
+	copy(b, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	b[16] = 2
+	b[18] = 62
+	b[20] = 1
+	b[52] = 64
+	if pkg.ArchSlug() == "arm64" {
+		b[18] = 183
+	}
+	return b
 }

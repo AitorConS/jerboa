@@ -12,10 +12,13 @@ static u64 alloc(heap h, u64 size)
 {
     tiny t = (tiny)h;
 
+    if (size > t->parent->pagesize - sizeof(void *))
+        return INVALID_PHYSICAL;
     if ((t->offset +size) > t->parent->pagesize) {
         void *new = allocate(t->parent, t->parent->pagesize);
         if (new == INVALID_ADDRESS)
             return INVALID_PHYSICAL;
+        *(void **)new = t->base;
         t->base = new;
         t->offset = sizeof(void *);
         return alloc(h, size);
@@ -31,11 +34,12 @@ static void destroy(heap h)
     tiny t = (tiny)h;
     heap p = t->parent;
     void * x=t->base;
-    while(x) {
+    while(x != t) {
         void *next = *(void **)x;
-        deallocate(p, next, p->pagesize);
+        deallocate(p, x, p->pagesize);
         x = next;
     }
+    deallocate(p, t, p->pagesize);
 }
 
 heap make_tiny_heap(heap parent)

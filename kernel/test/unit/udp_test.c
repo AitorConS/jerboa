@@ -68,11 +68,12 @@ int main(int argc, char ** argv)
 	if (i == iterations - 1 && terminate)
 	    strcpy(sbuf, "terminate");
 
-	int slen = sendto(fd, sbuf, MSGSIZE, 0, (struct sockaddr *)&dsin, sizeof(dsin));
+	int slen = send(fd, sbuf, MSGSIZE, 0);
 	// XXX retry on EINTR / EAGAIN
 	if (slen < 0)
-	    test_perror("sendto");
+	    test_perror("send");
 
+	rsin_len = sizeof(rsin);
 	int rlen = recvfrom(fd, rbuf, BUFLEN, 0, (struct sockaddr *)&rsin, &rsin_len);
 	if (rlen < 0)
 	    test_perror("recvfrom");

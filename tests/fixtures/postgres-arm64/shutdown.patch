@@ -1,0 +1,132 @@
+diff --git a/src/backend/postmaster/postmaster.c b/src/backend/postmaster/postmaster.c
+index bf424df..ee0ea4d 100644
+--- a/src/backend/postmaster/postmaster.c
++++ b/src/backend/postmaster/postmaster.c
+@@ -579,6 +579,9 @@ PostmasterMain(int argc, char *argv[])
+ 	pqinitmask();
+ 	PG_SETMASK(&BlockSig);
+ 
++	/* Process-directed shutdown signals must reach this thread's handlers. */
++	pqsignal_set_process_target();
++
+ 	pqsignal_no_restart(SIGHUP, SIGHUP_handler);	/* reread config file and
+ 													 * have children do same */
+ 	pqsignal_no_restart(SIGINT, pmdie); /* send SIGTERM and shut down */
+diff --git a/src/backend/storage/ipc/ipc.c b/src/backend/storage/ipc/ipc.c
+index 82d78ca..41a52e5 100644
+--- a/src/backend/storage/ipc/ipc.c
++++ b/src/backend/storage/ipc/ipc.c
+@@ -141,6 +141,14 @@ proc_exit(int code)
+ 
+ 	elog(DEBUG3, "exit(%d)", code);
+ 
++	/*
++	 * The postmaster thread owns the server process. Exiting only that thread
++	 * could leave helper threads keeping the process, and a Nanos VM, alive
++	 * after the shutdown checkpoint.
++	 */
++	if (PostmasterPid != 0 && pthread_equal(pthread_self(), PostmasterPid))
++		exit(code);
++
+ 	pthread_exit((void*)(size_t)code);
+ }
+ 
+diff --git a/src/include/port.h b/src/include/port.h
+index f55085d..6c50962 100644
+--- a/src/include/port.h
++++ b/src/include/port.h
+@@ -439,6 +439,7 @@ typedef void (*pqsigfunc) (int signo);
+ extern pqsigfunc pqsignal(int signo, pqsigfunc func);
+ #ifndef WIN32
+ extern pqsigfunc pqsignal_no_restart(int signo, pqsigfunc func);
++extern void pqsignal_set_process_target(void);
+ #else
+ #define pqsignal_no_restart(signo, func) pqsignal(signo, func)
+ #endif
+diff --git a/src/port/pqsignal.c b/src/port/pqsignal.c
+index 66513da..2772450 100644
+--- a/src/port/pqsignal.c
++++ b/src/port/pqsignal.c
+@@ -31,13 +31,69 @@
+ 
+ #if !defined(WIN32) || defined(FRONTEND)
+ 
++#ifndef WIN32
++#include <errno.h>
++#include <pthread.h>
++#include <string.h>
++#include <sys/utsname.h>
++#endif
++
+ static session_local pqsigfunc signal_handlers[NSIG];
+ static bool signal_catched[NSIG];
+ 
++#ifndef WIN32
++/*
++ * Handlers are per thread, but a signal sent to the whole process runs in
++ * whichever thread the kernel picks. A shutdown request sent that way is for
++ * the postmaster, so it is forwarded to the registered thread instead of
++ * running an arbitrary backend's handler. Forwarded and internally generated
++ * pthread_kill() signals are thread-directed (SI_TKILL) and are not
++ * forwarded again.
++ */
++static pthread_t process_signal_target;
++static volatile sig_atomic_t process_signal_target_set = 0;
++static bool process_sigterm_is_fast = false;
++
++void
++pqsignal_set_process_target(void)
++{
++	struct utsname system_name;
++
++	/*
++	 * Nanos sends SIGTERM when the VM is asked to stop and forces shutdown
++	 * after a timeout, so it gets fast shutdown: sessions are aborted and a
++	 * shutdown checkpoint is written, as for pg_ctl stop -m fast.
++	 */
++	process_sigterm_is_fast = uname(&system_name) == 0 &&
++		strcmp(system_name.sysname, "Nanos") == 0;
++	process_signal_target = pthread_self();
++	process_signal_target_set = 1;
++}
++#endif
+ 
+-static void process_signal_handler(int signo)
++static void process_signal_handler(int signo
++#ifndef WIN32
++								   , siginfo_t *info, void *context
++#endif
++	)
+ {
+ 	pqsigfunc handler;
++#ifndef WIN32
++	if (process_signal_target_set && info != NULL && info->si_code == SI_USER &&
++		(signo == SIGTERM || signo == SIGINT || signo == SIGQUIT))
++	{
++		if (signo == SIGTERM && process_sigterm_is_fast)
++			signo = SIGINT;
++		if (!pthread_equal(pthread_self(), process_signal_target))
++		{
++			int			save_errno = errno;
++
++			(void) pthread_kill(process_signal_target, signo);
++			errno = save_errno;
++			return;
++		}
++	}
++#endif
+ 	handler = signal_handlers[signo];
+ 	if (handler != SIG_DFL && handler != SIG_IGN)
+ 	{
+@@ -64,9 +120,9 @@ pqsignal(int signo, pqsigfunc func)
+ 	{
+ 		struct sigaction act;
+ 		signal_catched[signo] = true;
+-		act.sa_handler = process_signal_handler;
++		act.sa_sigaction = process_signal_handler;
+ 		sigemptyset(&act.sa_mask);
+-		act.sa_flags = SA_RESTART;
++		act.sa_flags = SA_RESTART | SA_SIGINFO;
+ 		if (sigaction(signo, &act, NULL) < 0)
+ 			return SIG_ERR;
+ 	}

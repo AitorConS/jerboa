@@ -1,9 +1,10 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -26,6 +28,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/slogformat"
+	"github.com/AitorConS/jerboa/internal/snapshot"
 	"github.com/AitorConS/jerboa/internal/tools"
 	"github.com/AitorConS/jerboa/internal/tracing"
 	"github.com/AitorConS/jerboa/internal/ui"
@@ -45,26 +48,30 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	var (
-		hostFlag      string
-		socketFlag    string
-		authTokenFlag string
-		qemuBin       string
-		storePath     string
-		vmStoreType   string
-		metricsAddr   string
-		uiAddr        string
-		logFormat     string
-		traceAddr     string
-		clusterAddr   string
-		clusterToken  string
-		obsToken      string
-		joinAddrs     string
-		hypervisor    string
-		fcBin         string
-		fcKernelPath  string
-		toolsDir      string
-		vmLogMaxBytes int64
-		allowInsecure bool
+		hostFlag       string
+		socketFlag     string
+		authTokenFlag  string
+		qemuBin        string
+		storePath      string
+		vmStoreType    string
+		metricsAddr    string
+		uiAddr         string
+		logFormat      string
+		traceAddr      string
+		clusterAddr    string
+		clusterToken   string
+		obsToken       string
+		joinAddrs      string
+		hypervisor     string
+		fcBin          string
+		fcKernelPath   string
+		fcSecurityPath string
+		toolsDir       string
+		vmLogMaxBytes  int64
+		allowInsecure  bool
+		snapshotDir    string
+		snapshotCount  int
+		snapshotBytes  int64
 	)
 	root := &cobra.Command{
 		Use:     "jerboad",
@@ -97,7 +104,24 @@ func newRootCmd() *cobra.Command {
 				obsToken = os.Getenv("JERBOA_OBSERVABILITY_TOKEN")
 			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
-			return serve(cmd.Context(), endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir)
+			var fcOpts []vm.FCOption
+			if fcSecurityPath != "" {
+				if runtime.GOOS != "darwin" {
+					return fmt.Errorf("--fc-security is only supported on macOS")
+				}
+				data, err := os.ReadFile(fcSecurityPath)
+				if err != nil {
+					return fmt.Errorf("read Firecracker security policy: %w", err)
+				}
+				if !json.Valid(data) {
+					return fmt.Errorf("firecracker security policy must be valid JSON")
+				}
+				fcOpts = append(fcOpts, vm.WithFCSecurity(data))
+			}
+			if runtime.GOOS == "darwin" {
+				fcOpts = append(fcOpts, snapshotStoreOption(snapshotDir, snapshot.Limits{MaxCount: snapshotCount, MaxBytes: snapshotBytes}))
+			}
+			return serve(cmd.Context(), endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir, fcOpts...)
 		},
 	}
 	root.Flags().StringVarP(&hostFlag, "host", "H", "",
@@ -109,16 +133,23 @@ func newRootCmd() *cobra.Command {
 		"shared secret required from clients via Auth.Hello (env: JERBOA_AUTH_TOKEN); empty disables auth")
 	root.Flags().BoolVar(&allowInsecure, "insecure", false,
 		"allow serving a TCP endpoint without an auth token (unsafe; a Unix socket needs no token)")
-	root.Flags().StringVar(&qemuBin, "qemu", "qemu-system-x86_64",
+	root.Flags().StringVar(&qemuBin, "qemu", vm.DefaultQEMUBinary(),
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
 		"Hypervisor backend: qemu or firecracker (overrides ~/.jerboa/config.toml)")
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
+	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON (outbound/DNS permissions)")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
-		"Path to Firecracker-compatible kernel (auto-downloaded if omitted)")
+		"Firecracker kernel (Linux: auto-downloaded; macOS: tools-dir/kernel.img)")
 	root.Flags().StringVar(&toolsDir, "tools-dir", "",
 		"directory holding the kernel build toolchain (mkfs, boot.img, kernel.img); empty downloads/caches under ~/.jerboa/tools")
+	root.Flags().StringVar(&snapshotDir, "snapshot-dir", defaultSnapshotPath(),
+		"private snapshot store (macOS Firecracker/HVF only)")
+	root.Flags().IntVar(&snapshotCount, "snapshot-max-count", 16,
+		"maximum number of stored snapshots (0 disables the limit)")
+	root.Flags().Int64Var(&snapshotBytes, "snapshot-max-bytes", 32<<30,
+		"maximum total bytes of stored snapshots (0 disables the limit)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
 	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
@@ -145,7 +176,7 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string) error {
+func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string, fcOpts ...vm.FCOption) error {
 	setupLogger(logFormat)
 
 	// Where the kernel build toolchain (mkfs, boot.img, kernel.img) lives. An
@@ -183,6 +214,12 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	}
 	switch hypervisor {
 	case "firecracker":
+		if runtime.GOOS == "darwin" && fcKernelPath == "" {
+			fcKernelPath = filepath.Join(toolsDir, "kernel.img")
+			if _, err := os.Stat(fcKernelPath); err != nil {
+				return fmt.Errorf("firecracker/HVF needs the ARM64 ELF kernel: build kernel PLATFORM=virt and pass --fc-kernel or --tools-dir: %w", err)
+			}
+		}
 		if fcKernelPath == "" {
 			slog.Info("jerboad: ensuring Firecracker kernel is available", "dir", toolsDir)
 			dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -194,9 +231,10 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			}
 		}
 		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
-		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors))
+		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors))
+		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, fcOpts...)
 	case "qemu":
-		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors))
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")))
 	default:
 		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
@@ -247,11 +285,38 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		}()
 	}
 
+	if qm, ok := mgr.(*vm.QEMUManager); ok {
+		dnsUpstream := "1.1.1.1:53"
+		if upstream, exists := os.LookupEnv("JERBOA_DNS_UPSTREAM"); exists {
+			dnsUpstream = upstream
+		}
+		vm.WithGuestDNS(dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream).Answer)(qm)
+	}
+	if fm, ok := mgr.(*vm.FirecrackerManager); ok && runtime.GOOS == "darwin" {
+		upstream, err := fm.GuestDNSUpstream()
+		if err != nil {
+			return fmt.Errorf("firecracker DNS policy: %w", err)
+		}
+		vm.WithFCGuestDNS(dnsserver.New(scheduler.NewResolver(mgr), upstream).Answer)(fm)
+	}
 	store := mgr.Store()
 	if err := store.Restore(); err != nil {
 		slog.Warn("jerboad: failed to restore VMs from disk", "err", err)
 	}
 
+	// Interrupted snapshot lifecycles are resolved before host runtime
+	// adoption so a restored guest is adopted like any other running VM and a
+	// rolled-back one is never re-attached.
+	if snap, ok := mgr.(interface{ RecoverSnapshotOperations(context.Context) error }); ok {
+		if err := snap.RecoverSnapshotOperations(ctx); err != nil {
+			return fmt.Errorf("recover snapshot operations: %w", err)
+		}
+	}
+	if native, ok := mgr.(interface{ RestoreHostRuntime(context.Context) error }); ok {
+		if err := native.RestoreHostRuntime(ctx); err != nil {
+			return fmt.Errorf("restore native runtime: %w", err)
+		}
+	}
 	var clusterLister apiserver.ClusterMemberLister
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {
@@ -335,47 +400,50 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		return tools.ResolveVolumeSeeder(rctx, toolsDir, "")
 	})
 
-	// Start the guest DNS server so VMs can resolve each other by name on their
-	// network. The reserved address is bound to loopback and reached by guests
-	// through their default gateway; queries are scoped by source IP. Address
-	// setup is best-effort (it is idempotent and usually already in place from a
-	// prior run), and the server starts regardless so a benign "already
-	// assigned" never disables name resolution.
-	if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
-		slog.Warn("jerboad: guest dns address setup failed", "err", err)
-	}
-	// Upstream resolver for names the daemon does not own. Overridable so
-	// restricted/offline environments can point at their own resolver (or set
-	// it empty to disable forwarding).
-	dnsUpstream := "1.1.1.1:53"
-	if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
-		dnsUpstream = v
-	}
-	dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)
-	// Close the listener on shutdown so ListenAndServe returns cleanly, matching
-	// the cluster server teardown above.
-	go func() {
-		<-ctx.Done()
-		_ = dnsSrv.Close()
-	}()
-	go func() {
-		addr := net.JoinHostPort(netconst.DNSAnycastIP, strconv.Itoa(netconst.DNSPort))
-		// A freshly restarted daemon can briefly race the previous process's
-		// UDP socket; retry the bind a few times before giving up.
-		for attempt := 0; attempt < 10; attempt++ {
-			err := dnsSrv.ListenAndServe(addr)
-			if err == nil {
-				return // clean shutdown (listener closed)
-			}
-			// Stop retrying once the daemon is shutting down.
-			if ctx.Err() != nil {
-				return
-			}
-			slog.Warn("jerboad: guest dns server bind failed; retrying", "attempt", attempt+1, "err", err)
-			time.Sleep(time.Second)
+	if runtime.GOOS == "linux" {
+		// Start the guest DNS server so VMs can resolve each other by name on their
+		// network. The reserved address is bound to loopback and reached by guests
+		// through their default gateway; queries are scoped by source IP. Address
+		// setup is best-effort (it is idempotent and usually already in place from a
+		// prior run), and the server starts regardless so a benign "already
+		// assigned" never disables name resolution.
+		if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
+			slog.Warn("jerboad: guest dns address setup failed", "err", err)
 		}
-		slog.Error("jerboad: guest dns server gave up starting")
-	}()
+		// Upstream resolver for names the daemon does not own. Overridable so
+		// restricted/offline environments can point at their own resolver (or set
+		// it empty to disable forwarding).
+		dnsUpstream := "1.1.1.1:53"
+		if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
+			dnsUpstream = v
+		}
+		dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)
+		// Close the listener on shutdown so ListenAndServe returns cleanly, matching
+		// the cluster server teardown above.
+		go func() {
+			<-ctx.Done()
+			_ = dnsSrv.Close()
+		}()
+		go func() {
+			addr := net.JoinHostPort(netconst.DNSAnycastIP, strconv.Itoa(netconst.DNSPort))
+			// A freshly restarted daemon can briefly race the previous process's
+			// UDP socket; retry the bind a few times before giving up.
+			for attempt := 0; attempt < 10; attempt++ {
+				err := dnsSrv.ListenAndServe(addr)
+				if err == nil {
+					return // clean shutdown (listener closed)
+				}
+				// Stop retrying once the daemon is shutting down.
+				if ctx.Err() != nil {
+					return
+				}
+				slog.Warn("jerboad: guest dns server bind failed; retrying", "attempt", attempt+1, "err", err)
+				time.Sleep(time.Second)
+			}
+			slog.Error("jerboad: guest dns server gave up starting")
+		}()
+
+	}
 
 	slog.Info("jerboad listening", "endpoint", endpoint, "hypervisor", hypervisor)
 
@@ -392,6 +460,27 @@ func defaultToolsPath() string {
 		return filepath.Join(".jerboa", "tools")
 	}
 	return filepath.Join(home, ".jerboa", "tools")
+}
+
+func defaultSnapshotPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".jerboa", "snapshots")
+	}
+	return filepath.Join(home, ".jerboa", "snapshots")
+}
+
+// snapshotStoreOption opens the store only when the Firecracker manager is
+// built. An unusable store disables snapshots instead of the daemon.
+func snapshotStoreOption(dir string, limits snapshot.Limits) vm.FCOption {
+	return func(m *vm.FirecrackerManager) {
+		store, err := snapshot.Open(dir, limits)
+		if err != nil {
+			slog.Warn("jerboad: snapshots disabled", "dir", dir, "err", err)
+			return
+		}
+		vm.WithFCSnapshotStore(store)(m)
+	}
 }
 
 func defaultStorePath() string {

@@ -1,0 +1,916 @@
+diff --git a/src/backend/access/transam/parallel.c b/src/backend/access/transam/parallel.c
+index 4526602..af61b58 100644
+--- a/src/backend/access/transam/parallel.c
++++ b/src/backend/access/transam/parallel.c
+@@ -13,6 +13,7 @@
+  */
+ 
+ #include "postgres.h"
++#include <sys/utsname.h>
+ 
+ #include "access/parallel.h"
+ #include "access/session.h"
+@@ -82,6 +83,7 @@ typedef struct FixedParallelState
+ 	bool		is_superuser;
+ 	PGPROC	   *parallel_master_pgproc;
+ 	pthread_t	parallel_master_pid;
++	int			parallel_master_proc_pid;
+ 	BackendId	parallel_master_backend_id;
+ 
+ 	/* Mutex protects remaining fields. */
+@@ -144,6 +146,7 @@ CreateParallelContext(const char *library_name, const char *function_name,
+ {
+ 	MemoryContext oldcontext;
+ 	ParallelContext *pcxt;
++	static session_local int nanos_guest = -1;
+ 
+ 	/* It is unsafe to create a parallel context if not in parallel mode. */
+ 	Assert(IsInParallelMode());
+@@ -151,6 +154,17 @@ CreateParallelContext(const char *library_name, const char *function_name,
+ 	/* Number of workers should be non-negative. */
+ 	Assert(nworkers >= 0);
+ 
++	/* The threaded parallel executor can hang on repeated queries on Nanos.
++	 * Use PostgreSQL's supported leader-only fallback, even if a client raises
++	 * the parallel GUCs. Other hosts retain the upstream execution path. */
++	if (nanos_guest < 0)
++	{
++		struct utsname uts;
++		nanos_guest = uname(&uts) == 0 && strcmp(uts.sysname, "Nanos") == 0;
++	}
++	if (nanos_guest)
++		nworkers = 0;
++
+ 	/*
+ 	 * If dynamic shared memory is not available, we won't be able to use
+ 	 * background workers.
+@@ -305,6 +319,7 @@ InitializeParallelDSM(ParallelContext *pcxt)
+ 						  &fps->temp_toast_namespace_id);
+ 	fps->parallel_master_pgproc = MyProc;
+ 	fps->parallel_master_pid = MyProcPid;
++	fps->parallel_master_proc_pid = MyThreadPid();
+ 	fps->parallel_master_backend_id = MyBackendId;
+ 	SpinLockInit(&fps->mutex);
+ 	fps->last_xlog_end = 0;
+@@ -1035,7 +1050,7 @@ ParallelWorkerMain(Datum main_arg)
+ 	 * in this case.
+ 	 */
+ 	pq_beginmessage(&msgbuf, 'K');
+-	pq_sendint32(&msgbuf, (int32) MyProcPid);
++	pq_sendint32(&msgbuf, (int32) MyThreadPid());
+ 	pq_sendint32(&msgbuf, (int32) MyCancelKey);
+ 	pq_endmessage(&msgbuf);
+ 
+@@ -1054,7 +1069,7 @@ ParallelWorkerMain(Datum main_arg)
+ 	 * so just exit quietly.)
+ 	 */
+ 	if (!BecomeLockGroupMember(fps->parallel_master_pgproc,
+-							   fps->parallel_master_pid))
++							   fps->parallel_master_proc_pid))
+ 		return;
+ 
+ 	/*
+diff --git a/src/backend/access/transam/slru.c b/src/backend/access/transam/slru.c
+index 001de7a..063762f 100644
+--- a/src/backend/access/transam/slru.c
++++ b/src/backend/access/transam/slru.c
+@@ -928,7 +928,7 @@ SlruReportIOError(SlruCtl ctl, int pageno, TransactionId xid)
+ 							   path, offset)));
+ 			break;
+ 		case SLRU_FSYNC_FAILED:
+-			ereport(ERROR,
++			ereport(data_sync_elevel(ERROR),
+ 					(errcode_for_file_access(),
+ 					 errmsg("could not access status of transaction %u", xid),
+ 					 errdetail("Could not fsync file \"%s\": %m.",
+diff --git a/src/backend/main/main.c b/src/backend/main/main.c
+index f5a0ca4..8bbfefb 100644
+--- a/src/backend/main/main.c
++++ b/src/backend/main/main.c
+@@ -387,6 +387,7 @@ help(const char *progname)
+ static void
+ check_root(const char *progname)
+ {
++#if 0 /* Nanos is a single-application unikernel without Unix users. */
+ #ifndef WIN32
+ 	if (geteuid() == 0)
+ 	{
+@@ -422,4 +423,5 @@ check_root(const char *progname)
+ 		exit(1);
+ 	}
+ #endif							/* WIN32 */
++#endif
+ }
+diff --git a/src/backend/port/sysv_shmem.c b/src/backend/port/sysv_shmem.c
+index 52348b2..6f0f3f5 100644
+--- a/src/backend/port/sysv_shmem.c
++++ b/src/backend/port/sysv_shmem.c
+@@ -102,6 +102,12 @@ static PGShmemHeader *PGSharedMemoryAttach(IpcMemoryKey key,
+ static void *
+ InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size)
+ {
++	/* Nanos has one address space and no processes: the shim only needs heap storage. */
++	void *nanosAddress = calloc(1, size);
++	if (nanosAddress == NULL)
++		ereport(FATAL, (errmsg("could not allocate shared memory shim: %m")));
++	return nanosAddress;
++#if 0
+ 	IpcMemoryId shmid;
+ 	void	   *requestedAddress = NULL;
+ 	void	   *memAddress;
+@@ -247,6 +253,7 @@ InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size)
+ 	}
+ 
+ 	return memAddress;
++#endif
+ }
+ 
+ /****************************************************************************/
+@@ -257,9 +264,7 @@ InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size)
+ static void
+ IpcMemoryDetach(int status, Datum shmaddr)
+ {
+-	/* Detach System V shared memory block. */
+-	if (shmdt(DatumGetPointer(shmaddr)) < 0)
+-		elog(LOG, "shmdt(%p) failed: %m", DatumGetPointer(shmaddr));
++	free(DatumGetPointer(shmaddr));
+ }
+ 
+ /****************************************************************************/
+@@ -269,9 +274,8 @@ IpcMemoryDetach(int status, Datum shmaddr)
+ static void
+ IpcMemoryDelete(int status, Datum shmId)
+ {
+-	if (shmctl(DatumGetInt32(shmId), IPC_RMID, NULL) < 0)
+-		elog(LOG, "shmctl(%d, %d, 0) failed: %m",
+-			 DatumGetInt32(shmId), IPC_RMID);
++	(void) status;
++	(void) shmId;
+ }
+ 
+ /*
+@@ -288,6 +292,9 @@ IpcMemoryDelete(int status, Datum shmId)
+ bool
+ PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2)
+ {
++	/* There cannot be another process holding a segment in Nanos. */
++	return false;
++#if 0
+ 	IpcMemoryId shmId = (IpcMemoryId) id2;
+ 	struct shmid_ds shmStat;
+ 	struct stat statbuf;
+@@ -368,6 +375,7 @@ PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2)
+ 	shmdt((void *) hdr);
+ 
+ 	return true;
++#endif
+ }
+ 
+ #ifdef USE_ANONYMOUS_SHMEM
+diff --git a/src/backend/postmaster/pgstat.c b/src/backend/postmaster/pgstat.c
+index 9828b42..012b40d 100644
+--- a/src/backend/postmaster/pgstat.c
++++ b/src/backend/postmaster/pgstat.c
+@@ -2865,7 +2865,7 @@ pgstat_bestart(void)
+ 		pgstat_increment_changecount_before(beentry);
+ 	} while ((beentry->st_changecount & 1) == 0);
+ 
+-	beentry->st_procpid = MyProcPid;
++	beentry->st_procpid = MyThreadPid();
+ 	beentry->st_proc_start_timestamp = proc_start_timestamp;
+ 	beentry->st_activity_start_timestamp = 0;
+ 	beentry->st_state_start_timestamp = 0;
+diff --git a/src/backend/postmaster/postmaster.c b/src/backend/postmaster/postmaster.c
+index 306632f..e5b6768 100644
+--- a/src/backend/postmaster/postmaster.c
++++ b/src/backend/postmaster/postmaster.c
+@@ -120,6 +120,7 @@
+ #include "storage/pg_shmem.h"
+ #include "storage/pmsignal.h"
+ #include "storage/proc.h"
++#include "storage/procarray.h"
+ #include "tcop/tcopprot.h"
+ #include "utils/builtins.h"
+ #include "utils/datetime.h"
+@@ -1456,7 +1457,7 @@ checkDataDir(void)
+ 	 *
+ 	 * XXX can we safely enable this check on Windows?
+ 	 */
+-#if !defined(WIN32) && !defined(__CYGWIN__)
++#if 0 && !defined(WIN32) && !defined(__CYGWIN__) /* No Unix users in Nanos. */
+ 	if (stat_buf.st_uid != geteuid())
+ 		ereport(FATAL,
+ 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+@@ -1478,7 +1479,7 @@ checkDataDir(void)
+ 	 * be proper support for Unix-y file permissions.  Need to think of a
+ 	 * reasonable check to apply on Windows.
+ 	 */
+-#if !defined(WIN32) && !defined(__CYGWIN__)
++#if 0 && !defined(WIN32) && !defined(__CYGWIN__) /* Nanos lacks Unix ownership modes. */
+ 	if (stat_buf.st_mode & (S_IRWXG | S_IRWXO))
+ 		ereport(FATAL,
+ 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+@@ -2255,54 +2256,41 @@ processCancelRequest(Port *port, void *pkt)
+ 	CancelRequestPacket *canc = (CancelRequestPacket *) pkt;
+ 	int			backendPID;
+ 	int32		cancelAuthCode;
+-	Backend    *bp;
+-
+-#ifndef EXEC_BACKEND
+-	dlist_iter	iter;
+-#else
+-	int			i;
+-#endif
++	PGPROC	   *proc;
++	bool		found;
++	bool		key_matches;
+ 
+ 	backendPID = (int) pg_ntoh32(canc->backendPID);
+ 	cancelAuthCode = (int32) pg_ntoh32(canc->cancelAuthCode);
+ 
+ 	/*
+-	 * See if we have a matching backend.  In the EXEC_BACKEND case, we can no
+-	 * longer access the postmaster's own backend list, and must rely on the
+-	 * duplicate array in shared memory.
++	 * This startup thread has no PGPROC yet and cannot join an LWLock wait
++	 * queue. Retry without queuing, allowing the startup timeout between
++	 * attempts. Startup signal handlers may exit immediately, so block them
++	 * only while trying/holding the lock.
+ 	 */
+-#ifndef EXEC_BACKEND
+-	dlist_foreach(iter, &BackendList)
+-	{
+-		bp = dlist_container(Backend, elem, iter.cur);
+-#else
+-	for (i = MaxLivePostmasterChildren() - 1; i >= 0; i--)
++	for (;;)
+ 	{
+-		bp = (Backend *) &ShmemBackendArray[i];
+-#endif
+-		if (bp->pid == backendPID)
+-		{
+-			if (bp->cancel_key == cancelAuthCode)
+-			{
+-				/* Found a match; signal that backend to cancel current op */
+-				ereport(DEBUG2,
+-						(errmsg_internal("processing cancel request: sending SIGINT to process %d",
+-										 backendPID)));
+-				signal_child(bp->pid, SIGINT);
+-			}
+-			else
+-				/* Right PID, wrong key: no way, Jose */
+-				ereport(LOG,
+-						(errmsg("wrong key in cancel request for process %d",
+-								backendPID)));
+-			return;
+-		}
++		PG_SETMASK(&BlockSig);
++		if (LWLockConditionalAcquire(ProcArrayLock, LW_SHARED))
++			break;
++		PG_SETMASK(&StartupBlockSig);
++		pg_usleep(1000L);
+ 	}
++	proc = BackendPidGetProcWithLock(backendPID);
++	found = proc != NULL;
++	key_matches = found && proc->cancel_key == cancelAuthCode;
++	if (key_matches)
++		(void) pthread_kill(proc->thread_id, SIGINT);
++	LWLockRelease(ProcArrayLock);
++	PG_SETMASK(&StartupBlockSig);
+ 
+-	/* No matching backend */
+-	ereport(LOG,
+-			(errmsg("PID %d in cancel request did not match any process",
+-					backendPID)));
++	if (!found)
++		ereport(LOG,
++				(errmsg("PID %d in cancel request did not match any process", backendPID)));
++	else if (!key_matches)
++		ereport(LOG,
++				(errmsg("wrong key in cancel request for process %d", backendPID)));
+ }
+ 
+ /*
+@@ -4010,6 +3998,8 @@ static void* thread_trampoline(void* arg)
+ 	MemoryContextSwitchTo(TopMemoryContext);
+ 
+ 	restore_backend_variables(ctx);
++	/* Signal masks are thread-local; pthread_create does not copy their values. */
++	pqinitmask();
+ 
+ 	InitializeGUCOptions();
+ 
+diff --git a/src/backend/replication/logical/launcher.c b/src/backend/replication/logical/launcher.c
+index 47a75f9..160fb24 100644
+--- a/src/backend/replication/logical/launcher.c
++++ b/src/backend/replication/logical/launcher.c
+@@ -519,7 +519,7 @@ logicalrep_worker_stop(Oid subid, Oid relid)
+ 	}
+ 
+ 	/* Now terminate the worker ... */
+-	kill(worker->proc->pid, SIGTERM);
++	pthread_kill(worker->proc->thread_id, SIGTERM);
+ 
+ 	/* ... and wait for it to die. */
+ 	for (;;)
+diff --git a/src/backend/storage/buffer/bufmgr.c b/src/backend/storage/buffer/bufmgr.c
+index f40e234..b0e6139 100644
+--- a/src/backend/storage/buffer/bufmgr.c
++++ b/src/backend/storage/buffer/bufmgr.c
+@@ -3530,7 +3530,7 @@ UnlockBuffers(void)
+ 		 * got a cancel/die interrupt before getting the signal.
+ 		 */
+ 		if ((buf_state & BM_PIN_COUNT_WAITER) != 0 &&
+-			buf->wait_backend_pid == MyProcPid)
++			buf->wait_backend_pid == MyThreadPid())
+ 			buf_state &= ~BM_PIN_COUNT_WAITER;
+ 
+ 		UnlockBufHdr(buf, buf_state);
+@@ -3646,7 +3646,7 @@ LockBufferForCleanup(Buffer buffer)
+ 			LockBuffer(buffer, BUFFER_LOCK_UNLOCK);
+ 			elog(ERROR, "multiple backends attempting to wait for pincount 1");
+ 		}
+-		bufHdr->wait_backend_pid = MyProcPid;
++		bufHdr->wait_backend_pid = MyThreadPid();
+ 		PinCountWaitBuf = bufHdr;
+ 		buf_state |= BM_PIN_COUNT_WAITER;
+ 		UnlockBufHdr(bufHdr, buf_state);
+@@ -3675,7 +3675,7 @@ LockBufferForCleanup(Buffer buffer)
+ 		 */
+ 		buf_state = LockBufHdr(bufHdr);
+ 		if ((buf_state & BM_PIN_COUNT_WAITER) != 0 &&
+-			bufHdr->wait_backend_pid == MyProcPid)
++			bufHdr->wait_backend_pid == MyThreadPid())
+ 			buf_state &= ~BM_PIN_COUNT_WAITER;
+ 		UnlockBufHdr(bufHdr, buf_state);
+ 
+diff --git a/src/backend/storage/file/fd.c b/src/backend/storage/file/fd.c
+index 3c81f79..cc509ce 100644
+--- a/src/backend/storage/file/fd.c
++++ b/src/backend/storage/file/fd.c
+@@ -84,14 +84,15 @@
+ #include "utils/resowner_private.h"
+ 
+ 
+-/* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
+-#if defined(HAVE_SYNC_FILE_RANGE)
+-#define PG_FLUSH_DATA_WORKS 1
+-#elif !defined(WIN32) && defined(MS_ASYNC)
+-#define PG_FLUSH_DATA_WORKS 1
+-#elif defined(USE_POSIX_FADVISE) && defined(POSIX_FADV_DONTNEED)
+-#define PG_FLUSH_DATA_WORKS 1
+-#endif
++/*
++ * Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data.
++ *
++ * Nanos: none of the mechanisms start writeback.  sync_file_range() returns
++ * ENOSYS and msync(MS_ASYNC) returns success without writing anything, so do
++ * not claim a working implementation.  pg_flush_data() is only an advisory
++ * hint; durability relies exclusively on fsync()/fdatasync().
++ */
++#define PG_NANOS_NO_FLUSH_DATA 1
+ 
+ /*
+  * We must leave some file descriptors free for system(), the dynamic loader,
+@@ -331,6 +332,20 @@ static int	fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int
+ static int	fsync_parent_path(const char *fname, int elevel);
+ 
+ 
++/*
++ * data_sync_elevel --- error level for failed data-file sync or close
++ *
++ * Backport of PostgreSQL 12 behaviour with data_sync_retry = off.  After a
++ * failed fsync() the kernel may have discarded or marked clean the dirty
++ * pages, so a later successful retry would be a false durability report.
++ * Crash instead and let WAL replay rewrite the data.
++ */
++int
++data_sync_elevel(int elevel)
++{
++	return Max(elevel, PANIC);
++}
++
+ /*
+  * pg_fsync --- do fsync with or without writethrough
+  */
+@@ -420,6 +435,14 @@ pg_flush_data(int fd, off_t offset, off_t nbytes)
+ 	if (!enableFsync)
+ 		return;
+ 
++#ifdef PG_NANOS_NO_FLUSH_DATA
++	/* No writeback hint exists on Nanos; do not call ENOSYS or no-op APIs. */
++	(void) fd;
++	(void) offset;
++	(void) nbytes;
++	return;
++#endif
++
+ 	/*
+ 	 * We compile all alternatives that are supported on the current platform,
+ 	 * to find portability problems more easily.
+@@ -631,7 +654,7 @@ durable_rename(const char *oldfile, const char *newfile, int elevel)
+ 			CloseTransientFile(fd);
+ 			errno = save_errno;
+ 
+-			ereport(elevel,
++			ereport(data_sync_elevel(elevel),
+ 					(errcode_for_file_access(),
+ 					 errmsg("could not fsync file \"%s\": %m", newfile)));
+ 			return -1;
+@@ -1047,7 +1070,7 @@ LruDelete(File file)
+ 	 * to leak the FD than to mess up our internal state.
+ 	 */
+ 	if (close(vfdP->fd))
+-		elog(LOG, "could not close file \"%s\": %m", vfdP->fileName);
++		elog(data_sync_elevel(LOG), "could not close file \"%s\": %m", vfdP->fileName);
+ 	vfdP->fd = VFD_CLOSED;
+ 	--nfile;
+ 
+@@ -1534,7 +1557,7 @@ FileClose(File file)
+ 	{
+ 		/* close the file */
+ 		if (close(vfdP->fd))
+-			elog(LOG, "could not close file \"%s\": %m", vfdP->fileName);
++			elog(data_sync_elevel(LOG), "could not close file \"%s\": %m", vfdP->fileName);
+ 
+ 		--nfile;
+ 		vfdP->fd = VFD_CLOSED;
+@@ -3222,7 +3245,7 @@ fsync_fname_ext(const char *fname, bool isdir, bool ignore_perm, int elevel)
+ 		(void) CloseTransientFile(fd);
+ 		errno = save_errno;
+ 
+-		ereport(elevel,
++		ereport(data_sync_elevel(elevel),
+ 				(errcode_for_file_access(),
+ 				 errmsg("could not fsync file \"%s\": %m", fname)));
+ 		return -1;
+diff --git a/src/backend/storage/ipc/procarray.c b/src/backend/storage/ipc/procarray.c
+index 0286028..ac5a3a3 100644
+--- a/src/backend/storage/ipc/procarray.c
++++ b/src/backend/storage/ipc/procarray.c
+@@ -2654,7 +2654,7 @@ CancelVirtualTransaction(VirtualTransactionId vxid, ProcSignalReason sigmode)
+ 			procvxid.localTransactionId == vxid.localTransactionId)
+ 		{
+ 			proc->recoveryConflictPending = true;
+-			pid = proc->pid;
++			pid = proc->pid ? proc->thread_id : 0;
+ 			if (pid != 0)
+ 			{
+ 				/*
+@@ -2818,7 +2818,7 @@ CancelDBBackends(Oid databaseid, ProcSignalReason sigmode, bool conflictPending)
+ 			GET_VXID_FROM_PGPROC(procvxid, *proc);
+ 
+ 			proc->recoveryConflictPending = conflictPending;
+-			pid = proc->pid;
++			pid = proc->pid ? proc->thread_id : 0;
+ 			if (pid != 0)
+ 			{
+ 				/*
+@@ -2892,7 +2892,6 @@ CountOtherDBBackends(Oid databaseId, int *nbackends, int *nprepared)
+ 	ProcArrayStruct *arrayP = procArray;
+ 
+ #define MAXAUTOVACPIDS	10		/* max autovacs to SIGTERM per iteration */
+-	int			autovac_pids[MAXAUTOVACPIDS];
+ 	int			tries;
+ 
+ 	/* 50 tries with 100ms sleep between tries makes 5 sec total wait */
+@@ -2928,7 +2927,11 @@ CountOtherDBBackends(Oid databaseId, int *nbackends, int *nprepared)
+ 				(*nbackends)++;
+ 				if ((pgxact->vacuumFlags & PROC_IS_AUTOVACUUM) &&
+ 					nautovacs < MAXAUTOVACPIDS)
+-					autovac_pids[nautovacs++] = proc->pid;
++				{
++					/* Keep the worker alive until its thread handle is used. */
++					(void) pthread_kill(proc->thread_id, SIGTERM);
++					nautovacs++;
++				}
+ 			}
+ 		}
+ 
+@@ -2937,15 +2940,6 @@ CountOtherDBBackends(Oid databaseId, int *nbackends, int *nprepared)
+ 		if (!found)
+ 			return false;		/* no conflicting backends, so done */
+ 
+-		/*
+-		 * Send SIGTERM to any conflicting autovacuums before sleeping. We
+-		 * postpone this step until after the loop because we don't want to
+-		 * hold ProcArrayLock while issuing kill(). We have no idea what might
+-		 * block kill() inside the kernel...
+-		 */
+-		for (index = 0; index < nautovacs; index++)
+-			(void) kill(autovac_pids[index], SIGTERM);	/* ignore any error */
+-
+ 		/* sleep, then try again */
+ 		pg_usleep(100 * 1000L); /* 100ms */
+ 	}
+diff --git a/src/backend/storage/lmgr/predicate.c b/src/backend/storage/lmgr/predicate.c
+index 46a889f..9f294a6 100644
+--- a/src/backend/storage/lmgr/predicate.c
++++ b/src/backend/storage/lmgr/predicate.c
+@@ -1821,7 +1821,7 @@ GetSerializableTransactionSnapshotInt(Snapshot snapshot,
+ 	sxact->topXid = GetTopTransactionIdIfAny();
+ 	sxact->finishedBefore = InvalidTransactionId;
+ 	sxact->xmin = snapshot->xmin;
+-	sxact->pid = MyProcPid;
++	sxact->pid = MyThreadPid();
+ 	SHMQueueInit(&(sxact->predicateLocks));
+ 	SHMQueueElemInit(&(sxact->finishedLink));
+ 	sxact->flags = 0;
+diff --git a/src/backend/storage/lmgr/proc.c b/src/backend/storage/lmgr/proc.c
+index 6e56581..f7f247c 100644
+--- a/src/backend/storage/lmgr/proc.c
++++ b/src/backend/storage/lmgr/proc.c
+@@ -366,7 +366,9 @@ InitProcess(void)
+ 	MyProc->fpLocalTransactionId = InvalidLocalTransactionId;
+ 	MyPgXact->xid = InvalidTransactionId;
+ 	MyPgXact->xmin = InvalidTransactionId;
+-	MyProc->pid = MyProcPid;
++	MyProc->pid = MyThreadPid();
++	MyProc->thread_id = MyProcPid;
++	MyProc->cancel_key = MyCancelKey;
+ 	/* backendId, databaseId and roleId will be filled in later */
+ 	MyProc->backendId = InvalidBackendId;
+ 	MyProc->databaseId = InvalidOid;
+@@ -531,7 +533,8 @@ InitAuxiliaryProcess(void)
+ 
+ 	/* Mark auxiliary proc as in use by me */
+ 	/* use volatile pointer to prevent code rearrangement */
+-	((volatile PGPROC *) auxproc)->pid = MyProcPid;
++	((volatile PGPROC *) auxproc)->pid = MyThreadPid();
++	auxproc->thread_id = MyProcPid;
+ 
+ 	MyProc = auxproc;
+ 	MyPgXact = &ProcGlobal->allPgXact[auxproc->pgprocno];
+@@ -604,7 +607,7 @@ PublishStartupProcessInformation(void)
+ 	SpinLockAcquire(ProcStructLock);
+ 
+ 	ProcGlobal->startupProc = MyProc;
+-	ProcGlobal->startupProcPid = MyProcPid;
++	ProcGlobal->startupProcPid = MyThreadPid();
+ 
+ 	SpinLockRelease(ProcStructLock);
+ }
+@@ -1295,10 +1298,12 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
+ 			 * Only do it if the worker is not working to protect against Xid
+ 			 * wraparound.
+ 			 */
+-			if ((autovac_pgxact->vacuumFlags & PROC_IS_AUTOVACUUM) &&
++			if (BackendPidGetProcWithLock(autovac->pid) == autovac &&
++				(autovac_pgxact->vacuumFlags & PROC_IS_AUTOVACUUM) &&
+ 				!(autovac_pgxact->vacuumFlags & PROC_VACUUM_FOR_WRAPAROUND))
+ 			{
+ 				int			pid = autovac->pid;
++				int			signal_error;
+ 				StringInfoData locktagbuf;
+ 				StringInfoData logbuf;	/* errdetail for server log */
+ 
+@@ -1312,7 +1317,8 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
+ 												 lockmode),
+ 								 locktagbuf.data);
+ 
+-				/* release lock as quickly as possible */
++				/* Pin the PGPROC until pthread_kill has consumed its handle. */
++				signal_error = pthread_kill(autovac->thread_id, SIGINT);
+ 				LWLockRelease(ProcArrayLock);
+ 
+ 				/* send the autovacuum worker Back to Old Kent Road */
+@@ -1321,22 +1327,11 @@ ProcSleep(LOCALLOCK *locallock, LockMethod lockMethodTable)
+ 								pid),
+ 						 errdetail_log("%s", logbuf.data)));
+ 
+-				if (pthread_kill(pid, SIGINT) < 0)
++				if (signal_error != 0 && signal_error != ESRCH)
+ 				{
+-					/*
+-					 * There's a race condition here: once we release the
+-					 * ProcArrayLock, it's possible for the autovac worker to
+-					 * close up shop and exit before we can do the kill().
+-					 * Therefore, we do not whinge about no-such-process.
+-					 * Other errors such as EPERM could conceivably happen if
+-					 * the kernel recycles the PID fast enough, but such cases
+-					 * seem improbable enough that it's probably best to issue
+-					 * a warning if we see some other errno.
+-					 */
+-					if (errno != ESRCH)
+-						ereport(WARNING,
+-								(errmsg("could not send signal to process %d: %m",
+-										pid)));
++					errno = signal_error;
++					ereport(WARNING,
++							(errmsg("could not send signal to process %d: %m", pid)));
+ 				}
+ 
+ 				pfree(logbuf.data);
+diff --git a/src/backend/storage/smgr/md.c b/src/backend/storage/smgr/md.c
+index 1155352..81ca59a 100644
+--- a/src/backend/storage/smgr/md.c
++++ b/src/backend/storage/smgr/md.c
+@@ -1039,7 +1039,7 @@ mdimmedsync(SMgrRelation reln, ForkNumber forknum)
+ 		MdfdVec    *v = &reln->md_seg_fds[forknum][segno - 1];
+ 
+ 		if (FileSync(v->mdfd_vfd, WAIT_EVENT_DATA_FILE_IMMEDIATE_SYNC) < 0)
+-			ereport(ERROR,
++			ereport(data_sync_elevel(ERROR),
+ 					(errcode_for_file_access(),
+ 					 errmsg("could not fsync file \"%s\": %m",
+ 							FilePathName(v->mdfd_vfd))));
+@@ -1272,7 +1272,7 @@ mdsync(void)
+ 					 */
+ 					if (!FILE_POSSIBLY_DELETED(errno) ||
+ 						failures > 0)
+-						ereport(ERROR,
++						ereport(data_sync_elevel(ERROR),
+ 								(errcode_for_file_access(),
+ 								 errmsg("could not fsync file \"%s\": %m",
+ 										path)));
+@@ -1445,7 +1445,7 @@ register_dirty_segment(SMgrRelation reln, ForkNumber forknum, MdfdVec *seg)
+ 				(errmsg("could not forward fsync request because request queue is full")));
+ 
+ 		if (FileSync(seg->mdfd_vfd, WAIT_EVENT_DATA_FILE_SYNC) < 0)
+-			ereport(ERROR,
++			ereport(data_sync_elevel(ERROR),
+ 					(errcode_for_file_access(),
+ 					 errmsg("could not fsync file \"%s\": %m",
+ 							FilePathName(seg->mdfd_vfd))));
+diff --git a/src/backend/tcop/postgres.c b/src/backend/tcop/postgres.c
+index c58d731..86c0966 100644
+--- a/src/backend/tcop/postgres.c
++++ b/src/backend/tcop/postgres.c
+@@ -3822,7 +3822,7 @@ PostgresMain(int argc, char *argv[],
+ 		StringInfoData buf;
+ 
+ 		pq_beginmessage(&buf, 'K');
+-		pq_sendint32(&buf, (int32) MyProcPid);
++		pq_sendint32(&buf, (int32) MyThreadPid());
+ 		pq_sendint32(&buf, (int32) MyCancelKey);
+ 		pq_endmessage(&buf);
+ 		/* Need not flush since ReadyForQuery will do it. */
+diff --git a/src/backend/utils/adt/misc.c b/src/backend/utils/adt/misc.c
+index 1980ff5..4497722 100644
+--- a/src/backend/utils/adt/misc.c
++++ b/src/backend/utils/adt/misc.c
+@@ -34,6 +34,7 @@
+ #include "postmaster/syslogger.h"
+ #include "rewrite/rewriteHandler.h"
+ #include "storage/fd.h"
++#include "storage/lwlock.h"
+ #include "storage/pmsignal.h"
+ #include "storage/proc.h"
+ #include "storage/procarray.h"
+@@ -218,16 +219,17 @@ current_query(PG_FUNCTION_ARGS)
+ static int
+ pg_signal_backend(int pid, int sig)
+ {
+-	PGPROC	   *proc = BackendPidGetProc(pid);
++	PGPROC	   *proc;
++	Oid			roleid = InvalidOid;
++	int			signal_error;
++
++	/* Permission checks may access catalogs, so do those outside the lock. */
++	LWLockAcquire(ProcArrayLock, LW_SHARED);
++	proc = BackendPidGetProcWithLock(pid);
++	if (proc != NULL)
++		roleid = proc->roleId;
++	LWLockRelease(ProcArrayLock);
+ 
+-	/*
+-	 * BackendPidGetProc returns NULL if the pid isn't valid; but by the time
+-	 * we reach kill(), a process for which we get a valid proc here might
+-	 * have terminated on its own.  There's no way to acquire a lock on an
+-	 * arbitrary process to prevent that. But since so far all the callers of
+-	 * this mechanism involve some request for ending the process anyway, that
+-	 * it might end on its own first is not a problem.
+-	 */
+ 	if (proc == NULL)
+ 	{
+ 		/*
+@@ -240,30 +242,23 @@ pg_signal_backend(int pid, int sig)
+ 	}
+ 
+ 	/* Only allow superusers to signal superuser-owned backends. */
+-	if (superuser_arg(proc->roleId) && !superuser())
++	if (superuser_arg(roleid) && !superuser())
+ 		return SIGNAL_BACKEND_NOSUPERUSER;
+ 
+ 	/* Users can signal backends they have role membership in. */
+-	if (!has_privs_of_role(GetUserId(), proc->roleId) &&
++	if (!has_privs_of_role(GetUserId(), roleid) &&
+ 		!has_privs_of_role(GetUserId(), DEFAULT_ROLE_SIGNAL_BACKENDID))
+ 		return SIGNAL_BACKEND_NOPERMISSION;
+ 
+-	/*
+-	 * Can the process we just validated above end, followed by the pid being
+-	 * recycled for a new process, before reaching here?  Then we'd be trying
+-	 * to kill the wrong thing.  Seems near impossible when sequential pid
+-	 * assignment and wraparound is used.  Perhaps it could happen on a system
+-	 * where pid re-use is randomized.  That race condition possibility seems
+-	 * too unlikely to worry about.
+-	 */
+-
+-	/* If we have setsid(), signal the backend's whole process group */
+-#ifdef HAVE_SETSID
+-	if (kill(-pid, sig))
+-#else
+-	if (kill(pid, sig))
+-#endif
++	/* Resolve again and pin the live slot while using the pthread handle. */
++	LWLockAcquire(ProcArrayLock, LW_SHARED);
++	proc = BackendPidGetProcWithLock(pid);
++	signal_error = (proc != NULL && proc->roleId == roleid) ?
++		pthread_kill(proc->thread_id, sig) : ESRCH;
++	LWLockRelease(ProcArrayLock);
++	if (signal_error != 0)
+ 	{
++		errno = signal_error;
+ 		/* Again, just a warning to allow loops */
+ 		ereport(WARNING,
+ 				(errmsg("could not send signal to process %d: %m", pid)));
+diff --git a/src/backend/utils/adt/pgstatfuncs.c b/src/backend/utils/adt/pgstatfuncs.c
+index 8d9e7c1..3c7e58f 100644
+--- a/src/backend/utils/adt/pgstatfuncs.c
++++ b/src/backend/utils/adt/pgstatfuncs.c
+@@ -872,7 +872,7 @@ pg_stat_get_activity(PG_FUNCTION_ARGS)
+ Datum
+ pg_backend_pid(PG_FUNCTION_ARGS)
+ {
+-	PG_RETURN_INT32(MyProcPid);
++	PG_RETURN_INT32(MyThreadPid());
+ }
+ 
+ 
+diff --git a/src/backend/utils/init/globals.c b/src/backend/utils/init/globals.c
+index 25a7f43..ba203cf 100644
+--- a/src/backend/utils/init/globals.c
++++ b/src/backend/utils/init/globals.c
+@@ -18,6 +18,8 @@
+  */
+ #include "postgres.h"
+ 
++#include <unistd.h>
++
+ #include "libpq/libpq-be.h"
+ #include "libpq/pqcomm.h"
+ #include "miscadmin.h"
+@@ -37,6 +39,32 @@ volatile session_local uint32 QueryCancelHoldoffCount = 0;
+ volatile session_local uint32 CritSectionCount = 0;
+ 
+ session_local pthread_t	MyProcPid;
++static session_local int MyThreadPidValue = 0;
++static uint32 NextThreadPid = 0x40000000;
++
++/*
++ * MyThreadPid --- positive 32-bit identity of the current thread
++ *
++ * MyProcPid is a 64-bit pthread_t, but PgBackendStatus.st_procpid, PGPROC.pid
++ * and pg_backend_pid() are int.  Truncating a pthread_t can yield zero or a
++ * negative value, and pg_stat_activity then hides the thread.  Hand out
++ * unique positive ids instead. They must be resolved to PGPROC.thread_id
++ * under ProcArrayLock before signalling, and must never be recycled.
++ */
++int
++MyThreadPid(void)
++{
++	while (MyThreadPidValue == 0)
++	{
++		uint32		pid = __sync_add_and_fetch(&NextThreadPid, 1);
++
++		if (pid > 0x7fffffff)
++			elog(PANIC, "thread identity space exhausted; restart PostgreSQL");
++		if (pid != getpid())
++			MyThreadPidValue = pid;
++	}
++	return MyThreadPidValue;
++}
+ session_local pg_time_t	MyStartTime;
+ session_local struct Port *MyProcPort;
+ session_local int32		MyCancelKey;
+diff --git a/src/backend/utils/misc/guc.c b/src/backend/utils/misc/guc.c
+index 1cd3a0c..edeb463 100644
+--- a/src/backend/utils/misc/guc.c
++++ b/src/backend/utils/misc/guc.c
+@@ -2362,7 +2362,7 @@ static struct config_int ConfigureNamesInt[] =
+ 			NULL,
+ 			GUC_UNIT_BLOCKS
+ 		},
+-		DECLARE_INT_GUC(checkpoint_flush_after,	DEFAULT_CHECKPOINT_FLUSH_AFTER, 0, WRITEBACK_MAX_PENDING_FLUSHES)
++		DECLARE_INT_GUC(checkpoint_flush_after,	DEFAULT_CHECKPOINT_FLUSH_AFTER, 0, 0)
+ 	},
+ 
+ 	{
+@@ -2493,7 +2493,7 @@ static struct config_int ConfigureNamesInt[] =
+ 			NULL,
+ 			GUC_UNIT_BLOCKS
+ 		},
+-		DECLARE_INT_GUC(bgwriter_flush_after,	DEFAULT_BGWRITER_FLUSH_AFTER, 0, WRITEBACK_MAX_PENDING_FLUSHES)
++		DECLARE_INT_GUC(bgwriter_flush_after,	DEFAULT_BGWRITER_FLUSH_AFTER, 0, 0)
+ 	},
+ 
+ 	{
+@@ -2518,7 +2518,7 @@ static struct config_int ConfigureNamesInt[] =
+ 			NULL,
+ 			GUC_UNIT_BLOCKS
+ 		},
+-		DECLARE_INT_GUC(backend_flush_after,	DEFAULT_BACKEND_FLUSH_AFTER, 0, WRITEBACK_MAX_PENDING_FLUSHES)
++		DECLARE_INT_GUC(backend_flush_after,	DEFAULT_BACKEND_FLUSH_AFTER, 0, 0)
+ 	},
+ 
+ 	{
+@@ -2854,7 +2854,7 @@ static struct config_int ConfigureNamesInt[] =
+ 			NULL,
+ 			GUC_UNIT_KB
+ 		},
+-		DECLARE_INT_GUC(thread_stack_size, 1024, PTHREAD_STACK_MIN/1024, 128*1024)
++		DECLARE_INT_GUC(thread_stack_size, 1024, 16, 128*1024)
+ 	},
+ 
+ 	/* End-of-list marker */
+diff --git a/src/bin/pg_rewind/copy_fetch.c b/src/bin/pg_rewind/copy_fetch.c
+index f7ac5b3..dd3ce52 100644
+--- a/src/bin/pg_rewind/copy_fetch.c
++++ b/src/bin/pg_rewind/copy_fetch.c
+@@ -156,7 +156,7 @@ recurse_dir(const char *datadir, const char *parentpath,
+  * If 'trunc' is true, any existing file with the same name is truncated.
+  */
+ static void
+-copy_file_range(const char *path, off_t begin, off_t end, bool trunc)
++copy_file_range_segment(const char *path, off_t begin, off_t end, bool trunc)
+ {
+ 	char		buf[BLCKSZ];
+ 	char		srcpath[MAXPGPATH];
+@@ -222,7 +222,7 @@ copy_executeFileMap(filemap_t *map)
+ 				break;
+ 
+ 			case FILE_ACTION_COPY:
+-				copy_file_range(entry->path, 0, entry->newsize, true);
++				copy_file_range_segment(entry->path, 0, entry->newsize, true);
+ 				break;
+ 
+ 			case FILE_ACTION_TRUNCATE:
+@@ -230,7 +230,7 @@ copy_executeFileMap(filemap_t *map)
+ 				break;
+ 
+ 			case FILE_ACTION_COPY_TAIL:
+-				copy_file_range(entry->path, entry->oldsize, entry->newsize, false);
++				copy_file_range_segment(entry->path, entry->oldsize, entry->newsize, false);
+ 				break;
+ 
+ 			case FILE_ACTION_CREATE:
+@@ -257,7 +257,7 @@ execute_pagemap(datapagemap_t *pagemap, const char *path)
+ 	while (datapagemap_next(iter, &blkno))
+ 	{
+ 		offset = blkno * BLCKSZ;
+-		copy_file_range(path, offset, offset + BLCKSZ, false);
++		copy_file_range_segment(path, offset, offset + BLCKSZ, false);
+ 		/* Ok, this block has now been copied from new data dir to old */
+ 	}
+ 	pg_free(iter);
+diff --git a/src/include/miscadmin.h b/src/include/miscadmin.h
+index aa21bb2..b2a2a4d 100644
+--- a/src/include/miscadmin.h
++++ b/src/include/miscadmin.h
+@@ -162,6 +162,7 @@ extern session_local int	max_worker_processes;
+ extern session_local int	max_parallel_workers;
+ 
+ extern session_local PGDLLIMPORT pthread_t MyProcPid;
++extern int	MyThreadPid(void);
+ extern session_local PGDLLIMPORT pg_time_t MyStartTime;
+ extern session_local PGDLLIMPORT struct Port *MyProcPort;
+ extern session_local PGDLLIMPORT struct Latch *MyLatch;
+diff --git a/src/include/pg_config_manual.h b/src/include/pg_config_manual.h
+index 6f2238b..e7b34a2 100644
+--- a/src/include/pg_config_manual.h
++++ b/src/include/pg_config_manual.h
+@@ -148,7 +148,7 @@
+  * enabled by default if sync_file_range() exists, ie, only on Linux.  Perhaps
+  * we could also enable by default if we have mmap and msync(MS_ASYNC)?
+  */
+-#ifdef HAVE_SYNC_FILE_RANGE
++#if 0 && defined(HAVE_SYNC_FILE_RANGE) /* Nanos: no writeback hint, see fd.c. */
+ #define DEFAULT_BACKEND_FLUSH_AFTER 0	/* never enabled by default */
+ #define DEFAULT_BGWRITER_FLUSH_AFTER 64
+ #define DEFAULT_CHECKPOINT_FLUSH_AFTER 32
+diff --git a/src/include/storage/fd.h b/src/include/storage/fd.h
+index 16debe3..dc7323f 100644
+--- a/src/include/storage/fd.h
++++ b/src/include/storage/fd.h
+@@ -119,6 +119,7 @@ extern int	pg_fsync_writethrough(int fd);
+ extern int	pg_fdatasync(int fd);
+ extern void pg_flush_data(int fd, off_t offset, off_t amount);
+ extern void fsync_fname(const char *fname, bool isdir);
++extern int	data_sync_elevel(int elevel);
+ extern int	durable_rename(const char *oldfile, const char *newfile, int loglevel);
+ extern int	durable_unlink(const char *fname, int loglevel);
+ extern int	durable_link_or_rename(const char *oldfile, const char *newfile, int loglevel);
+diff --git a/src/include/storage/proc.h b/src/include/storage/proc.h
+index 2351d28..1522c68 100644
+--- a/src/include/storage/proc.h
++++ b/src/include/storage/proc.h
+@@ -107,6 +107,8 @@ struct PGPROC
+ 								 * being executed by this proc, if running;
+ 								 * else InvalidLocalTransactionId */
+ 	int			pid;			/* Backend's process ID; 0 if prepared xact */
++	pthread_t	thread_id;		/* Signal target, never the SQL-visible pid */
++	int32		cancel_key;		/* Frontend CancelRequest authentication */
+ 	int			pgprocno;
+ 
+ 	/* These fields are zero while a backend is still starting up: */

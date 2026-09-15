@@ -28,9 +28,12 @@ Jerboa is split into two parts:
 - **`jerboad`** — the daemon that owns builds, images, VM lifecycle, networks,
   and compose state.
 
-The daemon is Linux-only. On Windows, the `jerboa` CLI runs on the host and
-talks to `jerboad` running inside a dedicated WSL2 distro managed by
-`jerboa daemon`.
+The daemon runs natively on Linux and, as a development preview, macOS Apple
+Silicon. On Windows, the `jerboa` CLI runs on the host and talks to `jerboad`
+running inside a dedicated WSL2 distro managed by `jerboa daemon`.
+See [macOS Apple Silicon](docs/macos.md) for the native build and compatibility matrix.
+See [Linux ARM64 packages](docs/packages-arm64.md) for local sysroot packaging,
+Docker imports, package provenance and Firecracker acceptance.
 
 ## Current Capabilities
 
@@ -38,8 +41,8 @@ talks to `jerboad` running inside a dedicated WSL2 distro managed by
   - static ELF binaries
   - Go, Node.js, Python, Rust, and `raw` (package-driven) projects
 - **Run** VMs on:
-  - QEMU (with automatic KVM acceleration when `/dev/kvm` is available)
-  - Firecracker
+  - QEMU (KVM on Linux when available; HVF for native ARM64 guests on macOS)
+  - Firecracker (Linux/KVM and native macOS ARM64/HVF fork)
 - **Manage**:
   - images and volumes
   - bridge networks with TAP-backed guest connectivity
@@ -52,9 +55,11 @@ talks to `jerboad` running inside a dedicated WSL2 distro managed by
 
 ### Runtime constraints worth knowing up front
 
-- Native VM execution requires Linux; the daemon binary itself only builds for Linux.
-- Port publishing requires a managed network (`-p/--port` requires `--network`) — there is no SLIRP fallback.
-- TCP port forwarding works today through a userspace forwarder; UDP mappings parse and persist but are currently skipped by the forwarder with a warning.
+- Stable releases target Linux and Windows/WSL2; native macOS ARM64 is a development preview.
+- On Linux, port publishing requires a managed network (`-p/--port` requires `--network`) — there is no SLIRP fallback.
+- Linux supports TCP forwarding; UDP mappings are skipped with a warning by the current Linux forwarder.
+- macOS provides userspace networks, guest DNS, TCP/UDP forwarding and optional explicit x86 emulation.
+- macOS uses CPU priority and an RSS watchdog as resource controls; these do not provide Linux cgroup isolation guarantees.
 
 See [Architecture](docs/architecture.md) for the full component breakdown.
 
@@ -98,6 +103,20 @@ For networking, volumes, DNS, and compose stacks, see
 [Getting Started](docs/getting-started.md).
 
 ## Installing
+
+### macOS Apple Silicon
+
+The native Firecracker package requires macOS 26+. Once a macOS release is
+published, the same installer selects its signed package automatically:
+
+```sh
+curl -fsSL https://jerboa.dev/install.sh | bash
+```
+
+Run without sudo on macOS. The package includes Firecracker, libraries, kernel
+and native tools, and starts the user daemon through launchd. See
+[Firecracker installation and source builds](docs/macos-firecracker.md) and
+[release infrastructure requirements](docs/macos-distribution.md).
 
 ### Linux
 

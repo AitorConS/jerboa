@@ -84,7 +84,7 @@ static void gen_bytestream(char *path, int len)
     u64 buf[INTERNAL_BUFLEN / 8];
     u64 i, nbytes = 0;
 
-    fd = open(path, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    fd = open(path, O_WRONLY | O_TRUNC);
     if (fd == -1) {
         test_perror("can't create bytestream file");
     }
@@ -113,10 +113,10 @@ static int ent_get_stats(char *path, struct ent_stat_entry *stats)
 {
     char ent_cmd[1024], ent_buf[1024];
     char *s;
-    int matched, nfield = 0, field_len, linenum = -1;
+    int matched, nfield = 0, field_len, linenum = -1, status;
     FILE *f;
 
-    snprintf(&ent_cmd[0], 1024, "ent -t %s", path);
+    snprintf(&ent_cmd[0], 1024, "ent -t '%s'", path);
 
     f = popen(&ent_cmd[0], "r");
     if (!f) {
@@ -124,10 +124,17 @@ static int ent_get_stats(char *path, struct ent_stat_entry *stats)
         return -1;
     }
 
-    matched = fread(&ent_buf[0], 1024, 1, f);
+    matched = fread(&ent_buf[0], 1, sizeof(ent_buf) - 1, f);
     if (ferror(f)) {
         pclose(f);
         msg_err("%s failed to read ent statistics, matched=%d", func_ss, matched);
+        return -1;
+    }
+    ent_buf[matched] = '\0';
+
+    status = pclose(f);
+    if (status != 0) {
+        msg_err("%s ent exited with status %d; Fourmilab ent must be in PATH", func_ss, status);
         return -1;
     }
 
@@ -154,7 +161,6 @@ static int ent_get_stats(char *path, struct ent_stat_entry *stats)
             sscanf(s, "%lf", &stats[nfield - (ENT_NSTATS + 1)].val);
         else if (linenum < 0) {
             msg_err("%s error: unable to parse", func_ss);
-            pclose(f);
             return -1;
         }
                      
@@ -162,9 +168,7 @@ static int ent_get_stats(char *path, struct ent_stat_entry *stats)
 
         s += field_len;
     } while (*s++);
-    
-    pclose(f);
-    
+
     return 0;
 }
 
@@ -228,10 +232,12 @@ out_fail:
 
 int main(int argc, char **argv)
 {
-    char c;
+    int c;
     int err;
     int result = EXIT_SUCCESS;
     struct ent_stat_entry stats[ENT_NSTATS + 1];
+    char path[512];
+    const char *tmpdir = getenv("TMPDIR");
 
     init_process_runtime();
 
@@ -249,17 +255,26 @@ int main(int argc, char **argv)
     }
 
     memset(&stats[0], 0, sizeof stats);
-    
-    gen_bytestream("/tmp/test", BSLEN);
-    
-    err = ent_get_stats("/tmp/test", &stats[0]);
+
+    if (!tmpdir || !*tmpdir)
+        tmpdir = "/tmp";
+    snprintf(path, sizeof(path), "%s/random_test.XXXXXX", tmpdir);
+    err = mkstemp(path);
+    if (err == -1)
+        test_perror("can't create bytestream file");
+    close(err);
+
+    gen_bytestream(path, BSLEN);
+
+    err = ent_get_stats(path, &stats[0]);
     if (err) {
+        rm_bytestream(path);
         test_error("cannot get stats");
     } else {
         result = ent_test(&stats[0]);
     }
-    
-    rm_bytestream("/tmp/test");
+
+    rm_bytestream(path);
 
     if (result != EXIT_SUCCESS)
         msg_err("Random test failed");

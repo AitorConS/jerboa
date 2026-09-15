@@ -217,7 +217,9 @@ func TestResolvesWithinDir(t *testing.T) {
 	// missing tail rather than failing outright.
 	resolved, err := evalSymlinksLenient(filepath.Join(dir, "sysroot", "lib", "does", "not", "exist"))
 	require.NoError(t, err)
-	require.True(t, withinDir(dir, resolved))
+	realDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	require.True(t, withinDir(realDir, resolved))
 }
 
 // TestStore_Extract_CleansUpAfterFailure checks that an aborted extraction

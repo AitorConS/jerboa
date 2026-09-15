@@ -58,6 +58,10 @@ func TestResolveMkfs_UsesExistingToolsDir(t *testing.T) {
 	}
 
 	mkfs, err := ResolveMkfs(context.Background(), toolsDir, "")
+	if runtime.GOOS == "darwin" {
+		require.ErrorContains(t, err, "native ARM64 mkfs")
+		return
+	}
 	require.NoError(t, err)
 	require.NotNil(t, mkfs)
 

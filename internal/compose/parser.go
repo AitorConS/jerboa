@@ -15,6 +15,20 @@ func Parse(data []byte) (File, error) {
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return File{}, fmt.Errorf("compose parse: %w", err)
 	}
+	// Services without attachments join Compose's implicit default network.
+	for name, svc := range f.Services {
+		if len(svc.Networks) == 0 {
+			if f.Networks == nil {
+				f.Networks = map[string]Network{}
+			}
+			if _, ok := f.Networks["default"]; !ok {
+				f.Networks["default"] = Network{Driver: "bridge"}
+				f.ImplicitDefault = true
+			}
+			svc.Networks = []string{"default"}
+			f.Services[name] = svc
+		}
+	}
 	if err := validate(f); err != nil {
 		return File{}, err
 	}
@@ -39,6 +53,9 @@ func validate(f File) error {
 			if _, ok := f.Services[dep]; !ok {
 				return fmt.Errorf("compose: service %q depends_on unknown service %q", name, dep)
 			}
+		}
+		if len(svc.Networks) > 1 {
+			return fmt.Errorf("compose: service %q supports only one network interface", name)
 		}
 		for _, net := range svc.Networks {
 			if _, ok := f.Networks[net]; !ok {

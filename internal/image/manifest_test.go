@@ -2,8 +2,11 @@ package image
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	pkg "github.com/AitorConS/jerboa/internal/package"
 
 	"github.com/stretchr/testify/require"
 )
@@ -165,4 +168,28 @@ func TestConfig_zeroValues(t *testing.T) {
 	require.Empty(t, c.Memory)
 	require.Equal(t, 0, c.CPUs)
 	require.Nil(t, c.Env)
+}
+
+func TestManifestPlatformsAndPackageIdentity(t *testing.T) {
+	m := Manifest{SchemaVersion: 1, Name: "service", Tag: "v1", DiskDigest: "sha256:abc", DiskSize: 1, Architecture: "arm64", Platform: "linux/arm64"}
+	m.Packages = []pkg.Reference{{Source: "jerboa", Name: "runtime", Version: "1.2.3", Platform: "linux/arm64", SHA256: strings.Repeat("a", 64), Provenance: &pkg.Provenance{Kind: "docker", Reference: "local-image", ImageID: "sha256:abc"}}}
+	data, err := Marshal(m)
+	require.NoError(t, err)
+	parsed, err := Parse(data)
+	require.NoError(t, err)
+	require.Equal(t, m.Packages, parsed.Packages)
+	m.Architecture = "amd64"
+	data, err = Marshal(m)
+	require.NoError(t, err)
+	_, err = Parse(data)
+	require.ErrorContains(t, err, "contradictory")
+	m.Architecture = ""
+	m.Platform = ""
+	m.Packages = nil
+	data, err = Marshal(m)
+	require.NoError(t, err)
+	parsed, err = Parse(data)
+	require.NoError(t, err)
+	require.Empty(t, parsed.Architecture)
+	require.Nil(t, parsed.Packages)
 }

@@ -12,8 +12,8 @@ import (
 // loadOpsPackageEnvs reads the Env field from each ops package's package.manifest
 // and returns a merged map. Errors are silently skipped — missing or malformed
 // manifests must not block the build.
-func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
-	opsStore, err := openOpsStore()
+func loadOpsPackageEnvs(pkgRefs []string, archs ...string) map[string]string {
+	opsStore, err := openOpsStore(optionalPackageArch(archs))
 	if err != nil {
 		return nil
 	}
@@ -29,7 +29,7 @@ func loadOpsPackageEnvs(pkgRefs []string) map[string]string {
 		if parseErr != nil {
 			continue
 		}
-		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		target := manifest.LookupArch(id.Namespace, id.Name, id.Version, optionalPackageArch(archs))
 		if target == nil {
 			continue
 		}
@@ -71,8 +71,8 @@ func mergePkgRefs(fromConfig, fromFlags []string) []string {
 // already declares how it is meant to be started.
 // Errors are silently skipped — a missing or malformed manifest simply yields
 // no default, and the caller reports the actionable error.
-func loadOpsProgramDefaults(pkgRefs []string) (path string, args []string) {
-	opsStore, err := openOpsStore()
+func loadOpsProgramDefaults(pkgRefs []string, archs ...string) (path string, args []string) {
+	opsStore, err := openOpsStore(optionalPackageArch(archs))
 	if err != nil {
 		return "", nil
 	}
@@ -85,7 +85,7 @@ func loadOpsProgramDefaults(pkgRefs []string) (path string, args []string) {
 		if parseErr != nil {
 			continue
 		}
-		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		target := manifest.LookupArch(id.Namespace, id.Name, id.Version, optionalPackageArch(archs))
 		if target == nil {
 			continue
 		}
@@ -108,57 +108,22 @@ func loadOpsProgramDefaults(pkgRefs []string) (path string, args []string) {
 // resolvePackages downloads and extracts packages, returning the list of
 // package files that should be included in the manifest.
 func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation
-	pkgStore, err := pkg.NewStore(pkgStorePath())
+	store, err := pkg.NewStore(pkgStorePath())
 	if err != nil {
-		return nil, fmt.Errorf("open package store: %w", err)
+		return nil, err
 	}
-
-	idx, err := pkgStore.FetchIndexCached()
-	if err != nil {
-		return nil, fmt.Errorf("fetch package index: %w", err)
-	}
-
 	var files []pkg.File
 	for _, ref := range pkgRefs {
-		pkgName, pkgVer := parsePkgRef(ref)
-		target := idx.Latest(pkgName)
-		if target == nil {
-			return nil, fmt.Errorf("package %q not found in index", pkgName)
-		}
-		if pkgVer != "" {
-			found := false
-			versions, ok := idx.Packages[pkgName]
-			if ok {
-				for i := range versions {
-					if versions[i].Version == pkgVer {
-						target = &versions[i]
-						found = true
-						break
-					}
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("version %q of package %q not found", pkgVer, pkgName)
-			}
-		}
-		if !pkgStore.IsDownloaded(target.Name, target.Version) {
-			if err := pkgStore.Download(*target); err != nil {
-				return nil, fmt.Errorf("download package %s: %w", target.Name, err)
-			}
-			if err := pkgStore.SaveMeta(*target); err != nil {
-				return nil, fmt.Errorf("save package meta: %w", err)
-			}
-		}
-		if !pkgStore.IsExtracted(target.Name, target.Version) {
-			if err := pkgStore.Extract(*target); err != nil {
-				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
-			}
-		}
-		pkgFiles, err := pkgStore.ExtractedFileList(target.Name, target.Version)
+		name, version := parsePkgRef(ref)
+		resolved, identity, err := store.Resolve(name, version, "linux/"+packageArchFor(ctx))
 		if err != nil {
-			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
+			return nil, err
 		}
-		files = append(files, pkgFiles...)
+		for i := range resolved {
+			r := identity
+			resolved[i].Reference = &r
+		}
+		files = append(files, resolved...)
 	}
 	return files, nil
 }
@@ -166,7 +131,7 @@ func resolvePackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) 
 // resolveOpsPackages downloads and extracts ops packages, returning the list
 // of package files with proper guest paths (preserving sysroot/ hierarchy).
 func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(packageArchFor(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("open ops package store: %w", err)
 	}
@@ -183,7 +148,7 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, erro
 			return nil, fmt.Errorf("parse ops package %q: %w", ref, err)
 		}
 
-		target := manifest.Lookup(id.Namespace, id.Name, id.Version)
+		target := manifest.LookupArch(id.Namespace, id.Name, id.Version, packageArchFor(ctx))
 		if target == nil {
 			return nil, fmt.Errorf("ops package %q not found in manifest", ref)
 		}
@@ -202,6 +167,16 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, erro
 		pkgFiles, err := opsStore.ExtractedFiles(target.Namespace, target.Name, target.Version)
 		if err != nil {
 			return nil, fmt.Errorf("list ops package files %s: %w", target.Name, err)
+		}
+		if err := pkg.ValidateFiles(pkgFiles, "linux/"+packageArchFor(ctx)); err != nil {
+			return nil, err
+		}
+		archiveHash, err := opsStore.ArchiveSHA256(target.Namespace, target.Name, target.Version, target.SHA256)
+		if err != nil {
+			return nil, err
+		}
+		for i := range pkgFiles {
+			pkgFiles[i].Reference = &pkg.Reference{Source: "ops", Name: target.Namespace + "/" + target.Name, Version: target.Version, Platform: "linux/" + packageArchFor(ctx), SHA256: archiveHash}
 		}
 		files = append(files, pkgFiles...)
 	}
@@ -278,62 +253,10 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string, pkgSource strin
 		return resolveOpsAutoPackages(ctx, autoPkgs)
 	}
 
-	pkgStore, err := pkg.NewStore(pkgStorePath())
-	if err != nil {
-		return nil, fmt.Errorf("open package store: %w", err)
-	}
-
-	idx, err := pkgStore.FetchIndexCached()
-	if err != nil {
-		return nil, fmt.Errorf("fetch package index: %w", err)
-	}
-
-	var files []pkg.File
-	for _, ref := range autoPkgs {
-		pkgName, pkgVer := parsePkgRef(ref)
-		target := idx.Latest(pkgName)
-		if target == nil {
-			return nil, fmt.Errorf("package %q not found in index", pkgName)
-		}
-		if pkgVer != "" {
-			found := false
-			versions, ok := idx.Packages[pkgName]
-			if ok {
-				for i := range versions {
-					if versions[i].Version == pkgVer {
-						target = &versions[i]
-						found = true
-						break
-					}
-				}
-			}
-			if !found {
-				return nil, fmt.Errorf("version %q of package %q not found", pkgVer, pkgName)
-			}
-		}
-		if !pkgStore.IsDownloaded(target.Name, target.Version) {
-			if err := pkgStore.Download(*target); err != nil {
-				return nil, fmt.Errorf("download package %s: %w", target.Name, err)
-			}
-			if err := pkgStore.SaveMeta(*target); err != nil {
-				return nil, fmt.Errorf("save package meta: %w", err)
-			}
-		}
-		if !pkgStore.IsExtracted(target.Name, target.Version) {
-			if err := pkgStore.Extract(*target); err != nil {
-				return nil, fmt.Errorf("extract package %s: %w", target.Name, err)
-			}
-		}
-		pkgFiles, err := pkgStore.ExtractedFileList(target.Name, target.Version)
-		if err != nil {
-			return nil, fmt.Errorf("list package files %s: %w", target.Name, err)
-		}
-		files = append(files, pkgFiles...)
-	}
-	return files, nil
+	return resolvePackages(ctx, autoPkgs)
 }
 
-func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.OpsPackage {
+func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string, archs ...string) *pkg.OpsPackage {
 	// Build a list of name aliases to try: the ops ecosystem names the Python
 	// runtime "python3" rather than "python", so try both.
 	names := []string{name}
@@ -349,7 +272,7 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.O
 	namespaces := []string{"eyberg", "nanovms", "myuniverse"}
 	for _, alias := range names {
 		for _, ns := range namespaces {
-			if t := manifest.Lookup(ns, alias, version); t != nil {
+			if t := manifest.LookupArch(ns, alias, version, optionalPackageArch(archs)); t != nil {
 				return t
 			}
 		}
@@ -361,7 +284,7 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.O
 		for _, ns := range namespaces {
 			for i := range manifest.Packages {
 				p := &manifest.Packages[i]
-				if p.Namespace != ns || p.Name != alias {
+				if p.Namespace != ns || p.Name != alias || (p.Arch != "" && p.Arch != optionalPackageArch(archs) && (p.Arch != "x86_64" || optionalPackageArch(archs) != "amd64")) || (p.Arch == "" && optionalPackageArch(archs) != "amd64") {
 					continue
 				}
 				pv := strings.TrimPrefix(p.Version, "v")
@@ -375,7 +298,7 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string) *pkg.O
 }
 
 func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File, error) { //nolint:unparam // ctx reserved for future cancellation
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(packageArchFor(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("open ops package store: %w", err)
 	}
@@ -398,9 +321,9 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 			if pkgVer != "" && pkgVer != "latest" {
 				id.Version = pkgVer
 			}
-			target = manifest.Lookup(id.Namespace, id.Name, id.Version)
+			target = manifest.LookupArch(id.Namespace, id.Name, id.Version, packageArchFor(ctx))
 		} else {
-			target = lookupOpsPackage(manifest, pkgName, pkgVer)
+			target = lookupOpsPackage(manifest, pkgName, pkgVer, packageArchFor(ctx))
 		}
 		if target == nil {
 			return nil, fmt.Errorf("ops package %q not found in manifest (try --pkg eyberg/%s)", ref, pkgName)
@@ -421,7 +344,48 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 		if err != nil {
 			return nil, fmt.Errorf("list ops package files %s: %w", target.Name, err)
 		}
+		if err := pkg.ValidateFiles(pkgFiles, "linux/"+packageArchFor(ctx)); err != nil {
+			return nil, err
+		}
+		archiveHash, err := opsStore.ArchiveSHA256(target.Namespace, target.Name, target.Version, target.SHA256)
+		if err != nil {
+			return nil, err
+		}
+		for i := range pkgFiles {
+			pkgFiles[i].Reference = &pkg.Reference{Source: "ops", Name: target.Namespace + "/" + target.Name, Version: target.Version, Platform: "linux/" + packageArchFor(ctx), SHA256: archiveHash}
+		}
 		files = append(files, pkgFiles...)
 	}
 	return files, nil
+}
+
+// The target travels with a build context, without mutating process environment.
+type packagePlatformKey struct{}
+
+func packageArchFor(ctx context.Context) string {
+	if arch, ok := ctx.Value(packagePlatformKey{}).(string); ok {
+		return arch
+	}
+	return pkg.ArchSlug()
+}
+func optionalPackageArch(archs []string) string {
+	if len(archs) > 0 {
+		return archs[0]
+	}
+	return pkg.ArchSlug()
+}
+func packageReferences(files []pkg.File) []pkg.Reference {
+	refs := []pkg.Reference{}
+	seen := map[string]bool{}
+	for _, f := range files {
+		if f.Reference != nil {
+			r := *f.Reference
+			key := r.Source + "/" + r.Name + ":" + r.Version + "/" + r.Platform
+			if !seen[key] {
+				seen[key] = true
+				refs = append(refs, r)
+			}
+		}
+	}
+	return refs
 }

@@ -296,7 +296,13 @@ func TestNewBuilder(t *testing.T) {
 func writeELF(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "hello")
-	require.NoError(t, os.WriteFile(p, []byte{0x7f, 'E', 'L', 'F', 1, 2, 3, 4}, 0o755))
+	header := make([]byte, 64)
+	copy(header, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	header[16] = 2   // ET_EXEC
+	header[18] = 183 // EM_AARCH64
+	header[20] = 1   // EV_CURRENT
+	header[52] = 64  // ELF header size
+	require.NoError(t, os.WriteFile(p, header, 0o755))
 	return p
 }
 

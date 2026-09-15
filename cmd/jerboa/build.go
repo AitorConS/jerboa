@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"io"
 	"os"
@@ -74,6 +75,32 @@ project markers (go.mod, package.json, etc.).`,
 				return fmt.Errorf("build: stat %s: %w", srcPath, err)
 			}
 
+			// Package architecture must follow the requested guest, including
+			// binary builds, rather than the architecture of this CLI process.
+			packageArch := pkg.ArchSlug()
+			if platform != "" {
+				if err := pkg.ValidatePlatform(platform); err != nil {
+					return err
+				}
+				target, err := builder.ParsePlatform(platform)
+				if err != nil {
+					return err
+				}
+				packageArch = target.Arch
+			} else if !info.IsDir() {
+				if f, err := elf.Open(srcPath); err == nil {
+					switch f.Machine {
+					case elf.EM_X86_64:
+						packageArch = "amd64"
+					case elf.EM_AARCH64:
+						packageArch = "arm64"
+					}
+					f.Close()
+				}
+			}
+			platform = "linux/" + packageArch
+			cmd.SetContext(context.WithValue(cmd.Context(), packagePlatformKey{}, packageArch))
+
 			// Writers for build output: info messages and subprocess output.
 			infoW := io.Writer(io.Discard)
 			if *verbose {
@@ -132,7 +159,7 @@ project markers (go.mod, package.json, etc.).`,
 			// Seed image env vars from ops package manifests (e.g. HOME, PYTHONPATH set by eyberg/python).
 			pkgEnv := make(map[string]string)
 			if pkgSource == "ops" && len(pkgs) > 0 {
-				for k, v := range loadOpsPackageEnvs(pkgs) {
+				for k, v := range loadOpsPackageEnvs(pkgs, packageArchFor(cmd.Context())) {
 					pkgEnv[k] = v
 				}
 			}
@@ -211,11 +238,23 @@ project markers (go.mod, package.json, etc.).`,
 				runPorts = cfg.Run.Ports
 			}
 
+			// Build-context precedence: the project's own files shadow package
+			// files at the same guest path. Resolve it here, before anything
+			// looks at the list, so validation, preflight and the uploaded tar
+			// all see exactly what lands in the image. Provenance is read first:
+			// a package whose files end up fully shadowed still took part in the
+			// build and stays recorded in the manifest.
+			pkgRefs := packageReferences(pkgFiles)
+			pkgFiles = pkg.ApplyContextPrecedence(pkgFiles)
+
 			// Preflight: catch at build time what would otherwise be a cryptic
 			// boot failure inside the guest (dynamic binary without its loader,
 			// missing shared libraries, absent entrypoint script...).
+			if _, err := pkg.ValidateImage(binaryPath, programPath, pkgFiles, "linux/"+packageArchFor(cmd.Context())); err != nil {
+				return fmt.Errorf("build: %w", err)
+			}
 			if !noPreflight {
-				findings := preflight.CheckImage(binaryPath, pkgFiles, entrypoint)
+				findings := preflight.CheckImagePlatform(binaryPath, pkgFiles, entrypoint, programPath, "linux/"+packageArchFor(cmd.Context()))
 				if len(findings) > 0 {
 					fmt.Fprintf(cmd.ErrOrStderr(), "Preflight found problems with the image contents:\n%s", preflight.Format(findings))
 				}
@@ -235,7 +274,8 @@ project markers (go.mod, package.json, etc.).`,
 			pr := buildContextReader(binaryPath, pkgFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
-				Name:        name,
+				Name:     name,
+				Platform: "linux/" + packageArchFor(cmd.Context()), Packages: pkgRefs,
 				Tag:         tag,
 				Program:     buildProgramPath,
 				ProgramPath: programPath,
@@ -281,7 +321,7 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
-	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip the pre-build image checks (ELF architecture, shared library closure, entrypoint presence)")
+	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip optional CLI preflight diagnostics (ELF/platform and final guest validation remain mandatory)")
 	cmd.Flags().BoolVar(&smoke, "smoke", false, "boot the image once after building to verify it starts (stops and removes the test VM afterwards)")
 	return cmd
 }
@@ -395,7 +435,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 			// ops package itself declares in its package.manifest, so e.g.
 			// `jerboa build . --lang raw --pkg eyberg/mysql` works with zero config.
 			if progPath == "" && pkgSource == "ops" && len(userPkgs) > 0 {
-				progPath, progArgs = loadOpsProgramDefaults(userPkgs)
+				progPath, progArgs = loadOpsProgramDefaults(userPkgs, packageArchFor(cmd.Context()))
 				if progPath != "" {
 					fmt.Fprintf(infoW, "using program from ops package manifest: %s %s\n", progPath, strings.Join(progArgs, " "))
 				}
@@ -425,7 +465,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 
 			// Merge env from auto-resolved ops packages, then driver (driver takes priority).
 			if pkgSource == "ops" && len(autoPkgs) > 0 {
-				for k, v := range loadOpsPackageEnvs(autoPkgs) {
+				for k, v := range loadOpsPackageEnvs(autoPkgs, packageArchFor(cmd.Context())) {
 					env[k] = v
 				}
 			}
@@ -514,8 +554,16 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			if prev.binaryPath == "" {
 				return "", nil, false, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
 			}
+			var reference *pkg.Reference
+			for _, f := range prev.pkgFiles {
+				if f.HostPath == prev.binaryPath {
+					reference = f.Reference
+					break
+				}
+			}
 			stagePkgs = append(stagePkgs, pkg.File{
 				HostPath:  prev.binaryPath,
+				Reference: reference,
 				GuestPath: copyFromGuestPath(cf, prev.binaryPath),
 			})
 		}

@@ -21,10 +21,14 @@ for meta_path in metadata:
     name, version = package["name"], package["version"]
     if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in name + version):
         raise SystemExit("Invalid package name/version")
-    filename = f"{name}-{version}.tar.gz"
+    platform = package.get("platform", "")
+    if platform and platform not in ("linux/arm64", "linux/amd64"):
+        raise SystemExit("Invalid package platform")
+    suffix = "-" + platform.replace("/", "-") if platform else ""
+    filename = f"{name}-{version}{suffix}.tar.gz"
     shutil.copyfile(archive, destination / filename)
     package["url"] = f"https://github.com/{repository}/releases/download/pkg-index/{filename}"
     versions = index["packages"].setdefault(name, [])
-    versions[:] = [p for p in versions if p["version"] != version]
+    versions[:] = [p for p in versions if (p["version"], p.get("platform", "")) != (version, platform)]
     versions.append(package)
 index_path.write_text(json.dumps(index, indent=2) + "\n")

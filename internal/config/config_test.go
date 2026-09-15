@@ -21,9 +21,14 @@ func setHome(t *testing.T) string {
 
 func TestDefaultEndpoint(t *testing.T) {
 	ep := DefaultEndpoint()
-	if runtime.GOOS == "windows" {
+	switch runtime.GOOS {
+	case "windows":
 		require.Equal(t, "tcp://127.0.0.1:7890", ep)
-	} else {
+	case "darwin":
+		home, err := os.UserHomeDir()
+		require.NoError(t, err)
+		require.Equal(t, "unix://"+filepath.Join(home, ".jerboa", "jerboad.sock"), ep)
+	default:
 		require.Equal(t, "unix:///var/run/jerboad.sock", ep)
 	}
 }

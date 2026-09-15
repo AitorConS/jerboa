@@ -312,3 +312,21 @@ func TestParseComposePortSpec_Invalid(t *testing.T) {
 	_, err := parseComposePortSpec("bad")
 	require.Error(t, err)
 }
+
+func TestComposePreservesBindAddress(t *testing.T) {
+	pm, err := parseComposePortSpec("127.0.0.1:18080:8080/udp")
+	require.NoError(t, err)
+	require.Equal(t, "127.0.0.1", pm.BindAddr)
+	require.Equal(t, "udp", pm.Protocol)
+}
+
+func TestImplicitComposeNetworksAreProjectScoped(t *testing.T) {
+	first, err := compose.Parse([]byte("services:\n  web:\n    image: app\n"))
+	require.NoError(t, err)
+	second, err := compose.Parse([]byte("services:\n  web:\n    image: app\n"))
+	require.NoError(t, err)
+	scopeImplicitComposeNetwork(&first, "/tmp/first/compose.yaml")
+	scopeImplicitComposeNetwork(&second, "/tmp/second/compose.yaml")
+	require.NotEqual(t, first.Services["web"].Networks, second.Services["web"].Networks)
+	require.NotContains(t, first.Networks, "default")
+}

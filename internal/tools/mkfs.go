@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"debug/elf"
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/image"
@@ -39,9 +41,19 @@ func directFunc(mkfsBin, bootImg, kernelImg string) image.MkfsFunc {
 		if manifest == "" {
 			manifest = buildNanosManifest(absBin)
 		}
+		selectedBoot, selectedKernel := bootImg, kernelImg
+		if runtime.GOOS == "darwin" {
+			if f, err := elf.Open(binaryPath); err == nil {
+				if f.Machine == elf.EM_X86_64 {
+					selectedBoot = filepath.Join(filepath.Dir(bootImg), "x86", "boot.img")
+					selectedKernel = filepath.Join(filepath.Dir(kernelImg), "x86", "kernel.img")
+				}
+				f.Close()
+			}
+		}
 		cmd := exec.CommandContext(ctx, mkfsBin,
-			"-b", bootImg,
-			"-k", kernelImg,
+			"-b", selectedBoot,
+			"-k", selectedKernel,
 			imgPath,
 		)
 		cmd.Stdin = strings.NewReader(manifest)

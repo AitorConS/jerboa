@@ -95,7 +95,7 @@ func TestAuth_BuildAuthenticatesDedicatedConn(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = client.Close() }()
 
-	ctxTar := buildContextTar(t, map[string][]byte{"app": {0x7f, 'E', 'L', 'F', 0, 1}})
+	ctxTar := buildContextTar(t, map[string][]byte{"app": validBuildELF()})
 	res, err := client.ImageBuild(context.Background(), api.BuildParams{
 		Name: "demo", Tag: "v1", Program: "app",
 	}, ctxTar)

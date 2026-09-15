@@ -1,0 +1,222 @@
+diff --git a/src/backend/libpq/be-secure-openssl.c b/src/backend/libpq/be-secure-openssl.c
+index 664e59b..1e30ce2 100644
+--- a/src/backend/libpq/be-secure-openssl.c
++++ b/src/backend/libpq/be-secure-openssl.c
+@@ -39,6 +39,8 @@
+ #include "postgres.h"
+ 
+ #include <sys/stat.h>
++#include <sys/utsname.h>
++#include <pthread.h>
+ #include <signal.h>
+ #include <fcntl.h>
+ #include <ctype.h>
+@@ -84,6 +86,8 @@ static const char *SSLerrmessage(unsigned long ecode);
+ static char *X509_NAME_to_cstring(X509_NAME *name);
+ 
+ static SSL_CTX *SSL_context = NULL;
++static pthread_mutex_t SSL_context_mutex = PTHREAD_MUTEX_INITIALIZER;
++static bool SSL_context_has_ca = false;
+ static bool SSL_initialized = false;
+ static bool ssl_passwd_cb_called = false;
+ 
+@@ -139,6 +143,9 @@ be_tls_init(bool isServerStart)
+ 	STACK_OF(X509_NAME) *root_cert_list = NULL;
+ 	SSL_CTX    *context;
+ 	struct stat buf;
++	struct utsname system_name;
++	/* Nanos isolates the application at the VM boundary, not with Unix users. */
++	bool nanos = uname(&system_name) == 0 && strcmp(system_name.sysname, "Nanos") == 0;
+ 
+ 	/* This stuff need be done only once. */
+ 	if (!SSL_initialized)
+@@ -168,6 +175,21 @@ be_tls_init(bool isServerStart)
+ 		goto error;
+ 	}
+ 
++	if (SSL_CTX_set_min_proto_version(context, TLS1_2_VERSION) != 1)
++	{
++		ereport(isServerStart ? FATAL : LOG,
++				(errmsg("could not require TLS 1.2 or later")));
++		goto error;
++	}
++	/* Initialize the immutable BIO method before publishing to backend threads. */
++	if (my_BIO_s_socket() == NULL)
++	{
++		ereport(isServerStart ? FATAL : LOG,
++				(errmsg("could not initialize SSL socket method")));
++		goto error;
++	}
++	SSL_CTX_set_info_callback(context, info_cb);
++
+ 	/*
+ 	 * Disable OpenSSL's moving-write-buffer sanity check, because it causes
+ 	 * unnecessary failures in nonblocking send cases.
+@@ -220,7 +242,7 @@ be_tls_init(bool isServerStart)
+ 	 * XXX surely we can check this on Windows somehow, too.
+ 	 */
+ #if !defined(WIN32) && !defined(__CYGWIN__)
+-	if (buf.st_uid != geteuid() && buf.st_uid != 0)
++	if (!nanos && buf.st_uid != geteuid() && buf.st_uid != 0)
+ 	{
+ 		ereport(isServerStart ? FATAL : LOG,
+ 				(errcode(ERRCODE_CONFIG_FILE_ERROR),
+@@ -242,8 +264,8 @@ be_tls_init(bool isServerStart)
+ 	 * permission check in postmaster.c)
+ 	 */
+ #if !defined(WIN32) && !defined(__CYGWIN__)
+-	if ((buf.st_uid == geteuid() && buf.st_mode & (S_IRWXG | S_IRWXO)) ||
+-		(buf.st_uid == 0 && buf.st_mode & (S_IWGRP | S_IXGRP | S_IRWXO)))
++	if (!nanos && ((buf.st_uid == geteuid() && buf.st_mode & (S_IRWXG | S_IRWXO)) ||
++		(buf.st_uid == 0 && buf.st_mode & (S_IWGRP | S_IXGRP | S_IRWXO))))
+ 	{
+ 		ereport(isServerStart ? FATAL : LOG,
+ 				(errcode(ERRCODE_CONFIG_FILE_ERROR),
+@@ -391,6 +413,7 @@ be_tls_init(bool isServerStart)
+ 	/*
+ 	 * Success!  Replace any existing SSL_context.
+ 	 */
++	pthread_mutex_lock(&SSL_context_mutex);
+ 	if (SSL_context)
+ 		SSL_CTX_free(SSL_context);
+ 
+@@ -403,6 +426,8 @@ be_tls_init(bool isServerStart)
+ 		ssl_loaded_verify_locations = true;
+ 	else
+ 		ssl_loaded_verify_locations = false;
++	SSL_context_has_ca = ssl_loaded_verify_locations;
++	pthread_mutex_unlock(&SSL_context_mutex);
+ 
+ 	return 0;
+ 
+@@ -418,10 +443,23 @@ error:
+ void
+ be_tls_destroy(void)
+ {
++	pthread_mutex_lock(&SSL_context_mutex);
+ 	if (SSL_context)
+ 		SSL_CTX_free(SSL_context);
+ 	SSL_context = NULL;
+ 	ssl_loaded_verify_locations = false;
++	SSL_context_has_ca = false;
++	pthread_mutex_unlock(&SSL_context_mutex);
++}
++
++bool
++be_tls_available(void)
++{
++	bool available;
++	pthread_mutex_lock(&SSL_context_mutex);
++	available = SSL_context != NULL;
++	pthread_mutex_unlock(&SSL_context_mutex);
++	return available;
+ }
+ 
+ /*
+@@ -438,15 +476,21 @@ be_tls_open_server(Port *port)
+ 	Assert(!port->ssl);
+ 	Assert(!port->peer);
+ 
++	pthread_mutex_lock(&SSL_context_mutex);
+ 	if (!SSL_context)
+ 	{
++		pthread_mutex_unlock(&SSL_context_mutex);
+ 		ereport(COMMERROR,
+ 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+ 				 errmsg("could not initialize SSL connection: SSL context not set up")));
+ 		return -1;
+ 	}
+ 
+-	if (!(port->ssl = SSL_new(SSL_context)))
++	/* SSL_new retains the context, so reload may safely replace it afterward. */
++	port->ssl = SSL_new(SSL_context);
++	ssl_loaded_verify_locations = SSL_context_has_ca;
++	pthread_mutex_unlock(&SSL_context_mutex);
++	if (!port->ssl)
+ 	{
+ 		ereport(COMMERROR,
+ 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+@@ -589,9 +633,6 @@ aloop:
+ 			(errmsg("SSL connection from \"%s\"",
+ 					port->peer_cn ? port->peer_cn : "(anonymous)")));
+ 
+-	/* set up debugging/info callback */
+-	SSL_CTX_set_info_callback(SSL_context, info_cb);
+-
+ 	return 0;
+ }
+ 
+diff --git a/src/backend/postmaster/postmaster.c b/src/backend/postmaster/postmaster.c
+index 306632f..283a43c 100644
+--- a/src/backend/postmaster/postmaster.c
++++ b/src/backend/postmaster/postmaster.c
+@@ -1953,7 +1953,7 @@ ProcessStartupPacket(Port *port, bool SSLdone)
+ 
+ #ifdef USE_SSL
+ 		/* No SSL when disabled or on Unix sockets */
+-		if (!LoadedSSL || IS_AF_UNIX(port->laddr.addr.ss_family))
++		if (!be_tls_available() || IS_AF_UNIX(port->laddr.addr.ss_family))
+ 			SSLok = 'N';
+ 		else
+ 			SSLok = 'S';		/* Support for SSL */
+diff --git a/src/backend/utils/adt/misc.c b/src/backend/utils/adt/misc.c
+index 1980ff5..224f0ac 100644
+--- a/src/backend/utils/adt/misc.c
++++ b/src/backend/utils/adt/misc.c
+@@ -329,8 +329,10 @@ pg_terminate_backend(PG_FUNCTION_ARGS)
+ Datum
+ pg_reload_conf(PG_FUNCTION_ARGS)
+ {
+-	if (kill(PostmasterPid, SIGHUP))
++	int rc = pthread_kill(PostmasterPid, SIGHUP);
++	if (rc != 0)
+ 	{
++		errno = rc;
+ 		ereport(WARNING,
+ 				(errmsg("failed to send signal to postmaster: %m")));
+ 		PG_RETURN_BOOL(false);
+diff --git a/src/backend/utils/misc/guc-file.c b/src/backend/utils/misc/guc-file.c
+index 1338c47..97ec811 100644
+--- a/src/backend/utils/misc/guc-file.c
++++ b/src/backend/utils/misc/guc-file.c
+@@ -279,9 +279,9 @@ struct yy_buffer_state
+ #endif /* !YY_STRUCT_YY_BUFFER_STATE */
+ 
+ /* Stack of input buffers. */
+-static size_t yy_buffer_stack_top = 0; /**< index of top of stack. */
+-static size_t yy_buffer_stack_max = 0; /**< capacity of stack. */
+-static YY_BUFFER_STATE * yy_buffer_stack = 0; /**< Stack as an array. */
++static session_local size_t yy_buffer_stack_top = 0; /**< index of top of stack. */
++static session_local size_t yy_buffer_stack_max = 0; /**< capacity of stack. */
++static session_local YY_BUFFER_STATE * yy_buffer_stack = 0; /**< Stack as an array. */
+ 
+ /* We provide macros for accessing buffer states in case in the
+  * future we want to put the buffer states in a more general
+@@ -515,8 +515,8 @@ static yyconst flex_int16_t yy_chk[168] =
+        40,   40,   40,   40,   40,   40,   40
+     } ;
+ 
+-static yy_state_type yy_last_accepting_state;
+-static char *yy_last_accepting_cpos;
++static session_local yy_state_type yy_last_accepting_state;
++static session_local char *yy_last_accepting_cpos;
+ 
+ extern session_local int GUC_yy_flex_debug;
+ session_local int GUC_yy_flex_debug = 0;
+@@ -2948,4 +2948,3 @@ GUC_scanstr(const char *s)
+ 
+ 	return newStr;
+ }
+-
+diff --git a/src/include/libpq/libpq.h b/src/include/libpq/libpq.h
+index 87ea508..fc6c8d0 100644
+--- a/src/include/libpq/libpq.h
++++ b/src/include/libpq/libpq.h
+@@ -83,6 +83,7 @@ extern session_local char *ssl_crl_file;
+ extern session_local char *ssl_dh_params_file;
+ 
+ extern int	secure_initialize(bool isServerStart);
++extern bool be_tls_available(void);
+ extern bool secure_loaded_verify_locations(void);
+ extern void secure_destroy(void);
+ extern int	secure_open_server(Port *port);
