@@ -106,15 +106,13 @@ For networking, volumes, DNS, and compose stacks, see
 
 ### macOS Apple Silicon
 
-The native Firecracker package requires macOS 26+. Once a macOS release is
-published, the same installer selects its signed package automatically:
-
-```sh
-curl -fsSL https://jerboa.dev/install.sh | bash
-```
-
-Run without sudo on macOS. The package includes Firecracker, libraries, kernel
-and native tools, and starts the user daemon through launchd. See
+Native Firecracker requires macOS 26+. Releases publish a self-contained Jerboa
+Desktop DMG (the `desktop` component's `darwin-arm64` asset). Its app bundles
+the CLI, daemon, Firecracker, libraries and kernel tools, starts the user daemon
+through launchd and offers to add `jerboa` to `/usr/local/bin`. It is not
+Developer ID signed or notarized yet, so allow its first launch in System
+Settings → Privacy & Security. The macOS path of `install.sh` needs a signed
+installer package, which releases do not publish yet. See
 [Firecracker installation and source builds](docs/macos-firecracker.md) and
 [release infrastructure requirements](docs/macos-distribution.md).
 

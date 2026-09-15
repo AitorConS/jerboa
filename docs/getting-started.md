@@ -61,17 +61,16 @@ Firecracker still requires KVM.
 
 ### macOS Apple Silicon
 
-On macOS 26+, use a native ARM64 terminal and run without sudo:
+On macOS 26+, download the release's Jerboa Desktop DMG
+(`https://releases.jerboa.dev/desktop/vVERSION/jerboa-desktop-VERSION-macos-arm64.dmg`),
+move the app to Applications and open it. It bundles the complete Firecracker
+runtime, starts the launchd daemon and offers to add the CLI to
+`/usr/local/bin`. The DMG is not Developer ID signed or notarized yet: allow the
+first launch in System Settings → Privacy & Security.
 
-```sh
-curl -fsSL https://jerboa.dev/install.sh | bash
-```
-
-The script detects macOS, verifies the signed complete Firecracker package,
-installs its native tools and starts the launchd daemon. It requires a release
-containing the `macos` component; older Linux-only releases are rejected.
-Until the first native package is published, use the
-[source build]({% link macos-firecracker.md %}).
+`install.sh` on macOS requires a release containing the signed `macos` package
+component, which is not published yet, so it currently rejects macOS. Use the
+DMG or the [source build]({% link macos-firecracker.md %}).
 
 ### Linux
 
