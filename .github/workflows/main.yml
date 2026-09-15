@@ -142,7 +142,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Check go.mod / go.sum are tidy
@@ -166,13 +166,16 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          version: v2.12.2
+          # golangci-lint supports the toolchain it was built with and the one
+          # before it, so a Go bump needs a linter that knows the new release:
+          # v2.12.2 predates Go 1.27 and cannot read its export data.
+          version: v2.13.2
 
   unit-tests:
     name: Unit Tests
@@ -187,7 +190,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Run unit tests
@@ -230,7 +233,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: govulncheck
@@ -251,7 +254,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Fuzz every target for a short burst
@@ -312,7 +315,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -342,7 +345,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -375,7 +378,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           # Self-hosted runner: the module cache persists on disk between runs,
           # so setup-go's tarball restore would extract over existing read-only
           # files and fail ("tar: Cannot open: File exists").
@@ -565,7 +568,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Install kernel toolchain deps
@@ -619,7 +622,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Read version
@@ -679,7 +682,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Read version
@@ -905,7 +908,7 @@ jobs:
           path: firecracker-macos
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.0'
+          go-version: '1.27.1'
           cache: false
       - name: Check release runner prerequisites
         working-directory: jerboa
@@ -1012,7 +1015,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Build release tooling
@@ -1183,7 +1186,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.13'
+          go-version: '1.27.1'
           cache: true
 
       - name: Download coverage artifact

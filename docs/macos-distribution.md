@@ -22,7 +22,7 @@ notarization check prevents the release channel from advancing.
 
 Provision a dedicated runner with labels `self-hosted`, `macOS`, `ARM64` and
 `hvf-macos26`. It needs macOS 26+, usable Hypervisor.framework, Apple Command
-Line Tools, ARM64 ELF binutils on PATH, and Cargo/rustup. CI installs Go 1.26.0
+Line Tools, ARM64 ELF binutils on PATH, and Cargo/rustup. CI installs Go 1.27.1
 and selects Rust 1.97.0. The fork is checked out at immutable commit
 `6750fc374d4758a8181d75e5299e7137a110dd41`; update that pin together with the
 integration tests when changing the fork API. Native dependencies are built
