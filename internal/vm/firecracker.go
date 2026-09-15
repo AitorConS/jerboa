@@ -22,10 +22,17 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/network"
+	"github.com/AitorConS/jerboa/internal/snapshot"
 )
 
 // FCOption configures a FirecrackerManager.
 type FCOption func(*FirecrackerManager)
+
+// WithFCSecurity supplies the macOS VMM's security JSON object. Published port
+// permissions are added per VM; outbound permissions remain explicitly chosen.
+func WithFCSecurity(data []byte) FCOption {
+	return func(m *FirecrackerManager) { m.fcSecurity = append([]byte(nil), data...) }
+}
 
 // WithFCStore injects a custom Store implementation.
 func WithFCStore(s Store) FCOption {
@@ -46,7 +53,7 @@ func WithFCMetrics(s MetricsSink) FCOption {
 // configured via a JSON config file and managed via the Firecracker REST API
 // over a per-VM Unix socket.
 //
-// Limitations vs. QEMUManager:
+// Linux limitations vs. QEMUManager (macOS uses the separate HVF adapter):
 //   - TAP networking only (like QEMU now): port maps require a NetworkName and
 //     are rejected at Start otherwise. Publishing is done by the userspace
 //     forwarder, shared with QEMU.
@@ -55,23 +62,30 @@ func WithFCMetrics(s MetricsSink) FCOption {
 //   - The kernel image must be a flat ELF vmlinux compatible with Firecracker
 //     (different from the BIOS-bootable kernel.img used by QEMU).
 type FirecrackerManager struct {
+	nativeNetworkHost
 	store       Store
 	fcBin       string
 	kernelImage string
+	fcSecurity  json.RawMessage
 	mkCmd       CommandFunc
 	hchecker    *HealthChecker
-	// platform hooks — overridden on Windows to route through WSL2
+	// Platform hooks for the VMM control and runtime paths.
 	vmSockPath         func(id string) string            // socket path as seen by the firecracker process
 	cfgPathForProcess  func(path string) string          // translates config file path for the FC process
 	shutdownAPI        func(sockPath string) error       // calls Firecracker's SendCtrlAltDel API
 	rewriteConfigPaths func(cfg *fcVMConfig)             // rewrites paths inside the FC JSON config
 	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
+	shutdownGrace      time.Duration                     // outer bound after requesting guest shutdown
 	metrics            MetricsSink
 	// applyLimits places the firecracker process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
 	applyLimits func(v *VM, pid int) error
+	// claims coordinates snapshot create/restore with stop, kill, remove and
+	// automatic restart; snapshots is nil when the snapshot store is disabled.
+	claims    lifecycleClaims
+	snapshots *snapshot.Store
 }
 
 // NewFirecrackerManager returns a FirecrackerManager.
@@ -90,6 +104,7 @@ func NewFirecrackerManager(fcBin, kernelImage string, opts ...FCOption) *Firecra
 		rewriteConfigPaths: func(*fcVMConfig) {},
 		vmmLogPath:         func(id string) string { return filepath.Join(os.TempDir(), "fc-"+id+"-vmm.log") },
 		readVMMLog:         os.ReadFile,
+		shutdownGrace:      gracePeriod,
 		applyLimits:        defaultApplyLimits,
 	}
 	platformInitFC(m)
@@ -117,11 +132,12 @@ func (m *FirecrackerManager) Create(_ context.Context, cfg Config) (*VM, error) 
 // Start writes a Firecracker config file and launches the firecracker process.
 // The VM boots immediately upon process start (no separate InstanceStart call needed).
 func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("Firecracker requires Linux/KVM; use QEMU/HVF on macOS")
-	}
-	v, err := m.store.Resolve(id)
+	v, release, err := m.claimVM(id, "start")
 	if err != nil {
+		return fmt.Errorf("firecracker start %s: %w", id, err)
+	}
+	defer release()
+	if err := m.validateFCPlatform(v.Cfg); err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 	if err := validatePortNetwork(v.Cfg); err != nil {
@@ -134,14 +150,14 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// Give this VM its own uniquely named TAP device. Several VMs can share a
 	// network (and its bridge), but a TAP can be enslaved to only one VM, so the
 	// device name must be per-VM rather than per-network.
-	if v.Cfg.NetworkName != "" && v.Cfg.TapName == "" {
+	if runtime.GOOS != "darwin" && v.Cfg.NetworkName != "" && v.Cfg.TapName == "" {
 		v.Cfg.TapName = tapDeviceName(v.ID)
 	}
 
 	// Firecracker, unlike QEMU, does not create the tap or wire the bridge: it
 	// opens an existing tap by name. Set up the persistent tap + bridge here,
 	// before launching, so the guest is reachable on the host network.
-	if v.Cfg.NetworkName != "" {
+	if runtime.GOOS != "darwin" && v.Cfg.NetworkName != "" {
 		if err := setupTAPNetwork(v.Cfg); err != nil {
 			slog.Warn("firecracker start: network setup failed", "vm_id", id, "err", err)
 		}
@@ -158,6 +174,18 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}
 
+	cleanup, err := m.prepareFCHost(v)
+	if err != nil {
+		_ = v.transition(StateStopped)
+		_ = os.Remove(rootfs)
+		return fmt.Errorf("firecracker host network: %w", err)
+	}
+	hostOwned := true
+	defer func() {
+		if hostOwned && cleanup != nil {
+			cleanup()
+		}
+	}()
 	sockPath := m.vmSockPath(id)
 	cfgPath, err := m.writeFCConfig(id, v.Cfg, rootfs)
 	if err != nil {
@@ -165,6 +193,12 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		_ = os.Remove(rootfs)
 		return fmt.Errorf("firecracker start %s: write config: %w", id, err)
 	}
+	configOwned := true
+	defer func() {
+		if configOwned {
+			cleanupFCConfig(cfgPath)
+		}
+	}()
 
 	// --log-path separates Firecracker's VMM log lines from stdout so only the
 	// VM serial console reaches logBuf. If the VM crashes with empty logs,
@@ -179,7 +213,16 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		_ = os.Remove(rootfs)
 		return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
 	}
+	if err := m.checkFCConfig(ctx, cfgPath); err != nil {
+		_ = v.transition(StateStopped)
+		_ = os.Remove(rootfs)
+		_ = os.Remove(vmmLog)
+		return fmt.Errorf("firecracker start %s: %w", id, err)
+	}
 	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", m.cfgPathForProcess(cfgPath), "--log-path", vmmLog)
+	if runtime.GOOS == "darwin" {
+		cmd = m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", cfgPath)
+	}
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
@@ -192,6 +235,9 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
+	if runtime.GOOS == "darwin" {
+		cmd.Stderr = &v.logBuf
+	}
 
 	if err := cmd.Start(); err != nil {
 		_ = v.transition(StateStopped)
@@ -199,10 +245,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		_ = os.Remove(rootfs)
 		return fmt.Errorf("firecracker start %s: launch: %w", id, err)
 	}
+	configOwned = false
+	hostOwned = false
 
 	now := time.Now()
 	v.mu.Lock()
 	v.proc = &osProcess{cmd.Process}
+	v.pid = cmd.Process.Pid
 	v.StartedAt = &now
 	v.mu.Unlock()
 
@@ -210,9 +259,8 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// same as the QEMU backend. Without this the VM reported the "fallback"
 	// source with zero CPU/mem/net counters.
 	if newStatsCollector != nil {
-		v.SetStatsProvider(func() RuntimeStats {
-			return newStatsCollector(cmd.Process.Pid, v).Collect()
-		})
+		collector := newStatsCollector(cmd.Process.Pid, v)
+		v.SetStatsProvider(collector.Collect)
 	}
 
 	// abort tears down a process whose post-launch setup failed, before the VM is
@@ -223,6 +271,10 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		v.SetExplicitStop()
 		_ = cmd.Process.Kill()
 		go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
+	}
+	if err := awaitFCReady(ctx, sockPath); err != nil {
+		abort()
+		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
 
 	// Resource limits are applied only when explicitly requested. If they cannot
@@ -247,7 +299,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// A published port that never binds is a broken run, so a port-forwarder start
 	// failure FAILS the run instead of leaving a "running" VM whose published port
 	// silently does not work.
-	if len(v.Cfg.PortMaps) > 0 {
+	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS == "linux" {
 		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
@@ -258,8 +310,9 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		v.mu.Unlock()
 	}
 
-	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
+	prepareNativeFCHealth(v)
 	m.hchecker.Start(ctx, v)
+	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
 	// Watch the boot log for a volume that fails to mount, so the silent
 	// data-loss case surfaces as a visible warning instead of vanishing writes.
 	if len(v.Cfg.Volumes) > 0 {
@@ -271,10 +324,11 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 // Stop gracefully shuts down the VM via Firecracker's SendCtrlAltDel API action,
 // falling back to SIGTERM → SIGKILL after gracePeriod.
 func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
-	v, err := m.store.Resolve(id)
+	v, release, err := m.claimVM(id, "stop")
 	if err != nil {
 		return fmt.Errorf("firecracker stop %s: %w", id, err)
 	}
+	defer release()
 	// Stopping an already-stopped VM is a no-op (idempotent), like `docker stop`.
 	if v.GetState() == StateStopped {
 		return nil
@@ -293,8 +347,9 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 
-	if err := m.shutdownAPI(m.vmSockPath(id)); err != nil {
-		slog.Debug("firecracker stop: SendCtrlAltDel failed, falling back to SIGTERM", "vm_id", id, "err", err)
+	// id may be a name or ID prefix; the API socket is named after the resolved ID.
+	if err := m.shutdownAPI(m.vmSockPath(v.ID)); err != nil {
+		slog.Debug("firecracker stop: SendCtrlAltDel failed, falling back to SIGTERM", "vm_id", v.ID, "err", err)
 		if sigErr := proc.signal(syscall.SIGTERM); sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
 			_ = proc.kill()
 			return nil
@@ -304,7 +359,7 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 	select {
 	case <-v.Done():
 		return nil
-	case <-time.After(gracePeriod):
+	case <-time.After(m.shutdownGrace):
 	case <-ctx.Done():
 	}
 	if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
@@ -315,10 +370,11 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 
 // Kill immediately terminates the firecracker process.
 func (m *FirecrackerManager) Kill(_ context.Context, id string) error {
-	v, err := m.store.Resolve(id)
+	v, release, err := m.claimVM(id, "kill")
 	if err != nil {
 		return fmt.Errorf("firecracker kill %s: %w", id, err)
 	}
+	defer release()
 	// Killing an already-stopped VM is a no-op (idempotent).
 	if v.GetState() == StateStopped {
 		return nil
@@ -342,40 +398,22 @@ func (m *FirecrackerManager) Kill(_ context.Context, id string) error {
 }
 
 // Signal sends sig to the VM. SIGKILL kills the host process immediately;
-// all other signals trigger a graceful SendCtrlAltDel via the Firecracker API,
-// falling back to an OS-level signal on failure.
-func (m *FirecrackerManager) Signal(_ context.Context, id string, sig os.Signal) error {
-	v, err := m.store.Resolve(id)
-	if err != nil {
-		return fmt.Errorf("firecracker signal %s: %w", id, err)
-	}
-	v.mu.RLock()
-	proc := v.proc
-	v.mu.RUnlock()
-	if proc == nil {
-		return fmt.Errorf("firecracker signal %s: no process", id)
-	}
+// all other signals use the normal graceful Stop lifecycle, including its
+// exclusive claim, stopping state, timeout and OS-level fallback.
+func (m *FirecrackerManager) Signal(ctx context.Context, id string, sig os.Signal) error {
 	if sig == syscall.SIGKILL {
-		if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("firecracker signal %s: %w", id, err)
-		}
-		return nil
+		return m.Kill(ctx, id)
 	}
-	if err := m.shutdownAPI(m.vmSockPath(id)); err != nil {
-		slog.Debug("firecracker signal: SendCtrlAltDel failed, falling back to OS signal", "vm_id", id)
-		if err := proc.signal(sig); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("firecracker signal %s: %w", id, err)
-		}
-	}
-	return nil
+	return m.Stop(ctx, id)
 }
 
 // Remove deletes a stopped VM from the registry.
 func (m *FirecrackerManager) Remove(_ context.Context, id string) error {
-	v, err := m.store.Resolve(id)
+	v, release, err := m.claimVM(id, "remove")
 	if err != nil {
 		return fmt.Errorf("firecracker remove %s: %w", id, err)
 	}
+	defer release()
 	if st := v.GetState(); st != StateStopped && st != StateCreated {
 		return fmt.Errorf("firecracker remove %s: vm is %s, must be stopped first", id, st)
 	}
@@ -429,7 +467,7 @@ func setupTAPNetwork(cfg Config) error {
 
 func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog, rootfs string) {
 	defer recoverGoroutine("firecracker monitor", v.ID)
-	exitErr := cmd.Wait()
+	exitErr := waitFCProcess(cmd, sockPath)
 	now := time.Now()
 	v.mu.Lock()
 	v.StoppedAt = &now
@@ -462,8 +500,15 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 		}
 	}
 
+	v.mu.Lock()
+	cleanup := v.hostCleanup
+	v.hostCleanup = nil
+	v.mu.Unlock()
+	if cleanup != nil {
+		cleanup()
+	}
 	_ = os.Remove(sockPath)
-	_ = os.Remove(cfgPath)
+	cleanupFCConfig(cfgPath)
 	_ = os.Remove(vmmLog)
 	_ = os.Remove(rootfs)
 
@@ -499,6 +544,9 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 			return
 		}
 	}
+	// Visible to snapshot restore during the backoff so a restore cannot race
+	// the replacement for the same IP and name.
+	m.claims.setRestartPending(v.ID, true)
 	go m.restartVM(v)
 }
 
@@ -513,6 +561,18 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	}
 	slog.Info("firecracker monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
+
+	defer m.claims.setRestartPending(old.ID, false)
+	_, release, err := m.claimVM(old.ID, opRestart)
+	if err != nil {
+		slog.Info("firecracker monitor: restart skipped", "vm_id", old.ID, "err", err)
+		return
+	}
+	defer release()
+	if st := old.GetState(); st != StateStopped {
+		slog.Info("firecracker monitor: restart skipped; vm is no longer stopped", "vm_id", old.ID, "state", st)
+		return
+	}
 
 	if m.metrics != nil {
 		m.metrics.RecordRestart()
@@ -548,6 +608,9 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 // writeFCConfig generates and writes the Firecracker JSON config file for v.
 // Returns the path to the written file.
 func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath string) (string, error) {
+	if runtime.GOOS == "darwin" {
+		return m.writeNativeFCConfig(id, cfg, rootfsPath)
+	}
 	memMiB, err := parseMiB(cfg.Memory)
 	if err != nil {
 		return "", fmt.Errorf("parse memory %q: %w", cfg.Memory, err)

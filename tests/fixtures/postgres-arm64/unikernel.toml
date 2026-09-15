@@ -1,0 +1,31 @@
+[build]
+lang = "raw"
+pkg_source = "jerboa"
+pkgs = ["postgresql-arm64:11-pthreads-nanos"]
+disk_size = "512M"
+dirs = ["/tmp", "/db"]
+
+[program]
+path = "/usr/local/pgsql/bin/postgres"
+# Durability settings are pinned on the command line so neither
+# postgresql.conf nor ALTER SYSTEM can weaken them.
+args = [
+  "-D", "/db",
+  "-p", "5432",
+  "-c", "listen_addresses=*",
+  "-c", "dynamic_shared_memory_type=mmap",
+  "-c", "max_parallel_workers=0",
+  "-c", "max_parallel_workers_per_gather=0",
+  "-c", "track_counts=on",
+  "-c", "autovacuum=on",
+  "-c", "fsync=on",
+  "-c", "synchronous_commit=on",
+  "-c", "full_page_writes=on",
+  "-c", "wal_sync_method=fdatasync",
+  "-c", "password_encryption=scram-sha-256",
+  "-c", "ssl=on",
+]
+
+[run]
+memory = "768M"
+cpus = 2

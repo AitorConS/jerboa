@@ -64,6 +64,7 @@ static inline void vtmmio_set_u64(vtmmio dev, u64 offset, u64 value)
 closure_type(vtmmio_probe, void, vtmmio dev);
 
 void vtmmio_probe_devs(vtmmio_probe probe);
+void virtio_mmio_register_device(kernel_heaps kh, u64 membase, u64 memsize, int irq);
 void vtmmio_set_status(vtmmio dev, u8 status);
 boolean attach_vtmmio(heap h, backed_heap page_allocator, vtmmio d, u64 feature_mask);
 status vtmmio_alloc_virtqueue(vtmmio dev, sstring name, int idx, range cpu_affinity,

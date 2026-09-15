@@ -67,6 +67,7 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("compose up: %w", err)
 			}
+			scopeImplicitComposeNetwork(&f, composeFile)
 			order, err := compose.TopologicalSort(f.Services)
 			if err != nil {
 				return fmt.Errorf("compose up: %w", err)
@@ -154,6 +155,7 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 					return fmt.Errorf("compose up: service %q: %w", name, buildErr)
 				}
 				params.Name = name
+				params.NetworkAliases = append([]string(nil), svc.Aliases...)
 
 				if len(svc.Networks) > 0 {
 					netName := svc.Networks[0]
@@ -516,17 +518,7 @@ func buildServiceRunParams(svc compose.Service, mem, storePath string) (api.RunP
 }
 
 // parseComposePortSpec converts "host:guest[/proto]" to a PortMapSpec.
-func parseComposePortSpec(s string) (api.PortMapSpec, error) {
-	pm, err := parseVolumePortString(s)
-	if err != nil {
-		return api.PortMapSpec{}, err
-	}
-	return api.PortMapSpec{
-		HostPort:  pm.HostPort,
-		GuestPort: pm.GuestPort,
-		Protocol:  string(pm.Protocol),
-	}, nil
-}
+func parseComposePortSpec(s string) (api.PortMapSpec, error) { return api.ParsePortMap(s) }
 
 const healthCheckInterval = 500 * time.Millisecond
 
@@ -547,4 +539,24 @@ func waitForHealthy(cmd *cobra.Command, client *api.Client, id, name string, tim
 		time.Sleep(healthCheckInterval)
 	}
 	return fmt.Errorf("timed out waiting for %s to become healthy", name)
+}
+
+// Implicit defaults belong to this compose file, preventing unrelated projects
+// from silently joining the same network. Explicit names keep existing semantics.
+func scopeImplicitComposeNetwork(f *compose.File, path string) {
+	if !f.ImplicitDefault {
+		return
+	}
+	sum := sha256.Sum256([]byte(stateFilePath(path)))
+	name := fmt.Sprintf("compose-%x-default", sum[:6])
+	f.Networks[name] = f.Networks["default"]
+	delete(f.Networks, "default")
+	for key, svc := range f.Services {
+		for i, network := range svc.Networks {
+			if network == "default" {
+				svc.Networks[i] = name
+			}
+		}
+		f.Services[key] = svc
+	}
 }

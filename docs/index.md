@@ -47,11 +47,11 @@ Stable daemon releases target Linux. The [native macOS ARM64 preview]({% link ma
 
 ## Important Runtime Constraints
 
-- Native VM execution requires Linux.
+- Native VM execution supports Linux and macOS Apple Silicon (preview).
 - Port publishing requires a managed network (`--network`).
 - TCP publishing works today through a userspace forwarder.
 - UDP port mappings parse and persist, but the current forwarder skips them with a warning.
-- The daemon binary is built only for Linux; Windows uses WSL2.
+- Native macOS uses the Firecracker/HVF fork or QEMU; Windows uses WSL2.
 
 ## Repo Shape
 

@@ -18,12 +18,13 @@ for tool in go cc aarch64-elf-as aarch64-elf-ld aarch64-elf-objcopy; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 cd "$root"
+version="v$(tr -d '[:space:]' < VERSION.md)"
 make -C kernel PLATFORM=virt kernel tools
 make -C kernel/platform/virt PLATFORM=virt "$root/kernel/output/platform/virt/boot-stub.img"
 dest="$root/dist/macos-arm64"
 mkdir -p "$dest/tools"
-CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -o "$dest/jerboa" ./cmd/jerboa
-CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -o "$dest/jerboad" ./cmd/jerboad
+CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$dest/jerboa" ./cmd/jerboa
+CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$dest/jerboad" ./cmd/jerboad
 cp kernel/output/tools/bin/mkfs kernel/output/tools/bin/dump "$dest/tools/"
 cp kernel/output/platform/virt/bin/kernel.img "$dest/tools/kernel.img"
 cp kernel/output/platform/virt/boot-stub.img "$dest/tools/boot.img"

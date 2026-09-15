@@ -197,6 +197,7 @@ typedef struct poll_notifier {
     struct notifier n;
     vector registrations;
     buffer poll_fds;
+    u64 generation;
 } *poll_notifier;
 
 #define NFDS(poll_fds) (buffer_length(poll_fds) / sizeof(struct pollfd))
@@ -215,13 +216,24 @@ static boolean poll_register(notifier n, descriptor f, u32 events, thunk a)
     new->events = events;
     new->a = a;
     new->next = vector_get(p->registrations, f);
-    if (!vector_set(p->registrations, f, new))
+    if (!vector_set(p->registrations, f, new)) {
+        deallocate(n->h, new, sizeof(*new));
         return false;
+    }
 
-    extend_total(p->poll_fds, (f+1) * sizeof(struct pollfd));
+    u64 previous_nfds = NFDS(p->poll_fds);
+    if (!extend_total(p->poll_fds, (f+1) * sizeof(struct pollfd))) {
+        assert(vector_set(p->registrations, f, new->next));
+        deallocate(n->h, new, sizeof(*new));
+        return false;
+    }
     struct pollfd *fds = buffer_ref(p->poll_fds, 0);
+    for (u64 i = previous_nfds; i < NFDS(p->poll_fds); i++)
+        fds[i] = (struct pollfd){.fd = -1};
     fds[f].fd = f;
-    fds[f].events = events;
+    fds[f].events |= events;
+    fds[f].revents = 0;
+    p->generation++;
 
     return true;
 }
@@ -239,6 +251,8 @@ static void poll_reset_fd(notifier n, descriptor f)
     assert(f < NFDS(p->poll_fds));
     struct pollfd *fds = buffer_ref(p->poll_fds, 0);
     fds[f].fd = -1;
+    fds[f].events = fds[f].revents = 0;
+    p->generation++;
 
     do {
         registration next;
@@ -272,8 +286,11 @@ static void poll_spin(notifier n)
 #ifdef SOCKET_USER_EPOLL_DEBUG
         rprintf("   returned %d\n", res);
 #endif
+        if (res == -1 && errno == EINTR)
+            continue;
         if (res == -1)
             halt("poll failed with %s (%d)\n", errno_sstring(), errno);
+        u64 generation = p->generation;
         for (int i = 0; i < NFDS(p->poll_fds); i++) {
             if (fds[i].revents == 0)
                 continue;
@@ -283,34 +300,40 @@ static void poll_spin(notifier n)
 #endif
 
             registration r = vector_get(p->registrations, fds[i].fd);
-            do {
+            while (r) {
                 if (r->events & fds[i].revents) {
 #ifdef SOCKET_USER_EPOLL_DEBUG
                     rprintf("      match events %x, applying thunk %p\n",
                         r->events, r->a);
 #endif
                     apply(r->a);
+                    /* A callback can free registrations and grow poll_fds. */
+                    if (p->generation != generation)
+                        break;
                 }
                 r = r->next;
-            } while (r);
+            }
+            if (p->generation != generation)
+                break;
         }
     }
 }
 
 notifier create_poll_notifier(heap h)
 {
-    poll_notifier p = mem_alloc(h, sizeof(struct select_notifier), MEM_NOFAIL);
+    poll_notifier p = mem_alloc(h, sizeof(struct poll_notifier), MEM_NOFAIL);
     p->n.h = h;
     p->n._register = poll_register;
     p->n.reset_fd = poll_reset_fd;
     p->n.spin = poll_spin;
     p->registrations = allocate_vector(h, 10);
+    p->generation = 0;
 
     p->poll_fds = allocate_buffer(h, 10 * sizeof(struct pollfd));
     buffer_produce(p->poll_fds, 10 * sizeof(struct pollfd));
     struct pollfd *fds = (struct pollfd *) buffer_ref(p->poll_fds, 0);
     for (int i = 0; i < NFDS(p->poll_fds); i++) {
-        fds[i].fd = -1;
+        fds[i] = (struct pollfd){.fd = -1};
     }
 
     return (notifier)p;

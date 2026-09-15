@@ -19,6 +19,3 @@ func DefaultQEMUBinary() string { return "qemu-system-x86_64" }
 
 func (m *QEMUManager) prepareHostVM(*VM) (func(), error)        { return nil, nil }
 func (m *QEMUManager) RestoreHostRuntime(context.Context) error { return nil }
-
-// Native networking is implemented only on macOS.
-type nativeNetworkState struct{}

@@ -276,7 +276,7 @@ jerboa build . --name redis
 ```
 
 The build reads a `unikernel.toml` that names the package and the program to run
-(a from-docker package records no default program, so `[program]` is required):
+(`[program]` explicitly selects what the raw build will execute):
 
 ```toml
 [build]
@@ -296,6 +296,9 @@ coreutils. Images that start through a shell script (the common
 `docker-entrypoint.sh` pattern) cannot be derived automatically — there is no
 shell in a unikernel — so pass `--file` with the real binary the script
 eventually launches.
+
+For platform variants, local sysroots and tested ARM64 examples, see
+[Linux ARM64 packages on macOS]({% link packages-arm64.md %}).
 
 ## Scaffolding: `jerboa init`
 

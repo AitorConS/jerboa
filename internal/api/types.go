@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"strconv"
+
+	pkg "github.com/AitorConS/jerboa/internal/package"
 )
 
 // Request is a JSON-RPC 2.0 request envelope.
@@ -76,17 +78,18 @@ type RunParams struct {
 	Image string `json:"image,omitempty"`
 	// ImagePath is a direct path to a bootable disk image on the daemon's
 	// filesystem. Used for file-based runs when Image is empty.
-	ImagePath   string            `json:"image_path"`
-	Memory      string            `json:"memory"`
-	CPUs        int               `json:"cpus"`
-	NetworkName string            `json:"network_name,omitempty"`
-	PortMaps    []PortMapSpec     `json:"port_maps,omitempty"`
-	Env         []string          `json:"env,omitempty"`
-	Name        string            `json:"name,omitempty"`
-	AutoRemove  bool              `json:"auto_remove,omitempty"`
-	Volumes     []VolumeMountSpec `json:"volumes,omitempty"`
-	Attach      bool              `json:"attach,omitempty"`
-	IPAddress   string            `json:"ip_address,omitempty"`
+	ImagePath      string            `json:"image_path"`
+	Memory         string            `json:"memory"`
+	CPUs           int               `json:"cpus"`
+	NetworkAliases []string          `json:"network_aliases,omitempty"`
+	NetworkName    string            `json:"network_name,omitempty"`
+	PortMaps       []PortMapSpec     `json:"port_maps,omitempty"`
+	Env            []string          `json:"env,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	AutoRemove     bool              `json:"auto_remove,omitempty"`
+	Volumes        []VolumeMountSpec `json:"volumes,omitempty"`
+	Attach         bool              `json:"attach,omitempty"`
+	IPAddress      string            `json:"ip_address,omitempty"`
 	// StaticIP records whether the client explicitly chose the address. All supplied addresses are reserved by the daemon.
 	StaticIP    bool             `json:"static_ip,omitempty"`
 	GatewayIP   string           `json:"gateway_ip,omitempty"`
@@ -278,8 +281,10 @@ type NodeRow struct {
 // terminated by a zero-length frame. The daemon unpacks it into its own Linux
 // filesystem, runs mkfs there, and stores the resulting image in its store.
 type BuildParams struct {
-	Name string `json:"name"`
-	Tag  string `json:"tag,omitempty"`
+	Platform string          `json:"platform,omitempty"`
+	Packages []pkg.Reference `json:"packages,omitempty"`
+	Name     string          `json:"name"`
+	Tag      string          `json:"tag,omitempty"`
 	// Program is the guest path (within the context tar) of the main ELF
 	// binary. All other tar entries are treated as additional image files.
 	Program string `json:"program"`
@@ -330,11 +335,46 @@ type VolumeSeedResult struct {
 
 // ImageManifestResult is the wire representation of a built image manifest.
 type ImageManifestResult struct {
-	Name       string `json:"name"`
-	Tag        string `json:"tag"`
-	DiskDigest string `json:"disk_digest"`
-	DiskSize   int64  `json:"disk_size"`
-	Created    string `json:"created"`
+	Architecture string          `json:"architecture,omitempty"`
+	Platform     string          `json:"platform,omitempty"`
+	Packages     []pkg.Reference `json:"packages,omitempty"`
+	Name         string          `json:"name"`
+	Tag          string          `json:"tag"`
+	DiskDigest   string          `json:"disk_digest"`
+	DiskSize     int64           `json:"disk_size"`
+	Created      string          `json:"created"`
+}
+
+// SnapshotParams names a snapshot and, for create/restore, the target VM.
+type SnapshotParams struct {
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name"`
+}
+
+// SnapshotInfo is the wire representation of a store entry. It never carries
+// host paths, sockets or environment values.
+type SnapshotInfo struct {
+	Name           string        `json:"name"`
+	CreatedAt      string        `json:"created_at,omitempty"`
+	VMID           string        `json:"vm_id,omitempty"`
+	VMName         string        `json:"vm_name,omitempty"`
+	Backend        string        `json:"backend,omitempty"`
+	Image          string        `json:"image,omitempty"`
+	ImageDigest    string        `json:"image_digest,omitempty"`
+	Memory         string        `json:"memory,omitempty"`
+	CPUs           int           `json:"cpus,omitempty"`
+	Network        string        `json:"network,omitempty"`
+	Subnet         string        `json:"subnet,omitempty"`
+	Gateway        string        `json:"gateway,omitempty"`
+	IPAddress      string        `json:"ip_address,omitempty"`
+	MAC            string        `json:"mac,omitempty"`
+	Aliases        []string      `json:"aliases,omitempty"`
+	Ports          []PortMapSpec `json:"ports,omitempty"`
+	SizeBytes      int64         `json:"size_bytes,omitempty"`
+	ManifestSHA256 string        `json:"manifest_sha256,omitempty"`
+	Components     int           `json:"components,omitempty"`
+	// Error is set by Snapshot.List for an entry that fails validation.
+	Error string `json:"error,omitempty"`
 }
 
 type VolumeRemoveParams struct {

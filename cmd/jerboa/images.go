@@ -9,7 +9,7 @@ import (
 )
 
 func newImagesCmd(endpoint *string, outputFmt *string) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "List unikernel images stored by the daemon",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -40,6 +40,20 @@ func newImagesCmd(endpoint *string, outputFmt *string) *cobra.Command {
 			return w.Flush()
 		},
 	}
+	cmd.AddCommand(&cobra.Command{Use: "inspect <ref>", Short: "Inspect image platform and integrated packages", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := api.Dial(*endpoint)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		m, err := client.ImageGet(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		return printJSON(cmd.OutOrStdout(), m)
+	}})
+	return cmd
+
 }
 
 func newRmiCmd(endpoint *string) *cobra.Command {

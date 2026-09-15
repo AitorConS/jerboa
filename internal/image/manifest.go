@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	pkg "github.com/AitorConS/jerboa/internal/package"
 )
 
 const SchemaVersion = 1
 
 // Manifest describes a unikernel disk image.
 type Manifest struct {
+	Platform string          `json:"platform,omitempty"`
+	Packages []pkg.Reference `json:"packages,omitempty"`
 	// Architecture is the guest ISA. Empty legacy manifests are x86_64.
 	Architecture string `json:"architecture,omitempty"`
 	// SchemaVersion must equal SchemaVersion (1).
@@ -77,6 +81,22 @@ func DigestSHA256(data []byte) string {
 }
 
 func validate(m Manifest) error {
+	if m.Architecture != "" && m.Architecture != "amd64" && m.Architecture != "x86_64" && m.Architecture != "arm64" {
+		return fmt.Errorf("unsupported architecture %q", m.Architecture)
+	}
+	if m.Platform != "" {
+		if err := pkg.ValidatePlatform(m.Platform); err != nil {
+			return err
+		}
+		arch := m.Architecture
+		if arch == "" || arch == "x86_64" {
+			arch = "amd64"
+		}
+		if m.Platform != "linux/"+arch {
+			return fmt.Errorf("contradictory platform and architecture")
+		}
+	}
+
 	if m.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported schemaVersion %d (want %d)", m.SchemaVersion, SchemaVersion)
 	}

@@ -436,3 +436,24 @@ services:
 `))
 	require.ErrorContains(t, err, "restart")
 }
+
+func TestNetworkAttachmentAliasesAndIPAM(t *testing.T) {
+	f, err := compose.Parse([]byte(`services:
+  backend:
+    image: sample
+    networks:
+      app:
+        ipv4_address: 172.25.0.10
+        aliases: [api, web]
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 172.25.0.0/24
+`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"app"}, f.Services["backend"].Networks)
+	require.Equal(t, []string{"api", "web"}, f.Services["backend"].Aliases)
+	require.Equal(t, "172.25.0.10", f.Services["backend"].IP)
+	require.Equal(t, "172.25.0.0/24", f.Networks["app"].Subnet)
+}

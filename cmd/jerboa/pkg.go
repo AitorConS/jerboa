@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/AitorConS/jerboa/internal/api"
@@ -16,6 +18,27 @@ func newPkgCmd(endpoint *string) *cobra.Command {
 		Use:   "pkg",
 		Short: "Manage runtime packages for unikernel images",
 	}
+	// Cobra runs only the nearest persistent hook. Keep the root's endpoint,
+	// authentication and managed-daemon initialization for package commands.
+	cmd.PersistentPreRunE = func(leaf *cobra.Command, args []string) error {
+		p, _ := leaf.Flags().GetString("platform")
+		if p != "" {
+			if err := pkg.ValidatePlatform(p); err != nil {
+				return err
+			}
+		}
+		for parent := cmd.Parent(); parent != nil; parent = parent.Parent() {
+			if parent.PersistentPreRunE != nil {
+				return parent.PersistentPreRunE(leaf, args)
+			}
+			if parent.PersistentPreRun != nil {
+				parent.PersistentPreRun(leaf, args)
+				break
+			}
+		}
+		return nil
+	}
+	cmd.PersistentFlags().String("platform", "", "Select linux/arm64 or linux/amd64")
 	cmd.AddCommand(
 		newPkgListCmd(),
 		newPkgSearchCmd(),
@@ -54,8 +77,8 @@ func opsStorePath() string {
 	return filepath.Join(home, ".jerboa", "packages-ops")
 }
 
-func openOpsStore() (*pkg.OpsStore, error) {
-	return pkg.NewOpsStore(opsStorePath())
+func openOpsStore(archs ...string) (*pkg.OpsStore, error) {
+	return pkg.NewOpsStoreArch(opsStorePath(), optionalPackageArch(archs))
 }
 
 func newPkgListCmd() *cobra.Command {
@@ -97,6 +120,10 @@ func pkgListJerboa(cmd *cobra.Command, outputJSON bool) error {
 	if err != nil {
 		return fmt.Errorf("pkg list --source jerboa: %w", err)
 	}
+	store, err = selectPkgStore(cmd, store)
+	if err != nil {
+		return err
+	}
 	pkgs, err := store.List()
 	if err != nil {
 		return fmt.Errorf("pkg list jerboa: %w", err)
@@ -109,9 +136,9 @@ func pkgListJerboa(cmd *cobra.Command, outputJSON bool) error {
 		return printJSON(cmd.OutOrStdout(), pkgs)
 	}
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tVERSION\tRUNTIME\tDESCRIPTION")
+	fmt.Fprintln(w, "NAME\tVERSION\tPLATFORM\tRUNTIME\tDESCRIPTION")
 	for _, p := range pkgs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Runtime, p.Description)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Platform, p.Runtime, p.Description)
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("pkg list jerboa: %w", err)
@@ -122,7 +149,7 @@ func pkgListJerboa(cmd *cobra.Command, outputJSON bool) error {
 // pkgListBothJSON emits both package sources as a single JSON object so the
 // default `pkg list --output-json` stays valid JSON (not two concatenated arrays).
 func pkgListBothJSON(cmd *cobra.Command) error {
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(cmdPackageArch(cmd))
 	if err != nil {
 		return fmt.Errorf("pkg list ops: %w", err)
 	}
@@ -142,7 +169,7 @@ func pkgListBothJSON(cmd *cobra.Command) error {
 }
 
 func pkgListOps(cmd *cobra.Command, outputJSON bool) error {
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(cmdPackageArch(cmd))
 	if err != nil {
 		return fmt.Errorf("pkg list --source ops: %w", err)
 	}
@@ -187,6 +214,18 @@ func newPkgSearchCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("pkg search: %w", err)
 			}
+			platform, _ := cmd.Flags().GetString("platform")
+			if platform != "" {
+				for name, versions := range idx.Packages {
+					filtered := []pkg.Package{}
+					for _, p := range versions {
+						if p.Platform == "" || p.Platform == platform {
+							filtered = append(filtered, p)
+						}
+					}
+					idx.Packages[name] = filtered
+				}
+			}
 			results := idx.Search(args[0])
 			if len(results) == 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "No packages found matching %q.\n", args[0])
@@ -196,9 +235,9 @@ func newPkgSearchCmd() *cobra.Command {
 				return printJSON(cmd.OutOrStdout(), results)
 			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tVERSION\tRUNTIME\tDESCRIPTION")
+			fmt.Fprintln(w, "NAME\tVERSION\tPLATFORM\tRUNTIME\tDESCRIPTION")
 			for _, p := range results {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Runtime, p.Description)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Platform, p.Runtime, p.Description)
 			}
 			return w.Flush()
 		},
@@ -209,7 +248,7 @@ func newPkgSearchCmd() *cobra.Command {
 }
 
 func pkgSearchOps(cmd *cobra.Command, query string, outputJSON bool) error {
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(cmdPackageArch(cmd))
 	if err != nil {
 		return fmt.Errorf("pkg search --source ops: %w", err)
 	}
@@ -252,45 +291,15 @@ func newPkgGetCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("pkg get: %w", err)
 			}
-			idx, err := pkgStore.FetchIndexCached()
+			platform, _ := cmd.Flags().GetString("platform")
+			if platform == "" {
+				platform = "linux/" + pkg.ArchSlug()
+			}
+			_, identity, err := pkgStore.Resolve(name, version, platform)
 			if err != nil {
-				return fmt.Errorf("pkg get: fetch index: %w", err)
+				return err
 			}
-
-			var target *pkg.Package
-			if version != "" {
-				versions, ok := idx.Packages[name]
-				if !ok {
-					return fmt.Errorf("pkg get: package %q not found", name)
-				}
-				for i := range versions {
-					if versions[i].Version == version {
-						target = &versions[i]
-						break
-					}
-				}
-				if target == nil {
-					return fmt.Errorf("pkg get: version %q of package %q not found", version, name)
-				}
-			} else {
-				target = idx.Latest(name)
-				if target == nil {
-					return fmt.Errorf("pkg get: package %q not found", name)
-				}
-			}
-
-			if pkgStore.IsDownloaded(target.Name, target.Version) {
-				fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s already downloaded.\n", target.Name, target.Version)
-				return nil
-			}
-
-			if err := pkgStore.Download(*target); err != nil {
-				return fmt.Errorf("pkg get: %w", err)
-			}
-			if err := pkgStore.SaveMeta(*target); err != nil {
-				return fmt.Errorf("pkg get: save meta: %w", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s installed.\n", target.Name, target.Version)
+			fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s (%s) installed.\n", identity.Name, identity.Version, identity.Platform)
 			return nil
 		},
 	}
@@ -304,7 +313,7 @@ func pkgGetOps(cmd *cobra.Command, ref string) error {
 		return fmt.Errorf("pkg get --source ops: %w", err)
 	}
 
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(cmdPackageArch(cmd))
 	if err != nil {
 		return fmt.Errorf("pkg get ops: %w", err)
 	}
@@ -314,7 +323,7 @@ func pkgGetOps(cmd *cobra.Command, ref string) error {
 		return fmt.Errorf("pkg get ops: fetch manifest: %w", err)
 	}
 
-	target := manifest.LookupArch(id.Namespace, id.Name, id.Version, pkg.ArchSlug())
+	target := manifest.LookupArch(id.Namespace, id.Name, id.Version, cmdPackageArch(cmd))
 	if target == nil {
 		return fmt.Errorf("pkg get ops: package %q not found in ops manifest", ref)
 	}
@@ -353,6 +362,11 @@ func newPkgRemoveCmd() *cobra.Command {
 				return fmt.Errorf("pkg remove: %w", err)
 			}
 
+			store, err = selectPkgStore(cmd, store)
+			if err != nil {
+				return err
+			}
+
 			if version == "" {
 				if err := store.RemoveAll(name); err != nil {
 					return fmt.Errorf("pkg remove: %w", err)
@@ -377,7 +391,7 @@ func pkgRemoveOps(cmd *cobra.Command, ref string) error {
 		return fmt.Errorf("pkg remove --source ops: %w", err)
 	}
 
-	opsStore, err := openOpsStore()
+	opsStore, err := openOpsStore(cmdPackageArch(cmd))
 	if err != nil {
 		return fmt.Errorf("pkg remove ops: %w", err)
 	}
@@ -396,6 +410,9 @@ func newPkgCreateCmd() *cobra.Command {
 		runtimeName  string
 		missingFiles bool
 		sysroot      string
+		platform     string
+		programPath  string
+		maps         []string
 	)
 	cmd := &cobra.Command{
 		Use:   "create <name>[:<version>] <binary>",
@@ -427,43 +444,27 @@ func newPkgCreateCmd() *cobra.Command {
 				}
 			}
 
-			if missingFiles {
-				missing, lddErr := pkg.MissingFiles(binaryPath)
-				switch {
-				case lddErr != nil:
-					fmt.Fprintf(cmd.ErrOrStderr(), "Warning: --missing-files could not run ldd: %v\n", lddErr)
-				case len(missing) > 0:
-					fmt.Fprintf(cmd.ErrOrStderr(), "Missing shared libraries detected (not on local filesystem):\n")
-					for _, m := range missing {
-						fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", m)
-					}
-					fmt.Fprintf(cmd.ErrOrStderr(), "Consider adding these with --libs or re-running with the binary on a Linux system.\n")
-				default:
-					fmt.Fprintf(cmd.ErrOrStderr(), "All shared library dependencies are present.\n")
-				}
+			extras := []pkg.File{}
+			for _, lib := range libs {
+				extras = append(extras, pkg.File{HostPath: lib, GuestPath: filepath.Base(lib)})
 			}
-
-			// Warn on version/unresolved mismatches before building. Without a
-			// sysroot, ldd resolves against the host, whose library versions may
-			// not match the binary's — the resulting package would boot broken.
-			if mismatches, mErr := pkg.LibMismatches(binaryPath, sysroot); mErr != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not check library compatibility: %v\n", mErr)
-			} else if len(mismatches) > 0 {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: shared library mismatch — the bundled libraries do not satisfy %s:\n", filepath.Base(binaryPath))
-				for _, m := range mismatches {
-					fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", m)
+			for _, mapping := range maps {
+				src, dest, ok := strings.Cut(mapping, "=")
+				if !ok || src == "" || dest == "" {
+					return fmt.Errorf("invalid --map %q: want source=destination", mapping)
 				}
-				if sysroot == "" {
-					fmt.Fprintf(cmd.ErrOrStderr(), "Resolve against the binary's own rootfs with --sysroot <dir>, use a static binary, or build from Docker (pkg from-docker).\n")
-				}
+				extras = append(extras, pkg.File{HostPath: src, GuestPath: dest})
 			}
-
-			allLibs := libs
-			resolved, err := resolveLibs(binaryPath, sysroot)
+			files, actual, err := pkg.LocalFiles(binaryPath, sysroot, programPath, extras)
 			if err != nil {
-				fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not auto-resolve shared libs: %v\n", err)
-			} else {
-				allLibs = append(allLibs, resolved...)
+				return fmt.Errorf("pkg create: %w", err)
+			}
+			if platform != "" && platform != actual {
+				return fmt.Errorf("requested platform %s conflicts with ELF %s", platform, actual)
+			}
+			platform = actual
+			if missingFiles {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Static dependency analysis succeeded.")
 			}
 
 			store, err := pkg.NewStore(pkgStorePath())
@@ -471,40 +472,26 @@ func newPkgCreateCmd() *cobra.Command {
 				return fmt.Errorf("pkg create: %w", err)
 			}
 
-			if err := store.Create(name, version, binaryPath, allLibs, description, runtimeName); err != nil {
+			store, err = store.ForPlatform(platform)
+			if err != nil {
+				return err
+			}
+			if err := store.CreateFromFiles(name, version, files, description, runtimeName); err != nil {
 				return fmt.Errorf("pkg create: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Package %s:%s created from %s.\n", name, version, filepath.Base(binaryPath))
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&platform, "platform", "", "Target linux/arm64 or linux/amd64 (inferred from ELF)")
+	cmd.Flags().StringVar(&programPath, "program-path", "", "Program destination in guest")
+	cmd.Flags().StringArrayVar(&maps, "map", nil, "Additional source=guest-path mapping (repeatable)")
 	cmd.Flags().StringArrayVar(&libs, "libs", nil, "Additional files to include (repeatable)")
 	cmd.Flags().StringVar(&description, "description", "", "Package description")
 	cmd.Flags().StringVar(&runtimeName, "runtime", "", "Runtime family (e.g. node, python)")
 	cmd.Flags().BoolVar(&missingFiles, "missing-files", false, "Report shared library dependencies missing from the local filesystem")
 	cmd.Flags().StringVar(&sysroot, "sysroot", "", "Resolve shared libraries against this rootfs instead of the host (avoids version mismatch for foreign binaries)")
 	return cmd
-}
-
-// resolveLibs auto-resolves the binary's shared libraries. When sysroot is set,
-// libraries are picked from that rootfs (the distro the binary was built for);
-// otherwise they are resolved against the host filesystem.
-func resolveLibs(binaryPath, sysroot string) ([]string, error) {
-	if sysroot != "" {
-		return pkg.LddSysroot(binaryPath, sysroot)
-	}
-	libs, err := pkg.Ldd(binaryPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var existing []string
-	for _, lib := range libs {
-		if _, err := os.Stat(lib); err == nil {
-			existing = append(existing, lib)
-		}
-	}
-	return existing, nil
 }
 
 func parsePkgRef(ref string) (name, version string) {
@@ -525,6 +512,7 @@ func lastIndexByte(s string, c byte) int {
 
 func newPkgFromDockerCmd() *cobra.Command {
 	var (
+		platform    string
 		libs        []string
 		description string
 		runtimeName string
@@ -556,7 +544,11 @@ Examples:
 			if version == "" {
 				version = "1.0.0"
 			}
-			dockerImage := args[1]
+			origin, err := pkg.PinDocker(cmd.Context(), args[1], platform)
+			if err != nil {
+				return err
+			}
+			dockerImage := origin.ImageID
 
 			filePath, _ := cmd.Flags().GetString("file")
 			warnMangledImagePath(cmd.ErrOrStderr(), "--file", filePath)
@@ -573,12 +565,16 @@ Examples:
 				return fmt.Errorf("pkg from-docker: %w", err)
 			}
 
+			store, err = store.ForPlatform(platform)
+			if err != nil {
+				return err
+			}
 			if store.IsDownloaded(name, version) {
 				return fmt.Errorf("pkg from-docker: package %s:%s already exists (remove it first)", name, version)
 			}
 
 			fmt.Fprintf(cmd.ErrOrStderr(), "Extracting %s and its library closure from Docker image %s...\n", filePath, dockerImage)
-			files, cleanup, err := pkg.FromDocker(dockerImage, filePath, libs)
+			files, cleanup, err := pkg.FromDocker(dockerImage, filePath, libs, platform)
 			if err != nil {
 				return fmt.Errorf("pkg from-docker: %w", err)
 			}
@@ -587,8 +583,24 @@ Examples:
 				return fmt.Errorf("pkg from-docker: no files extracted from image")
 			}
 
+			if err := pkg.ValidateFiles(files, platform); err != nil {
+				return err
+			}
 			if err := store.CreateFromFiles(name, version, files, description, runtimeName); err != nil {
 				return fmt.Errorf("pkg from-docker: %w", err)
+			}
+
+			metas, err := store.List()
+			if err != nil {
+				return err
+			}
+			for _, meta := range metas {
+				if meta.Name == name && meta.Version == version && meta.Platform == platform {
+					meta.Provenance = origin
+					if err := store.SaveMeta(meta); err != nil {
+						return err
+					}
+				}
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Package %s:%s created from Docker image %s (%d files).\n",
@@ -596,6 +608,7 @@ Examples:
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&platform, "platform", "linux/"+pkg.ArchSlug(), "Docker target platform")
 	cmd.Flags().String("file", "", "Path to the binary inside the Docker image (default: derived from the image's Entrypoint/Cmd)")
 	cmd.Flags().StringArrayVar(&libs, "libs", nil, "Additional library paths inside the container to include (repeatable)")
 	cmd.Flags().StringVar(&description, "description", "", "Package description")
@@ -632,14 +645,7 @@ func deriveDockerProgram(cmd *cobra.Command, dockerImage string) (string, error)
 		fmt.Fprintf(cmd.ErrOrStderr(), " (image args: %v — pass them via [program] args at build time)", args)
 	}
 	fmt.Fprintln(cmd.ErrOrStderr())
-	// The image env is not stored in the package (jerboa package meta has no
-	// env field yet); print it so the user can carry over what matters.
-	if len(cfg.Env) > 0 {
-		fmt.Fprintf(cmd.ErrOrStderr(), "Image declares environment variables (bake needed ones into unikernel.toml [env]):\n")
-		for _, e := range cfg.Env {
-			fmt.Fprintf(cmd.ErrOrStderr(), "  %s\n", e)
-		}
-	}
+
 	return resolved, nil
 }
 
@@ -649,6 +655,8 @@ func newPkgPushCmd() *cobra.Command {
 		Short: "Push a locally cached package to a remote package index",
 		Long: `Push a locally cached package archive and metadata to a remote package index.
 The index server must support POST /packages with multipart form data.
+Without --platform, prefer the default platform, then a legacy package, then
+the sole downloaded variant. Use --platform to select a specific architecture.
 
 Example:
   jerboa pkg push node:20 https://packages.example.com`,
@@ -663,6 +671,11 @@ Example:
 			store, err := pkg.NewStore(pkgStorePath())
 			if err != nil {
 				return fmt.Errorf("pkg push: %w", err)
+			}
+
+			store, err = selectPushStore(cmd, store, name, version)
+			if err != nil {
+				return err
 			}
 
 			if !store.IsDownloaded(name, version) {
@@ -694,6 +707,14 @@ Examples:
   jerboa pkg load myruntime:1.0.0`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			platform, _ := cmd.Flags().GetString("platform")
+			if platform == "" {
+				platform = "linux/" + cmdPackageArch(cmd)
+			}
+			if err := pkg.ValidatePlatform(platform); err != nil {
+				return err
+			}
+			cmd.SetContext(context.WithValue(cmd.Context(), packagePlatformKey{}, strings.TrimPrefix(platform, "linux/")))
 			var pkgFiles []pkg.File
 			var binaryPath string
 			var err error
@@ -707,7 +728,7 @@ Examples:
 				if parseErr != nil {
 					return fmt.Errorf("pkg load ops: %w", parseErr)
 				}
-				opsStore, storeErr := openOpsStore()
+				opsStore, storeErr := openOpsStore(cmdPackageArch(cmd))
 				if storeErr != nil {
 					return fmt.Errorf("pkg load ops store: %w", storeErr)
 				}
@@ -734,10 +755,20 @@ Examples:
 			}
 			defer func() { _ = client.Close() }()
 
+			programPath := ""
+			for _, f := range pkgFiles {
+				if f.HostPath == binaryPath {
+					programPath = f.GuestPath
+					break
+				}
+			}
+
 			pr := buildContextReader(binaryPath, pkgFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
-				Name:    "pkg-load",
+				Name:        "pkg-load",
+				ProgramPath: programPath,
+				Platform:    platform, Packages: packageReferences(pkgFiles),
 				Program: buildProgramPath,
 				Memory:  "256M",
 			}, pr)
@@ -761,4 +792,81 @@ Examples:
 	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "run in the background")
 	return cmd
+}
+
+func selectPkgStore(cmd *cobra.Command, store *pkg.Store) (*pkg.Store, error) {
+	platform, _ := cmd.Flags().GetString("platform")
+	if platform == "" {
+		return store, nil
+	}
+	return store.ForPlatform(platform)
+}
+
+func cmdPackageArch(cmd *cobra.Command) string {
+	p, _ := cmd.Flags().GetString("platform")
+	if p != "" {
+		return strings.TrimPrefix(p, "linux/")
+	}
+	return pkg.ArchSlug()
+}
+
+// Push selects only downloaded content; it must never consult the remote index.
+func selectPushStore(cmd *cobra.Command, store *pkg.Store, name, version string) (*pkg.Store, error) {
+	platform, _ := cmd.Flags().GetString("platform")
+	explicit := platform != ""
+	if !explicit {
+		platform = "linux/" + cmdPackageArch(cmd)
+	}
+	preferred, err := store.ForPlatform(platform)
+	if err != nil {
+		return nil, err
+	}
+	if preferred.IsDownloaded(name, version) {
+		return preferred, nil
+	}
+	if store.IsDownloaded(name, version) {
+		if explicit {
+			local, err := store.List()
+			if err != nil {
+				return nil, err
+			}
+			for _, p := range local {
+				if p.Name == name && p.Version == version && p.Platform == "" {
+					if _, _, err := store.Verify(p, platform); err != nil {
+						return nil, err
+					}
+					return store, nil
+				}
+			}
+		} else {
+			return store, nil
+		}
+	}
+	if explicit {
+		return preferred, nil
+	}
+	local, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	var candidates []*pkg.Store
+	for _, p := range local {
+		if p.Name != name || p.Version != version || p.Platform == "" {
+			continue
+		}
+		s, err := store.ForPlatform(p.Platform)
+		if err != nil {
+			return nil, err
+		}
+		if s.IsDownloaded(name, version) {
+			candidates = append(candidates, s)
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0], nil
+	}
+	if len(candidates) > 1 {
+		return nil, fmt.Errorf("pkg push: multiple local variants of %s:%s; select --platform", name, version)
+	}
+	return preferred, nil
 }

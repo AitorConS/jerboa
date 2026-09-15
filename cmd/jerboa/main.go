@@ -109,6 +109,7 @@ func newRootCmd() *cobra.Command {
 		newVersionCmd(),
 		newPkgCmd(&endpoint),
 		newNetworkCmd(&endpoint, &outputFmt),
+		newSnapshotCmd(&endpoint, &outputFmt),
 		newDNSCmd(&endpoint, &outputFmt),
 		newStatsCmd(&endpoint, &outputFmt),
 		newNodeCmd(&endpoint, &outputFmt),

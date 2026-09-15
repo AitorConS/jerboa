@@ -37,15 +37,20 @@ const (
 	StateStopping State = "stopping"
 	// StateStopped means the QEMU process has exited.
 	StateStopped State = "stopped"
+	// StateRestoring means a stopped VM is being restored in place from a
+	// snapshot. It is persisted so daemon recovery can finish or roll back.
+	StateRestoring State = "restoring"
 )
 
-// validTransitions defines the allowed state machine edges.
+// validTransitions defines the allowed state machine edges. Stopped→restoring
+// is only taken by (*VM).beginRestore, which also renews the done channel.
 var validTransitions = map[State][]State{
-	StateCreated:  {StateStarting},
-	StateStarting: {StateRunning, StateStopped},
-	StateRunning:  {StateStopping, StateStopped},
-	StateStopping: {StateStopped},
-	StateStopped:  {},
+	StateCreated:   {StateStarting},
+	StateStarting:  {StateRunning, StateStopped},
+	StateRunning:   {StateStopping, StateStopped},
+	StateStopping:  {StateStopped},
+	StateStopped:   {StateRestoring},
+	StateRestoring: {StateRunning, StateStopped},
 }
 
 // VolumeMount describes a volume attached to a VM.
@@ -119,9 +124,9 @@ type HealthCheckConfig struct {
 
 // Config holds the parameters used to create a VM.
 type Config struct {
-	EmulateX86   bool `json:"emulate_x86,omitempty"`
-	nativeSocket string
-	nativeMAC    string
+	EmulateX86   bool   `json:"emulate_x86,omitempty"`
+	nativeSocket string //nolint:unused // Used by the macOS backend.
+	nativeMAC    string //nolint:unused // Used by the macOS backend.
 	Architecture string `json:"architecture,omitempty"`
 	ImageDigest  string `json:"image_digest,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
@@ -139,7 +144,8 @@ type Config struct {
 	// require a non-empty NetworkName. Several VMs can share one network (and
 	// its bridge), so this is NOT used as the host TAP device name — see
 	// TapName.
-	NetworkName string
+	NetworkAliases []string
+	NetworkName    string
 	// TapName is the host TAP interface name for this VM's network attachment.
 	// A TAP device can be enslaved to only one VM at a time, so every VM on a
 	// shared bridge needs its own uniquely named TAP. It is assigned per VM at
@@ -367,7 +373,7 @@ type VM struct {
 	hostCleanup   func()
 	healthDial    func(context.Context, string, string) (net.Conn, error)
 	healthAddress string
-	networkStats  func() (int64, int64)
+	networkStats  func() (int64, int64) //nolint:unused // Used by native macOS statistics.
 	cgroupMgr     *CgroupManager
 	portFwd       *network.Forwarder // userspace host→guest port publisher; nil when no PortMaps
 	qmpAddr       string             // QMP socket address ("unix:<path>" or "tcp:host:port"); set at start, cleared when stopped

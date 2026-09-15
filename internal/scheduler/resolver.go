@@ -4,6 +4,7 @@ package scheduler
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/vm"
@@ -16,10 +17,11 @@ type VMSource interface {
 
 // Record describes a resolvable VM name inside a network scope.
 type Record struct {
-	Name    string `json:"name"`
-	Network string `json:"network"`
-	IP      string `json:"ip"`
-	VMID    string `json:"vm_id"`
+	Aliases []string `json:"aliases,omitempty"`
+	Name    string   `json:"name"`
+	Network string   `json:"network"`
+	IP      string   `json:"ip"`
+	VMID    string   `json:"vm_id"`
 }
 
 // Resolver resolves VM names to IP addresses using in-memory VM state.
@@ -33,23 +35,14 @@ func NewResolver(vms VMSource) *Resolver {
 }
 
 // Resolve returns a DNS record for name and optional network.
-// Accepted names are VM ID and VM name. If name is of the form host.network
-// and network is empty, the network is inferred from the suffix.
+// Accepted names are VM ID, VM name and aliases (including dotted aliases).
+// Literal matches within the network precede the host.network fallback.
+// When network is empty, dotted queries infer the network from their suffix.
 func (r *Resolver) Resolve(name, network string) (Record, error) {
 	if strings.TrimSpace(name) == "" {
 		return Record{}, fmt.Errorf("name must not be empty")
 	}
-	host, scope := splitScopedName(name)
-	if network == "" {
-		network = scope
-	}
-
-	matches := make([]Record, 0, 1)
-	for _, rec := range r.records(network) {
-		if rec.Name == host || rec.VMID == host {
-			matches = append(matches, rec)
-		}
-	}
+	matches, host, network := r.lookup(name, network)
 	if len(matches) == 1 {
 		return matches[0], nil
 	}
@@ -69,17 +62,7 @@ func (r *Resolver) ResolveAll(name, network string) ([]Record, error) {
 	if strings.TrimSpace(name) == "" {
 		return nil, fmt.Errorf("name must not be empty")
 	}
-	host, scope := splitScopedName(name)
-	if network == "" {
-		network = scope
-	}
-
-	var matches []Record
-	for _, rec := range r.records(network) {
-		if rec.Name == host || rec.VMID == host {
-			matches = append(matches, rec)
-		}
-	}
+	matches, host, network := r.lookup(name, network)
 	if len(matches) == 0 {
 		if network != "" {
 			return nil, fmt.Errorf("record %q not found in network %q", host, network)
@@ -87,6 +70,33 @@ func (r *Resolver) ResolveAll(name, network string) ([]Record, error) {
 		return nil, fmt.Errorf("record %q not found", host)
 	}
 	return matches, nil
+}
+
+// lookup gives literal names/aliases priority in the caller's network. Only
+// absent literal matches fall back to host.network; an explicit network never
+// changes scope. Unscoped dotted queries retain suffix-based network selection.
+func (r *Resolver) lookup(name, network string) ([]Record, string, string) {
+	host, scope := splitScopedName(name)
+	if network == "" {
+		network = scope
+	}
+	records := r.records(network)
+	match := func(query string) []Record {
+		var matches []Record
+		for _, rec := range records {
+			if rec.Name == query || rec.VMID == query || slices.Contains(rec.Aliases, query) {
+				matches = append(matches, rec)
+			}
+		}
+		return matches
+	}
+	if matches := match(name); len(matches) > 0 {
+		return matches, name, network
+	}
+	if scope == network && scope != "" {
+		return match(host), host, network
+	}
+	return nil, name, network
 }
 
 // List returns all resolvable records, optionally filtered by network.
@@ -141,6 +151,7 @@ func vmToRecord(v *vm.VM) (Record, bool) {
 	}
 	return Record{
 		Name:    name,
+		Aliases: append([]string(nil), v.Cfg.NetworkAliases...),
 		Network: v.Cfg.NetworkName,
 		IP:      v.Cfg.IPAddress,
 		VMID:    v.ID,

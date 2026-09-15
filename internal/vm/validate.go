@@ -40,6 +40,19 @@ func hasBootArgUnsafe(s string) bool {
 // It deliberately does not touch the filesystem: image and volume paths are
 // resolved and existence-checked by the image store layer before reaching here.
 func validateVMConfig(cfg Config) error {
+	if len(cfg.NetworkAliases) > 64 {
+		return fmt.Errorf("at most 64 network aliases")
+	}
+	for _, alias := range cfg.NetworkAliases {
+		if len(alias) == 0 || len(alias) > 253 {
+			return fmt.Errorf("invalid network alias")
+		}
+		for _, r := range alias {
+			if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '-' && r != '_' && r != '.' {
+				return fmt.Errorf("invalid network alias")
+			}
+		}
+	}
 	if cfg.ImagePath == "" {
 		return fmt.Errorf("validate config: ImagePath is required")
 	}

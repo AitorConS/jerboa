@@ -97,6 +97,7 @@ SRCS-kernel.elf= \
 	$(SRCDIR)/virtio/virtio.c \
 	$(SRCDIR)/virtio/virtio_9p.c \
 	$(SRCDIR)/virtio/virtio_balloon.c \
+	$(SRCDIR)/virtio/virtio_input.c \
 	$(SRCDIR)/virtio/virtio_mmio.c \
 	$(SRCDIR)/virtio/virtio_net.c \
 	$(SRCDIR)/virtio/virtio_pci.c \

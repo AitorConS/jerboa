@@ -8,7 +8,7 @@ nav_order: 9
 
 The native macOS port is a **development preview**. The CLI, daemon, Desktop and filesystem tools run as ARM64 processes on macOS. ARM64 unikernels run directly in QEMU with Apple's Hypervisor.framework (HVF). No Linux host VM, WSL or Rosetta is used. HVF failures are errors; there is no silent TCG fallback.
 
-The port now covers the VM, image, volume, shared-network, DNS, health-check, restart, Compose and observability workflows. Linux-specific mechanisms have explicit native alternatives below; scheduler priority and a sampled memory watchdog are **not equivalent to cgroup isolation**. Firecracker itself still requires Linux/KVM.
+The QEMU port covers the VM, image, volume, shared-network, DNS, health-check, restart, Compose and observability workflows. Linux-specific mechanisms have explicit native alternatives below; scheduler priority and a sampled memory watchdog are **not equivalent to cgroup isolation**. The local Firecracker macOS fork is also supported through a separate [Firecracker/HVF backend]({% link macos-firecracker.md %}), with a smaller compatibility surface.
 
 The published stable kernel toolset targets Linux/x86_64. Native builds compile their own ARM64 tools. Optional x86 compatibility downloads only signature/checksum-verified guest boot artifacts, keeping all host tools native.
 
@@ -30,6 +30,11 @@ The build fetches the kernel's existing pinned source dependencies. Outputs are 
 The smoke test uses an isolated temporary home and exercises four-vCPU HVF boots, HTTP, environment injection, volume persistence, static IPs, shared networks, guest DNS, TCP/HTTP health checks on unpublished ports, UDP forwarding, host-gateway access, port collision rollback, DNS scope, daemon-crash network recovery, restart exit semantics, Compose, raw disks, native resource accounting and the memory watchdog. When `tools/x86` is installed, it also builds and boots an explicitly emulated x86 image. Optional runtime tests download ARM64 Node and Python packages. Test data and test VMs are cleaned up afterward.
 
 The implementation has been exercised on one Apple Silicon Mac with QEMU 11.1.1. This is not a certification of every M-series chip or macOS version. The build explicitly enables cgo for Apple's native resource-accounting API.
+
+Kernel host tests also require Fourmilab `ent` and Python 3. Run
+`brew install ent`, then `make test-kernel`. This includes loopback HTTP tests
+for the poll/select notifiers and a UDP echo test; no external server is needed.
+Set an absolute `OUTDIR` to keep test build output isolated.
 
 ## Start the native engine
 
@@ -66,7 +71,7 @@ pnpm run dist:mac
 
 The ARM64 `.app`, DMG and ZIP are written to `dist/`. Desktop bundles the CLI, daemon and kernel tools; QEMU remains an external native prerequisite in this preview. Finder launches use the same native launchd lifecycle as the CLI. The native engine updates with the app, rather than through WSL distro updates.
 
-Local builds have no Developer ID/notarization unless signing credentials are configured. Distribution signing, notarization and a published macOS update feed remain release work. The Windows installer and its WSL lifecycle remain separate.
+Local builds have no Developer ID/notarization unless signing credentials are configured. The release workflow now builds and verifies a signed/notarized Firecracker package for R2; it requires a provisioned macOS runner and Apple identities. See [distribution]({% link macos-distribution.md %}) and [installation]({% link macos-firecracker.md %}). The Windows installer and its WSL lifecycle remain separate.
 
 ## Capabilities and current limits
 
@@ -92,7 +97,7 @@ Local builds have no Developer ID/notarization unless signing credentials are co
 | Disk IOPS/BPS limits | QEMU block throttling |
 | Daemon crash recovery | Reconnects surviving QEMU processes to networks, published ports, probes and collectors |
 | Metrics / dashboard / tracing | Shared daemon implementation; managed launchd flags supported |
-| Firecracker | Use QEMU/HVF locally; use a Linux daemon when Firecracker itself is required |
+| Firecracker | Native macOS fork available; see [Firecracker/HVF]({% link macos-firecracker.md %}) for its supported scope |
 | Image registries, package stores, signing and cluster RPC | Shared implementation; Go test suite passes, external service deployments not retested here |
 
 ### Native alternatives and exact Linux semantics
@@ -101,7 +106,7 @@ Native network addresses belong to the userspace stack, so arbitrary macOS host 
 
 `--cpu-shares` maps larger weights to higher scheduler priority. `--memory-max` observes resident memory and kills the QEMU process when a sample exceeds the requested budget. Both modes appear as warnings in `jerboa inspect`; they do not provide the same resource-isolation guarantees as Linux cgroup v2. The guest's own RAM remains configured by `--memory`.
 
-For exact cgroup semantics or Firecracker, run the existing Linux daemon and connect the native macOS CLI/Desktop to it. An SSH tunnel can expose the authenticated daemon's loopback endpoint without publishing the RPC service:
+For exact cgroup semantics or upstream Linux Firecracker, run the existing Linux daemon and connect the native macOS CLI/Desktop to it. The native Firecracker/HVF fork is a separate local backend. An SSH tunnel can expose the authenticated daemon's loopback endpoint without publishing the RPC service:
 
 ```sh
 ssh -N -L 17890:127.0.0.1:7890 linux-host

@@ -33,14 +33,18 @@ type OpsStore struct {
 }
 
 // NewOpsStore creates an OpsStore rooted at dir, creating it if needed.
-func NewOpsStore(dir string) (*OpsStore, error) {
-	if ArchSlug() != "amd64" {
-		dir = filepath.Join(dir, ArchSlug())
+func NewOpsStore(dir string) (*OpsStore, error) { return NewOpsStoreArch(dir, ArchSlug()) }
+func NewOpsStoreArch(dir, arch string) (*OpsStore, error) {
+	if err := ValidatePlatform("linux/" + arch); err != nil {
+		return nil, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("ops store mkdir %s: %w", dir, err)
+	if arch != "amd64" {
+		dir = filepath.Join(dir, arch)
 	}
-	return &OpsStore{root: dir, arch: ArchSlug()}, nil
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("ops_store operation: %w", err)
+	}
+	return &OpsStore{root: dir, arch: arch}, nil
 }
 
 // PackageDir returns the local directory for an ops package.
@@ -607,6 +611,7 @@ func copyFileContents(src, dst string, perm fs.FileMode) error {
 // File represents a file to be included in a unikernel image, with both
 // its host path (on the build machine) and its guest path (inside the image).
 type File struct {
+	Reference *Reference `json:"-"`
 	HostPath  string
 	GuestPath string
 	// IsDir marks an empty directory to create inside the image (no host file).
@@ -957,4 +962,25 @@ func isELFFile(path string) bool {
 		return false
 	}
 	return magic[0] == 0x7f && magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F'
+}
+
+// ArchiveSHA256 identifies the actual archive used, including cached packages.
+func (s *OpsStore) ArchiveSHA256(namespace, name, version, expected string) (string, error) {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return "", err
+	}
+	f, err := os.Open(filepath.Join(s.PackageDir(namespace, name, version), s.arch+".tar.gz"))
+	if err != nil {
+		return "", fmt.Errorf("ops_store operation: %w", err)
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("ops_store operation: %w", err)
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if expected != "" && !strings.EqualFold(got, expected) {
+		return "", ErrChecksumMismatch
+	}
+	return got, nil
 }

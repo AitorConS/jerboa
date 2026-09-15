@@ -56,15 +56,13 @@ func WithMetrics(s MetricsSink) Option {
 
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
-	nativeMu    sync.Mutex
-	nativeState nativeNetworkState
-	guestDNS    func([]byte, string) ([]byte, error)
-	store       Store
-	qemuBin     string
-	kernelPath  string
-	mkCmd       CommandFunc
-	hchecker    *HealthChecker
-	metrics     MetricsSink
+	nativeNetworkHost
+	store      Store
+	qemuBin    string
+	kernelPath string
+	mkCmd      CommandFunc
+	hchecker   *HealthChecker
+	metrics    MetricsSink
 	// applyLimits places the hypervisor process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.

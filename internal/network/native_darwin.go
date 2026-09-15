@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -26,14 +27,20 @@ import (
 )
 
 type NativeNetwork struct {
-	stack *stack.Stack
-	sw    *tap.Switch
-	ports *forwarder.PortsForwarder
-	dns   []net.PacketConn
-	once  sync.Once
+	stack     *stack.Stack
+	egress    *nativeEgressPool
+	publishMu sync.Mutex
+	published map[string]*nativePublication
+	sw        *tap.Switch
+	ports     *forwarder.PortsForwarder
+	dns       []net.PacketConn
+	once      sync.Once
 }
 
 func NewNativeNetwork(cidr, gateway string, answer func([]byte, string) ([]byte, error)) (*NativeNetwork, error) {
+	return NewNativeNetworkWithPolicy(cidr, gateway, answer, nil)
+}
+func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string) ([]byte, error), allow func(string, string, uint16, bool) bool) (*NativeNetwork, error) {
 	_, subnet, err := net.ParseCIDR(cidr)
 	if err != nil || subnet.IP.To4() == nil || !subnet.Contains(net.ParseIP(gateway)) {
 		return nil, fmt.Errorf("invalid native subnet/gateway %s/%s", cidr, gateway)
@@ -66,9 +73,26 @@ func NewNativeNetwork(cidr, gateway string, answer func([]byte, string) ([]byte,
 	nat := map[tcpip.Address]tcpip.Address{tcpip.AddrFrom4Slice(net.ParseIP(gateway).To4()): tcpip.AddrFrom4Slice(net.IPv4(127, 0, 0, 1).To4())}
 	tf := forwarder.TCP(s, nat, &natMu, false)
 	uf := forwarder.UDP(s, nat, &natMu, false)
-	s.SetTransportProtocolHandler(tcp.ProtocolNumber, tf.HandlePacket)
-	s.SetTransportProtocolHandler(udp.ProtocolNumber, uf.HandlePacket)
+	permitted := func(id stack.TransportEndpointID, udp bool) bool {
+		if allow == nil {
+			return true
+		}
+		address := id.LocalAddress.String()
+		if address == gateway {
+			address = "127.0.0.1"
+		} else if subnet.Contains(net.ParseIP(address)) {
+			return false
+		}
+		return allow(id.RemoteAddress.String(), address, id.LocalPort, udp)
+	}
 	n := &NativeNetwork{stack: s, sw: sw, ports: forwarder.NewPortsForwarder(s)}
+	if allow != nil {
+		n.egress = newEgressPool()
+		n.egress.install(s, gateway, permitted)
+	} else {
+		s.SetTransportProtocolHandler(tcp.ProtocolNumber, tf.HandlePacket)
+		s.SetTransportProtocolHandler(udp.ProtocolNumber, uf.HandlePacket)
+	}
 	// Bind each address explicitly so replies preserve the queried source IP.
 	for _, address := range []string{netconst.DNSAnycastIP, "10.0.2.3"} {
 		dns, err := gonet.DialUDP(s, &tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFrom4Slice(net.ParseIP(address).To4()), Port: 53}, nil, ipv4.ProtocolNumber)
@@ -115,16 +139,35 @@ func (n *NativeNetwork) DialContext(ctx context.Context, _, addr string) (net.Co
 	if ip == nil {
 		return nil, fmt.Errorf("invalid guest IP %s", host)
 	}
-	return gonet.DialContextTCP(ctx, n.stack, tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFrom4Slice(ip), Port: uint16(p)}, ipv4.ProtocolNumber)
+	c, err := gonet.DialContextTCP(ctx, n.stack, tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFrom4Slice(ip), Port: uint16(p)}, ipv4.ProtocolNumber)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
 }
 func (n *NativeNetwork) Expose(proto, local, remote string) error {
+	if n.egress != nil {
+		return n.exposeOwned(proto, local, remote)
+	}
 	return n.ports.Expose(types.TransportProtocol(proto), local, remote)
 }
 func (n *NativeNetwork) Unexpose(proto, local string) error {
+	if n.egress != nil {
+		return n.unexposeOwned(proto, local)
+	}
 	return n.ports.Unexpose(types.TransportProtocol(proto), local)
 }
 func (n *NativeNetwork) Close() {
 	n.once.Do(func() {
+		if n.egress != nil {
+			n.egress.closeSource("")
+			n.publishMu.Lock()
+			for key, p := range n.published {
+				p.close()
+				delete(n.published, key)
+			}
+			n.publishMu.Unlock()
+		}
 		for _, c := range n.dns {
 			_ = c.Close()
 		}
@@ -137,6 +180,7 @@ type NativeLink struct {
 	mu       sync.Mutex
 	conn     net.Conn
 	closed   bool
+	cleanup  func()
 	rx, tx   atomic.Int64
 }
 type frameCounter struct {
@@ -182,12 +226,21 @@ func (c *countedConn) Write(b []byte) (int, error) {
 	c.link.rx.Add(c.writeFrames.count(b[:n]))
 	return n, e
 }
-func (n *NativeNetwork) Listen(path string) (*NativeLink, error) {
+func (n *NativeNetwork) Listen(path string) (*NativeLink, error) { return n.ListenVM(path, "", "") }
+func (n *NativeNetwork) ListenVM(path, ip, mac string) (*NativeLink, error) {
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		return nil, err
 	}
+	if err := os.Chmod(path, 0600); err != nil {
+		ln.Close()
+		return nil, err
+	}
 	l := &NativeLink{listener: ln}
+	if n.egress != nil {
+		n.egress.activateSource(ip)
+		l.cleanup = func() { n.egress.closeSource(ip) }
+	}
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -202,7 +255,8 @@ func (n *NativeNetwork) Listen(path string) (*NativeLink, error) {
 			}
 			l.conn = c
 			l.mu.Unlock()
-			_ = n.sw.Accept(context.Background(), &countedConn{Conn: c, link: l}, types.QemuProtocol)
+			guard := newEthernetConn(c, ip, mac)
+			_ = n.sw.Accept(context.Background(), &countedConn{Conn: guard, link: l}, types.QemuProtocol)
 		}
 	}()
 	return l, nil
@@ -210,7 +264,13 @@ func (n *NativeNetwork) Listen(path string) (*NativeLink, error) {
 func (l *NativeLink) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
 	l.closed = true
+	if l.cleanup != nil {
+		l.cleanup()
+	}
 	_ = l.listener.Close()
 	if l.conn != nil {
 		_ = l.conn.Close()

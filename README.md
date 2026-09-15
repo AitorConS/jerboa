@@ -32,6 +32,8 @@ The daemon runs natively on Linux and, as a development preview, macOS Apple
 Silicon. On Windows, the `jerboa` CLI runs on the host and talks to `jerboad`
 running inside a dedicated WSL2 distro managed by `jerboa daemon`.
 See [macOS Apple Silicon](docs/macos.md) for the native build and compatibility matrix.
+See [Linux ARM64 packages](docs/packages-arm64.md) for local sysroot packaging,
+Docker imports, package provenance and Firecracker acceptance.
 
 ## Current Capabilities
 
@@ -40,7 +42,7 @@ See [macOS Apple Silicon](docs/macos.md) for the native build and compatibility 
   - Go, Node.js, Python, Rust, and `raw` (package-driven) projects
 - **Run** VMs on:
   - QEMU (KVM on Linux when available; HVF for native ARM64 guests on macOS)
-  - Firecracker (Linux/KVM)
+  - Firecracker (Linux/KVM and native macOS ARM64/HVF fork)
 - **Manage**:
   - images and volumes
   - bridge networks with TAP-backed guest connectivity
@@ -101,6 +103,20 @@ For networking, volumes, DNS, and compose stacks, see
 [Getting Started](docs/getting-started.md).
 
 ## Installing
+
+### macOS Apple Silicon
+
+The native Firecracker package requires macOS 26+. Once a macOS release is
+published, the same installer selects its signed package automatically:
+
+```sh
+curl -fsSL https://jerboa.dev/install.sh | bash
+```
+
+Run without sudo on macOS. The package includes Firecracker, libraries, kernel
+and native tools, and starts the user daemon through launchd. See
+[Firecracker installation and source builds](docs/macos-firecracker.md) and
+[release infrastructure requirements](docs/macos-distribution.md).
 
 ### Linux
 

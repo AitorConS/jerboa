@@ -320,6 +320,16 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleNodeList()
 	case "DNS.ResolveAll":
 		return s.handleDNSResolveAll(req.Params)
+	case "VM.SnapshotCreate":
+		return s.handleSnapshotCreate(ctx, req.Params)
+	case "VM.SnapshotRestore":
+		return s.handleSnapshotRestore(ctx, req.Params)
+	case "Snapshot.List":
+		return s.handleSnapshotList()
+	case "Snapshot.Inspect":
+		return s.handleSnapshotInspect(req.Params)
+	case "Snapshot.Remove":
+		return s.handleSnapshotRemove(req.Params)
 	default:
 		return nil, &api.RPCError{Code: -32601, Message: "method not found: " + req.Method}
 	}
@@ -391,9 +401,6 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			imagePath = resolved
 		}
 	}
-	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
-		return nil, rerr
-	}
 
 	architecture := ""
 	if runtime.GOOS == "darwin" && (p.ImagePath != "" || looksLikePath(p.Image)) {
@@ -407,6 +414,15 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		if runtime.GOOS == "darwin" && m.Architecture != "arm64" && !p.EmulateX86 {
 			return nil, &api.RPCError{Code: -32000, Message: "native macOS requires an ARM64 image; rebuild with --platform linux/arm64 or explicitly use --emulate-x86"}
 		}
+	}
+
+	if validator, ok := s.mgr.(interface{ ValidateImagePlatform(string, bool) error }); ok {
+		if err := validator.ValidateImagePlatform(architecture, p.EmulateX86); err != nil {
+			return nil, &api.RPCError{Code: -32602, Message: err.Error()}
+		}
+	}
+	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
+		return nil, rerr
 	}
 
 	// The daemon owns each reservation until creation succeeds, rolling it back on failure.
@@ -476,27 +492,28 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 
 	cfg := vm.Config{
-		EmulateX86:   p.EmulateX86,
-		Architecture: architecture,
-		ImagePath:    imagePath,
-		ImageDigest:  imageDigest,
-		ImageRef:     p.Image,
-		Memory:       memory,
-		CPUs:         cpus,
-		NetworkName:  p.NetworkName,
-		PortMaps:     portMaps,
-		Env:          p.Env,
-		Name:         p.Name,
-		Volumes:      volumeMountsFromSpec(p.Volumes),
-		Attach:       p.Attach,
-		IPAddress:    p.IPAddress,
-		GatewayIP:    p.GatewayIP,
-		BridgeName:   p.BridgeName,
-		SubnetMask:   p.SubnetMask,
-		CPUShares:    p.CPUShares,
-		MemoryMax:    p.MemoryMax,
-		DiskIOPS:     p.DiskIOPS,
-		DiskBPS:      p.DiskBPS,
+		EmulateX86:     p.EmulateX86,
+		Architecture:   architecture,
+		ImagePath:      imagePath,
+		ImageDigest:    imageDigest,
+		ImageRef:       p.Image,
+		Memory:         memory,
+		CPUs:           cpus,
+		NetworkName:    p.NetworkName,
+		NetworkAliases: append([]string(nil), p.NetworkAliases...),
+		PortMaps:       portMaps,
+		Env:            p.Env,
+		Name:           p.Name,
+		Volumes:        volumeMountsFromSpec(p.Volumes),
+		Attach:         p.Attach,
+		IPAddress:      p.IPAddress,
+		GatewayIP:      p.GatewayIP,
+		BridgeName:     p.BridgeName,
+		SubnetMask:     p.SubnetMask,
+		CPUShares:      p.CPUShares,
+		MemoryMax:      p.MemoryMax,
+		DiskIOPS:       p.DiskIOPS,
+		DiskBPS:        p.DiskBPS,
 	}
 	if p.HealthCheck != nil {
 		cfg.HealthCheck = &vm.HealthCheckConfig{
@@ -1080,7 +1097,7 @@ func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *api.RPCError
 	// running ones block removal.
 	inUse := 0
 	for _, v := range s.mgr.List() {
-		if v.Cfg.NetworkName == p.Name && v.GetState() == vm.StateRunning {
+		if st := v.GetState(); v.Cfg.NetworkName == p.Name && (st == vm.StateRunning || st == vm.StateRestoring) {
 			inUse++
 		}
 	}

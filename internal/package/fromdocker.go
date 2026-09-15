@@ -3,6 +3,7 @@ package pkg
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/sha256"
 	"debug/elf"
 	"errors"
 	"fmt"
@@ -55,8 +56,8 @@ var defaultLibDirs = []string{
 //
 // The returned cleanup removes the staging directory that the Files' HostPaths
 // live in; call it once the Files have been packaged.
-func FromDocker(image, containerPath string, extraLibs []string) (files []File, cleanup func(), err error) {
-	cfs, cleanupExport, err := exportContainerFS(image)
+func FromDocker(image, containerPath string, extraLibs []string, platforms ...string) (files []File, cleanup func(), err error) {
+	cfs, cleanupExport, err := exportContainerFS(image, platforms...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -82,7 +83,12 @@ func FromDocker(image, containerPath string, extraLibs []string) (files []File, 
 
 	files = make([]File, 0, len(closure))
 	for i, real := range closure {
-		data, rerr := cfs.readFile(real)
+		resolved, rerr := cfs.resolve(real)
+		if rerr != nil {
+			stagingCleanup()
+			return nil, nil, rerr
+		}
+		data, rerr := cfs.readFile(resolved)
 		if rerr != nil {
 			stagingCleanup()
 			return nil, nil, fmt.Errorf("from-docker: read %s: %w", real, rerr)
@@ -106,11 +112,14 @@ func FromDocker(image, containerPath string, extraLibs []string) (files []File, 
 // a tar. It lets us resolve absolute paths and symlinks and read file contents
 // without materializing the (possibly symlink-laden) tree on the host.
 type containerFS struct {
+	root    string
 	tarPath string
+	hosts   map[string]string
 	index   map[string]cfsEntry // clean absolute path ("/usr/bin/x") -> entry
 }
 
 type cfsEntry struct {
+	digest   [32]byte
 	typeflag byte
 	linkname string // symlink/hardlink target as recorded in the tar
 }
@@ -118,12 +127,20 @@ type cfsEntry struct {
 // exportContainerFS creates a throwaway container from image, exports its merged
 // filesystem to a temp tar, and indexes every entry. The returned cleanup removes
 // the temp tar. The container is removed before returning.
-func exportContainerFS(image string) (*containerFS, func(), error) {
+func exportContainerFS(image string, platforms ...string) (*containerFS, func(), error) {
 	if err := ensureDockerImage(image); err != nil {
 		return nil, nil, err
 	}
 
-	out, err := exec.Command("docker", "create", image).Output() //nolint:noctx // interactive CLI call
+	args := []string{"create"}
+	if len(platforms) > 0 {
+		if err := ValidatePlatform(platforms[0]); err != nil {
+			return nil, nil, err
+		}
+		args = append(args, "--platform", platforms[0])
+	}
+	args = append(args, image)
+	out, err := exec.Command("docker", args...).Output() //nolint:noctx // interactive CLI call
 	if err != nil {
 		return nil, nil, fmt.Errorf("from-docker: docker create %s: %w", image, dockerErr(err))
 	}
@@ -178,7 +195,19 @@ func indexTar(tarPath string) (map[string]cfsEntry, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
 		}
-		index[absClean(hdr.Name)] = cfsEntry{typeflag: hdr.Typeflag, linkname: hdr.Linkname}
+		entry := cfsEntry{typeflag: hdr.Typeflag, linkname: hdr.Linkname}
+		if hdr.Typeflag == tar.TypeReg {
+			h := sha256.New()
+			if _, err := io.Copy(h, tr); err != nil {
+				return nil, fmt.Errorf("container filesystem operation: %w", err)
+			}
+			copy(entry.digest[:], h.Sum(nil))
+		}
+		name := absClean(hdr.Name)
+		if old, ok := index[name]; ok && old != entry {
+			return nil, fmt.Errorf("export collision at %s", name)
+		}
+		index[name] = entry
 	}
 	return index, nil
 }
@@ -191,6 +220,12 @@ func indexTar(tarPath string) (map[string]cfsEntry, error) {
 // /lib/x86_64-linux-gnu/libc.so.6 physically lives under /usr/lib. It errors when
 // a component is missing or when the target is not a regular file.
 func (c *containerFS) resolve(p string) (string, error) {
+	// Explicit local mappings overlay the source filesystem, including usrmerge
+	// directory aliases. They describe the final guest path of this input file.
+	if _, ok := c.hosts[absClean(p)]; ok && c.index[absClean(p)].typeflag == tar.TypeReg {
+		return absClean(p), nil
+	}
+
 	work := splitAbs(p)
 	var out []string // components resolved so far (below root)
 	hops := 0
@@ -207,7 +242,7 @@ func (c *containerFS) resolve(p string) (string, error) {
 			continue
 		}
 		cur := "/" + strings.Join(append(append([]string{}, out...), part), "/")
-		entry, ok := c.index[cur]
+		entry, ok := c.entry(cur)
 		if !ok {
 			// An unrecorded intermediate component is treated as a plain directory
 			// (some exports omit directory entries); only a missing leaf is fatal.
@@ -225,7 +260,7 @@ func (c *containerFS) resolve(p string) (string, error) {
 				return "", fmt.Errorf("%q: too many symlink hops (cycle?)", p)
 			}
 			var base []string
-			if strings.HasPrefix(entry.linkname, "/") {
+			if strings.HasPrefix(entry.linkname, "/") || entry.typeflag == tar.TypeLink {
 				base = splitAbs(entry.linkname)
 			} else {
 				base = append(append([]string{}, out...), splitAbs(entry.linkname)...)
@@ -246,7 +281,7 @@ func (c *containerFS) resolve(p string) (string, error) {
 	}
 
 	final := "/" + strings.Join(out, "/")
-	entry, ok := c.index[final]
+	entry, ok := c.entry(final)
 	if !ok {
 		return "", fmt.Errorf("%q not found in image", final)
 	}
@@ -258,7 +293,7 @@ func (c *containerFS) resolve(p string) (string, error) {
 
 // splitAbs splits an absolute-ized, cleaned path into its non-empty components.
 func splitAbs(p string) []string {
-	cleaned := strings.TrimPrefix(absClean(p), "/")
+	cleaned := strings.TrimPrefix(filepath.ToSlash(p), "/")
 	if cleaned == "" {
 		return nil
 	}
@@ -268,6 +303,23 @@ func splitAbs(p string) []string {
 // readFile returns the contents of the regular file at the clean absolute path
 // real (as returned by resolve). It scans the tar for that single entry.
 func (c *containerFS) readFile(real string) ([]byte, error) {
+	if c.hosts != nil {
+		if host, ok := c.hosts[real]; ok {
+			data, err := os.ReadFile(host)
+			if err != nil {
+				return nil, fmt.Errorf("read container file %s: %w", real, err)
+			}
+			return data, nil
+		}
+		if c.root != "" {
+			data, err := os.ReadFile(filepath.Join(c.root, real))
+			if err != nil {
+				return nil, fmt.Errorf("read container root file %s: %w", real, err)
+			}
+			return data, nil
+		}
+		return nil, fmt.Errorf("missing %s", real)
+	}
 	f, err := os.Open(c.tarPath)
 	if err != nil {
 		return nil, fmt.Errorf("open export tar: %w", err)
@@ -298,57 +350,74 @@ func (c *containerFS) readFile(real string) ([]byte, error) {
 // elfClosure returns the resolved absolute paths making up the runtime closure of
 // the binary at binPath: the binary itself (first), its ELF interpreter, and the
 // transitive DT_NEEDED shared libraries. A statically linked binary (no
-// interpreter, no needed libraries) yields just itself. Non-ELF targets (e.g. a
-// shell script) yield just the target — the caller's shell-launcher check catches
-// the cases a unikernel cannot run.
+// interpreter, no needed libraries) yields just itself. Non-ELF targets and
+// missing or incompatible dependencies are rejected. Requested guest paths
+// are retained even when the underlying content is reached through a symlink.
 func (c *containerFS) elfClosure(binPath string) ([]string, error) {
-	start, err := c.resolve(binPath)
-	if err != nil {
-		return nil, fmt.Errorf("locate %s: %w", binPath, err)
+	start := absClean(binPath)
+	result := []string{}
+	seen := map[string]bool{}
+	type pending struct {
+		guest     string
+		inherited []string
 	}
-
-	result := []string{start}
-	seen := map[string]bool{start: true}
-	queue := []string{start}
-
+	queue := []pending{{guest: start}}
+	platform := ""
 	for len(queue) > 0 {
-		cur := queue[0]
+		item := queue[0]
+		cur := item.guest
 		queue = queue[1:]
-
-		data, err := c.readFile(cur)
-		if err != nil {
+		if seen[cur] {
 			continue
+		}
+		seen[cur] = true
+		real, err := c.resolve(cur)
+		if err != nil {
+			return nil, err
+		}
+		data, err := c.readFile(real)
+		if err != nil {
+			return nil, err
 		}
 		info, err := readELFInfo(data)
 		if err != nil {
-			continue // not an ELF: no dependencies to chase
+			return nil, fmt.Errorf("%s: %w", cur, err)
 		}
-
-		add := func(candidate string) {
-			rp, err := c.resolve(candidate)
-			if err != nil || seen[rp] {
-				return
-			}
-			seen[rp] = true
-			result = append(result, rp)
-			queue = append(queue, rp)
+		if platform == "" {
+			platform = info.platform
 		}
-
+		if info.platform != platform {
+			return nil, fmt.Errorf("mixed architectures: %s is %s, want %s", cur, info.platform, platform)
+		}
+		result = append(result, cur)
 		if info.interp != "" {
-			add(info.interp)
+			queue = append(queue, pending{guest: info.interp})
 		}
-		searchDirs := append(expandOrigin(info.runpath, path.Dir(cur)), defaultLibDirs...)
-		for _, soname := range info.needed {
-			if strings.Contains(soname, "/") {
-				add(soname)
+		inherited := append(expandOrigin(info.rpath, path.Dir(cur)), item.inherited...)
+		searchDirs := append(append([]string{}, inherited...), expandOrigin(info.runpath, path.Dir(cur))...)
+		for _, dir := range defaultLibDirs {
+			if platform == "linux/arm64" && strings.Contains(dir, "x86_64") || platform == "linux/amd64" && strings.Contains(dir, "aarch64") {
 				continue
 			}
-			for _, dir := range searchDirs {
-				if _, err := c.resolve(path.Join(dir, soname)); err == nil {
-					add(path.Join(dir, soname))
-					break
+			searchDirs = append(searchDirs, dir)
+		}
+		for _, soname := range info.needed {
+			candidate := ""
+			if strings.Contains(soname, "/") {
+				candidate = absClean(soname)
+			} else {
+				for _, dir := range searchDirs {
+					p := path.Join(dir, soname)
+					if _, err := c.resolve(p); err == nil {
+						candidate = p
+						break
+					}
 				}
 			}
+			if candidate == "" {
+				return nil, fmt.Errorf("%s: missing dependency %s", cur, soname)
+			}
+			queue = append(queue, pending{guest: candidate, inherited: inherited})
 		}
 	}
 	return result, nil
@@ -357,9 +426,11 @@ func (c *containerFS) elfClosure(binPath string) ([]string, error) {
 // elfInfo is the subset of ELF dynamic metadata needed to walk a binary's
 // shared-library closure.
 type elfInfo struct {
-	interp  string   // PT_INTERP (dynamic linker), empty for a static binary
-	needed  []string // DT_NEEDED sonames
-	runpath []string // DT_RUNPATH / DT_RPATH search dirs
+	platform string
+	interp   string   // PT_INTERP (dynamic linker), empty for a static binary
+	needed   []string // DT_NEEDED sonames
+	runpath  []string // DT_RUNPATH applies to direct dependencies only
+	rpath    []string // DT_RPATH is inherited by descendants
 }
 
 // readELFInfo parses ELF dynamic metadata from an in-memory image. It returns an
@@ -371,23 +442,54 @@ func readELFInfo(data []byte) (*elfInfo, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	if f.Class != elf.ELFCLASS64 || f.Data != elf.ELFDATA2LSB {
+		return nil, fmt.Errorf("requires little-endian ELF64")
+	}
+	if f.OSABI != elf.ELFOSABI_NONE && f.OSABI != elf.ELFOSABI_LINUX {
+		return nil, fmt.Errorf("unsupported ELF ABI %s", f.OSABI)
+	}
+	if f.Type != elf.ET_EXEC && f.Type != elf.ET_DYN {
+		return nil, fmt.Errorf("ELF is not executable or a shared library")
+	}
 	info := &elfInfo{}
+	switch f.Machine {
+	case elf.EM_AARCH64:
+		info.platform = "linux/arm64"
+	case elf.EM_X86_64:
+		info.platform = "linux/amd64"
+	default:
+		return nil, fmt.Errorf("unsupported ELF architecture %s", f.Machine)
+	}
 	for _, p := range f.Progs {
 		if p.Type != elf.PT_INTERP {
 			continue
 		}
+		if p.Filesz == 0 || p.Filesz > 4096 {
+			return nil, fmt.Errorf("invalid PT_INTERP size")
+		}
 		buf := make([]byte, p.Filesz)
-		if _, err := p.ReadAt(buf, 0); err == nil {
-			info.interp = strings.TrimRight(string(buf), "\x00")
+		if _, err := p.ReadAt(buf, 0); err != nil {
+			return nil, fmt.Errorf("container filesystem operation: %w", err)
+		}
+		if buf[len(buf)-1] != 0 {
+			return nil, fmt.Errorf("unterminated PT_INTERP")
+		}
+		info.interp = strings.TrimRight(string(buf), "\x00")
+		if !strings.HasPrefix(info.interp, "/") {
+			return nil, fmt.Errorf("interpreter must be absolute")
 		}
 	}
-	if needed, err := f.DynString(elf.DT_NEEDED); err == nil {
+	if f.SectionByType(elf.SHT_DYNAMIC) != nil {
+		needed, err := f.DynString(elf.DT_NEEDED)
+		if err != nil {
+			return nil, fmt.Errorf("invalid dynamic dependencies: %w", err)
+		}
 		info.needed = needed
 	}
 	if rp, err := f.DynString(elf.DT_RUNPATH); err == nil && len(rp) > 0 {
 		info.runpath = splitLibPath(rp)
 	} else if rp, err := f.DynString(elf.DT_RPATH); err == nil && len(rp) > 0 {
-		info.runpath = splitLibPath(rp)
+		info.rpath = splitLibPath(rp)
 	}
 	return info, nil
 }
@@ -461,4 +563,32 @@ func appendUnique(s []string, v string) []string {
 		}
 	}
 	return append(s, v)
+}
+
+func (c *containerFS) entry(p string) (cfsEntry, bool) {
+	if e, ok := c.index[p]; ok {
+		return e, true
+	}
+	if c.root == "" {
+		return cfsEntry{}, false
+	}
+	host := filepath.Join(c.root, p)
+	info, err := os.Lstat(host)
+	if err != nil {
+		return cfsEntry{}, false
+	}
+	e := cfsEntry{typeflag: tar.TypeReg}
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		e.typeflag = tar.TypeSymlink
+		e.linkname, err = os.Readlink(host)
+		if err != nil {
+			return cfsEntry{}, false
+		}
+	case info.IsDir():
+		e.typeflag = tar.TypeDir
+	case !info.Mode().IsRegular():
+		return cfsEntry{}, false
+	}
+	return e, true
 }

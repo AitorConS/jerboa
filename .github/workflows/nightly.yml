@@ -46,7 +46,7 @@ jobs:
 
       - name: Verify toolchain
         run: |
-          for tool in gcc nasm qemu-system-x86_64; do
+          for tool in gcc nasm qemu-system-x86_64 ent python3; do
             command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86"; exit 1; }
           done
 

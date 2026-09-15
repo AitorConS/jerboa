@@ -120,13 +120,14 @@ func (h *HealthChecker) probe(p *healthProbe) {
 	p.vm.mu.RUnlock()
 	var ok bool
 	if dial != nil {
-		if p.cfg.Type == "tcp" {
+		switch p.cfg.Type {
+		case "tcp":
 			c, err := dial(probeCtx, "tcp", p.target)
 			ok = err == nil
 			if c != nil {
 				c.Close()
 			}
-		} else if p.cfg.Type == "http" {
+		case "http":
 			transport := &http.Transport{DialContext: dial}
 			defer transport.CloseIdleConnections()
 			req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, p.target, nil)

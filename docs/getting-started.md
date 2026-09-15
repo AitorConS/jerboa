@@ -25,7 +25,7 @@ Jerboa currently runs in two supported ways:
 Notes:
 
 - Stable daemon releases target Linux. A [native macOS Apple Silicon preview]({% link macos.md %}) can be built from source.
-- Linux VM execution uses KVM; the macOS preview uses QEMU/HVF.
+- Linux VM execution uses KVM; the macOS preview supports the native Firecracker/HVF fork and QEMU/HVF.
 - Windows support is built around WSL2, not native Windows virtualization.
 
 ## Prerequisites
@@ -58,6 +58,20 @@ Firecracker still requires KVM.
 ---
 
 ## Install
+
+### macOS Apple Silicon
+
+On macOS 26+, use a native ARM64 terminal and run without sudo:
+
+```sh
+curl -fsSL https://jerboa.dev/install.sh | bash
+```
+
+The script detects macOS, verifies the signed complete Firecracker package,
+installs its native tools and starts the launchd daemon. It requires a release
+containing the `macos` component; older Linux-only releases are rejected.
+Until the first native package is published, use the
+[source build]({% link macos-firecracker.md %}).
 
 ### Linux
 

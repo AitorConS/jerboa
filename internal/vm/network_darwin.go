@@ -18,12 +18,17 @@ type nativeNetworkGroup struct {
 	network       *network.NativeNetwork
 	refs          int
 	cidr, gateway string
+	members       map[string]bool
 }
 
 func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 	if v.Cfg.EmulateX86 {
 		v.AddWarning("x86 guest uses explicit TCG CPU emulation; ARM64 guests use native HVF")
 	}
+	return m.nativeNetworkHost.prepareHostVM(v)
+}
+
+func (m *nativeNetworkHost) prepareHostVM(v *VM) (func(), error) {
 	key := v.Cfg.NetworkName
 	ip, gateway, mask := v.Cfg.IPAddress, v.Cfg.GatewayIP, v.Cfg.SubnetMask
 	if key == "" {
@@ -46,6 +51,17 @@ func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	m.nativeMu.Lock()
+	if g.members == nil {
+		g.members = map[string]bool{}
+	}
+	if g.members[ip] {
+		g.refs--
+		m.nativeMu.Unlock()
+		return nil, fmt.Errorf("guest IP %s is already attached", ip)
+	}
+	g.members[ip] = true
+	m.nativeMu.Unlock()
 	var ports []network.PortForward
 	var link *network.NativeLink
 	var once sync.Once
@@ -63,6 +79,7 @@ func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 			}
 			m.nativeMu.Lock()
 			defer m.nativeMu.Unlock()
+			delete(g.members, ip)
 			g.refs--
 			if g.refs == 0 {
 				g.network.Close()
@@ -73,6 +90,9 @@ func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 	// Setup owns a reference until success or rollback.
 	failed := func(err error) (func(), error) { cleanup(); return nil, err }
 	for _, p := range toNetworkPortForwards(v.Cfg.PortMaps) {
+		if p.BindAddr == "" {
+			p.BindAddr = "0.0.0.0"
+		}
 		proto := p.Protocol
 		if proto == "" {
 			proto = "tcp"
@@ -86,7 +106,7 @@ func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 	sum := sha256.Sum256([]byte(v.ID))
 	v.Cfg.nativeMAC = fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
 	_ = os.Remove(v.Cfg.nativeSocket)
-	link, err = g.network.Listen(v.Cfg.nativeSocket)
+	link, err = g.network.ListenVM(v.Cfg.nativeSocket, ip, v.Cfg.nativeMAC)
 	if err != nil {
 		return failed(err)
 	}
@@ -99,7 +119,7 @@ func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 	return cleanup, nil
 }
 
-func (m *QEMUManager) acquireNativeNetwork(key, cidr, gateway string) (*nativeNetworkGroup, error) {
+func (m *nativeNetworkHost) acquireNativeNetwork(key, cidr, gateway string) (*nativeNetworkGroup, error) {
 	m.nativeMu.Lock()
 	defer m.nativeMu.Unlock()
 	if m.nativeState == nil {
@@ -107,7 +127,7 @@ func (m *QEMUManager) acquireNativeNetwork(key, cidr, gateway string) (*nativeNe
 	}
 	g := m.nativeState[key]
 	if g == nil {
-		n, err := network.NewNativeNetwork(cidr, gateway, m.guestDNS)
+		n, err := network.NewNativeNetworkWithPolicy(cidr, gateway, m.guestDNS, m.nativeEgress)
 		if err != nil {
 			return nil, err
 		}

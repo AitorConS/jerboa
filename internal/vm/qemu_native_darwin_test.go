@@ -56,8 +56,11 @@ func TestNativeX86CompatibilityIsExplicit(t *testing.T) {
 }
 
 func TestNativeStatsReadActualProcess(t *testing.T) {
+	if darwinStatsSource != "darwin-libproc" {
+		t.Skip("live Darwin resource accounting requires cgo/libproc")
+	}
 	v := &VM{ID: "test", State: StateRunning}
-	stats := (&darwinStats{pid: os.Getpid(), vm: v}).Collect()
+	stats := newDarwinStatsCollector(os.Getpid(), v).Collect()
 	require.Equal(t, darwinStatsSource, stats.Source)
 	require.Greater(t, stats.MemBytes, int64(0))
 }

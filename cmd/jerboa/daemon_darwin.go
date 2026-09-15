@@ -118,16 +118,12 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	if hypervisor == "" {
 		hypervisor = cfg.Hypervisor
 	}
-	if hypervisor != "" && hypervisor != "qemu" {
-		return fmt.Errorf("macOS requires the qemu/HVF backend")
+	if hypervisor == "" {
+		hypervisor = "qemu"
 	}
-	// launchd has a minimal PATH, including when launched by Finder.
-	qemu, err := exec.LookPath("qemu-system-aarch64")
+	hypervisorArgs, err := nativeHypervisorArgs(hypervisor, filepath.Dir(bin))
 	if err != nil {
-		qemu = "/opt/homebrew/bin/qemu-system-aarch64"
-	}
-	if _, err := os.Stat(qemu); err != nil {
-		return fmt.Errorf("native QEMU missing: install qemu-system-aarch64")
+		return err
 	}
 	toolsArgs := ""
 	if _, err := os.Stat(filepath.Join(filepath.Dir(bin), "tools", "platform.txt")); err == nil {
@@ -136,7 +132,7 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	log := filepath.Join(dir, "jerboad.log")
 	plist := `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
  <key>Label</key><string>` + nativeService + `</string>
- <key>ProgramArguments</key><array><string>` + xmlText(bin) + `</string><string>--host</string><string>` + xmlText(endpoint) + `</string><string>--qemu</string><string>` + xmlText(qemu) + `</string><string>--hypervisor</string><string>qemu</string>` + toolsArgs + observabilityArgs + `</array>
+ <key>ProgramArguments</key><array><string>` + xmlText(bin) + `</string><string>--host</string><string>` + xmlText(endpoint) + `</string>` + hypervisorArgs + toolsArgs + observabilityArgs + `</array>
  <key>EnvironmentVariables</key><dict><key>JERBOA_AUTH_TOKEN</key><string>` + xmlText(token) + `</string><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
  <key>RunAtLoad</key><true/><key>StandardOutPath</key><string>` + xmlText(log) + `</string><key>StandardErrorPath</key><string>` + xmlText(log) + `</string></dict></plist>`
 	plistPath := filepath.Join(dir, nativeService+".plist")
@@ -171,4 +167,44 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "native ARM64 daemon running at %s\n", endpoint)
 	return nil
+}
+
+func nativeHypervisorArgs(hypervisor, binDir string) (string, error) {
+	name, flag := "qemu-system-aarch64", "--qemu"
+	if hypervisor == "firecracker" {
+		name, flag = "firecracker", "--fc-bin"
+	} else if hypervisor != "qemu" {
+		return "", fmt.Errorf("unknown macOS hypervisor %q", hypervisor)
+	}
+	bin := ""
+	if hypervisor == "firecracker" {
+		bin = os.Getenv("JERBOA_FIRECRACKER_BIN")
+	}
+	if bin == "" {
+		bin = filepath.Join(binDir, name)
+		if _, err := os.Stat(bin); err != nil {
+			bin, err = exec.LookPath(name)
+			if err != nil {
+				bin = filepath.Join("/opt/homebrew/bin", name)
+			}
+		}
+	}
+	bin, err := filepath.Abs(bin)
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(bin); err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("native %s executable missing at %s", hypervisor, bin)
+	}
+	args := "<string>--hypervisor</string><string>" + xmlText(hypervisor) + "</string><string>" + flag + "</string><string>" + xmlText(bin) + "</string>"
+	if hypervisor == "firecracker" {
+		if policy := os.Getenv("JERBOA_FIRECRACKER_SECURITY"); policy != "" {
+			policy, err = filepath.Abs(policy)
+			if err != nil {
+				return "", err
+			}
+			args += "<string>--fc-security</string><string>" + xmlText(policy) + "</string>"
+		}
+	}
+	return args, nil
 }

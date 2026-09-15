@@ -2,7 +2,6 @@ package image
 
 import (
 	"context"
-	"debug/elf"
 	"fmt"
 	"io"
 	"os"
@@ -25,6 +24,8 @@ type MkfsFunc func(ctx context.Context, imgPath, binaryPath string, manifest str
 
 // BuildConfig holds the parameters for building a unikernel image.
 type BuildConfig struct {
+	Platform string
+	Packages []pkg.Reference
 	// Name is the image name (e.g. "hello").
 	Name string
 	// Tag is the image tag (default "latest" if empty).
@@ -109,22 +110,13 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
-	architecture := ""
-	if runtime.GOOS == "darwin" {
-		f, err := elf.Open(cfg.BinaryPath)
-		if err != nil {
-			return Manifest{}, fmt.Errorf("ARM64 ELF: %w", err)
-		}
-		machine := f.Machine
-		_ = f.Close()
-		switch machine {
-		case elf.EM_AARCH64:
-			architecture = "arm64"
-		case elf.EM_X86_64:
-			architecture = "amd64"
-		default:
-			return Manifest{}, fmt.Errorf("macOS supports Linux ARM64 or x86_64 ELF; got %s", machine)
-		}
+	platform, err := pkg.ValidateImage(cfg.BinaryPath, cfg.ProgramPath, cfg.PkgFiles, cfg.Platform)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("build: %w", err)
+	}
+	architecture := strings.TrimPrefix(platform, "linux/")
+	if err := pkg.ValidateReferences(cfg.Packages, platform); err != nil {
+		return Manifest{}, err
 	}
 
 	tmp, err := os.CreateTemp("", "jerboa-build-*.img")
@@ -148,6 +140,16 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, fmt.Errorf("build: %w", resolvErr)
 	}
 
+	// Include daemon-injected files in the final path/collision check.
+	validationProgram := cfg.ProgramPath
+	if validationProgram == "" {
+		validationProgram = "program"
+	}
+	finalFiles := append(append([]pkg.File{}, cfg.PkgFiles...), pkg.File{HostPath: cfg.BinaryPath, GuestPath: validationProgram})
+	if err := pkg.ValidateFiles(finalFiles, platform); err != nil {
+		return Manifest{}, err
+	}
+
 	manifest := BuildManifest(cfg)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
@@ -161,6 +163,8 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	m := Manifest{
 		SchemaVersion: SchemaVersion,
 		Architecture:  architecture,
+		Platform:      platform,
+		Packages:      cfg.Packages,
 		Name:          cfg.Name,
 		Tag:           cfg.Tag,
 		Created:       time.Now().UTC(),
@@ -188,7 +192,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 func injectResolvConf(cfg *BuildConfig) (cleanup func(), err error) {
 	cleanup = func() {}
 	for _, f := range cfg.PkgFiles {
-		if filepath.ToSlash(f.GuestPath) == "etc/resolv.conf" {
+		if strings.TrimPrefix(filepath.ToSlash(f.GuestPath), "/") == "etc/resolv.conf" {
 			return cleanup, nil
 		}
 	}

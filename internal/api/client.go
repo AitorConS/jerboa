@@ -496,6 +496,50 @@ func (c *Client) ImageRemove(_ context.Context, ref string) error {
 	return nil
 }
 
+// SnapshotCreate pauses VM id, captures snapshot name and resumes the VM.
+func (c *Client) SnapshotCreate(_ context.Context, id, name string) (SnapshotInfo, error) {
+	var info SnapshotInfo
+	if err := c.call("VM.SnapshotCreate", SnapshotParams{ID: id, Name: name}, &info); err != nil {
+		return SnapshotInfo{}, fmt.Errorf("client snapshot create: %w", err)
+	}
+	return info, nil
+}
+
+// SnapshotRestore restores stopped VM id in place from snapshot name.
+func (c *Client) SnapshotRestore(_ context.Context, id, name string) (VMInfo, error) {
+	var info VMInfo
+	if err := c.call("VM.SnapshotRestore", SnapshotParams{ID: id, Name: name}, &info); err != nil {
+		return VMInfo{}, fmt.Errorf("client snapshot restore: %w", err)
+	}
+	return info, nil
+}
+
+// SnapshotList returns every snapshot store entry.
+func (c *Client) SnapshotList(_ context.Context) ([]SnapshotInfo, error) {
+	var out []SnapshotInfo
+	if err := c.call("Snapshot.List", struct{}{}, &out); err != nil {
+		return nil, fmt.Errorf("client snapshot list: %w", err)
+	}
+	return out, nil
+}
+
+// SnapshotInspect returns one snapshot's metadata.
+func (c *Client) SnapshotInspect(_ context.Context, name string) (SnapshotInfo, error) {
+	var info SnapshotInfo
+	if err := c.call("Snapshot.Inspect", SnapshotParams{Name: name}, &info); err != nil {
+		return SnapshotInfo{}, fmt.Errorf("client snapshot inspect: %w", err)
+	}
+	return info, nil
+}
+
+// SnapshotRemove deletes a snapshot that no restore is using.
+func (c *Client) SnapshotRemove(_ context.Context, name string) error {
+	if err := c.call("Snapshot.Remove", SnapshotParams{Name: name}, nil); err != nil {
+		return fmt.Errorf("client snapshot remove: %w", err)
+	}
+	return nil
+}
+
 func (c *Client) call(method string, params any, out any) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

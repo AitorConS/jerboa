@@ -96,7 +96,7 @@ func TestContainerFS_ResolveRejectsSymlinkCycle(t *testing.T) {
 }
 
 // TestElfClosure_NonELF confirms a non-ELF target (e.g. a shell script) yields
-// just itself — the closure walker must not fail on files it cannot parse.
+// an error: importing a shell launcher cannot produce a runnable package.
 func TestElfClosure_NonELF(t *testing.T) {
 	tarPath := writeSyntheticTar(t, []tar.Header{
 		{Name: "entry.sh", Typeflag: tar.TypeReg, Mode: 0o755},
@@ -104,8 +104,8 @@ func TestElfClosure_NonELF(t *testing.T) {
 	cfs := newContainerFS(t, tarPath)
 
 	closure, err := cfs.elfClosure("/entry.sh")
-	require.NoError(t, err)
-	require.Equal(t, []string{"/entry.sh"}, closure)
+	require.Error(t, err)
+	require.Nil(t, closure)
 }
 
 // TestTarEntryName_NormalizesAndNeutralizesTraversal locks in that guest paths

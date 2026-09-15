@@ -5,7 +5,9 @@ package apiserver
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -320,7 +322,8 @@ func (s *Server) handleImageRemove(params json.RawMessage) (any, *api.RPCError) 
 // imageManifestResult converts a stored manifest to its wire representation.
 func imageManifestResult(m image.Manifest) api.ImageManifestResult {
 	return api.ImageManifestResult{
-		Name:       m.Name,
+		Name:         m.Name,
+		Architecture: m.Architecture, Platform: m.Platform, Packages: m.Packages,
 		Tag:        m.Tag,
 		DiskDigest: m.DiskDigest,
 		DiskSize:   m.DiskSize,
@@ -368,6 +371,11 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		return
 	}
 
+	if _, err := pkg.ValidateImage(binaryPath, p.ProgramPath, pkgFiles, p.Platform); err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: err.Error()})
+		return
+	}
 	// Resolve mkfs lazily — the first build may download the kernel toolchain.
 	mkfs, err := s.resolveMkfs(ctx)
 	if err != nil {
@@ -377,7 +385,8 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	}
 
 	m, err := image.NewBuilder(s.imgStore).Build(ctx, image.BuildConfig{
-		Name:        p.Name,
+		Name:     p.Name,
+		Platform: p.Platform, Packages: p.Packages,
 		Tag:         p.Tag,
 		BinaryPath:  binaryPath,
 		ProgramPath: p.ProgramPath,
@@ -438,6 +447,11 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
 		}
+		for _, part := range strings.Split(filepath.ToSlash(hdr.Name), "/") {
+			if part == ".." {
+				return nil, fmt.Errorf("invalid guest path %q", hdr.Name)
+			}
+		}
 		guestPath := filepath.ToSlash(filepath.Clean("/" + strings.TrimSuffix(hdr.Name, "/")))
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -456,6 +470,28 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 			}
 			if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 				return nil, fmt.Errorf("mkdir for %s: %w", hdr.Name, err)
+			}
+			if previous, err := os.Open(dest); err == nil {
+				h := sha256.New()
+				_, readErr := io.Copy(h, previous)
+				previous.Close()
+				if readErr != nil {
+					return nil, fmt.Errorf("read image build upload: %w", readErr)
+				}
+				old := h.Sum(nil)
+				h.Reset()
+				n, readErr := io.Copy(h, io.LimitReader(tr, remaining+1))
+				remaining -= n
+				if readErr != nil {
+					return nil, fmt.Errorf("read image build upload: %w", readErr)
+				}
+				if remaining < 0 {
+					return nil, fmt.Errorf("build context exceeds byte limit")
+				}
+				if !bytes.Equal(old, h.Sum(nil)) {
+					return nil, fmt.Errorf("different content collides at %s", guestPath)
+				}
+				continue
 			}
 			mode := os.FileMode(hdr.Mode).Perm() //nolint:gosec // tar mode bits are bounded by Perm()
 			n, err := writeFileFromTar(dest, tr, mode, remaining)

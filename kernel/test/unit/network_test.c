@@ -19,6 +19,7 @@ static void send_request(heap h, stats s, buffer_handler out, tuple t)
 
 u64 requests_per_connection;
 u64 total_connections;
+static vector connection_heaps;
 
 static void print_stats(stats s)
 {
@@ -53,7 +54,7 @@ closure_function(7, 1, void, value_in,
         } else {
             s->active--;
             apply(bound(out), 0);
-            destroy_heap(bound(h));
+            /* The HTTP parser still uses this heap until its callback returns. */
             apply(bound(completed), 0);
             return;
         }
@@ -81,6 +82,7 @@ closure_function(5, 1, input_buffer_handler, newconn,
     tuple t = bound(t);
     heap pages = allocate_mmapheap(bound(h), 4096);
     heap c = make_tiny_heap(pages);
+    vector_push(connection_heaps, c);
     u64 *count = allocate_zero(c, sizeof(u64));
     s->connections++;
     s->active++;
@@ -112,6 +114,10 @@ closure_function(1, 1, void, finished,
 {
     print_stats(bound(st));
     rprintf("\n");
+    while (vector_length(connection_heaps)) {
+        heap h = vector_pop(connection_heaps);
+        destroy_heap(h);
+    }
     exit(0);
 }
 
@@ -126,7 +132,8 @@ u64 extract_u64_with_default(tuple t, symbol n, u64 otherwise)
 
 int main(int argc, char **argv)
 {
-    heap h = init_process_runtime();    
+    heap h = init_process_runtime();
+    connection_heaps = allocate_vector(h, 16);
     tuple t = parse_arguments(h, argc, argv);
     vector unassoc = get_vector(t, sym(unassociated));
     if (!unassoc) {

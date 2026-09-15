@@ -285,7 +285,7 @@ static boolean reorder_sort(void *a, void *b)
 
 static boolean remove_test(heap h, int passes)
 {
-    const int max_elems = 512;
+    enum { max_elems = 512 };
     struct pqueue_test_elem elems[max_elems];
     int num_elems;
     int val;
@@ -331,7 +331,7 @@ static boolean remove_test(heap h, int passes)
 
 static boolean reorder_test(heap h, int passes)
 {
-    const int max_elems = 512;
+    enum { max_elems = 512 };
     struct pqueue_test_elem elems[max_elems];
     int num_elems;
     int val;

@@ -55,6 +55,9 @@ var IndexURL = "https://github.com/AitorConS/jerboa/releases/download/pkg-index/
 
 // Package describes a downloadable runtime package.
 type Package struct {
+	ProgramPath string      `json:"program_path,omitempty"`
+	Platform    string      `json:"platform,omitempty"`
+	Provenance  *Provenance `json:"provenance,omitempty"`
 	// Name is the package name (e.g. "node", "python", "redis", "nginx").
 	Name string `json:"name"`
 	// Version is the semantic version (e.g. "20.11.0").
@@ -81,8 +84,9 @@ type Index struct {
 
 // Store manages locally cached packages under a root directory.
 type Store struct {
-	root string
-	mu   sync.RWMutex
+	root     string
+	platform string
+	mu       sync.RWMutex
 }
 
 // NewStore creates a Store rooted at dir, creating it if needed.
@@ -95,6 +99,9 @@ func NewStore(dir string) (*Store, error) {
 
 // PackageDir returns the local directory for a package version.
 func (s *Store) PackageDir(name, version string) string {
+	if s.platform != "" {
+		return filepath.Join(s.root, name, version, strings.ReplaceAll(s.platform, "/", "-"))
+	}
 	return filepath.Join(s.root, name, version)
 }
 
@@ -112,6 +119,13 @@ func (s *Store) IsDownloaded(name, version string) bool {
 // Download fetches the package archive from its URL and stores it locally.
 // Verifies size and SHA-256 digest after download.
 func (s *Store) Download(pkg Package) error {
+	if pkg.Platform != "" && pkg.Platform != s.platform {
+		selected, err := s.ForPlatform(pkg.Platform)
+		if err != nil {
+			return err
+		}
+		return selected.Download(pkg)
+	}
 	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
 		return err
 	}
@@ -206,6 +220,21 @@ func (s *Store) Remove(name, version string) error {
 
 // RemoveAll deletes all locally cached versions of a package.
 func (s *Store) RemoveAll(name string) error {
+	if s.platform != "" {
+		list, err := s.List()
+		if err != nil {
+			return err
+		}
+		for _, p := range list {
+			if p.Name == name && p.Platform == s.platform {
+				if err := s.Remove(name, p.Version); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+
 	if err := naming.ValidateResourceName("package", name); err != nil {
 		return err
 	}
@@ -222,6 +251,13 @@ func (s *Store) RemoveAll(name string) error {
 // Extract decompresses the package archive into a files subdirectory.
 // After extraction the individual files can be listed with ExtractedFiles.
 func (s *Store) Extract(pkg Package) (err error) {
+	if pkg.Platform != "" && pkg.Platform != s.platform {
+		selected, err := s.ForPlatform(pkg.Platform)
+		if err != nil {
+			return err
+		}
+		return selected.Extract(pkg)
+	}
 	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
 		return err
 	}
@@ -398,43 +434,64 @@ func (s *Store) List() ([]Package, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return nil, fmt.Errorf("package list: %w", err)
-	}
 	var result []Package
-	for _, e := range entries {
-		if !e.IsDir() {
+	names, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("package operation: %w", err)
+	}
+	for _, name := range names {
+		if !name.IsDir() {
 			continue
 		}
-		name := e.Name()
-		verEntries, err := os.ReadDir(filepath.Join(s.root, name))
+		versions, err := os.ReadDir(filepath.Join(s.root, name.Name()))
 		if err != nil {
 			continue
 		}
-		for _, ve := range verEntries {
-			if !ve.IsDir() {
+		for _, version := range versions {
+			if !version.IsDir() {
 				continue
 			}
-			metaPath := filepath.Join(s.root, name, ve.Name(), "meta.json")
-			data, err := os.ReadFile(metaPath)
-			if err != nil {
-				result = append(result, Package{Name: name, Version: ve.Name()})
-				continue
+			base := filepath.Join(s.root, name.Name(), version.Name())
+			paths := []string{base}
+			children, _ := os.ReadDir(base)
+			modern := false
+			for _, child := range children {
+				if child.IsDir() && (child.Name() == "linux-arm64" || child.Name() == "linux-amd64") {
+					paths = append(paths, filepath.Join(base, child.Name()))
+					modern = true
+				}
 			}
-			var pkg Package
-			if err := json.Unmarshal(data, &pkg); err != nil {
-				result = append(result, Package{Name: name, Version: ve.Name()})
-				continue
+			for _, dir := range paths {
+				data, err := os.ReadFile(filepath.Join(dir, "meta.json"))
+				if dir == base && err != nil && modern {
+					continue
+				}
+				meta := Package{Name: name.Name(), Version: version.Name()}
+				if err == nil {
+					_ = json.Unmarshal(data, &meta)
+				}
+				if err := validatePackageRef(meta.Name, meta.Version); err != nil {
+					return nil, err
+				}
+				if s.platform == "" || meta.Platform == "" || meta.Platform == s.platform {
+					result = append(result, meta)
+				}
 			}
-			result = append(result, pkg)
 		}
 	}
+
 	return result, nil
 }
 
 // SaveMeta writes the package metadata to the local cache.
 func (s *Store) SaveMeta(pkg Package) error {
+	if pkg.Platform != "" && pkg.Platform != s.platform {
+		selected, err := s.ForPlatform(pkg.Platform)
+		if err != nil {
+			return err
+		}
+		return selected.SaveMeta(pkg)
+	}
 	if err := validatePackageRef(pkg.Name, pkg.Version); err != nil {
 		return err
 	}
@@ -501,14 +558,14 @@ func (s *Store) FetchIndexCached() (*Index, error) {
 	if fetchErr == nil {
 		// Best-effort cache write: a failure only degrades offline behavior.
 		_ = os.WriteFile(cachePath, raw, 0o644)
-		return idx, nil
+		return s.mergeLocalIndex(idx), nil
 	}
 
 	if data, err := os.ReadFile(cachePath); err == nil {
 		var cached Index
 		if err := json.Unmarshal(data, &cached); err == nil {
 			slog.Warn("package index unreachable; using cached copy", "cache", cachePath, "err", fetchErr)
-			return &cached, nil
+			return s.mergeLocalIndex(&cached), nil
 		}
 	}
 
@@ -580,6 +637,15 @@ func (s *Store) CreateFromFiles(name, version string, files []File, description,
 		return fmt.Errorf("pkg create: no files to package")
 	}
 
+	if s.platform != "" {
+		if err := ValidateFiles(files, s.platform); err != nil {
+			return err
+		}
+		if _, err := ELFPlatform(files[0].HostPath); err != nil {
+			return err
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -606,6 +672,9 @@ func (s *Store) CreateFromFiles(name, version string, files []File, description,
 		SHA256:      sha,
 		Size:        size,
 		Created:     time.Now().UTC(),
+		Platform:    s.platform,
+		ProgramPath: tarEntryName(files[0].GuestPath),
+		Provenance:  &Provenance{Kind: "local"},
 	}
 
 	if err := s.writeMeta(dir, meta); err != nil {
@@ -630,7 +699,7 @@ func tarEntryName(guest string) string {
 }
 
 func createArchive(outPath string, files []File) (string, int64, error) {
-	f, err := os.Create(outPath)
+	f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return "", 0, fmt.Errorf("create archive file: %w", err)
 	}
@@ -899,132 +968,37 @@ func resolveDockerProgram(fs *containerFS, cfg *DockerImageConfig, program strin
 	return "", fmt.Errorf("program %q not found on container PATH", program)
 }
 
-// Ldd analyses a binary with ldd and returns its shared library dependencies as
-// resolved against the host filesystem. A non-zero exit (e.g. "not a dynamic
-// executable") is returned as an error; symbol-version mismatches do not fail
-// ldd (they are warnings on stderr) and are surfaced separately by LibMismatches.
+// Ldd is the compatibility API for static host-root dependency analysis.
+// It never executes the input program, ldd, or a dynamic loader.
 func Ldd(binaryPath string) ([]string, error) {
-	cmd := exec.Command("ldd", binaryPath) //nolint:noctx // ldd is a static utility call with no meaningful context
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("ldd %s: %w", binaryPath, err)
-	}
-	return parseLddLibs(string(output)), nil
+	return LddSysroot(binaryPath, "/")
 }
 
-// LddSysroot resolves a binary's shared library dependencies against sysroot
-// instead of the host, so libraries are picked from the distro the binary was
-// built for rather than whatever happens to be installed on the build machine.
-// It runs the sysroot's own dynamic linker with --library-path pointed at the
-// sysroot lib dirs, and returns the resolved sysroot paths plus the interpreter
-// (the binary cannot boot without its loader). Libraries the loader resolved
-// from outside the sysroot (its built-in default search paths still hit the
-// host) are dropped, so a sysroot build never silently bundles host libraries.
-// Only existing files are returned.
+// LddSysroot resolves ELF dependencies statically within sysroot.
+// Use LocalFiles when guest destination paths must be retained.
 func LddSysroot(binaryPath, sysroot string) ([]string, error) {
-	loader, err := findLoader(sysroot, binaryPath)
+	files, _, err := LocalFiles(binaryPath, sysroot, filepath.Base(binaryPath), nil)
 	if err != nil {
 		return nil, err
 	}
-	out, err := runLoaderList(loader, sysrootLibDirs(sysroot), binaryPath)
-	if err != nil {
-		return nil, err
+	var libs []string
+	for _, f := range files[1:] {
+		libs = append(libs, f.HostPath)
 	}
-
-	libs := parseLddLibs(out)
-	// The interpreter itself may not be listed by --list; bundle it explicitly so
-	// the guest has the exact loader the binary references.
-	libs = append(libs, loader)
-
-	seen := make(map[string]struct{}, len(libs))
-	var existing []string
-	for _, lib := range libs {
-		if _, dup := seen[lib]; dup {
-			continue
-		}
-		seen[lib] = struct{}{}
-		// The loader's default search path can resolve a dependency from the host
-		// even with --library-path set; anything outside the sysroot is not part
-		// of this build and must not be bundled.
-		if !isUnderDir(sysroot, lib) {
-			continue
-		}
-		if _, statErr := os.Stat(lib); statErr == nil {
-			existing = append(existing, lib)
-		}
-	}
-	if len(existing) == 0 {
-		return nil, fmt.Errorf("no libraries resolved under sysroot %q for %s", sysroot, binaryPath)
-	}
-	return existing, nil
+	return libs, nil
 }
 
-// LibMismatches runs the loader (host ldd, or the sysroot linker when sysroot is
-// non-empty) and returns the lines reporting dependencies that will not satisfy
-// the binary at runtime: unresolved or version-mismatched deps ("=> not found",
-// "version `X' not found"), plus — for a sysroot build — any dependency the
-// loader resolved from outside the sysroot. An empty slice means every
-// dependency resolved cleanly. A nil error with an empty slice is only returned
-// when the loader actually ran.
+// LibMismatches reports structural dependency resolution failures. It does not
+// execute a loader or promise compatibility of individual symbol versions.
 func LibMismatches(binaryPath, sysroot string) ([]string, error) {
-	var out string
-	if sysroot != "" {
-		loader, err := findLoader(sysroot, binaryPath)
-		if err != nil {
-			return nil, err
-		}
-		o, err := runLoaderList(loader, sysrootLibDirs(sysroot), binaryPath)
-		if err != nil {
-			return nil, err
-		}
-		out = o
-	} else {
-		cmd := exec.Command("ldd", binaryPath) //nolint:noctx // static utility call
-		o, err := cmd.CombinedOutput()
-		// ldd exits non-zero when a dependency is unresolved but still prints the
-		// diagnostic lines; a non-ExitError means it could not run at all.
-		var exitErr *exec.ExitError
-		if err != nil && !errors.As(err, &exitErr) {
-			return nil, fmt.Errorf("ldd %s: %w", binaryPath, err)
-		}
-		out = string(o)
+	if sysroot == "" {
+		sysroot = "/"
 	}
-
-	var problems []string
-	for _, line := range strings.Split(out, "\n") {
-		l := strings.TrimSpace(line)
-		if l == "" {
-			continue
-		}
-		// "libfoo => not found" and "libbar.so: version `X' not found" both
-		// contain "not found"; that single marker catches every mismatch class.
-		if strings.Contains(l, "not found") {
-			problems = append(problems, l)
-		}
+	_, err := LddSysroot(binaryPath, sysroot)
+	if err != nil {
+		return []string{err.Error()}, err
 	}
-	if sysroot != "" {
-		for _, lib := range parseLddLibs(out) {
-			if !isUnderDir(sysroot, lib) {
-				problems = append(problems, "resolved outside sysroot: "+lib)
-			}
-		}
-	}
-	return problems, nil
-}
-
-// runLoaderList runs "<loader> --library-path <dirs> --list <binary>" and returns
-// its combined output. The loader exits non-zero when a dependency is unresolved
-// yet still lists what it found, so an ExitError is tolerated; any other error
-// (the loader could not be executed) is returned so callers do not mistake a
-// failed inspection for a clean one.
-func runLoaderList(loader string, libDirs []string, binaryPath string) (string, error) {
-	cmd := exec.Command(loader, "--library-path", strings.Join(libDirs, ":"), "--list", binaryPath) //nolint:noctx,gosec // daemon-side call; loader/binary are operator-supplied package inputs
-	out, err := cmd.CombinedOutput()
-	var exitErr *exec.ExitError
-	if err != nil && !errors.As(err, &exitErr) {
-		return "", fmt.Errorf("run loader %s: %w", loader, err)
-	}
-	return string(out), nil
+	return nil, nil
 }
 
 // isUnderDir reports whether path is dir itself or nested inside it, after
@@ -1223,4 +1197,27 @@ func (s *Store) writeMeta(dir string, meta Package) error {
 		return fmt.Errorf("meta write %s: %w", metaPath, err)
 	}
 	return nil
+}
+
+// Local coordinates replace remote/cache entries with the same name/version/platform.
+func (s *Store) mergeLocalIndex(idx *Index) *Index {
+	if idx.Packages == nil {
+		idx.Packages = map[string][]Package{}
+	}
+	local, err := s.List()
+	if err != nil {
+		return idx
+	}
+	for i := len(local) - 1; i >= 0; i-- {
+		p := local[i]
+		versions := idx.Packages[p.Name]
+		out := []Package{p}
+		for _, remote := range versions {
+			if remote.Version != p.Version || remote.Platform != p.Platform {
+				out = append(out, remote)
+			}
+		}
+		idx.Packages[p.Name] = out
+	}
+	return idx
 }

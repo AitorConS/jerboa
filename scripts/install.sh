@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Installs jerboad natively on a Linux host: the daemon binary, firecracker,
+# Installs Jerboa on Linux x86_64 or macOS 26+ Apple Silicon.
+# macOS installs the signed/notarized native Firecracker bundle and launchd daemon.
+# On Linux: the daemon binary, firecracker,
 # qemu, and the runtime dependencies, plus a systemd service to run it.
 #
 # This is the Linux counterpart to `jerboa daemon install` on Windows, which
@@ -52,7 +54,9 @@ Usage: sudo bash install.sh [--version VERSION]
   --version VERSION  Install latest (default), 0.51.2 or v0.51.2.
   -h, --help         Show this help without changing the system.
 
-Requires Debian/Ubuntu with systemd on x86_64 Linux.
+Requires Debian/Ubuntu with systemd on x86_64 Linux, or macOS 26+ Apple Silicon.
+On macOS run without sudo; Homebrew supplies jq and minisign if missing.
+The signed native package uses Firecracker; sudo is requested for package installation.
 HYPERVISOR=qemu allows running without KVM (software emulation).
 HELP
 }
@@ -76,6 +80,69 @@ case "${HYPERVISOR}" in qemu|firecracker) ;; *) die "HYPERVISOR must be qemu or 
 [[ "${JERBOA_PORT}" =~ ^[0-9]{1,5}$ ]] || die "JERBOA_PORT must be between 1 and 65535"
 JERBOA_PORT=$((10#${JERBOA_PORT}))
 [ "${JERBOA_PORT}" -ge 1 ] && [ "${JERBOA_PORT}" -le 65535 ] || die "JERBOA_PORT must be between 1 and 65535"
+# Dispatch before Linux-only validation, dependencies or privileged operations.
+install_macos() {
+	[ "$(uname -m)" = arm64 ] || die "macOS requires Apple Silicon; run from a native ARM64 terminal (not Rosetta)"
+	macos_version="$(sw_vers -productVersion)"
+	[ "${macos_version%%.*}" -ge 26 ] || die "Firecracker requires macOS 26 or newer"
+	[ "${HYPERVISOR}" = firecracker ] || die "the macOS package installer supports HYPERVISOR=firecracker"
+	[ "$(id -u)" -ne 0 ] || die "run the macOS installer without sudo; it requests elevation when installing the package"
+	for dependency in jq minisign; do
+		if ! command -v "${dependency}" >/dev/null 2>&1; then
+			command -v brew >/dev/null 2>&1 || die "install Homebrew and run: brew install jq minisign"
+			brew install "${dependency}"
+		fi
+	done
+	tmp="$(mktemp -d)"
+	trap 'rm -rf "${tmp}"' EXIT
+	fetch() {
+		curl --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 300 \
+			--retry 3 -fsSL -A jerboa-installer/1.0 "$1" -o "$2"
+	}
+	# Historical macOS installs require their own signed immutable manifest.
+	manifest="${RELEASE_BASE}/channels/stable.json"
+	[ "${VERSION}" = latest ] || manifest="${RELEASE_BASE}/releases/${VERSION}/manifest.json"
+	fetch "${manifest}" "${tmp}/manifest.json"
+	fetch "${manifest}.minisig" "${tmp}/manifest.json.minisig"
+	minisign -Vm "${tmp}/manifest.json" -x "${tmp}/manifest.json.minisig" -P "${PUBLIC_KEY}" >/dev/null \
+		|| die "release manifest signature verification failed"
+	resolved="$(jq -er '.components.macos.version' "${tmp}/manifest.json")" \
+		|| die "this release does not include the native macOS package"
+	[[ "${resolved}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid macOS release version"
+	[ "${VERSION}" = latest ] || [ "${VERSION}" = "${resolved}" ] || die "macOS release version mismatch"
+	VERSION="${resolved}"
+	url="$(jq -er '.components.macos.platforms["darwin-arm64"].url' "${tmp}/manifest.json")"
+	digest="$(jq -er '.components.macos.platforms["darwin-arm64"].sha256' "${tmp}/manifest.json")"
+	[[ "${url}" = "${RELEASE_BASE}/macos/${VERSION}/"* ]] || die "unexpected macOS package URL"
+	[[ "${digest}" =~ ^[0-9a-fA-F]{64}$ ]] || die "invalid macOS package checksum"
+	log "downloading native macOS package ${VERSION}"
+	fetch "${url}" "${tmp}/jerboa.pkg"
+	printf '%s  %s\n' "${digest}" "${tmp}/jerboa.pkg" | shasum -a 256 -c - \
+		|| die "macOS package checksum verification failed"
+	pkgutil --check-signature "${tmp}/jerboa.pkg" || die "macOS package signature verification failed"
+	spctl --assess --type install "${tmp}/jerboa.pkg" || die "Gatekeeper rejected the macOS package"
+	# Stop only the managed user service, after all downloaded bytes are verified.
+	if [ -x /usr/local/libexec/jerboa/bin/jerboa ]; then
+		/usr/local/libexec/jerboa/bin/jerboa daemon stop
+	fi
+	sudo installer -pkg "${tmp}/jerboa.pkg" -target /
+	# Wrappers preserve the bundle's relative daemon/tools/library lookup.
+	for binary in jerboa jerboad; do
+		printf '#!/bin/sh\nexec /usr/local/libexec/jerboa/bin/%s "$@"\n' "${binary}" > "${tmp}/${binary}"
+		sudo install -d /usr/local/bin
+		sudo install -m 0755 "${tmp}/${binary}" "/usr/local/bin/${binary}"
+	done
+	/usr/local/libexec/jerboa/bin/jerboa config set hypervisor firecracker
+	/usr/local/libexec/jerboa/bin/jerboa daemon start --hypervisor firecracker
+	log "done. Jerboa ${VERSION} with native Firecracker is installed"
+	echo "    verify: /usr/local/bin/jerboa status"
+}
+case "$(uname -s)" in
+	Darwin) install_macos; exit 0 ;;
+	Linux) ;;
+	*) die "supported platforms: Linux x86_64 and macOS Apple Silicon" ;;
+esac
+
 [ "${FC_ARCH}" = x86_64 ] || die "only FC_ARCH=x86_64 is supported by the Linux daemon"
 [[ "${FIRECRACKER_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid FIRECRACKER_VERSION"
 

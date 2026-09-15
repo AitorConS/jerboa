@@ -9,8 +9,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	pkg "github.com/AitorConS/jerboa/internal/package"
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/apiserver"
@@ -134,7 +137,7 @@ func TestImageBuild_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
-	elf := []byte{0x7f, 'E', 'L', 'F', 0, 1, 2, 3}
+	elf := validBuildELF()
 	ctxTar := buildContextTar(t, map[string][]byte{
 		"app":          elf,
 		"lib/extra.so": []byte("library-bytes"),
@@ -165,7 +168,7 @@ func TestImageBuild_RoundTrip(t *testing.T) {
 
 func buildImage(t *testing.T, client *api.Client, name, tag string) {
 	t.Helper()
-	ctxTar := buildContextTar(t, map[string][]byte{"app": {0x7f, 'E', 'L', 'F', 0, 1}})
+	ctxTar := buildContextTar(t, map[string][]byte{"app": validBuildELF()})
 	_, err := client.ImageBuild(context.Background(), api.BuildParams{
 		Name: name, Tag: tag, Program: "app",
 	}, ctxTar)
@@ -379,4 +382,40 @@ func TestVolumeSeed_MissingDiskErrors(t *testing.T) {
 	}, ctxTar)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not found")
+}
+
+func validBuildELF() []byte {
+	b := make([]byte, 64)
+	copy(b, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	b[16] = 2
+	b[18] = 183
+	b[20] = 1
+	b[52] = 64
+	return b
+}
+
+func TestImageBuildRejectsPlatformBeforeMkfs(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+	_, err = client.ImageBuild(context.Background(), api.BuildParams{Name: "bad", Program: "app", Platform: "linux/amd64"}, buildContextTar(t, map[string][]byte{"app": validBuildELF()}))
+	require.ErrorContains(t, err, "conflicts")
+	list, err := store.List()
+	require.NoError(t, err)
+	require.Empty(t, list)
+}
+
+func TestImageBuildPackageMetadataRoundTrip(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+	refs := []pkg.Reference{{Source: "jerboa", Name: "service", Version: "1.2.3", Platform: "linux/arm64", SHA256: strings.Repeat("a", 64), Provenance: &pkg.Provenance{Kind: "local"}}}
+	res, err := client.ImageBuild(context.Background(), api.BuildParams{Name: "metadata", Program: "app", Platform: "linux/arm64", Packages: refs}, buildContextTar(t, map[string][]byte{"app": validBuildELF()}))
+	require.NoError(t, err)
+	require.Equal(t, "arm64", res.Architecture)
+	require.Equal(t, "linux/arm64", res.Platform)
+	require.Equal(t, refs, res.Packages)
+	got, err := client.ImageGet(context.Background(), "metadata:latest")
+	require.NoError(t, err)
+	require.Equal(t, res, got)
 }

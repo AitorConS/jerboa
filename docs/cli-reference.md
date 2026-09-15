@@ -49,6 +49,24 @@ Authentication token resolution:
 
 ## Core VM Commands
 
+### `jerboa snapshot`
+
+Local macOS Firecracker/HVF snapshots on named networks:
+
+```sh
+jerboa snapshot create <vm> <name>
+jerboa snapshot restore <vm> <name>
+jerboa snapshot ls --output json
+jerboa snapshot inspect <name>
+jerboa snapshot rm <name>
+```
+
+Creation pauses and resumes a running VM. Restore requires the same VM to be
+stopped and resumes its captured memory and ephemeral root disk in place.
+VMs with volumes and the default slirp network are rejected. Existing TCP
+connections do not survive; snapshots are not portable backups. See
+[macOS snapshots]({% link macos-snapshots.md %}) for quotas, compatibility and recovery.
+
 ### `jerboa run <image>`
 
 Create and start a VM from:
@@ -328,13 +346,25 @@ jerboa build . --name redis
 
 `pkg create` flags:
 
-- `--libs` — additional files to bundle (repeatable)
-- `--description`, `--runtime` — metadata
-- `--missing-files` — report shared libraries missing from the local filesystem
-- `--sysroot <dir>` — resolve shared libraries against `<dir>` (the rootfs the binary
-  was built for) instead of the host, avoiding version mismatch for foreign binaries.
-  When omitted, `pkg create` still warns if the host libraries do not satisfy the
-  binary's symbol versions.
+- `--platform linux/arm64|linux/amd64` — inferred from ELF when omitted; an explicit mismatch fails.
+- `--program-path <guest-path>` — destination of the program inside the guest.
+- `--map source=destination` — additional file at an explicit guest path (repeatable).
+- `--libs` — additional files at their basenames (repeatable).
+- `--description`, `--runtime` — metadata.
+- `--missing-files` — report static dependency analysis; missing dependencies fail creation.
+- `--sysroot <dir>` — resolve the loader and libraries within this rootfs, preserving guest paths.
+
+`pkg from-docker` and selection operations also accept `--platform`. Docker
+imports record the requested reference, immutable image ID and available repository
+digest. Local variants coexist and take precedence over the remote index.
+`jerboa images inspect <ref>` displays image platform and integrated package
+versions, hashes and provenance. See [ARM64 package workflow]({% link packages-arm64.md %})
+for local sysroots, compatibility rules and reproducible Firecracker acceptance.
+
+`pkg load` uses the root command's endpoint and authentication configuration,
+including `--host` and `JERBOA_HOST`. Use `--source jerboa` for local packages.
+`pkg push` without `--platform` prefers the default platform, then a legacy
+package, then the sole downloaded variant; use the flag for explicit selection.
 
 ---
 

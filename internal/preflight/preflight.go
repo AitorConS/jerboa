@@ -249,3 +249,15 @@ func checkEntrypoint(tree *guestTree, entrypoint string) []Finding {
 		Hint:     "check [build] entrypoint in unikernel.toml and that the file is not excluded by .unignore",
 	}}
 }
+
+// CheckImagePlatform checks the final guest paths using the same resolver as imports and the daemon.
+func CheckImagePlatform(binary string, files []pkg.File, entrypoint, program, platform string) []Finding {
+	_, err := pkg.ValidateImage(binary, program, files, platform)
+	if err != nil {
+		return []Finding{{Severity: Error, Message: err.Error()}}
+	}
+	if entrypoint != "" {
+		return checkEntrypoint(newGuestTree(files), entrypoint)
+	}
+	return nil
+}
