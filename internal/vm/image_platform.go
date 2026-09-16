@@ -13,12 +13,22 @@ func (m *FirecrackerManager) ValidateImagePlatform(architecture string, emulate 
 		architecture = "amd64"
 	}
 	if emulate {
-		return fmt.Errorf("firecracker does not support x86 emulation; select QEMU explicitly")
+		return errFCX86Emulation()
 	}
 	if architecture != runtime.GOARCH {
 		return fmt.Errorf("firecracker on %s requires a %s image, got %s", runtime.GOOS, runtime.GOARCH, architecture)
 	}
 	return nil
+}
+
+// errFCX86Emulation explains how to reach QEMU, the only backend that emulates x86.
+func errFCX86Emulation() error {
+	if runtime.GOOS == "darwin" {
+		return fmt.Errorf("firecracker/HVF cannot emulate x86 images; rebuild with --platform linux/arm64, " +
+			"or switch the daemon to QEMU (brew install qemu, then jerboa config set hypervisor qemu && jerboa daemon restart, " +
+			"or select QEMU in Jerboa Desktop settings)")
+	}
+	return fmt.Errorf("firecracker does not support x86 emulation; select QEMU explicitly")
 }
 func (m *QEMUManager) ValidateImagePlatform(architecture string, emulate bool) error {
 	if architecture == "" || architecture == "x86_64" {

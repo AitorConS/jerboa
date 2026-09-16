@@ -53,6 +53,12 @@ func concreteIPv4(value string) bool {
 
 func (m *FirecrackerManager) prepareFCHost(v *VM) (func(), error) {
 	if v.Cfg.NetworkName == "" {
+		// Without a Jerboa network the VMM's own slirp carries the traffic, so no
+		// Jerboa link sees the frames: count bytes from the VMM's metrics instead.
+		socket := m.vmSockPath(v.ID)
+		v.mu.Lock()
+		v.networkStats = func() (int64, int64) { return readNativeFCNetStats(socket) }
+		v.mu.Unlock()
 		return nil, nil
 	}
 	p, err := m.sharedPolicy()

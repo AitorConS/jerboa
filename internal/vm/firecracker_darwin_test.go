@@ -84,6 +84,46 @@ func TestNativeFCShutdown(t *testing.T) {
 	}
 }
 
+func TestNativeFCNetStatsWithoutNetwork(t *testing.T) {
+	// t.TempDir embeds this long test name, which overflows the 104-byte
+	// Unix socket path limit on macOS.
+	dir, err := os.MkdirTemp("", "fcnet")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "fc.sock")
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/metrics" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = io.WriteString(w, `{"net_rx_bytes_total":8776,"net_tx_bytes_total":7599,"uptime_seconds":1.5}`)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	m := &FirecrackerManager{vmSockPath: func(string) string { return socket }}
+	v := &VM{ID: "netstats"}
+	cleanup, err := m.prepareFCHost(v)
+	require.NoError(t, err)
+	require.Nil(t, cleanup)
+	rx, tx := v.networkStats()
+	require.Equal(t, int64(8776), rx)
+	require.Equal(t, int64(7599), tx)
+
+	rx, tx = readNativeFCNetStats(filepath.Join(t.TempDir(), "missing.sock"))
+	require.Zero(t, rx)
+	require.Zero(t, tx)
+}
+
+func TestNativeFCX86EmulationExplainsQEMU(t *testing.T) {
+	err := (&FirecrackerManager{}).ValidateImagePlatform("amd64", true)
+	require.ErrorContains(t, err, "jerboa config set hypervisor qemu")
+	require.ErrorContains(t, err, "--platform linux/arm64")
+}
+
 func TestNativeFCSecurityPolicy(t *testing.T) {
 	m := NewFirecrackerManager("firecracker", "/kernel", WithFCSecurity([]byte(`{"version":1,"egress":[{"protocol":"tcp","address":"192.0.2.10","port":443}]}`)))
 	p, err := m.writeFCConfig("security", Config{Memory: "128M"}, "/root")
