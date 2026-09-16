@@ -947,6 +947,8 @@ jobs:
           set -euo pipefail
           python3 experiments/hvf/distribution/build-native-deps.py
           GLIB_PREFIX="$PWD/experiments/hvf/build/distribution/native" sh experiments/hvf/build-native.sh
+          # Offline license metadata needs workspace dependencies beyond the binary build.
+          cargo +1.97.0 fetch --locked --target aarch64-apple-darwin
           python3 experiments/hvf/distribution/package.py "$RUNNER_TEMP/firecracker-package"
 
       - name: Build and test native Jerboa
