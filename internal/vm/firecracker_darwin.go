@@ -232,9 +232,39 @@ func waitFCProcess(cmd *exec.Cmd, socket string) error {
 	}
 }
 
+// readNativeFCNetStats returns the guest NIC's received and transmitted bytes
+// from the HVF metrics API. slirp runs inside the VMM, so these counters are the
+// only byte source for VMs outside a Jerboa network; unavailable samples read as
+// zero.
+func readNativeFCNetStats(socket string) (int64, int64) {
+	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}
+	defer transport.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), nativeFCControlTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/metrics", nil)
+	if err != nil {
+		return 0, 0
+	}
+	resp, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		return 0, 0
+	}
+	defer resp.Body.Close()
+	var metrics struct {
+		RX int64 `json:"net_rx_bytes_total"`
+		TX int64 `json:"net_tx_bytes_total"`
+	}
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&metrics) != nil {
+		return 0, 0
+	}
+	return metrics.RX, metrics.TX
+}
+
 func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 	if cfg.EmulateX86 {
-		return fmt.Errorf("Firecracker/HVF does not support x86 emulation")
+		return errFCX86Emulation()
 	}
 	if err := validateHostConfig(cfg, m.kernelImage); err != nil {
 		return err

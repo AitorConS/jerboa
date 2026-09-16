@@ -13,6 +13,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestELFPlatformExplainsHostExecutables(t *testing.T) {
+	root := t.TempDir()
+	for name, tc := range map[string]struct {
+		data   []byte
+		format string
+	}{
+		"macho":     {[]byte{0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00, 0x00, 0x01}, "macOS Mach-O"},
+		"universal": {[]byte{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x02}, "macOS Mach-O"},
+		"pe":        {[]byte{'M', 'Z', 0x90, 0x00}, "Windows PE"},
+	} {
+		p := putFixture(t, root, name, tc.data)
+		_, err := ELFPlatform(p)
+		require.ErrorContains(t, err, "is a "+tc.format+" executable, not a Linux ELF binary")
+		require.ErrorContains(t, err, "GOOS=linux")
+		_, err = ValidateImage(p, "program", nil, "linux/arm64")
+		require.ErrorContains(t, err, tc.format)
+	}
+}
+
 // syntheticELF builds parsable ELF headers and dynamic sections on every host.
 func syntheticELF(machine elf.Machine, interp string, needed []string, runpath string) []byte {
 	b := make([]byte, 2048)
