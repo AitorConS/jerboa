@@ -9,7 +9,7 @@ nav_order: 8
 
 Every error on this page is real: either Jerboa prints it, or the Nanos guest
 prints it on the serial console. Errors are grouped by *when* they happen —
-during the build, at boot inside the guest, at run time, or on Windows/WSL.
+during the build, at boot inside the guest, at run time, on Windows/WSL, or on macOS.
 If a concept below is unfamiliar (one-process model, packages, program path),
 read [Build Concepts]({% link build-concepts.md %}) first.
 
@@ -80,15 +80,17 @@ macOS Mach-O binary, or a shell script. Only Linux ELF binaries can boot on
 Nanos, and there is no shell in the guest to run scripts.
 
 **Fix**: cross-compile for Linux (`GOOS=linux GOARCH=amd64`, or
-`cargo build --target x86_64-unknown-linux-musl`), or use a package that ships
-a Linux build. If it is a launcher script, find the real binary it eventually
+`cargo build --target x86_64-unknown-linux-musl`; on a Mac use
+`GOOS=linux GOARCH=arm64`), or use a package that ships a Linux build.
+On macOS this error reads
+[`is a macOS Mach-O executable, not a Linux ELF binary`](#is-a-macos-mach-o-executable-not-a-linux-elf-binary). If it is a launcher script, find the real binary it eventually
 starts and use that.
 
 ### `32-bit ELF` / `unsupported architecture` (preflight)
 
 Nanos images boot 64-bit x86_64 (or arm64) binaries only.
 
-**Fix**: rebuild the program for `x86_64` 64-bit Linux.
+**Fix**: rebuild the program for 64-bit Linux — `x86_64`, or `arm64` on a Mac.
 
 ### `interpreter ... not found in image` / `missing shared libraries` (preflight)
 
@@ -131,6 +133,19 @@ binary, and that target is not installed.
 ```sh
 rustup target add x86_64-unknown-linux-musl
 ```
+
+### `different content collides at /<path>`
+
+Two files that end up at the same path inside the image have different content —
+for example, two packages that both ship a `README.md` at the image root.
+
+Files from your own project always take priority over package files at the
+same path, so this error only appears when two packages, or two files of your
+project, claim the same path.
+
+**Fix**: remove one of the conflicting packages, or move one of your own files
+to a different path (for example with `--map source=destination` on
+`pkg create`).
 
 ### `package not found in index`
 
@@ -269,8 +284,9 @@ the program requires; make sure the program runs in **foreground** mode
 
 ### `--port requires --network`
 
-Port publishing is implemented by the managed network's userspace forwarder;
-there is no SLIRP fallback.
+On Linux and Windows, port publishing is implemented by the managed network's
+userspace forwarder; there is no SLIRP fallback. (On macOS, `-p` works without
+`--network`.)
 
 **Fix**:
 
@@ -281,8 +297,9 @@ jerboa run web:latest --network app -p 8080:80
 
 ### UDP port mapping does not forward
 
-UDP mappings are accepted syntactically but the current forwarder skips them
-with a warning. Only TCP forwarding works today.
+On Linux and Windows, UDP mappings are accepted syntactically but the current
+forwarder skips them with a warning. Only TCP forwarding works there today.
+macOS forwards both TCP and UDP.
 
 ### `pre-existing shared memory block ... is still in use` (PostgreSQL)
 
@@ -356,6 +373,122 @@ nested virtualization support on the host.
 
 **Fix**: use QEMU (the default) — it falls back to TCG emulation without KVM —
 or enable nested virtualization for WSL2.
+
+---
+
+## macOS Errors
+
+See [Using Jerboa on macOS]({% link macos-guide.md %}) for how the Mac differs
+from Linux.
+
+### `"Jerboa Desktop" Not Opened`
+
+The Jerboa Desktop preview is not signed or notarized by Apple yet, so
+Gatekeeper blocks its first launch.
+
+**Fix**: click **Done**, open **System Settings → Privacy & Security**, click
+**Open Anyway** next to the Jerboa Desktop message, confirm with your password
+and open the app again.
+
+### `Move Jerboa Desktop to the Applications folder and reopen it before starting the engine`
+
+The engine runs from inside the app bundle, so the app refuses to start it from
+the DMG or from a temporary location.
+
+**Fix**: quit the app, drag **Jerboa Desktop** into **Applications** (or accept
+**Move to Applications** when the app asks) and open it from there.
+
+### `is a macOS Mach-O executable, not a Linux ELF binary`
+
+You passed a program compiled for macOS. Unikernels run Linux programs only.
+
+**Fix**: point `jerboa build` at the source directory so Jerboa cross-compiles
+it, or build a Linux ARM64 binary yourself:
+
+```sh
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o myapp .
+jerboa build ./myapp --name myapp
+```
+
+### `firecracker/HVF cannot emulate x86 images`
+
+The image is x86_64 (or you passed `--emulate-x86`), and Firecracker can only
+run ARM64 images.
+
+**Fix**: rebuild the image with `--platform linux/arm64`. If you need the x86
+version, switch the daemon to QEMU:
+
+```sh
+brew install qemu
+jerboa config set hypervisor qemu
+jerboa daemon restart
+jerboa run myimage:latest --emulate-x86
+```
+
+### `native qemu executable missing` / `native firecracker executable missing`
+
+The daemon is configured for an engine that is not installed. This usually
+means `hypervisor` is `qemu` (the CLI's default) but QEMU is not installed.
+
+**Fix**: select Firecracker, which ships with the app, or install QEMU:
+
+```sh
+jerboa config set hypervisor firecracker   # or: brew install qemu
+jerboa daemon start
+```
+
+### `native daemon did not start`
+
+The daemon failed during start-up.
+
+**Fix**: read `~/.jerboa/jerboad.log`. The daemon runs in your user session, so
+start it from a logged-in desktop session (not from a plain SSH login).
+
+### `native daemon lifecycle requires the default local socket`
+
+`jerboa daemon start/stop/restart` on macOS only manages the local daemon, but
+`JERBOA_HOST` or `daemon.endpoint` points somewhere else.
+
+**Fix**: `unset JERBOA_HOST` (and remove `daemon.endpoint` from the config) to
+manage the local daemon. To talk to a remote daemon, use regular commands with
+`--host` instead.
+
+### VMs cannot reach the internet (Firecracker)
+
+By default Firecracker VMs cannot open outbound connections or resolve external
+DNS names. Traffic between VMs on a network and published ports still work.
+
+**Fix**: allow the exact destinations in a policy file and restart the daemon
+with it. See
+[Allowing internet access]({% link macos-guide.md %}#allowing-internet-access-firecracker).
+
+### Cannot connect to the VM's IP from the Mac
+
+On macOS, VM addresses live inside Jerboa's own network stack and are not
+routable from the Mac.
+
+**Fix**: publish the port and connect to `localhost`:
+
+```sh
+jerboa run web:latest -p 127.0.0.1:8080:80
+curl http://127.0.0.1:8080
+```
+
+### `UNSUPPORTED_CAPABILITY` on `jerboa snapshot`
+
+Snapshots require the Firecracker engine, a VM on a named network (`--network`)
+and no volumes.
+
+**Fix**: switch to Firecracker, run the VM with `--network <name>` and without
+`-v`, then create the snapshot. Restore only works on the same VM, while it is
+stopped.
+
+### `vm lifecycle operation in progress`
+
+Another operation (start, stop, restart, snapshot or restore) is still running
+on the same VM.
+
+**Fix**: wait for it to finish and try again.
 
 ---
 

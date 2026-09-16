@@ -93,17 +93,18 @@ Key flags:
 | `--health-check` | `tcp:PORT` or `http:PORT:/path` |
 | `--restart` | `never`, `on-failure`, `always[:max-retries]` |
 | `--verify` | Signature verification mode: `off`, `warn`, `enforce` |
-| `--cpu-shares` | cgroup v2 CPU weight |
-| `--memory-max` | cgroup v2 memory hard limit |
+| `--cpu-shares` | cgroup v2 CPU weight (macOS QEMU: process priority; Firecracker: not supported) |
+| `--memory-max` | cgroup v2 memory hard limit (macOS QEMU: VM stopped when exceeded; Firecracker: not supported) |
+| `--emulate-x86` | macOS only: run an x86_64 image with QEMU emulation |
 | `--disk-iops` | Boot-disk IOPS throttle |
 | `--disk-bps` | Boot-disk throughput throttle |
 
 Notes:
 
-- Port publishing requires `--network`.
+- Port publishing requires `--network` on Linux and Windows. On macOS, `-p` works without it.
 - Every VM on a managed network gets a guest IP: `--ip` pins it, otherwise the daemon's IPAM allocates the next free address from the network's subnet.
 - TCP forwarding works today.
-- UDP mappings are currently skipped by the userspace forwarder with a warning.
+- UDP mappings are currently skipped by the Linux userspace forwarder with a warning; macOS forwards UDP.
 - On Windows the published port lives inside the `jerboa` WSL2 distro. With
   WSL2's default NAT networking it is reachable at the distro IP (the host from
   `jerboa daemon status`), not at `localhost` on the Windows host — set
