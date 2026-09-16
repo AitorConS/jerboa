@@ -19,12 +19,16 @@ on:
     branches: [main]
   # Manual publish escape hatch: run the workflow from the Actions tab with
   # `publish: true` to build and push a release to R2 without a VERSION bump
-  # (e.g. a dry run, or re-publishing after an infra fix). Left false it runs
-  # CI only, exactly like a normal push whose VERSION didn't change.
+  # (e.g. re-publishing after an infra fix). Use `build_macos: true` with
+  # `publish: false` to validate macOS packaging without publishing a release.
   workflow_dispatch:
     inputs:
       publish:
         description: 'Build + publish a release to R2 even without a VERSION bump'
+        type: boolean
+        default: false
+      build_macos:
+        description: 'Build macOS runtime and Desktop DMG without requiring publication'
         type: boolean
         default: false
 
@@ -892,7 +896,7 @@ jobs:
     needs: [changes, lint, unit-tests]
     if: >-
       (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+      (github.event_name == 'workflow_dispatch' && (inputs.publish || inputs.build_macos))
     timeout-minutes: 120
     env:
       MACOSX_DEPLOYMENT_TARGET: '26.0'
