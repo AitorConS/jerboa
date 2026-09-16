@@ -81,7 +81,7 @@ jobs:
             echo "code=true"       >> "$GITHUB_OUTPUT"
             echo "version=false"   >> "$GITHUB_OUTPUT"
             # Don't force the heavy Windows installer smoke on an indeterminate
-            # diff; the release path (version bump) runs it regardless.
+            # diff; it is a PR-only, non-blocking check.
             echo "installer=false" >> "$GITHUB_OUTPUT"
             echo "Indeterminate diff for range '${RANGE:-<none>}': running full CI, not publishing."
             exit 0
@@ -667,16 +667,11 @@ jobs:
   windows-smoke-inputs:
     name: Build Windows Installer Smoke Inputs
     needs: [changes, lint, unit-tests]
-    # Feeds windows-installer-smoke in BOTH contexts it runs: every release
-    # (version bump / publish dispatch) and PRs that touch the installer surface.
-    # Building here (rather than reusing build-release/build-distro) is what lets
-    # the smoke run on PRs, where those release-gated jobs are skipped. On a
-    # release this rebuilds the rootfs that build-distro also builds — cheap,
-    # isolated ubuntu minutes, and keeps the PR and release paths identical.
-    if: >-
-      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true') ||
-      (github.event_name == 'pull_request' && needs.changes.outputs.installer == 'true')
+    # Feeds windows-installer-smoke, which runs only on PRs that touch the
+    # installer surface. Building here (rather than reusing build-release/
+    # build-distro) is what lets the smoke run on PRs, where those
+    # release-gated jobs are skipped.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.installer == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -735,21 +730,20 @@ jobs:
   windows-installer-smoke:
     name: Windows Desktop Installer Smoke
     needs: [changes, windows-smoke-inputs]
-    # Runs in two contexts: (1) every release — version bump / publish dispatch —
-    # where it IS in publish-r2's `needs`, so a broken installer blocks the
-    # release (caught pre-publication); and (2) PRs that touch the installer
-    # surface (changes.outputs.installer), as a pre-merge check. Both share the
-    # same producer (windows-smoke-inputs) so the two paths are identical.
-    if: >-
-      (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true') ||
-      (github.event_name == 'pull_request' && needs.changes.outputs.installer == 'true')
+    # A pre-merge check on PRs that touch the installer surface
+    # (changes.outputs.installer). It is not a required status check and is
+    # not in publish-r2's `needs`: the single self-hosted Windows runner can
+    # queue for an hour and the smoke itself takes ~40 minutes, so it must not
+    # gate or delay a release.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.installer == 'true'
     # Self-hosted Windows host with WSL2 + nested virtualization enabled (so the
     # imported jerboa distro gets /dev/kvm for firecracker), plus Node 22 and
     # git-bash. Label it `kvm` to reuse the environment's protection rules.
     environment: kvm
     runs-on: [self-hosted, windows, kvm]
-    timeout-minutes: 40
+    # Queue time does not count. A passing run took 41 minutes (28 of them
+    # provisioning the engine and booting three unikernels), so 40 was too tight.
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -1035,7 +1029,7 @@ jobs:
   publish-r2:
     name: Publish to R2
     runs-on: ubuntu-latest
-    needs: [changes, build-release, build-distro, build-macos, windows-installer-smoke]
+    needs: [changes, build-release, build-distro, build-macos]
     if: >-
       (github.event_name == 'push' && needs.changes.outputs.version == 'true') ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
