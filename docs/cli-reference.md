@@ -193,6 +193,7 @@ Key flags:
 | `--port` | Declared service port; emits the guest network section in the build manifest |
 | `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
 | `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
+| `--size-report[=text\|json]` | Before assembling, print what the image will contain grouped by program, runtime package, npm module, Python distribution and top-level project path. `json` prints every group to stdout (the build summary then goes to stderr) |
 | `--layout` | Disk image layout: `standard` (default; boots on every hypervisor) or `compact` (no boot code and no boot filesystem copy of the kernel; about 3–4 MiB smaller, boots only on Firecracker and native ARM64 QEMU on macOS). An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 
@@ -208,6 +209,7 @@ Key flags:
 | `pkg_source` | Package source: `ops` (default) or `jerboa`; an explicit `--pkg-source` flag wins |
 | `disk_size` | Minimum image size (e.g. `512M`, `1G`) for runtime scratch space |
 | `layout` | `standard` (default) or `compact`; see `--layout` |
+| `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through — re-include ignored defaults such as `node_modules` with `!node_modules` in `.unignore`. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from

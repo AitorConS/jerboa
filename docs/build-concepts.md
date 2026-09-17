@@ -333,6 +333,8 @@ pkg_source = "ops"       # "ops" (default) or "jerboa"
 disk_size = "1G"         # minimum image size (free space for runtime writes)
 layout = "standard"      # "standard" (every hypervisor) or "compact" (Firecracker and
                          # native ARM64 QEMU only: no boot code or boot filesystem)
+include = ["server.js", "lib", "node_modules"]  # optional allowlist of project paths
+                         # (node/python/raw); `jerboa build --size-report` shows what is left
 dirs = ["/data"]         # empty directories to create (mount points, scratch paths)
 
 [program]                # raw builds only

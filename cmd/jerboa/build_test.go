@@ -157,7 +157,7 @@ func TestSourceFilesShadowPackageFilesAtSamePath(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("project docs"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.py"), []byte("print('hi')\n"), 0o644))
 
-	srcFiles, err := sourceFiles(dir)
+	srcFiles, err := sourceFiles(dir, nil)
 	require.NoError(t, err)
 	require.Len(t, srcFiles, 2)
 	for _, f := range srcFiles {

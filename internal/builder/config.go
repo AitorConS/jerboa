@@ -43,6 +43,10 @@ type BuildConfig struct {
 	// every hypervisor) or "compact" (no boot code or boot filesystem; smaller,
 	// for Firecracker and QEMU direct kernel boot only).
 	Layout string `toml:"layout"`
+	// Include is an allowlist of project paths to package for interpreted
+	// languages (node, python, raw). Empty packages every file that .unignore
+	// lets through. See IncludeMatcher for the pattern syntax.
+	Include []string `toml:"include"`
 	// Dirs lists absolute directories to create (empty) inside the image —
 	// analogous to a Dockerfile's mkdir/VOLUME. Use for volume mount points (a
 	// TFS volume can only be mounted onto a directory that already exists in the
