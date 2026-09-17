@@ -4,6 +4,7 @@ package vm
 
 import (
 	"encoding/json"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,4 +36,17 @@ func TestFCRootRateLimiter(t *testing.T) {
 	require.Equal(t, &fcTokenBucket{Size: 10 << 20, RefillTime: 1000}, rl.Bandwidth)
 	require.Equal(t, &fcTokenBucket{Size: 500, RefillTime: 1000}, rl.Ops)
 	require.Nil(t, fcRootRateLimiter(Config{DiskIOPS: 1}).Bandwidth)
+}
+
+func TestValidateImageLayout(t *testing.T) {
+	fc := NewFirecrackerManager("firecracker", "vmlinux")
+	require.NoError(t, fc.ValidateImageLayout("compact", false))
+	q := NewQEMUManager("qemu")
+	require.NoError(t, q.ValidateImageLayout("", false))
+	require.Error(t, q.ValidateImageLayout("compact", true), "x86 emulation boots through BIOS")
+	if runtime.GOOS == "darwin" {
+		require.NoError(t, q.ValidateImageLayout("compact", false), "native ARM64 loads the kernel directly")
+	} else {
+		require.ErrorContains(t, q.ValidateImageLayout("compact", false), "BIOS")
+	}
 }

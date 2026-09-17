@@ -193,6 +193,7 @@ Key flags:
 | `--port` | Declared service port; emits the guest network section in the build manifest |
 | `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
 | `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
+| `--layout` | Disk image layout: `standard` (default; boots on every hypervisor) or `compact` (no boot code and no boot filesystem copy of the kernel; about 3–4 MiB smaller, boots only on Firecracker and native ARM64 QEMU on macOS). An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
@@ -206,6 +207,7 @@ Key flags:
 | `pkgs` | Packages to include (e.g. `["eyberg/postgresql:11.3.0"]`); `--pkg` flags append to this list |
 | `pkg_source` | Package source: `ops` (default) or `jerboa`; an explicit `--pkg-source` flag wins |
 | `disk_size` | Minimum image size (e.g. `512M`, `1G`) for runtime scratch space |
+| `layout` | `standard` (default) or `compact`; see `--layout` |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from

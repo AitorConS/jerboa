@@ -78,6 +78,9 @@ type BuildConfig struct {
 	// When non-empty, emitted as imagesize in the Nanos manifest so mkfs pads
 	// the image to at least that size, leaving free space for runtime writes.
 	DiskSize string
+	// Layout is LayoutStandard (BIOS-bootable) or LayoutCompact (root
+	// filesystem only, for hypervisors that load the kernel directly).
+	Layout string
 	// Output is where mkfs subprocess output is written. Nil defaults to os.Stderr.
 	Output io.Writer
 }
@@ -154,6 +157,9 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
+	if err := checkImageLayout(tmpPath, cfg.Layout); err != nil {
+		return Manifest{}, fmt.Errorf("build: %w", err)
+	}
 
 	stat, err := os.Stat(tmpPath)
 	if err != nil {
@@ -174,6 +180,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 			Ports:  cfg.Ports,
 		},
 		DiskSize: stat.Size(),
+		Layout:   cfg.Layout,
 	}
 
 	// PutMove hashes the image once and renames it into the store instead of
@@ -226,6 +233,9 @@ func validateBuildConfig(cfg BuildConfig) error {
 	}
 	if cfg.MkfsRun == nil {
 		return fmt.Errorf("MkfsRun is required")
+	}
+	if cfg.Layout != LayoutStandard && cfg.Layout != LayoutCompact {
+		return fmt.Errorf("invalid image layout %q", cfg.Layout)
 	}
 	return nil
 }
@@ -354,6 +364,10 @@ func BuildManifest(cfg BuildConfig) string {
 	b.WriteString(")\n")
 	if cfg.DiskSize != "" {
 		fmt.Fprintf(&b, "    imagesize:%s\n", cfg.DiskSize)
+	}
+	// Consumed by mkfs (like imagesize): omit the boot code and boot filesystem.
+	if cfg.Layout == LayoutCompact {
+		b.WriteString("    compact:true\n")
 	}
 	// Static network config is injected at run time from the daemon-assigned
 	// TAP IP — via QEMU fw_cfg (opt/uni/network → net_inject) or Firecracker

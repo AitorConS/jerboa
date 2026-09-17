@@ -39,6 +39,10 @@ type BuildConfig struct {
 	// Use when the default content-based image size leaves insufficient free space
 	// for runtime writes (e.g. database temp tablespaces, log files).
 	DiskSize string `toml:"disk_size"`
+	// Layout selects the disk image layout: "standard" (default, bootable by
+	// every hypervisor) or "compact" (no boot code or boot filesystem; smaller,
+	// for Firecracker and QEMU direct kernel boot only).
+	Layout string `toml:"layout"`
 	// Dirs lists absolute directories to create (empty) inside the image —
 	// analogous to a Dockerfile's mkdir/VOLUME. Use for volume mount points (a
 	// TFS volume can only be mounted onto a directory that already exists in the

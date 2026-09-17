@@ -312,6 +312,9 @@ type BuildParams struct {
 	// Use when the default content-based size leaves insufficient free space
 	// for runtime writes (e.g. database temp tablespaces, log files).
 	DiskSize string `json:"disk_size,omitempty"`
+	// Layout is "" (standard, BIOS-bootable) or "compact" (root filesystem
+	// only; for Firecracker and QEMU direct kernel boot).
+	Layout string `json:"layout,omitempty"`
 }
 
 // VolumeSeedParams seeds an existing volume's disk with an initialized
@@ -349,6 +352,7 @@ type ImageManifestResult struct {
 	DiskDigest   string          `json:"disk_digest"`
 	DiskSize     int64           `json:"disk_size"`
 	Created      string          `json:"created"`
+	Layout       string          `json:"layout,omitempty"`
 }
 
 // SnapshotParams names a snapshot and, for create/restore, the target VM.

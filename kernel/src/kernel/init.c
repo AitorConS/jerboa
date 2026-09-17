@@ -311,8 +311,9 @@ closure_function(4, 2, void, fsstarted,
         boolean ingest_kernel_syms = symtab_is_empty() &&
                 (klibs || get(root, sym(ingest_kernel_symbols)));
         struct partition_entry *bootfs_part;
+        /* Compact images keep an empty boot filesystem slot (nsectors 0). */
         if ((ingest_kernel_syms || klibs_in_bootfs) &&
-            (bootfs_part = partition_get(mbr, PARTITION_BOOTFS))) {
+            (bootfs_part = partition_get(mbr, PARTITION_BOOTFS)) && bootfs_part->nsectors) {
             create_filesystem(h, SECTOR_SIZE,
                               bootfs_part->nsectors * SECTOR_SIZE,
                               closure(h, offset_req_handler,

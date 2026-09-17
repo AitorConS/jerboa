@@ -331,6 +331,8 @@ run = ["npm run build"]  # shell commands before packaging (Dockerfile RUN analo
 pkgs = []                # packages to include (e.g. ["eyberg/postgresql:11.3.0"])
 pkg_source = "ops"       # "ops" (default) or "jerboa"
 disk_size = "1G"         # minimum image size (free space for runtime writes)
+layout = "standard"      # "standard" (every hypervisor) or "compact" (Firecracker and
+                         # native ARM64 QEMU only: no boot code or boot filesystem)
 dirs = ["/data"]         # empty directories to create (mount points, scratch paths)
 
 [program]                # raw builds only

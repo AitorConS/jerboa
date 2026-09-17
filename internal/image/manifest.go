@@ -32,6 +32,8 @@ type Manifest struct {
 	DiskDigest string `json:"diskDigest"`
 	// DiskSize is the byte size of the raw disk image.
 	DiskSize int64 `json:"diskSize"`
+	// Layout is LayoutStandard (empty) or LayoutCompact.
+	Layout string `json:"layout,omitempty"`
 }
 
 // Config holds default VM launch parameters for an image.
@@ -114,6 +116,9 @@ func validate(m Manifest) error {
 	}
 	if m.DiskSize <= 0 {
 		return fmt.Errorf("diskSize must be positive")
+	}
+	if m.Layout != LayoutStandard && m.Layout != LayoutCompact {
+		return fmt.Errorf("unsupported layout %q", m.Layout)
 	}
 	return nil
 }
