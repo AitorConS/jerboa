@@ -127,8 +127,11 @@ type Config struct {
 	EmulateX86   bool   `json:"emulate_x86,omitempty"`
 	nativeSocket string //nolint:unused // Used by the macOS backend.
 	nativeMAC    string //nolint:unused // Used by the macOS backend.
-	Architecture string `json:"architecture,omitempty"`
-	ImageDigest  string `json:"image_digest,omitempty"`
+	// privateBootDisk marks ImagePath as a per-VM private disk (set only on the
+	// launch copy of the config), so the hypervisor may open it read-write.
+	privateBootDisk bool
+	Architecture    string `json:"architecture,omitempty"`
+	ImageDigest     string `json:"image_digest,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
 	// ImageRef is the image reference the VM was created from (e.g.

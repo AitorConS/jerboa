@@ -11,17 +11,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCopyFileIndependentCopy verifies copyFile produces a byte-identical but
-// independent file: writing to the destination must not affect the source. This
-// is the property that lets several Firecracker VMs share a base image safely.
-func TestCopyFileIndependentCopy(t *testing.T) {
+// TestPrepareBootDiskIndependentCopy verifies prepareBootDisk produces a
+// byte-identical but independent file: writing to the destination must not
+// affect the source. This is the property that lets several Firecracker VMs
+// share a base image safely.
+func TestPrepareBootDiskIndependentCopy(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "base.img")
 	dst := filepath.Join(dir, "vm-rootfs.img")
 	want := []byte("unikernel base image contents")
 	require.NoError(t, os.WriteFile(src, want, 0o600))
 
-	require.NoError(t, copyFile(dst, src))
+	require.NoError(t, prepareBootDisk(dst, src, ""))
 
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)

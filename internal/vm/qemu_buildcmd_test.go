@@ -32,6 +32,16 @@ func TestBuildCmd_BootDiskIsEphemeral(t *testing.T) {
 	require.Contains(t, args[didx+1], "snapshot=on")
 }
 
+func TestBuildCmd_PrivateBootDiskOpenedDirectly(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{ImagePath: "/disks/qemu-vm-boot.img", Memory: "256M", privateBootDisk: true})
+	didx := indexOf(args, "-drive")
+	// A private per-VM clone is already discarded on exit; an extra overlay
+	// would only add another temp file and a copy-on-write layer.
+	require.Contains(t, args[didx+1], "file=/disks/qemu-vm-boot.img")
+	require.NotContains(t, args[didx+1], "snapshot=on")
+}
+
 func TestBuildVolumeArgs_NotEphemeral(t *testing.T) {
 	// Volumes must persist, so they must NOT get snapshot=on.
 	args := buildVolumeArgs([]VolumeMount{

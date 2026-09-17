@@ -594,6 +594,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
 | `--tools-dir` | Toolchain cache/lookup directory (`mkfs`, `boot.img`, `kernel.img`); empty caches under `~/.jerboa/tools` |
 | `--store` | Image store root directory (default `~/.jerboa/images`) |
+| `--vm-disk-dir` | Directory for per-VM private boot disks (default `~/.jerboa/vm-disks`). Keep it on the image store's filesystem: on btrfs, XFS (reflink) and APFS each start clones the image instantly; elsewhere a sparse copy writes only the image's data blocks. Leftover disks from VMs that are no longer running are removed at startup |
 | `--vm-store` | VM state store backend: `file` (default) or `sqlite` |
 | `--vm-log-max-bytes` | Max in-memory serial log bytes retained per VM (`0` = 4 MiB default) |
 | `--log-format` | Log format: `text` (default) or `json` |

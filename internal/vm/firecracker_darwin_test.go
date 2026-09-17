@@ -242,7 +242,7 @@ func TestNativeFCGuest(t *testing.T) {
 	base, err = os.ReadFile(disk)
 	require.NoError(t, err)
 	require.Equal(t, hash, sha256.Sum256(base), "base disk changed")
-	_, err = os.Stat(fcRootfsPath(v.ID))
+	_, err = os.Stat(m.rootfsPath(v.ID))
 	require.True(t, os.IsNotExist(err))
 }
 

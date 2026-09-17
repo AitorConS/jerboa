@@ -59,7 +59,7 @@ func validateHostConfig(cfg Config, kernel string) error {
 // Direct-boot the ARM64 Nanos Image with Apple's Hypervisor.framework.
 // HVF failure is fatal: never silently fall back to CPU emulation.
 func (m *QEMUManager) buildNativeCmd(ctx context.Context, cfg Config, qmp string) *exec.Cmd {
-	drive := "file=" + strings.ReplaceAll(cfg.ImagePath, ",", ",,") + ",format=raw,if=none,id=root,snapshot=on"
+	drive := "file=" + strings.ReplaceAll(cfg.ImagePath, ",", ",,") + ",format=raw,if=none,id=root" + bootDiskSnapshotOpt(cfg)
 	if cfg.DiskIOPS > 0 {
 		drive += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
 	}

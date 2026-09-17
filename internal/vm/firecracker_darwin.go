@@ -54,7 +54,7 @@ func (m *FirecrackerManager) RestoreHostRuntime(ctx context.Context) error {
 			}
 			m.hchecker.Stop(v.ID)
 			_ = os.Remove(socket)
-			_ = os.Remove(fcRootfsPath(v.ID))
+			_ = os.Remove(m.rootfsPath(v.ID))
 			_ = os.Remove(m.vmmLogPath(v.ID))
 			paths, _ := filepath.Glob(filepath.Join(os.TempDir(), "jerboa-fc-"+v.ID+"-*", "config.json"))
 			for _, p := range paths {

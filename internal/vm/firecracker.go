@@ -49,6 +49,13 @@ func WithFCMetrics(s MetricsSink) FCOption {
 	return func(m *FirecrackerManager) { m.metrics = s }
 }
 
+// WithFCDiskDir sets the directory for per-VM private root disks. It should be
+// on the same filesystem as the image store so disks can be cloned instead of
+// copied. Empty uses the system temp dir.
+func WithFCDiskDir(dir string) FCOption {
+	return func(m *FirecrackerManager) { m.diskDir = dir }
+}
+
 // FirecrackerManager implements Manager by spawning firecracker processes
 // configured via a JSON config file and managed via the Firecracker REST API
 // over a per-VM Unix socket.
@@ -78,6 +85,7 @@ type FirecrackerManager struct {
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
 	shutdownGrace      time.Duration                     // outer bound after requesting guest shutdown
 	metrics            MetricsSink
+	diskDir            string
 	// applyLimits places the firecracker process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -163,13 +171,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		}
 	}
 
-	// Boot off a private per-VM copy of the base image. Firecracker opens the
+	// Boot off a private per-VM clone of the base image. Firecracker opens the
 	// root drive read-write with no copy-on-write, so pointing several VMs at the
-	// shared store image would corrupt it; the copy gives each VM ephemeral
-	// scratch space and leaves the base pristine (mirrors QEMU's snapshot=on).
-	// Attached volumes stay shared and persistent — only the rootfs is copied.
-	rootfs := fcRootfsPath(id)
-	if err := copyBootImage(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest); err != nil {
+	// shared store image would corrupt it; the clone gives each VM ephemeral
+	// scratch space and leaves the base pristine. Attached volumes stay shared
+	// and persistent — only the rootfs is cloned.
+	rootfs := m.rootfsPath(id)
+	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest); err != nil {
 		_ = v.transition(StateStopped)
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}
@@ -843,36 +851,13 @@ func fcConfigPath(id string) string {
 	return filepath.Join(os.TempDir(), "fc-"+id+"-config.json")
 }
 
-// fcRootfsPath returns the per-VM ephemeral root disk path. Firecracker has no
-// QEMU-style snapshot=on copy-on-write, so each VM boots off a private copy of
+// rootfsPath returns the per-VM ephemeral root disk path. Firecracker has no
+// QEMU-style snapshot=on copy-on-write, so each VM boots off a private clone of
 // the base image instead of the shared store image. This keeps the base image
 // pristine and lets several VMs run from the same image at once without both
 // guests writing to the same backing file (silent filesystem corruption).
-func fcRootfsPath(id string) string {
-	return filepath.Join(os.TempDir(), "fc-"+id+"-rootfs.img")
-}
-
-// copyFile copies src to dst, truncating dst if it exists. The copy is the
-// Firecracker equivalent of QEMU's ephemeral snapshot overlay: guest writes go
-// to this private file and it is deleted when the VM stops.
-func copyFile(dst, src string) error {
-	in, err := os.Open(src) //nolint:gosec // daemon-owned image store path
-	if err != nil {
-		return fmt.Errorf("open source %s: %w", src, err)
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("create dest %s: %w", dst, err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("close dest %s: %w", dst, err)
-	}
-	return nil
+func (m *FirecrackerManager) rootfsPath(id string) string {
+	return filepath.Join(bootDiskDir(m.diskDir), fcRootfsPrefix+id+fcRootfsSuffix)
 }
 
 // Firecracker VM config JSON types.

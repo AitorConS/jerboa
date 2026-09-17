@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -54,6 +55,13 @@ func WithMetrics(s MetricsSink) Option {
 	return func(m *QEMUManager) { m.metrics = s }
 }
 
+// WithDiskDir sets the directory for per-VM private boot disks. It should be
+// on the same filesystem as the image store so disks can be cloned instead of
+// copied. Empty uses the system temp dir.
+func WithDiskDir(dir string) Option {
+	return func(m *QEMUManager) { m.diskDir = dir }
+}
+
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
 	nativeNetworkHost
@@ -63,6 +71,7 @@ type QEMUManager struct {
 	mkCmd      CommandFunc
 	hchecker   *HealthChecker
 	metrics    MetricsSink
+	diskDir    string
 	// applyLimits places the hypervisor process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -144,19 +153,14 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	}()
 	bootCfg := v.Cfg
 	if bootCfg.ImageDigest != "" {
-		private, err := os.CreateTemp("", "jerboa-boot-*.img")
-		if err != nil {
+		bootPath := m.bootDiskPath(v.ID)
+		if err := prepareBootDisk(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest); err != nil {
 			_ = v.transition(StateStopped)
 			return fmt.Errorf("qemu boot image: %w", err)
 		}
-		bootPath := private.Name()
-		_ = private.Close()
 		go func(done <-chan struct{}) { <-done; _ = os.Remove(bootPath) }(v.Done())
-		if err := copyBootImage(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest); err != nil {
-			_ = v.transition(StateStopped)
-			return fmt.Errorf("qemu boot image: %w", err)
-		}
 		bootCfg.ImagePath = bootPath
+		bootCfg.privateBootDisk = true
 	}
 	cmd := m.buildCmd(ctx, bootCfg, qmpAddr)
 
@@ -415,20 +419,33 @@ func (m *QEMUManager) List() []*VM {
 	return m.store.List()
 }
 
+// bootDiskPath returns the private boot disk path for VM id.
+func (m *QEMUManager) bootDiskPath(id string) string {
+	return filepath.Join(bootDiskDir(m.diskDir), qemuBootDiskPrefix+id+qemuBootDiskSuffix)
+}
+
+// bootDiskSnapshotOpt returns the QEMU -drive suffix for the boot disk.
+//
+// The root filesystem is ephemeral scratch space: guest writes must never reach
+// the shared store image, several VMs may boot the same image, and runtime
+// state such as a database's postmaster.pid must not persist into the next
+// boot. A private boot disk (cloned per start and deleted on exit) already
+// guarantees all of that, so it is opened directly. Only a shared image, used
+// when no digest is recorded, needs snapshot=on, which keeps guest writes in a
+// temporary overlay that QEMU discards on exit. Attached volumes are separate
+// -drive entries without snapshot, so their data persists either way.
+func bootDiskSnapshotOpt(cfg Config) string {
+	if cfg.privateBootDisk {
+		return ""
+	}
+	return ",snapshot=on"
+}
+
 func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) *exec.Cmd {
 	if runtime.GOOS == "darwin" {
 		return m.buildNativeCmd(ctx, cfg, qmpAddr)
 	}
-	// snapshot=on makes the boot disk copy-on-write: QEMU keeps guest writes in a
-	// temporary overlay and discards them on exit, leaving the base image
-	// pristine. This matches the documented model — the root filesystem is
-	// ephemeral scratch space (lost on stop) and durable data belongs on a
-	// volume. It also lets the same image back several VMs at once (the base is
-	// opened read-only, so there is no write-lock contention), and it keeps
-	// runtime state like a database's postmaster.pid/lock files from persisting
-	// into the image and breaking the next boot. Attached volumes are separate
-	// -drive entries without snapshot, so their data still persists.
-	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio,snapshot=on"
+	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio" + bootDiskSnapshotOpt(cfg)
 	if cfg.DiskIOPS > 0 {
 		driveArg += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
 	}
