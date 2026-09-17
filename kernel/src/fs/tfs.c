@@ -1358,6 +1358,24 @@ sstring filesystem_get_label(filesystem fs)
     return sstring_from_cstring(t_fs->label, sizeof(t_fs->label));
 }
 
+/* Returns the byte offset just past the highest allocated or reserved storage
+ * range (0 when nothing is allocated). Used by mkfs to size a partition to
+ * what its filesystem actually occupies. */
+u64 filesystem_storage_end(filesystem fs)
+{
+    tfs t = (tfs)fs;
+    u64 end = 0;
+    if (t->storage) {
+        tfs_storage_lock(t);
+        rangemap_foreach(t->storage, n) {
+            if (n->r.end > end)
+                end = n->r.end;
+        }
+        tfs_storage_unlock(t);
+    }
+    return end << fs->blocksize_order;
+}
+
 void filesystem_get_uuid(filesystem fs, u8 *uuid)
 {
     runtime_memcpy(uuid, ((tfs)fs)->uuid, UUID_LEN);

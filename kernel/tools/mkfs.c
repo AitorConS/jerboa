@@ -336,6 +336,17 @@ static value translate(heap h, vector worklist,
 
 extern heap init_process_runtime();
 
+/* Byte offset just past the highest storage range (data or reservation) of the
+ * most recently created filesystem, relative to its start. */
+static u64 fs_storage_end;
+
+/* The boot filesystem partition is sized to its allocated storage, rounded up
+ * to this alignment, instead of always reserving BOOTFS_SIZE. Every reader
+ * (stage2, UEFI loader, kernel klib/symbol loading) takes the size from the
+ * MBR and opens the boot filesystem read-only, so a smaller partition only
+ * has to contain every allocated range, including reserved log space. */
+#define BOOTFS_ALIGN    (64 * KB)
+
 static io_status_handler mkfs_write_status;
 closure_func_basic(io_status_handler, void, mkfs_write_handler,
                    status s, bytes length)
@@ -392,6 +403,7 @@ closure_function(4, 2, void, fsc,
         }
     }
     filesystem_flush(fs, ignore_status);
+    fs_storage_end = filesystem_storage_end(fs);
     closure_finish();
 }
 
@@ -479,7 +491,7 @@ static ssize_t write_uefi_part(descriptor out, ssize_t offset, const char *uefi_
     return offset + UEFI_PART_SIZE;
 }
 
-static void write_mbr(descriptor f, boolean uefi)
+static void write_mbr(descriptor f, boolean uefi, u64 bootfs_size)
 {
     // get resulting size
     off_t total_size = lseek(f, 0, SEEK_END);
@@ -513,7 +525,7 @@ static void write_mbr(descriptor f, boolean uefi)
         partition_write(&e[part_num++], true, 0xEF, fs_offset, fs_size);
         fs_offset += fs_size;
     }
-    fs_size = BOOTFS_SIZE;
+    fs_size = bootfs_size;
     partition_write(&e[part_num++], true, 0x83, fs_offset, fs_size);
 
     /* Root filesystem */
@@ -616,6 +628,7 @@ int main(int argc, char **argv)
     long long coredumplimit = 0;
     boolean empty_fs = false;
     const char *uefi_loader = NULL;
+    u64 bootfs_size = BOOTFS_SIZE;
     heap h = init_process_runtime();
     cmdline_tuples = allocate_vector(h, 4);
     assert(cmdline_tuples != INVALID_ADDRESS);
@@ -782,9 +795,13 @@ int main(int argc, char **argv)
             }
         }
         if (boot) {
+            fs_storage_end = 0;
             create_filesystem(h, SECTOR_SIZE, BOOTFS_SIZE, closure(h, bwrite, out, offset), false,
                               sstring_empty(), closure(h, fsc, h, out, boot, target_root));
-            offset += BOOTFS_SIZE;
+            bootfs_size = pad(fs_storage_end, BOOTFS_ALIGN);
+            if (bootfs_size == 0 || bootfs_size > BOOTFS_SIZE)
+                halt("boot filesystem size %ld out of range\n", bootfs_size);
+            offset += bootfs_size;
 
             /* Remove tuple from root, so it doesn't end up in the root FS. */
             set(root, sym(boot), 0);
@@ -815,7 +832,7 @@ int main(int argc, char **argv)
         }
     }
     if (bootimg_path != NULL)
-        write_mbr(out, uefi_loader != NULL);
+        write_mbr(out, uefi_loader != NULL, bootfs_size);
 
     close(out);
     exit(0);

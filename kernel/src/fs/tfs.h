@@ -12,6 +12,7 @@ extern io_status_handler ignore_io_status;
 status filesystem_probe(u8 *first_sector, u8 *uuid, char *label);
 sstring filesystem_get_label(filesystem fs);
 void filesystem_get_uuid(filesystem fs, u8 *uuid);
+u64 filesystem_storage_end(filesystem fs);
 
 void create_filesystem(heap h,
                        u64 blocksize,
