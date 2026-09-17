@@ -119,7 +119,8 @@ jobs:
   image-benchmarks:
     name: Image Build & Boot Benchmarks
     runs-on: [self-hosted, linux, kvm]
-    timeout-minutes: 30
+    # ~33 runs x up to 4 runtimes x (boot + 5s idle sample + 5s load + stop).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -150,139 +151,87 @@ jobs:
       - name: Build CLI
         run: make build
 
-      # ── QEMU phase ────────────────────────────────────────────────────────────
-
-      - name: Start QEMU daemon
+      # Both daemons run at once so jerboa-bench can interleave runtimes in a
+      # seeded random order. Each gets its own HOME (VM, network and image
+      # state live under ~/.jerboa), network name and subnet.
+      - name: Start QEMU and Firecracker daemons
         run: |
-          QEMU_SOCK=/tmp/bench-qemu.sock
-          BENCH_STORE=$(mktemp -d)
-          # Stage the freshly built kernel toolchain into one directory so the
-          # daemon resolves mkfs/boot.img/kernel.img locally instead of
-          # downloading a release.
-          BENCH_TOOLS=$(mktemp -d)
+          BENCH_ROOT=$(mktemp -d)
+          BENCH_TOOLS="${BENCH_ROOT}/tools"
+          mkdir -p "${BENCH_TOOLS}" "${BENCH_ROOT}/qemu" "${BENCH_ROOT}/fc"
+          # Stage the freshly built kernel toolchain so the QEMU daemon resolves
+          # mkfs/boot.img/kernel.img locally instead of downloading a release.
           cp kernel/output/tools/bin/mkfs "${BENCH_TOOLS}/mkfs"
           cp kernel/output/platform/pc/boot/boot.img "${BENCH_TOOLS}/boot.img"
           cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
-          echo "QEMU_SOCK=${QEMU_SOCK}" >> "$GITHUB_ENV"
-          echo "BENCH_STORE=${BENCH_STORE}" >> "$GITHUB_ENV"
-          ./dist/jerboad --host "unix://${QEMU_SOCK}" --tools-dir "${BENCH_TOOLS}" &
+          echo "BENCH_ROOT=${BENCH_ROOT}" >> "$GITHUB_ENV"
+          HOME="${BENCH_ROOT}/qemu" ./dist/jerboad --host "unix://${BENCH_ROOT}/qemu.sock" --tools-dir "${BENCH_TOOLS}" \
+            --store "${BENCH_ROOT}/qemu/images" > "${BENCH_ROOT}/qemu.log" 2>&1 &
           echo "QEMU_PID=$!" >> "$GITHUB_ENV"
-          for i in $(seq 1 20); do [ -S "${QEMU_SOCK}" ] && break; sleep 0.5; done
-          [ -S "${QEMU_SOCK}" ] || { echo "QEMU jerboad failed to start"; exit 1; }
-
-      - name: Benchmark — build hello
-        id: build-bench
-        run: |
-          BUILD_OUT=$(./dist/jerboa --host "unix://${QEMU_SOCK}" --store "${BENCH_STORE}" \
-            build examples/hello --name bench-hello --lang go)
-          echo "${BUILD_OUT}"
-          BUILD_TIME=$(echo "${BUILD_OUT}" | grep -oP 'built in \K\S+')
-          IMAGE_SIZE=$(echo "${BUILD_OUT}" | grep -oP '\d+(\.\d+)?[KMGT]?B' | head -1)
-          echo "build_time=${BUILD_TIME}" >> "$GITHUB_OUTPUT"
-          echo "image_size=${IMAGE_SIZE}" >> "$GITHUB_OUTPUT"
-
-      - name: Benchmark — QEMU boot hello (3 runs)
-        id: qemu-bench
-        run: |
-          TOTAL=0
-          MIN=999999
-          for i in 1 2 3; do
-            T0=$(date +%s%N)
-            ./dist/jerboa --host "unix://${QEMU_SOCK}" --store "${BENCH_STORE}" \
-              run bench-hello:latest --attach --rm > /dev/null
-            T1=$(date +%s%N)
-            MS=$(( (T1 - T0) / 1000000 ))
-            echo "QEMU run ${i}: ${MS}ms"
-            TOTAL=$(( TOTAL + MS ))
-            [ "${MS}" -lt "${MIN}" ] && MIN=${MS}
+          # The Firecracker daemon downloads kernel-fc.img on first start; it
+          # uses the staged mkfs so both images come from this commit.
+          HOME="${BENCH_ROOT}/fc" ./dist/jerboad --host "unix://${BENCH_ROOT}/fc.sock" --hypervisor firecracker \
+            --tools-dir "${BENCH_TOOLS}" --store "${BENCH_ROOT}/fc/images" \
+            --fc-metrics-dir "${BENCH_ROOT}/fc-metrics" > "${BENCH_ROOT}/fc.log" 2>&1 &
+          echo "FC_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 120); do
+            [ -S "${BENCH_ROOT}/qemu.sock" ] && [ -S "${BENCH_ROOT}/fc.sock" ] && break
+            sleep 1
           done
-          AVG=$(( TOTAL / 3 ))
-          echo "avg_ms=${AVG}" >> "$GITHUB_OUTPUT"
-          echo "min_ms=${MIN}" >> "$GITHUB_OUTPUT"
+          [ -S "${BENCH_ROOT}/qemu.sock" ] || { cat "${BENCH_ROOT}/qemu.log"; exit 1; }
+          [ -S "${BENCH_ROOT}/fc.sock" ] || { cat "${BENCH_ROOT}/fc.log"; exit 1; }
+          HOME="${BENCH_ROOT}/qemu" ./dist/jerboa --host "unix://${BENCH_ROOT}/qemu.sock" network create benchq --subnet 10.231.0.0/24
+          HOME="${BENCH_ROOT}/fc" ./dist/jerboa --host "unix://${BENCH_ROOT}/fc.sock" network create benchfc --subnet 10.232.0.0/24
 
-      - name: Stop QEMU daemon
+      - name: Run jerboa-bench
+        run: |
+          go build -o dist/jerboa-bench ./cmd/jerboa-bench
+          RUNTIMES=(
+            --runtime "qemu=jerboa,host=unix://${BENCH_ROOT}/qemu.sock,network=benchq,store=${BENCH_ROOT}/qemu/images"
+            --runtime "fc=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images"
+            --runtime "fc-compact=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images,layout=compact"
+          )
+          if docker info >/dev/null 2>&1; then
+            RUNTIMES+=(--runtime docker=docker)
+          else
+            echo "::notice::docker unavailable on this runner; benchmarking Jerboa backends only"
+          fi
+          ./dist/jerboa-bench --jerboa ./dist/jerboa "${RUNTIMES[@]}" \
+            --runs 30 --warmup 3 --seed "${GITHUB_RUN_ID}" \
+            --idle-sample 5s --load-duration 5s --load-concurrency 16 --load-direct \
+            --out bench-image.json | tee bench-summary.txt
+
+      - name: Stop daemons
         if: always()
         run: |
           [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
-          rm -f /tmp/bench-qemu.sock
-
-      # ── Firecracker phase ─────────────────────────────────────────────────────
-
-      - name: Start Firecracker daemon
-        run: |
-          FC_SOCK=/tmp/bench-fc.sock
-          echo "FC_SOCK=${FC_SOCK}" >> "$GITHUB_ENV"
-          ./dist/jerboad --host "unix://${FC_SOCK}" --hypervisor firecracker &
-          echo "FC_PID=$!" >> "$GITHUB_ENV"
-          # longer wait — first run downloads kernel-fc.img from releases
-          for i in $(seq 1 60); do [ -S "${FC_SOCK}" ] && break; sleep 1; done
-          [ -S "${FC_SOCK}" ] || { echo "Firecracker jerboad failed to start"; exit 1; }
-
-      - name: Benchmark — Firecracker boot hello (3 runs)
-        id: fc-bench
-        run: |
-          TOTAL=0
-          MIN=999999
-          for i in 1 2 3; do
-            T0=$(date +%s%N)
-            ./dist/jerboa --host "unix://${FC_SOCK}" --store "${BENCH_STORE}" \
-              run bench-hello:latest --attach --rm > /dev/null
-            T1=$(date +%s%N)
-            MS=$(( (T1 - T0) / 1000000 ))
-            echo "FC run ${i}: ${MS}ms"
-            TOTAL=$(( TOTAL + MS ))
-            [ "${MS}" -lt "${MIN}" ] && MIN=${MS}
-          done
-          AVG=$(( TOTAL / 3 ))
-          echo "avg_ms=${AVG}" >> "$GITHUB_OUTPUT"
-          echo "min_ms=${MIN}" >> "$GITHUB_OUTPUT"
-
-      - name: Stop Firecracker daemon
-        if: always()
-        run: |
           [ -n "${FC_PID}" ] && kill "${FC_PID}" 2>/dev/null || true
-          rm -f /tmp/bench-fc.sock
-
-      # ── Results ───────────────────────────────────────────────────────────────
 
       - name: Write job summary
         if: always()
         run: |
           {
-            echo "## Image Build & Boot Benchmarks"
+            echo "## Image & Runtime Benchmarks"
             echo ""
-            echo "App: \`examples/hello\` (Go, prints and exits)"
+            echo "Same static test binary in every runtime; 30 randomized runs after 3 warmups."
+            echo "Memory: Jerboa = VMM process RSS, Docker = container cgroup usage."
             echo ""
-            echo "| Metric | QEMU | Firecracker |"
-            echo "|--------|------|-------------|"
-            echo "| Build time | ${{ steps.build-bench.outputs.build_time }} | — |"
-            echo "| Image size | ${{ steps.build-bench.outputs.image_size }} | — |"
-            echo "| Boot avg (3 runs) | ${{ steps.qemu-bench.outputs.avg_ms }}ms | ${{ steps.fc-bench.outputs.avg_ms }}ms |"
-            echo "| Boot min (3 runs) | ${{ steps.qemu-bench.outputs.min_ms }}ms | ${{ steps.fc-bench.outputs.min_ms }}ms |"
+            echo '```'
+            cat bench-summary.txt 2>/dev/null || echo "benchmark did not complete"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Save results as JSON
-        run: |
-          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          cat > bench-image.json <<EOF
-          {
-            "commit": "${{ github.sha }}",
-            "run_id": "${{ github.run_id }}",
-            "date": "${DATE}",
-            "hello_build_time": "${{ steps.build-bench.outputs.build_time }}",
-            "hello_image_size": "${{ steps.build-bench.outputs.image_size }}",
-            "qemu_boot_avg_ms": ${{ steps.qemu-bench.outputs.avg_ms }},
-            "qemu_boot_min_ms": ${{ steps.qemu-bench.outputs.min_ms }},
-            "fc_boot_avg_ms": ${{ steps.fc-bench.outputs.avg_ms }},
-            "fc_boot_min_ms": ${{ steps.fc-bench.outputs.min_ms }}
-          }
-          EOF
-
       - name: Upload benchmark results
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: image-benchmarks-${{ github.run_id }}
-          path: bench-image.json
+          path: |
+            bench-image.json
+            bench-image.csv
+            bench-summary.txt
+            ${{ env.BENCH_ROOT }}/fc-metrics/
+          if-no-files-found: ignore
 
   fuzz-extended:
     name: Fuzz (extended)
