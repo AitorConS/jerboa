@@ -68,6 +68,7 @@ func newRootCmd() *cobra.Command {
 		fcSecurityPath string
 		toolsDir       string
 		vmDiskDir      string
+		fcMetricsDir   string
 		vmLogMaxBytes  int64
 		allowInsecure  bool
 		snapshotDir    string
@@ -119,6 +120,12 @@ func newRootCmd() *cobra.Command {
 				}
 				fcOpts = append(fcOpts, vm.WithFCSecurity(data))
 			}
+			if fcMetricsDir != "" {
+				if runtime.GOOS != "linux" {
+					return fmt.Errorf("--fc-metrics-dir is only supported on Linux")
+				}
+				fcOpts = append(fcOpts, vm.WithFCMetricsDir(fcMetricsDir))
+			}
 			if runtime.GOOS == "darwin" {
 				fcOpts = append(fcOpts, snapshotStoreOption(snapshotDir, snapshot.Limits{MaxCount: snapshotCount, MaxBytes: snapshotBytes}))
 			}
@@ -141,6 +148,8 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
 	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON (outbound/DNS permissions)")
+	root.Flags().StringVar(&fcMetricsDir, "fc-metrics-dir", "",
+		"Linux Firecracker: write per-VM device metrics (block I/O counts, flushes, latency) to this directory for profiling; empty disables")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
 		"Firecracker kernel (Linux: auto-downloaded; macOS: tools-dir/kernel.img)")
 	root.Flags().StringVar(&toolsDir, "tools-dir", "",

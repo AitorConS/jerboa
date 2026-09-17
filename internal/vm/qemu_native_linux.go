@@ -10,7 +10,7 @@ func validateHostConfig(cfg Config, _ string) error {
 	if cfg.EmulateX86 {
 		return fmt.Errorf("--emulate-x86 is a macOS compatibility option; Linux selects its accelerator directly")
 	}
-	return nil
+	return validateDiskIOHost(cfg)
 }
 func (m *QEMUManager) buildNativeCmd(ctx context.Context, cfg Config, qmp string) *exec.Cmd {
 	panic("macOS backend on Linux")

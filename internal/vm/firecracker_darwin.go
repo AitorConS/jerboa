@@ -266,6 +266,9 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 	if cfg.EmulateX86 {
 		return errFCX86Emulation()
 	}
+	if cfg.VolumeCache == VolumeCacheUnsafe {
+		return fmt.Errorf("Firecracker/HVF always forwards guest flushes to host storage; --volume-cache unsafe is not supported")
+	}
 	if err := validateHostConfig(cfg, m.kernelImage); err != nil {
 		return err
 	}

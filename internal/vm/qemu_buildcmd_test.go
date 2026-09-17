@@ -44,9 +44,9 @@ func TestBuildCmd_PrivateBootDiskOpenedDirectly(t *testing.T) {
 
 func TestBuildVolumeArgs_NotEphemeral(t *testing.T) {
 	// Volumes must persist, so they must NOT get snapshot=on.
-	args := buildVolumeArgs([]VolumeMount{
+	args := buildVolumeArgs(Config{Volumes: []VolumeMount{
 		{DiskPath: "/vol/data.img", GuestPath: "/data", ReadOnly: false},
-	})
+	}})
 	idx := indexOf(args, "-drive")
 	require.NotContains(t, args[idx+1], "snapshot=on")
 }
@@ -129,9 +129,9 @@ func TestBuildCmd_NetworkCfg_MissingIP(t *testing.T) {
 }
 
 func TestBuildVolumeArgs_SingleRW(t *testing.T) {
-	args := buildVolumeArgs([]VolumeMount{
+	args := buildVolumeArgs(Config{Volumes: []VolumeMount{
 		{DiskPath: "/vol/data.img", GuestPath: "/data", ReadOnly: false},
-	})
+	}})
 	require.Contains(t, args, "-drive")
 	idx := indexOf(args, "-drive")
 	require.Contains(t, args[idx+1], "file=/vol/data.img")
@@ -140,18 +140,18 @@ func TestBuildVolumeArgs_SingleRW(t *testing.T) {
 }
 
 func TestBuildVolumeArgs_ReadOnly(t *testing.T) {
-	args := buildVolumeArgs([]VolumeMount{
+	args := buildVolumeArgs(Config{Volumes: []VolumeMount{
 		{DiskPath: "/vol/ro.img", GuestPath: "/ro", ReadOnly: true},
-	})
+	}})
 	idx := indexOf(args, "-drive")
 	require.Contains(t, args[idx+1], "readonly=on")
 }
 
 func TestBuildVolumeArgs_Multiple(t *testing.T) {
-	args := buildVolumeArgs([]VolumeMount{
+	args := buildVolumeArgs(Config{Volumes: []VolumeMount{
 		{DiskPath: "/vol/a.img", GuestPath: "/a", ReadOnly: false},
 		{DiskPath: "/vol/b.img", GuestPath: "/b", ReadOnly: true},
-	})
+	}})
 	drives := []string{}
 	for i, v := range args {
 		if v == "-drive" && i+1 < len(args) {
@@ -164,8 +164,28 @@ func TestBuildVolumeArgs_Multiple(t *testing.T) {
 	require.Contains(t, drives[1], "readonly=on")
 }
 
+func TestBuildVolumeArgs_CacheAndEngine(t *testing.T) {
+	vols := []VolumeMount{{DiskPath: "/vol/data.img", GuestPath: "/data"}}
+	// Default: QEMU's writeback cache already honors guest flushes.
+	args := buildVolumeArgs(Config{Volumes: vols})
+	drive := args[indexOf(args, "-drive")+1]
+	require.NotContains(t, drive, "cache=")
+	require.NotContains(t, drive, "aio=")
+
+	args = buildVolumeArgs(Config{Volumes: vols, VolumeCache: VolumeCacheUnsafe, DiskIOEngine: DiskIOEngineAsync})
+	drive = args[indexOf(args, "-drive")+1]
+	require.Contains(t, drive, ",cache=unsafe")
+	require.Contains(t, drive, ",aio=io_uring")
+}
+
+func TestBuildCmd_AsyncEngineOnBootDisk(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu")
+	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M", DiskIOEngine: DiskIOEngineAsync})
+	require.Contains(t, args[indexOf(args, "-drive")+1], ",aio=io_uring")
+}
+
 func TestBuildVolumeArgs_Empty(t *testing.T) {
-	args := buildVolumeArgs(nil)
+	args := buildVolumeArgs(Config{})
 	require.Empty(t, args)
 }
 

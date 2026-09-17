@@ -101,6 +101,10 @@ type RunParams struct {
 	MemoryMax   int64            `json:"memory_max,omitempty"`
 	DiskIOPS    uint64           `json:"disk_iops,omitempty"`
 	DiskBPS     int64            `json:"disk_bps,omitempty"`
+	// DiskIOEngine is "sync" (default) or "async" (Linux io_uring).
+	DiskIOEngine string `json:"disk_io_engine,omitempty"`
+	// VolumeCache is "writeback" (default; guest flushes are durable) or "unsafe".
+	VolumeCache string `json:"volume_cache,omitempty"`
 }
 
 // HealthCheckSpec is the wire representation of a health check configuration.
@@ -168,6 +172,8 @@ type VMDetail struct {
 	RestartPolicy   string            `json:"restart_policy,omitempty"`
 	DiskIOPS        uint64            `json:"disk_iops,omitempty"`
 	DiskBPS         int64             `json:"disk_bps,omitempty"`
+	DiskIOEngine    string            `json:"disk_io_engine,omitempty"`
+	VolumeCache     string            `json:"volume_cache,omitempty"`
 	// Warnings are non-fatal runtime conditions detected after start, e.g. a
 	// volume whose mount point does not exist in the image (so it never mounted).
 	Warnings []string `json:"warnings,omitempty"`

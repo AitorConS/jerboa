@@ -98,6 +98,8 @@ Key flags:
 | `--emulate-x86` | macOS only: run an x86_64 image with QEMU emulation |
 | `--disk-iops` | Boot-disk IOPS throttle |
 | `--disk-bps` | Boot-disk throughput throttle |
+| `--disk-io-engine` | Host block I/O engine for every drive: `sync` (default) or `async` (io_uring; Linux 5.10+ only). Async can help parallel I/O but costs extra host CPU and device setup time; benchmark before enabling |
+| `--volume-cache` | Volume flush handling: `writeback` (default; a guest `fsync` reaches host storage on QEMU and Firecracker) or `unsafe` (flushes ignored; faster, but committed data can be lost if the host crashes). Not supported by Firecracker/HVF on macOS |
 
 Notes:
 
@@ -592,6 +594,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |
 | `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
 | `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
+| `--fc-metrics-dir` | Linux only: write each Firecracker VM's device metrics (per-drive bytes, operations, flushes, latency) as JSON lines to `fc-<id>-metrics.json` in this directory, for storage profiling |
 | `--tools-dir` | Toolchain cache/lookup directory (`mkfs`, `boot.img`, `kernel.img`); empty caches under `~/.jerboa/tools` |
 | `--store` | Image store root directory (default `~/.jerboa/images`) |
 | `--vm-disk-dir` | Directory for per-VM private boot disks (default `~/.jerboa/vm-disks`). Keep it on the image store's filesystem: on btrfs, XFS (reflink) and APFS each start clones the image instantly; elsewhere a sparse copy writes only the image's data blocks. Leftover disks from VMs that are no longer running are removed at startup |

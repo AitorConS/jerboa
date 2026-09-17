@@ -514,6 +514,8 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		MemoryMax:      p.MemoryMax,
 		DiskIOPS:       p.DiskIOPS,
 		DiskBPS:        p.DiskBPS,
+		DiskIOEngine:   p.DiskIOEngine,
+		VolumeCache:    p.VolumeCache,
 	}
 	if p.HealthCheck != nil {
 		cfg.HealthCheck = &vm.HealthCheckConfig{
@@ -848,6 +850,8 @@ func toDetail(v *vm.VM) api.VMDetail {
 		RestartPolicy:   string(v.Cfg.Restart.Policy),
 		DiskIOPS:        v.Cfg.DiskIOPS,
 		DiskBPS:         v.Cfg.DiskBPS,
+		DiskIOEngine:    v.Cfg.DiskIOEngine,
+		VolumeCache:     v.Cfg.VolumeCache,
 		Warnings:        v.Warnings(),
 	}
 	startedAt, stoppedAt := v.GetTimes()

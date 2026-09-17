@@ -39,6 +39,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		memoryMax   string
 		diskIOPS    uint64
 		diskBPS     string
+
+		diskIOEngine string
+		volumeCache  string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -180,6 +183,8 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if diskIOPS > 0 {
 				params.DiskIOPS = diskIOPS
 			}
+			params.DiskIOEngine = diskIOEngine
+			params.VolumeCache = volumeCache
 			if diskBPS != "" && diskBPS != "0" {
 				bps, err := parseMemoryMax(diskBPS)
 				if err != nil {
@@ -246,6 +251,8 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "memory limit (e.g. 512M; Linux hard limit, macOS RSS watchdog)")
 	cmd.Flags().Uint64Var(&diskIOPS, "disk-iops", 0, "disk I/O throttle: max IOPS for boot disk (0=no limit)")
 	cmd.Flags().StringVar(&diskBPS, "disk-bps", "", "disk I/O throttle: max bytes/sec for boot disk (e.g. 10M, 0=no limit)")
+	cmd.Flags().StringVar(&diskIOEngine, "disk-io-engine", "", "host block I/O engine: sync (default) or async (Linux io_uring, 5.10+)")
+	cmd.Flags().StringVar(&volumeCache, "volume-cache", "", "volume flush handling: writeback (default, guest fsync is durable) or unsafe (faster, may lose data on host crash)")
 	return cmd
 }
 

@@ -445,7 +445,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	if runtime.GOOS == "darwin" {
 		return m.buildNativeCmd(ctx, cfg, qmpAddr)
 	}
-	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio" + bootDiskSnapshotOpt(cfg)
+	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio" + bootDiskSnapshotOpt(cfg) + qemuDriveIOOpts(cfg)
 	if cfg.DiskIOPS > 0 {
 		driveArg += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
 	}
@@ -473,7 +473,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	args = append(args, buildNetArgs(cfg)...)
 	args = append(args, buildEnvArgs(cfg.Env)...)
 	args = append(args, buildNetworkCfgArgs(cfg)...)
-	args = append(args, buildVolumeArgs(cfg.Volumes)...)
+	args = append(args, buildVolumeArgs(cfg)...)
 	args = append(args, buildMountArgs(cfg.Volumes)...)
 	if qmpAddr != "" {
 		// qmpAddr already carries its scheme ("unix:<path>" or "tcp:host:port").
@@ -556,13 +556,14 @@ func buildNetArgs(cfg Config) []string {
 
 // buildVolumeArgs appends extra virtio-blk drives for each volume mount.
 // Each volume gets its own drive index (starting at 1; index 0 is the boot disk).
-func buildVolumeArgs(vols []VolumeMount) []string {
+func buildVolumeArgs(cfg Config) []string {
 	var args []string
-	for i, vol := range vols {
+	for i, vol := range cfg.Volumes {
 		drive := fmt.Sprintf("file=%s,format=raw,if=virtio,index=%d", vol.DiskPath, i+1)
 		if vol.ReadOnly {
 			drive += ",readonly=on"
 		}
+		drive += qemuVolumeCacheOpts(cfg) + qemuDriveIOOpts(cfg)
 		args = append(args, "-drive", drive)
 	}
 	return args

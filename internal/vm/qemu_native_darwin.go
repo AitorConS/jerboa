@@ -23,6 +23,9 @@ func validateHostConfig(cfg Config, kernel string) error {
 	if cfg.Architecture != "arm64" && !cfg.EmulateX86 {
 		return fmt.Errorf("native macOS requires an ARM64 image; rebuild with --platform linux/arm64 or explicitly use --emulate-x86 for an x86 image")
 	}
+	if cfg.DiskIOEngine == DiskIOEngineAsync {
+		return fmt.Errorf("disk I/O engine async uses Linux io_uring and is not available on macOS")
+	}
 	if cfg.CPUShares > 10000 || cfg.MemoryMax < 0 {
 		return fmt.Errorf("invalid CPU weight or memory limit")
 	}
@@ -91,7 +94,7 @@ func (m *QEMUManager) buildNativeCmd(ctx context.Context, cfg Config, qmp string
 	}
 	args = append(args, buildNetworkCfgArgs(netcfg)...)
 	args = append(args, buildEnvArgs(cfg.Env)...)
-	args = append(args, buildVolumeArgs(cfg.Volumes)...)
+	args = append(args, buildVolumeArgs(cfg)...)
 	args = append(args, buildMountArgs(cfg.Volumes)...)
 	if qmp != "" {
 		args = append(args, "-qmp", qmp+",server,nowait")
