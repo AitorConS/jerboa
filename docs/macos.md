@@ -60,18 +60,18 @@ Managed launches accept and persist `--metrics-addr`, `--ui-addr`, `--trace-addr
 
 ## Desktop
 
-With sibling `jerboa` and `JerboaDesktop` checkouts:
+With sibling `jerboa`, `firecracker-macos` and `JerboaDesktop` checkouts, stage the native build and the Firecracker package:
 
 ```sh
 cd ../JerboaDesktop
 pnpm install
-./scripts/stage-macos.sh
+./scripts/stage-macos.sh ../jerboa/dist/macos-arm64 <firecracker-package>
 pnpm run dist:mac
 ```
 
-The ARM64 `.app`, DMG and ZIP are written to `dist/`. Desktop bundles the CLI, daemon and kernel tools; QEMU remains an external native prerequisite in this preview. Finder launches use the same native launchd lifecycle as the CLI. The native engine updates with the app, rather than through WSL distro updates.
+The ARM64 DMG is written to `dist/` and requires macOS 26+. Its app is self-contained: `Contents/Resources/bin` holds the CLI, daemon, kernel tools, Firecracker and `engine-version.txt`, and `Contents/Resources/lib` the libraries Firecracker loads, so no QEMU install is needed. Finder launches use the same native launchd lifecycle as the CLI with `--hypervisor firecracker` unless `hypervisor` is configured; the app refuses to start the engine outside Applications because launchd keeps the absolute daemon path. Once the engine runs it offers to install `/usr/local/bin/jerboa` and `jerboad` wrappers (administrator prompt) and leaves commands it did not create, such as the pkg installer's, untouched. The native engine updates with the app, rather than through WSL distro updates.
 
-Local builds have no Developer ID/notarization unless signing credentials are configured. The release workflow now builds and verifies a signed/notarized Firecracker package for R2; it requires a provisioned macOS runner and Apple identities. See [distribution]({% link macos-distribution.md %}) and [installation]({% link macos-firecracker.md %}). The Windows installer and its WSL lifecycle remain separate.
+On a release, `build-macos` in the main workflow builds the runtime and this DMG on a GitHub-hosted macOS 26 runner and publishes it as the `desktop` component's `darwin-arm64` asset. Neither the runtime nor the DMG is Developer ID signed or notarized yet (binaries keep ad-hoc signatures), so macOS blocks the first launch of a downloaded copy until it is allowed in System Settings → Privacy & Security. See [distribution]({% link macos-distribution.md %}). The Windows installer and its WSL lifecycle remain separate.
 
 ## Capabilities and current limits
 

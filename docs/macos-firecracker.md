@@ -33,11 +33,11 @@ Firecracker in the user's config and starts the user's launchd daemon.
 Stop running VMs before upgrading; the installer stops the managed daemon.
 
 This route requires a published release whose signed manifest contains the
-`macos` component. Older Linux-only releases are rejected before installation.
-The CI publishing path is implemented; its first macOS publication requires a
-provisioned macOS runner and Apple signing identities. Until that release is
-published, use the source build below. See the
-[distribution pipeline]({% link macos-distribution.md %}) for prerequisites.
+`macos` component. Releases without it are rejected before installation. CI
+does not publish that package yet because releases are not Developer ID signed;
+it publishes the unsigned, self-contained Jerboa Desktop DMG instead. Until a
+signed package is published, use the DMG or the source build below. See the
+[distribution pipeline]({% link macos-distribution.md %}).
 
 ## Build and run
 

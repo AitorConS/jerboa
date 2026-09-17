@@ -228,7 +228,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&memory, "memory", "256M", "VM memory (e.g. 256M, 1G)")
 	cmd.Flags().IntVar(&cpus, "cpus", 1, "number of virtual CPUs")
-	cmd.Flags().StringArrayVarP(&ports, "port", "p", nil, "publish port(s): [bindaddr:]host:guest[/tcp|udp] (repeatable; requires --network)")
+	cmd.Flags().StringArrayVarP(&ports, "port", "p", nil, "publish port(s): [bindaddr:]host:guest[/tcp|udp] (repeatable; requires --network on Linux)")
 	cmd.Flags().StringArrayVarP(&envs, "env", "e", nil, "set environment variable KEY=VALUE (repeatable)")
 	cmd.Flags().StringVar(&envFile, "env-file", "", "read environment variables from file (one KEY=VALUE per line)")
 	cmd.Flags().StringVar(&name, "name", "", "assign a name to the VM instance")
@@ -237,7 +237,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().BoolVar(&attach, "attach", false, "attach to VM serial console (blocks until VM stops)")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
-	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'jerboa network'; Linux only)")
+	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'jerboa network')")
 	cmd.Flags().BoolVar(&emulateX86, "emulate-x86", false, "explicitly emulate an x86 image on macOS (TCG, slower than ARM64/HVF)")
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")

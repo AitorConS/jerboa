@@ -17,15 +17,15 @@ nav_order: 2
 
 ## Platform Model
 
-Jerboa currently runs in two supported ways:
+Jerboa currently runs in three ways:
 
 - **Linux host**: `jerboa` talks to a native `jerboad` process over a Unix socket.
 - **Windows host**: `jerboa.exe` talks to `jerboad` running inside a dedicated WSL2 distro managed by `jerboa daemon`.
+- **macOS on Apple Silicon** (development preview): `jerboa` and `jerboad` run natively on the Mac, and VMs use Apple's Hypervisor.framework. See [Using Jerboa on macOS]({% link macos-guide.md %}).
 
 Notes:
 
-- Stable daemon releases target Linux. A [native macOS Apple Silicon preview]({% link macos.md %}) can be built from source.
-- Linux VM execution uses KVM; the macOS preview supports the native Firecracker/HVF fork and QEMU/HVF.
+- Linux VM execution uses KVM; macOS runs ARM64 images with Firecracker (bundled) or QEMU.
 - Windows support is built around WSL2, not native Windows virtualization.
 
 ## Prerequisites
@@ -55,23 +55,35 @@ Required:
 The actual daemon and hypervisors run inside the imported `jerboa` WSL2 distro.
 Firecracker still requires KVM.
 
+### macOS
+
+Required:
+
+- a Mac with Apple Silicon
+- macOS 26 or newer
+
+Optional:
+
+- QEMU (`brew install qemu`), only to run x86_64 images with emulation
+
 ---
 
 ## Install
 
 ### macOS Apple Silicon
 
-On macOS 26+, use a native ARM64 terminal and run without sudo:
+On macOS 26+, download the release's Jerboa Desktop DMG
+(`https://releases.jerboa.dev/desktop/vVERSION/jerboa-desktop-VERSION-macos-arm64.dmg`),
+move the app to Applications and open it. It bundles the CLI, the daemon and
+the Firecracker runtime, starts the daemon and offers to add `jerboa` to
+`/usr/local/bin`.
 
-```sh
-curl -fsSL https://jerboa.dev/install.sh | bash
-```
+The DMG is not signed or notarized by Apple yet, so macOS blocks the first
+launch: allow it in **System Settings → Privacy & Security → Open Anyway**.
 
-The script detects macOS, verifies the signed complete Firecracker package,
-installs its native tools and starts the launchd daemon. It requires a release
-containing the `macos` component; older Linux-only releases are rejected.
-Until the first native package is published, use the
-[source build]({% link macos-firecracker.md %}).
+`install.sh` does not support macOS yet. For step-by-step instructions and the
+differences from Linux, see [Using Jerboa on macOS]({% link macos-guide.md %}).
+To build from source, see [Firecracker on macOS]({% link macos-firecracker.md %}).
 
 ### Linux
 
@@ -146,6 +158,18 @@ jerboa daemon logs -f
 ```
 
 The Windows client auto-starts the daemon for daemon-backed commands when needed.
+
+### macOS daemon
+
+The Jerboa Desktop app starts the daemon when it opens. From the terminal:
+
+```bash
+jerboa daemon start
+jerboa daemon status
+```
+
+The daemon runs as your user (no `sudo`) while you are logged in and logs to
+`~/.jerboa/jerboad.log`. It does not start automatically at login yet.
 
 ---
 
@@ -256,11 +280,15 @@ when you need a fixed address:
 jerboa run myapp:latest --network app --ip 10.100.0.10 -p 8080:80
 ```
 
-Important:
+Important (Linux and Windows):
 
 - `-p/--port` requires `--network`
 - TCP forwarding works today
 - UDP port mappings are accepted syntactically but are currently skipped by the forwarder with a warning
+
+**macOS:** `-p` works without `--network`, and both TCP and UDP ports are
+forwarded. Firecracker VMs cannot reach the internet unless you allow it. See
+[Networking on macOS]({% link macos-guide.md %}#networking-and-ports).
 
 ### Publish bind address
 
@@ -366,6 +394,8 @@ The CLI has no self-update command. How you update depends on the platform:
   (on your PATH) and reconciles the WSL2 daemon/distro runtime for you.
 - **Linux** — reinstall `jerboa`/`jerboad` yourself (rerun `scripts/install.sh`
   or rebuild from source).
+- **macOS** — download the newer Jerboa Desktop DMG and replace the app in
+  Applications; the CLI and daemon update with it.
 - **kernel tooling** is managed separately through `jerboa kernel` and is also
   auto-downloaded on first VM boot when missing.
 
@@ -382,6 +412,7 @@ jerboa kernel update    # install the latest kernel toolchain
 ## Next
 
 - [Build Concepts]({% link build-concepts.md %})
+- [Using Jerboa on macOS]({% link macos-guide.md %})
 - [CLI Reference]({% link cli-reference.md %})
 - [Compose]({% link compose.md %})
 - [Architecture]({% link architecture.md %})

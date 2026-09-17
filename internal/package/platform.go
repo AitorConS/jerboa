@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -46,11 +47,31 @@ func ELFPlatform(filename string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("platform operation: %w", err)
 	}
+	if format := hostExecutableFormat(data); format != "" {
+		return "", fmt.Errorf("%s is a %s executable, not a Linux ELF binary: unikernel programs must be built for Linux "+
+			"(for Go: CGO_ENABLED=0 GOOS=linux go build, or pass the source directory to jerboa build to cross-compile it)",
+			filepath.Base(filename), format)
+	}
 	info, err := readELFInfo(data)
 	if err != nil {
 		return "", err
 	}
 	return info.platform, nil
+}
+
+// hostExecutableFormat names the desktop executable formats most often passed
+// by mistake: a program compiled for the macOS or Windows host instead of Linux.
+func hostExecutableFormat(data []byte) string {
+	if len(data) >= 4 {
+		switch binary.BigEndian.Uint32(data) {
+		case 0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe:
+			return "macOS Mach-O"
+		}
+	}
+	if len(data) >= 2 && data[0] == 'M' && data[1] == 'Z' {
+		return "Windows PE"
+	}
+	return ""
 }
 
 // ValidateFiles validates the exact guest tree, including data collisions and every ELF.

@@ -26,7 +26,10 @@ tree. It is neither the configured guest RAM nor a guest-internal used-memory
 metric. The VMM RSS can include resident guest-memory mappings, while untouched
 or reclaimed guest pages need not be resident. `disk_bytes` sums cumulative
 host process disk-I/O bytes for the currently live tree. Network byte counters
-continue to come from Jerboa's per-VM native network path.
+come from Jerboa's per-VM native network path for VMs on a named network. A
+Firecracker/HVF VM without `--network` uses the VMM's own slirp, so its counters
+are the guest NIC's `net_rx_bytes_total` and `net_tx_bytes_total` from the HVF
+`GET /metrics` API; an unavailable sample reads as zero.
 
 Every process is keyed by PID and kernel creation time. The root identity is
 captured when the collector is installed and a mismatch returns fallback zeros,
