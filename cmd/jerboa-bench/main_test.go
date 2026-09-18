@@ -104,7 +104,7 @@ func TestExternalLoadMetric(t *testing.T) {
 	re := regexp.MustCompile(`tps = ([0-9.]+)`)
 	res := externalLoad(context.Background(), "echo host={host} port={port}; echo 'tps = 1234.5 (without initial connection time)'", "10.0.0.2", 5432, re)
 	require.Zero(t, res.Errors)
-	require.Equal(t, 1234.5, res.ExternalTPS)
+	require.InDelta(t, 1234.5, res.ExternalTPS, 1e-9)
 	require.Contains(t, res.Output, "host=10.0.0.2 port=5432")
 
 	failed := externalLoad(context.Background(), "exit 3", "h", 1, re)
@@ -120,8 +120,8 @@ func TestSummarizeRuntimeSkipsWarmupsAndFailures(t *testing.T) {
 	}
 	s := summarizeRuntime(runs, "qemu", 1)
 	require.Equal(t, 1, s["ready_ms"].N)
-	require.Equal(t, 100.0, s["ready_ms"].Median)
-	require.Equal(t, 64.0, s["mem_ready_mib"].Median)
-	require.Equal(t, 900.0, s["load_published_rps"].Median)
-	require.Equal(t, 1000.0, s["load_direct_rps"].Median)
+	require.InDelta(t, 100.0, s["ready_ms"].Median, 1e-9)
+	require.InDelta(t, 64.0, s["mem_ready_mib"].Median, 1e-9)
+	require.InDelta(t, 900.0, s["load_published_rps"].Median, 1e-9)
+	require.InDelta(t, 1000.0, s["load_direct_rps"].Median, 1e-9)
 }

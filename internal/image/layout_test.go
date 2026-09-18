@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,7 +74,7 @@ func TestBuildCompactLayout(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, LayoutCompact, m.Layout)
-	require.True(t, strings.Contains(gotManifest, "compact:true"))
+	require.Contains(t, gotManifest, "compact:true")
 
 	// An old mkfs ignores the key and writes a standard image.
 	_, err = NewBuilder(makeStore(t)).Build(context.Background(), BuildConfig{

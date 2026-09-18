@@ -214,10 +214,11 @@ func prepareApp(ctx context.Context, o options) (appConfig, func(), error) {
 	if app.BinaryPath == "" {
 		dir, err := os.MkdirTemp("", "jerboa-bench-app-")
 		if err != nil {
-			return app, cleanup, err
+			return app, cleanup, fmt.Errorf("build the test app: %w", err)
 		}
 		cleanup = func() { _ = os.RemoveAll(dir) }
 		app.BinaryPath = filepath.Join(dir, "jerboa-bench-app")
+		// #nosec G204 -- the only variable is the caller's output path.
 		cmd := exec.CommandContext(ctx, "go", "build", "-trimpath", "-ldflags=-s -w", "-o", app.BinaryPath,
 			"github.com/AitorConS/jerboa/cmd/jerboa-bench/testapp")
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+o.appArch)
@@ -247,6 +248,7 @@ func labels(rts []benchRuntime) []string {
 // all measured runs shuffled together, so slow drift on the host (thermal,
 // page cache, background jobs) does not systematically favor one runtime.
 func schedule(runtimes []string, runs, warmup int, seed int64) []slot {
+	// #nosec G404 -- a seeded, reproducible run order is the point; not security.
 	r := rand.New(rand.NewSource(seed))
 	var plan []slot
 	for w := 0; w < warmup; w++ {
@@ -272,7 +274,7 @@ func runOnce(ctx context.Context, o options, rt benchRuntime, s slot, order int,
 		rec.Error = stage + ": " + err.Error()
 		return rec
 	}
-	port, err := freePort()
+	port, err := freePort(ctx)
 	if err != nil {
 		return fail("port", err)
 	}
@@ -429,10 +431,10 @@ func hostMeta(ctx context.Context, o options, app appConfig) map[string]any {
 func writeReport(o options, rep report) error {
 	data, err := json.MarshalIndent(rep, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encode the report: %w", err)
 	}
 	if err := os.WriteFile(o.out, data, 0o644); err != nil {
-		return err
+		return fmt.Errorf("write %s: %w", o.out, err)
 	}
 	csvPath := o.csvOut
 	if csvPath == "" {
@@ -440,7 +442,7 @@ func writeReport(o options, rep report) error {
 	}
 	f, err := os.Create(csvPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("write %s: %w", csvPath, err)
 	}
 	defer func() { _ = f.Close() }()
 	w := csv.NewWriter(f)
@@ -465,7 +467,10 @@ func writeReport(o options, rep report) error {
 		_ = w.Write(row)
 	}
 	w.Flush()
-	return w.Error()
+	if err := w.Error(); err != nil {
+		return fmt.Errorf("write %s: %w", csvPath, err)
+	}
+	return nil
 }
 
 func f2(v float64) string { return strconv.FormatFloat(v, 'f', 2, 64) }

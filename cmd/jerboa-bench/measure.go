@@ -25,7 +25,7 @@ import (
 func measureFileSizes(ctx context.Context, path string, info *imageInfo) error {
 	st, err := os.Stat(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("measure %s: %w", path, err)
 	}
 	if info.LogicalBytes == 0 {
 		info.LogicalBytes = st.Size()
@@ -34,16 +34,16 @@ func measureFileSizes(ctx context.Context, path string, info *imageInfo) error {
 
 	f, err := os.Open(path) //nolint:gosec // benchmark artifact
 	if err != nil {
-		return err
+		return fmt.Errorf("measure %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	var counter countingWriter
 	gz := gzip.NewWriter(&counter)
 	if _, err := io.Copy(gz, f); err != nil {
-		return err
+		return fmt.Errorf("compress %s: %w", path, err)
 	}
 	if err := gz.Close(); err != nil {
-		return err
+		return fmt.Errorf("compress %s: %w", path, err)
 	}
 	info.GzipBytes = counter.n
 
@@ -87,21 +87,26 @@ func parseReadyProbe(s string) (readyProbe, error) {
 // forwarder accepts first), so HTTP probes are the meaningful readiness signal.
 func waitReady(ctx context.Context, addr string, probe readyProbe) error {
 	client := &http.Client{Timeout: 250 * time.Millisecond, Transport: &http.Transport{DisableKeepAlives: true}}
+	dialer := &net.Dialer{Timeout: 250 * time.Millisecond}
 	for {
 		var ok bool
 		switch probe.kind {
 		case "tcp":
-			conn, err := net.DialTimeout("tcp", addr, 250*time.Millisecond)
+			conn, err := dialer.DialContext(ctx, "tcp", addr)
 			if err == nil {
 				_ = conn.Close()
 				ok = true
 			}
 		default:
-			resp, err := client.Get("http://" + addr + probe.path)
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+probe.path, nil)
+			if err != nil {
+				return fmt.Errorf("readiness request for %s: %w", addr, err)
+			}
+			resp, err := client.Do(req)
 			if err == nil {
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
-				ok = resp.StatusCode >= 200 && resp.StatusCode < 300
+				ok = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices
 			}
 		}
 		if ok {
@@ -191,6 +196,7 @@ func httpLoad(ctx context.Context, url string, concurrency int, duration time.Du
 func externalLoad(ctx context.Context, template, host string, port int, metricRe *regexp.Regexp) loadResult {
 	expanded := strings.NewReplacer("{host}", host, "{port}", strconv.Itoa(port)).Replace(template)
 	res := loadResult{Target: expanded}
+	// #nosec G204 -- --load-cmd is an operator-supplied benchmark command.
 	cmd := exec.CommandContext(ctx, "sh", "-c", expanded)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -215,10 +221,11 @@ func tail(s string, n int) string {
 }
 
 // freePort asks the kernel for an unused loopback port.
-func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+func freePort(ctx context.Context) (int, error) {
+	var lc net.ListenConfig
+	l, err := lc.Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("reserve a host port: %w", err)
 	}
 	defer func() { _ = l.Close() }()
 	return l.Addr().(*net.TCPAddr).Port, nil

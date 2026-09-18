@@ -111,6 +111,7 @@ func newRuntime(spec runtimeSpec, jerboaBin string) benchRuntime {
 // into the error so failures are diagnosable from the report.
 func command(ctx context.Context, name string, args ...string) (string, error) {
 	var stdout, stderr bytes.Buffer
+	// #nosec G204 -- this harness drives the CLIs and flags its operator passed in.
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -241,7 +242,7 @@ func (j *jerboaRuntime) Stop(ctx context.Context, inst instance) error {
 }
 
 // WaitStopped polls until the VM leaves the stopping state. jerboa stop can
-// return once the hypervisor process is signalled, before the daemon's monitor
+// return once the hypervisor process is signaled, before the daemon's monitor
 // has recorded the VM as stopped, and a remove in that window is rejected with
 // "vm is stopping, must be stopped first".
 func (j *jerboaRuntime) WaitStopped(ctx context.Context, inst instance) error {
@@ -298,19 +299,19 @@ func (d *dockerRuntime) Prepare(ctx context.Context, app appConfig) (imageInfo, 
 	}
 	dir, err := os.MkdirTemp("", "jerboa-bench-docker-")
 	if err != nil {
-		return imageInfo{}, err
+		return imageInfo{}, fmt.Errorf("docker build context: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	data, err := os.ReadFile(app.BinaryPath)
 	if err != nil {
-		return imageInfo{}, err
+		return imageInfo{}, fmt.Errorf("read the benchmark binary: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "app"), data, 0o755); err != nil {
-		return imageInfo{}, err
+		return imageInfo{}, fmt.Errorf("stage the benchmark binary: %w", err)
 	}
 	dockerfile := fmt.Sprintf("FROM scratch\nCOPY app /app\nEXPOSE %d\nENTRYPOINT [\"/app\"]\n", app.GuestPort)
 	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o644); err != nil {
-		return imageInfo{}, err
+		return imageInfo{}, fmt.Errorf("write the Dockerfile: %w", err)
 	}
 	d.ref = "jerboa-bench-" + sanitize(d.spec.Label) + ":" + app.BinarySHA256[:12]
 	platform := "linux/" + runtime.GOARCH
@@ -342,6 +343,7 @@ func (d *dockerRuntime) binaryHashInImage(ctx context.Context) (string, error) {
 		return "", err
 	}
 	defer func() { _, _ = command(context.Background(), "docker", "rm", id) }()
+	// #nosec G204 -- the image reference comes from this harness's own flags.
 	cmd := exec.CommandContext(ctx, "docker", "cp", id+":/app", "-")
 	out, err := cmd.Output()
 	if err != nil {
@@ -353,7 +355,7 @@ func (d *dockerRuntime) binaryHashInImage(ctx context.Context) (string, error) {
 	}
 	h := sha256.New()
 	if _, err := io.Copy(h, tr); err != nil {
-		return "", err
+		return "", fmt.Errorf("hash the image's binary: %w", err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
@@ -363,7 +365,7 @@ func (d *dockerRuntime) binaryHashInImage(ctx context.Context) (string, error) {
 func (d *dockerRuntime) measureCompressed(ctx context.Context, info *imageInfo) error {
 	f, err := os.CreateTemp("", "jerboa-bench-save-*.tar")
 	if err != nil {
-		return err
+		return fmt.Errorf("docker save: %w", err)
 	}
 	path := f.Name()
 	_ = f.Close()
@@ -449,12 +451,12 @@ func parseDockerMemUsage(s string) (int64, error) {
 func fileSHA256(path string) (string, error) {
 	f, err := os.Open(path) //nolint:gosec // user-provided benchmark binary
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("hash %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+		return "", fmt.Errorf("hash %s: %w", path, err)
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

@@ -127,7 +127,10 @@ func writeSizeReport(w io.Writer, r sizeReport, format string) error {
 	if format == "json" {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(r)
+		if err := enc.Encode(r); err != nil {
+			return fmt.Errorf("write size report: %w", err)
+		}
+		return nil
 	}
 	fmt.Fprintf(w, "Image contents: %s in %d files (uncompressed file sizes)\n", formatSize(r.TotalBytes), r.TotalFiles)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', tabwriter.AlignRight)
@@ -143,7 +146,10 @@ func writeSizeReport(w io.Writer, r sizeReport, format string) error {
 	if rest := len(r.Groups) - sizeReportTopN; rest > 0 {
 		fmt.Fprintf(tw, "%s\t%s\t\t %d more groups\n", formatSize(r.TotalBytes-shown), share(r.TotalBytes-shown, r.TotalBytes), rest)
 	}
-	return tw.Flush()
+	if err := tw.Flush(); err != nil {
+		return fmt.Errorf("write size report: %w", err)
+	}
+	return nil
 }
 
 func share(part, total int64) string {

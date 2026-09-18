@@ -18,11 +18,12 @@ func TestSummarize(t *testing.T) {
 	require.LessOrEqual(t, s.MedianCI95[0], s.Median)
 	require.GreaterOrEqual(t, s.MedianCI95[1], s.Median)
 	require.Equal(t, s, summarize([]float64{5, 1, 4, 2, 3}, 1), "seeded bootstrap is reproducible")
+	//nolint:testifylint // exact equality is the point: the same seed must give the same numbers
 }
 
 func TestSummarizeEdgeCases(t *testing.T) {
 	require.Equal(t, summary{}, summarize(nil, 1))
 	one := summarize([]float64{7}, 1)
-	require.Equal(t, 7.0, one.Median)
+	require.InDelta(t, 7.0, one.Median, 1e-9)
 	require.Equal(t, [2]float64{7, 7}, one.MedianCI95)
 }

@@ -75,6 +75,7 @@ func bootstrapMedianCI(values []float64, seed int64) [2]float64 {
 	if len(values) < 2 {
 		return [2]float64{values[0], values[0]}
 	}
+	// #nosec G404 -- resampling must be reproducible from the report's seed.
 	r := rand.New(rand.NewSource(seed))
 	medians := make([]float64, bootstrapResamples)
 	sample := make([]float64, len(values))

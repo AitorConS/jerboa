@@ -42,6 +42,11 @@ func main() {
 		_, _ = w.Write(payload)
 	})
 	srv := &http.Server{Addr: ":" + port, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("jerboa-bench testapp listening on :%s", port)
+	// Logging the parsed number keeps unvalidated environment input out of the log.
+	listenPort, err := strconv.Atoi(port)
+	if err != nil {
+		log.Fatalf("invalid PORT: %v", err)
+	}
+	log.Printf("jerboa-bench testapp listening on :%d", listenPort)
 	log.Fatal(srv.ListenAndServe())
 }
