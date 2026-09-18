@@ -53,14 +53,18 @@ func TestParseMemoryMax(t *testing.T) {
 		{"1024", 1024},
 		{"2g", 2 * 1024 * 1024 * 1024},
 		{"", 0},
+		{"10MB", 10 * 1024 * 1024},
+		{"10MiB", 10 * 1024 * 1024},
+		{"2GB", 2 * 1024 * 1024 * 1024},
+		{"512b", 512},
 	}
 	for _, tc := range tests {
-		got, err := parseMemoryMax(tc.input)
+		got, err := parseByteSize("memory-max", tc.input)
 		require.NoError(t, err)
 		require.Equal(t, tc.want, got)
 	}
-	_, err := parseMemoryMax("-1M")
+	_, err := parseByteSize("memory-max", "-1M")
 	require.Error(t, err)
-	_, err = parseMemoryMax("abc")
-	require.Error(t, err)
+	_, err = parseByteSize("disk-bps", "abc")
+	require.ErrorContains(t, err, "disk-bps", "the error must name the flag being parsed")
 }

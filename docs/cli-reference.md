@@ -98,6 +98,8 @@ Key flags:
 | `--emulate-x86` | macOS only: run an x86_64 image with QEMU emulation |
 | `--disk-iops` | Boot-disk IOPS throttle |
 | `--disk-bps` | Boot-disk throughput throttle |
+| `--disk-io-engine` | Host block I/O engine for every drive: `sync` (default) or `async` (io_uring; Linux 5.10+ only). Async can help parallel I/O but costs extra host CPU and device setup time; benchmark before enabling |
+| `--volume-cache` | Volume flush handling: `writeback` (default; a guest `fsync` reaches host storage on QEMU and Firecracker) or `unsafe` (flushes ignored; faster, but committed data can be lost if the host crashes). Not supported by Firecracker/HVF on macOS |
 
 Notes:
 
@@ -191,6 +193,8 @@ Key flags:
 | `--port` | Declared service port; emits the guest network section in the build manifest |
 | `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
 | `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
+| `--size-report[=text\|json]` | Before assembling, print what the image will contain grouped by program, runtime package, npm module, Python distribution and top-level project path. `json` prints every group to stdout (the build summary then goes to stderr) |
+| `--layout` | Disk image layout: `standard` (default; boots on every hypervisor) or `compact` (no boot code and no boot filesystem copy of the kernel; about 3–4 MiB smaller, boots only on Firecracker and native ARM64 QEMU on macOS). An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
@@ -204,6 +208,8 @@ Key flags:
 | `pkgs` | Packages to include (e.g. `["eyberg/postgresql:11.3.0"]`); `--pkg` flags append to this list |
 | `pkg_source` | Package source: `ops` (default) or `jerboa`; an explicit `--pkg-source` flag wins |
 | `disk_size` | Minimum image size (e.g. `512M`, `1G`) for runtime scratch space |
+| `layout` | `standard` (default) or `compact`; see `--layout` |
+| `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through — re-include ignored defaults such as `node_modules` with `!node_modules` in `.unignore`. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from
@@ -592,8 +598,10 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |
 | `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
 | `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
+| `--fc-metrics-dir` | Linux only: write each Firecracker VM's device metrics (per-drive bytes, operations, flushes, latency) as JSON lines to `fc-<id>-metrics.json` in this directory, for storage profiling |
 | `--tools-dir` | Toolchain cache/lookup directory (`mkfs`, `boot.img`, `kernel.img`); empty caches under `~/.jerboa/tools` |
 | `--store` | Image store root directory (default `~/.jerboa/images`) |
+| `--vm-disk-dir` | Directory for per-VM private boot disks (default `~/.jerboa/vm-disks`). Keep it on the image store's filesystem: on btrfs, XFS (reflink) and APFS each start clones the image instantly; elsewhere a sparse copy writes only the image's data blocks. Leftover disks from VMs that are no longer running are removed at startup |
 | `--vm-store` | VM state store backend: `file` (default) or `sqlite` |
 | `--vm-log-max-bytes` | Max in-memory serial log bytes retained per VM (`0` = 4 MiB default) |
 | `--log-format` | Log format: `text` (default) or `json` |

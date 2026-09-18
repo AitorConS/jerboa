@@ -212,4 +212,4 @@ The repo currently contains:
 - e2e tests in `tests/e2e/`
 - kernel tests under `kernel/test/`
 
-CI also builds release binaries, a WSL distro rootfs artifact, and benchmark jobs for QEMU and Firecracker boot paths.
+CI also builds release binaries, a WSL distro rootfs artifact, and a nightly `jerboa-bench` run comparing QEMU, Firecracker (standard and compact layouts) and, when available, Docker on the same binary (see [Benchmarks]({% link benchmarks.md %})).

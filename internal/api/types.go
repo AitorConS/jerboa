@@ -101,6 +101,10 @@ type RunParams struct {
 	MemoryMax   int64            `json:"memory_max,omitempty"`
 	DiskIOPS    uint64           `json:"disk_iops,omitempty"`
 	DiskBPS     int64            `json:"disk_bps,omitempty"`
+	// DiskIOEngine is "sync" (default) or "async" (Linux io_uring).
+	DiskIOEngine string `json:"disk_io_engine,omitempty"`
+	// VolumeCache is "writeback" (default; guest flushes are durable) or "unsafe".
+	VolumeCache string `json:"volume_cache,omitempty"`
 }
 
 // HealthCheckSpec is the wire representation of a health check configuration.
@@ -168,6 +172,8 @@ type VMDetail struct {
 	RestartPolicy   string            `json:"restart_policy,omitempty"`
 	DiskIOPS        uint64            `json:"disk_iops,omitempty"`
 	DiskBPS         int64             `json:"disk_bps,omitempty"`
+	DiskIOEngine    string            `json:"disk_io_engine,omitempty"`
+	VolumeCache     string            `json:"volume_cache,omitempty"`
 	// Warnings are non-fatal runtime conditions detected after start, e.g. a
 	// volume whose mount point does not exist in the image (so it never mounted).
 	Warnings []string `json:"warnings,omitempty"`
@@ -306,6 +312,9 @@ type BuildParams struct {
 	// Use when the default content-based size leaves insufficient free space
 	// for runtime writes (e.g. database temp tablespaces, log files).
 	DiskSize string `json:"disk_size,omitempty"`
+	// Layout is "" (standard, BIOS-bootable) or "compact" (root filesystem
+	// only; for Firecracker and QEMU direct kernel boot).
+	Layout string `json:"layout,omitempty"`
 }
 
 // VolumeSeedParams seeds an existing volume's disk with an initialized
@@ -343,6 +352,7 @@ type ImageManifestResult struct {
 	DiskDigest   string          `json:"disk_digest"`
 	DiskSize     int64           `json:"disk_size"`
 	Created      string          `json:"created"`
+	Layout       string          `json:"layout,omitempty"`
 }
 
 // SnapshotParams names a snapshot and, for create/restore, the target VM.

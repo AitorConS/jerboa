@@ -79,5 +79,8 @@ ports = ["5432:5432"]    # host:guest publish maps; applied when the VM joins a
 #   jerboa volume create pgdata --size 1G --seed-pkg eyberg/postgresql:11.3.0 --src /db
 #   jerboa run postgresql -v pgdata:/db --network pgnet -p 5432:5432
 #
-# Always stop the VM with `jerboa stop` (graceful) so postgres checkpoints and
-# removes postmaster.pid; an ungraceful kill can leave a stale lock on the volume.
+# Stop the VM with `jerboa stop`. On QEMU (and Firecracker on macOS) the guest is
+# told to shut down, so postgres checkpoints and removes postmaster.pid. On
+# Firecracker on Linux there is no such channel, so the lock stays behind and the
+# next boot needs postmaster.pid deleted from the volume — the data itself
+# survives, postgres replays its write-ahead log. See docs/troubleshooting.md.

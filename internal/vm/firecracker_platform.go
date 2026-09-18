@@ -13,7 +13,7 @@ import (
 func platformInitFC(_ *FirecrackerManager)                                    {}
 func (m *FirecrackerManager) checkFCConfig(_ context.Context, _ string) error { return nil }
 
-func (m *FirecrackerManager) validateFCPlatform(_ Config) error { return nil }
+func (m *FirecrackerManager) validateFCPlatform(cfg Config) error { return validateDiskIOHost(cfg) }
 func (m *FirecrackerManager) writeNativeFCConfig(_ string, _ Config, _ string) (string, error) {
 	panic("native Firecracker config is only available on macOS")
 }

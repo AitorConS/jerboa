@@ -49,6 +49,21 @@ func WithFCMetrics(s MetricsSink) FCOption {
 	return func(m *FirecrackerManager) { m.metrics = s }
 }
 
+// WithFCMetricsDir makes each Linux Firecracker VM write its device metrics
+// (per-drive bytes, operations, flushes and latency aggregates) as JSON lines
+// to <dir>/fc-<id>-metrics.json for storage profiling. Empty disables it.
+// Firecracker flushes metrics periodically and on the FlushMetrics action.
+func WithFCMetricsDir(dir string) FCOption {
+	return func(m *FirecrackerManager) { m.metricsDir = dir }
+}
+
+// WithFCDiskDir sets the directory for per-VM private root disks. It should be
+// on the same filesystem as the image store so disks can be cloned instead of
+// copied. Empty uses the system temp dir.
+func WithFCDiskDir(dir string) FCOption {
+	return func(m *FirecrackerManager) { m.diskDir = dir }
+}
+
 // FirecrackerManager implements Manager by spawning firecracker processes
 // configured via a JSON config file and managed via the Firecracker REST API
 // over a per-VM Unix socket.
@@ -57,7 +72,7 @@ func WithFCMetrics(s MetricsSink) FCOption {
 //   - TAP networking only (like QEMU now): port maps require a NetworkName and
 //     are rejected at Start otherwise. Publishing is done by the userspace
 //     forwarder, shared with QEMU.
-//   - DiskIOPS / DiskBPS throttling is not available (no Firecracker equivalent).
+//   - DiskIOPS / DiskBPS map to the root drive's token bucket rate limiter.
 //   - On Windows, Firecracker runs inside WSL2; KVM must be available in WSL2.
 //   - The kernel image must be a flat ELF vmlinux compatible with Firecracker
 //     (different from the BIOS-bootable kernel.img used by QEMU).
@@ -77,7 +92,15 @@ type FirecrackerManager struct {
 	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
 	shutdownGrace      time.Duration                     // outer bound after requesting guest shutdown
-	metrics            MetricsSink
+	// guestShutdown reports whether the VMM has a shutdown channel this guest
+	// acts on. Upstream Firecracker only offers SendCtrlAltDel, which writes to
+	// the i8042 reset port; Nanos implements no i8042 or ACPI handler, so the
+	// guest never sees it. The macOS VMM raises a power button the guest does
+	// handle, so its platform hook sets this.
+	guestShutdown bool
+	metrics       MetricsSink
+	diskDir       string
+	metricsDir    string
 	// applyLimits places the firecracker process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -163,13 +186,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		}
 	}
 
-	// Boot off a private per-VM copy of the base image. Firecracker opens the
+	// Boot off a private per-VM clone of the base image. Firecracker opens the
 	// root drive read-write with no copy-on-write, so pointing several VMs at the
-	// shared store image would corrupt it; the copy gives each VM ephemeral
-	// scratch space and leaves the base pristine (mirrors QEMU's snapshot=on).
-	// Attached volumes stay shared and persistent — only the rootfs is copied.
-	rootfs := fcRootfsPath(id)
-	if err := copyBootImage(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest); err != nil {
+	// shared store image would corrupt it; the clone gives each VM ephemeral
+	// scratch space and leaves the base pristine. Attached volumes stay shared
+	// and persistent — only the rootfs is cloned.
+	rootfs := m.rootfsPath(id)
+	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest); err != nil {
 		_ = v.transition(StateStopped)
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}
@@ -347,9 +370,22 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 
+	// Ask the guest to shut down where that works. Otherwise terminate the VMM
+	// directly instead of waiting out the grace period for a request the guest
+	// cannot answer: the root disk is a per-VM clone discarded on exit, and
+	// volume writes the guest already flushed are on host storage (volumes
+	// default to cache_type Writeback).
+	//
 	// id may be a name or ID prefix; the API socket is named after the resolved ID.
-	if err := m.shutdownAPI(m.vmSockPath(v.ID)); err != nil {
-		slog.Debug("firecracker stop: SendCtrlAltDel failed, falling back to SIGTERM", "vm_id", v.ID, "err", err)
+	requested := false
+	if m.guestShutdown {
+		if err := m.shutdownAPI(m.vmSockPath(v.ID)); err != nil {
+			slog.Debug("firecracker stop: guest shutdown request failed, falling back to SIGTERM", "vm_id", v.ID, "err", err)
+		} else {
+			requested = true
+		}
+	}
+	if !requested {
 		if sigErr := proc.signal(syscall.SIGTERM); sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
 			_ = proc.kill()
 			return nil
@@ -633,6 +669,11 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 				PathOnHost:   rootfsPath,
 				IsRootDevice: true,
 				IsReadOnly:   false,
+				// The root disk is a private per-VM clone deleted on exit, so
+				// guest flushes buy no durability there.
+				CacheType:   fcCacheUnsafe,
+				IoEngine:    fcIOEngine(cfg),
+				RateLimiter: fcRootRateLimiter(cfg),
 			},
 		},
 		MachineConfig: fcMachineConfig{
@@ -647,6 +688,8 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 			PathOnHost:   vol.DiskPath,
 			IsRootDevice: false,
 			IsReadOnly:   vol.ReadOnly,
+			CacheType:    fcVolumeCacheType(cfg),
+			IoEngine:     fcIOEngine(cfg),
 		})
 	}
 
@@ -661,6 +704,20 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 				GuestMAC: guestMACFromIP(cfg.IPAddress),
 			},
 		}
+	}
+
+	if m.metricsDir != "" {
+		// Firecracker opens an existing metrics file; it does not create one.
+		if err := os.MkdirAll(m.metricsDir, 0o700); err != nil {
+			return "", fmt.Errorf("create firecracker metrics dir: %w", err)
+		}
+		metricsPath := filepath.Join(m.metricsDir, "fc-"+id+"-metrics.json")
+		f, err := os.OpenFile(metricsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+		if err != nil {
+			return "", fmt.Errorf("create firecracker metrics file: %w", err)
+		}
+		_ = f.Close()
+		fcCfg.Metrics = &fcMetrics{MetricsPath: metricsPath}
 	}
 
 	m.rewriteConfigPaths(&fcCfg)
@@ -843,36 +900,13 @@ func fcConfigPath(id string) string {
 	return filepath.Join(os.TempDir(), "fc-"+id+"-config.json")
 }
 
-// fcRootfsPath returns the per-VM ephemeral root disk path. Firecracker has no
-// QEMU-style snapshot=on copy-on-write, so each VM boots off a private copy of
+// rootfsPath returns the per-VM ephemeral root disk path. Firecracker has no
+// QEMU-style snapshot=on copy-on-write, so each VM boots off a private clone of
 // the base image instead of the shared store image. This keeps the base image
 // pristine and lets several VMs run from the same image at once without both
 // guests writing to the same backing file (silent filesystem corruption).
-func fcRootfsPath(id string) string {
-	return filepath.Join(os.TempDir(), "fc-"+id+"-rootfs.img")
-}
-
-// copyFile copies src to dst, truncating dst if it exists. The copy is the
-// Firecracker equivalent of QEMU's ephemeral snapshot overlay: guest writes go
-// to this private file and it is deleted when the VM stops.
-func copyFile(dst, src string) error {
-	in, err := os.Open(src) //nolint:gosec // daemon-owned image store path
-	if err != nil {
-		return fmt.Errorf("open source %s: %w", src, err)
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("create dest %s: %w", dst, err)
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return fmt.Errorf("copy %s -> %s: %w", src, dst, err)
-	}
-	if err := out.Close(); err != nil {
-		return fmt.Errorf("close dest %s: %w", dst, err)
-	}
-	return nil
+func (m *FirecrackerManager) rootfsPath(id string) string {
+	return filepath.Join(bootDiskDir(m.diskDir), fcRootfsPrefix+id+fcRootfsSuffix)
 }
 
 // Firecracker VM config JSON types.
@@ -882,6 +916,11 @@ type fcVMConfig struct {
 	Drives            []fcDrive            `json:"drives"`
 	MachineConfig     fcMachineConfig      `json:"machine-config"`
 	NetworkInterfaces []fcNetworkInterface `json:"network-interfaces,omitempty"`
+	Metrics           *fcMetrics           `json:"metrics,omitempty"`
+}
+
+type fcMetrics struct {
+	MetricsPath string `json:"metrics_path"`
 }
 
 type fcBootSource struct {
@@ -889,11 +928,28 @@ type fcBootSource struct {
 	BootArgs        string `json:"boot_args,omitempty"`
 }
 
+// fcDrive is shared with the macOS VMM, whose schema rejects unknown fields:
+// the optional fields must stay omitempty and are only set on Linux.
 type fcDrive struct {
-	DriveID      string `json:"drive_id"`
-	PathOnHost   string `json:"path_on_host"`
-	IsRootDevice bool   `json:"is_root_device"`
-	IsReadOnly   bool   `json:"is_read_only"`
+	DriveID      string         `json:"drive_id"`
+	PathOnHost   string         `json:"path_on_host"`
+	IsRootDevice bool           `json:"is_root_device"`
+	IsReadOnly   bool           `json:"is_read_only"`
+	CacheType    string         `json:"cache_type,omitempty"`
+	IoEngine     string         `json:"io_engine,omitempty"`
+	RateLimiter  *fcRateLimiter `json:"rate_limiter,omitempty"`
+}
+
+// fcRateLimiter is Firecracker's per-drive token bucket rate limiter.
+type fcRateLimiter struct {
+	Bandwidth *fcTokenBucket `json:"bandwidth,omitempty"`
+	Ops       *fcTokenBucket `json:"ops,omitempty"`
+}
+
+// fcTokenBucket allows Size tokens (bytes or operations) per RefillTime ms.
+type fcTokenBucket struct {
+	Size       int64 `json:"size"`
+	RefillTime int64 `json:"refill_time"`
 }
 
 type fcMachineConfig struct {

@@ -26,6 +26,7 @@ const (
 func platformInitFC(m *FirecrackerManager) {
 	m.vmSockPath = nativeFCSocketPath
 	m.shutdownAPI = nativeFCShutdown
+	m.guestShutdown = true // the native VMM raises a power button Nanos handles
 	m.shutdownGrace = nativeFCStopGracePeriod
 }
 
@@ -54,7 +55,7 @@ func (m *FirecrackerManager) RestoreHostRuntime(ctx context.Context) error {
 			}
 			m.hchecker.Stop(v.ID)
 			_ = os.Remove(socket)
-			_ = os.Remove(fcRootfsPath(v.ID))
+			_ = os.Remove(m.rootfsPath(v.ID))
 			_ = os.Remove(m.vmmLogPath(v.ID))
 			paths, _ := filepath.Glob(filepath.Join(os.TempDir(), "jerboa-fc-"+v.ID+"-*", "config.json"))
 			for _, p := range paths {
@@ -265,6 +266,9 @@ func readNativeFCNetStats(socket string) (int64, int64) {
 func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 	if cfg.EmulateX86 {
 		return errFCX86Emulation()
+	}
+	if cfg.VolumeCache == VolumeCacheUnsafe {
+		return fmt.Errorf("Firecracker/HVF always forwards guest flushes to host storage; --volume-cache unsafe is not supported")
 	}
 	if err := validateHostConfig(cfg, m.kernelImage); err != nil {
 		return err

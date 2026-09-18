@@ -336,6 +336,17 @@ static value translate(heap h, vector worklist,
 
 extern heap init_process_runtime();
 
+/* Byte offset just past the highest storage range (data or reservation) of the
+ * most recently created filesystem, relative to its start. */
+static u64 fs_storage_end;
+
+/* The boot filesystem partition is sized to its allocated storage, rounded up
+ * to this alignment, instead of always reserving BOOTFS_SIZE. Every reader
+ * (stage2, UEFI loader, kernel klib/symbol loading) takes the size from the
+ * MBR and opens the boot filesystem read-only, so a smaller partition only
+ * has to contain every allocated range, including reserved log space. */
+#define BOOTFS_ALIGN    (64 * KB)
+
 static io_status_handler mkfs_write_status;
 closure_func_basic(io_status_handler, void, mkfs_write_handler,
                    status s, bytes length)
@@ -392,6 +403,7 @@ closure_function(4, 2, void, fsc,
         }
     }
     filesystem_flush(fs, ignore_status);
+    fs_storage_end = filesystem_storage_end(fs);
     closure_finish();
 }
 
@@ -479,7 +491,7 @@ static ssize_t write_uefi_part(descriptor out, ssize_t offset, const char *uefi_
     return offset + UEFI_PART_SIZE;
 }
 
-static void write_mbr(descriptor f, boolean uefi)
+static void write_mbr(descriptor f, boolean uefi, u64 bootfs_size)
 {
     // get resulting size
     off_t total_size = lseek(f, 0, SEEK_END);
@@ -513,8 +525,17 @@ static void write_mbr(descriptor f, boolean uefi)
         partition_write(&e[part_num++], true, 0xEF, fs_offset, fs_size);
         fs_offset += fs_size;
     }
-    fs_size = BOOTFS_SIZE;
-    partition_write(&e[part_num++], true, 0x83, fs_offset, fs_size);
+    fs_size = bootfs_size;
+    if (fs_size) {
+        partition_write(&e[part_num++], true, 0x83, fs_offset, fs_size);
+    } else {
+        /* Compact layout: keep the boot filesystem slot, empty, so
+         * partition_get() indices are unchanged, and start it where the root
+         * filesystem starts so the kernel log dump (which sits right before
+         * the first partition) keeps its location. */
+        partition_write(&e[part_num], false, 0x00, fs_offset, SECTOR_SIZE);
+        e[part_num++].nsectors = 0;
+    }
 
     /* Root filesystem */
     fs_offset += fs_size;
@@ -538,6 +559,10 @@ static void usage(const char *program_name)
            "%s [options] -e image-file\n"
            "Options:\n"
            "-b boot-image	- specify boot image to prepend\n"
+           "-c		- compact layout: minimal MBR, no boot code and no boot\n"
+           "		  filesystem, for hypervisors that load the kernel\n"
+           "		  directly (Firecracker, QEMU -kernel); also enabled by\n"
+           "		  compact:true in the manifest. Ignores -b and -k.\n"
            "-u uefi-loader	- specify UEFI loader (creates EFI System Partition)\n"
            "-k kern-image	- specify kernel image\n"
            "-l label	- specify filesystem label\n"
@@ -616,12 +641,17 @@ int main(int argc, char **argv)
     long long coredumplimit = 0;
     boolean empty_fs = false;
     const char *uefi_loader = NULL;
+    u64 bootfs_size = BOOTFS_SIZE;
+    boolean compact = false;
     heap h = init_process_runtime();
     cmdline_tuples = allocate_vector(h, 4);
     assert(cmdline_tuples != INVALID_ADDRESS);
 
-    while ((c = getopt(argc, argv, "eb:k:l:r:s:u:t:")) != EOF) {
+    while ((c = getopt(argc, argv, "ceb:k:l:r:s:u:t:")) != EOF) {
         switch (c) {
+        case 'c':
+            compact = true;
+            break;
         case 'e':
             empty_fs = true;
             break;
@@ -681,9 +711,55 @@ int main(int argc, char **argv)
         halt("couldn't open output file %s: %s\n", image_path, errno_sstring());
     }
 
+    /* The manifest is read before anything is written: it can select the
+     * compact layout, which changes what precedes the filesystems. */
+    if (empty_fs) {
+        root = allocate_tuple();
+        set(root, sym(children), allocate_tuple());
+    } else {
+        parser p = tuple_parser(h, stack_closure_func(parse_finish, finish),
+                                stack_closure_func(parse_error, perr));
+        parser_feed(p, read_stdin(h));
+    }
+    if (root && !empty_fs) {
+        /* apply commandline tuples to root */
+        value v;
+        vector_foreach(cmdline_tuples, v) {
+            iterate(v, stack_closure_func(binding_handler, cmdline_tuple_each));
+            deallocate_value(v);
+        }
+        deallocate_vector(cmdline_tuples);
+
+        v = get(root, sym(compact));
+        if (v) {
+            set(root, sym(compact), 0); /* consume it, kernel doesn't need it */
+            compact = !buffer_strcmp((buffer)v, "true");
+            deallocate_buffer((buffer)v);
+        }
+    }
+    if (compact) {
+        if (empty_fs)
+            halt("compact layout requires a manifest\n");
+        if (uefi_loader)
+            halt("compact layout has no UEFI boot partition\n");
+    }
+
     // prepend boot image (if any)
     ssize_t offset = 0;
-    if (bootimg_path != NULL) {
+    if (compact) {
+        /* Minimal boot record: no boot code, a zero-length filesystem region
+         * (read by write_mbr) and the MBR signature. */
+        u8 mbr[SECTOR_SIZE];
+        zero(mbr, sizeof(mbr));
+        struct partition_entry *e = partition_at(mbr, 0);
+        region r = (region)((u8 *)e - sizeof(*r));
+        r->type = REGION_FILESYSTEM;
+        mbr[SECTOR_SIZE - 2] = 0x55;
+        mbr[SECTOR_SIZE - 1] = 0xaa;
+        if (write(out, mbr, sizeof(mbr)) != sizeof(mbr))
+            halt("couldn't write to output file %s: %s\n", image_path, errno_sstring());
+        offset = SECTOR_SIZE + KLOG_DUMP_SIZE;
+    } else if (bootimg_path != NULL) {
         descriptor in = open(bootimg_path, O_RDONLY);
         if (in < 0) {
             halt("couldn't open boot image file %s: %s\n", bootimg_path, errno_sstring());
@@ -714,27 +790,10 @@ int main(int argc, char **argv)
             offset = write_uefi_part(out, offset, uefi_loader);
     }
 
-    if (empty_fs) {
-        root = allocate_tuple();
-        set(root, sym(children), allocate_tuple());
-    } else {
-        parser p = tuple_parser(h, stack_closure_func(parse_finish, finish),
-                                stack_closure_func(parse_error, perr));
-        parser_feed(p, read_stdin(h));
-    }
-
     mkfs_write_status = closure_func(h, io_status_handler, mkfs_write_handler);
 
     if (root && !empty_fs) {
-        /* apply commandline tuples to root */
-        value v;
-        vector_foreach(cmdline_tuples, v) {
-            iterate(v, stack_closure_func(binding_handler, cmdline_tuple_each));
-            deallocate_value(v);
-        }
-        deallocate_vector(cmdline_tuples);
-
-        v = get(root, sym(imagesize));
+        value v = get(root, sym(imagesize));
         if (v) {
             set(root, sym(imagesize), 0); /* consume it, kernel doesn't need it */
             push_u8((buffer)v, 0);
@@ -757,7 +816,13 @@ int main(int argc, char **argv)
         }
 
         tuple boot = get_tuple(root, sym(boot));
-        if (kernelimg_path != NULL) {
+        if (compact) {
+            /* The hypervisor loads the kernel; nothing reads a boot FS. */
+            if (boot)
+                set(root, sym(boot), 0);
+            boot = 0;
+            bootfs_size = 0;
+        } else if (kernelimg_path != NULL) {
             if (!boot)
                 boot = allocate_tuple();
             tuple children = find_or_allocate_tuple(boot, sym(children));
@@ -782,13 +847,17 @@ int main(int argc, char **argv)
             }
         }
         if (boot) {
+            fs_storage_end = 0;
             create_filesystem(h, SECTOR_SIZE, BOOTFS_SIZE, closure(h, bwrite, out, offset), false,
                               sstring_empty(), closure(h, fsc, h, out, boot, target_root));
-            offset += BOOTFS_SIZE;
+            bootfs_size = pad(fs_storage_end, BOOTFS_ALIGN);
+            if (bootfs_size == 0 || bootfs_size > BOOTFS_SIZE)
+                halt("boot filesystem size %ld out of range\n", bootfs_size);
+            offset += bootfs_size;
 
             /* Remove tuple from root, so it doesn't end up in the root FS. */
             set(root, sym(boot), 0);
-        } else if (bootimg_path) {
+        } else if (bootimg_path && !compact) {
             halt("kernel or boot FS not specified\n");
         }
     }
@@ -814,8 +883,8 @@ int main(int argc, char **argv)
             halt("could not set image size: %s\n", errno_sstring());
         }
     }
-    if (bootimg_path != NULL)
-        write_mbr(out, uefi_loader != NULL);
+    if (compact || bootimg_path != NULL)
+        write_mbr(out, uefi_loader != NULL, bootfs_size);
 
     close(out);
     exit(0);

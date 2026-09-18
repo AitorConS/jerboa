@@ -484,6 +484,7 @@ func TestBuild_MkfsFailure(t *testing.T) {
 }
 
 func TestBuild_StorePutFailure(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 
 	readonlyDir := filepath.Join(dir, "readonly")

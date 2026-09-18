@@ -328,6 +328,7 @@ func imageManifestResult(m image.Manifest) api.ImageManifestResult {
 		DiskDigest: m.DiskDigest,
 		DiskSize:   m.DiskSize,
 		Created:    m.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
+		Layout:     m.Layout,
 	}
 }
 
@@ -400,6 +401,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Port:        p.Port,
 		Ports:       p.Ports,
 		DiskSize:    p.DiskSize,
+		Layout:      p.Layout,
 		Output:      io.Discard,
 	})
 	if err != nil {

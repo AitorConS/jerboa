@@ -127,8 +127,11 @@ type Config struct {
 	EmulateX86   bool   `json:"emulate_x86,omitempty"`
 	nativeSocket string //nolint:unused // Used by the macOS backend.
 	nativeMAC    string //nolint:unused // Used by the macOS backend.
-	Architecture string `json:"architecture,omitempty"`
-	ImageDigest  string `json:"image_digest,omitempty"`
+	// privateBootDisk marks ImagePath as a per-VM private disk (set only on the
+	// launch copy of the config), so the hypervisor may open it read-write.
+	privateBootDisk bool
+	Architecture    string `json:"architecture,omitempty"`
+	ImageDigest     string `json:"image_digest,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
 	// ImageRef is the image reference the VM was created from (e.g.
@@ -185,10 +188,16 @@ type Config struct {
 	CPUShares uint64
 	// MemoryMax is the cgroup v2 memory hard limit in bytes. 0 means no limit.
 	MemoryMax int64
-	// DiskIOPS is the maximum I/O operations per second for the boot disk (QEMU throttle). 0 means no limit.
+	// DiskIOPS is the maximum I/O operations per second for the boot disk. 0 means no limit.
 	DiskIOPS uint64
-	// DiskBPS is the maximum bytes per second for the boot disk (QEMU throttle). 0 means no limit.
+	// DiskBPS is the maximum bytes per second for the boot disk. 0 means no limit.
 	DiskBPS int64
+	// DiskIOEngine selects the host block I/O engine for every drive:
+	// DiskIOEngineSync (default when empty) or DiskIOEngineAsync (io_uring).
+	DiskIOEngine string `json:"disk_io_engine,omitempty"`
+	// VolumeCache selects how volume drives treat guest flushes:
+	// VolumeCacheWriteback (default when empty) or VolumeCacheUnsafe.
+	VolumeCache string `json:"volume_cache,omitempty"`
 }
 
 // tapDevice returns the host TAP interface name for this VM's network

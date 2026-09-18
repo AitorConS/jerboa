@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/builder"
+	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/preflight"
 	"github.com/spf13/cobra"
@@ -48,6 +50,8 @@ func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 		configFile  string
 		noPreflight bool
 		smoke       bool
+		layout      string
+		sizeReportF string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -211,6 +215,9 @@ project markers (go.mod, package.json, etc.).`,
 			var runPorts []string
 			if cfg != nil {
 				diskSize = cfg.Build.DiskSize
+				if !cmd.Flags().Changed("layout") && cfg.Build.Layout != "" {
+					layout = cfg.Build.Layout
+				}
 				// Bake declared directories (e.g. volume mount points) into the
 				// image as empty dirs. A TFS volume can only be mounted onto a
 				// directory that already exists in the root image.
@@ -263,6 +270,28 @@ project markers (go.mod, package.json, etc.).`,
 				}
 			}
 
+			imageLayout, err := image.ParseLayout(layout)
+			if err != nil {
+				return fmt.Errorf("build: %w", err)
+			}
+			if sizeReportF != "" {
+				if sizeReportF != "text" && sizeReportF != "json" {
+					return fmt.Errorf("build: --size-report must be text or json")
+				}
+				report, err := buildSizeReport(binaryPath, pkgFiles)
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+				// JSON goes to stdout for tooling; the table is a diagnostic.
+				out := cmd.ErrOrStderr()
+				if sizeReportF == "json" {
+					out = cmd.OutOrStdout()
+				}
+				if err := writeSizeReport(out, report, sizeReportF); err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+			}
+
 			sp.Start("Assembling image on daemon")
 			client, err := api.Dial(*endpoint)
 			if err != nil {
@@ -287,6 +316,7 @@ project markers (go.mod, package.json, etc.).`,
 				Port:        port,
 				Ports:       runPorts,
 				DiskSize:    diskSize,
+				Layout:      imageLayout,
 			}, pr)
 			if err != nil {
 				sp.Fail("Image assembly failed")
@@ -297,7 +327,12 @@ project markers (go.mod, package.json, etc.).`,
 			sizeStr := formatSize(res.DiskSize)
 			sp.Done(fmt.Sprintf("%s:%s  ·  %s  ·  built in %s", res.Name, res.Tag, sizeStr, formatDuration(elapsed)))
 
-			fmt.Fprintf(cmd.OutOrStdout(), "%s  %s:%s  ·  %s  ·  built in %s\n",
+			// With --size-report=json, stdout carries only the JSON report.
+			summaryOut := cmd.OutOrStdout()
+			if sizeReportF == "json" {
+				summaryOut = cmd.ErrOrStderr()
+			}
+			fmt.Fprintf(summaryOut, "%s  %s:%s  ·  %s  ·  built in %s\n",
 				res.DiskDigest, res.Name, res.Tag, sizeStr, formatDuration(elapsed))
 
 			// --smoke: boot the image once against the daemon to prove it starts,
@@ -319,6 +354,9 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&pkgSource, "pkg-source", "ops", "package source: \"ops\" (nanovms/ops ecosystem, default) or \"jerboa\" (first-party index)")
 	cmd.Flags().StringVar(&lang, "lang", "", "build from source directory with language driver (go, node, python, rust, raw)")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
+	cmd.Flags().StringVar(&sizeReportF, "size-report", "", "print what the image contains, grouped by program, package, npm module, Python distribution and top-level path: text or json")
+	cmd.Flags().Lookup("size-report").NoOptDefVal = "text"
+	cmd.Flags().StringVar(&layout, "layout", "standard", "disk image layout: standard (boots on every hypervisor) or compact (no boot code or boot filesystem; smaller, Firecracker and native ARM64 QEMU only)")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
 	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip optional CLI preflight diagnostics (ELF/platform and final guest validation remain mandatory)")
@@ -389,10 +427,16 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	var cfgEntrypoint string
 	var buildArgs []string
 	var buildRun []string
+	var includePatterns []string
 	if cfg != nil {
 		cfgEntrypoint = cfg.Build.Entrypoint
 		buildArgs = cfg.Build.Args
 		buildRun = cfg.Build.Run
+		includePatterns = cfg.Build.Include
+	}
+	include, err := builder.NewIncludeMatcher(includePatterns)
+	if err != nil {
+		return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 	}
 
 	// Execute user-defined build commands (unikernel.toml [build] run = [...]).
@@ -471,9 +515,12 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 			}
 		}
 
-		srcFiles, err := sourceFiles(result.SourceDir)
+		srcFiles, err := sourceFiles(result.SourceDir, include)
 		if err != nil {
 			return "", "", "", nil, nil, false, fmt.Errorf("build: collect source files: %w", err)
+		}
+		if ep := strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(result.Entrypoint)), "/"); result.Entrypoint != "" && !include.Match(ep) {
+			return "", "", "", nil, nil, false, fmt.Errorf("build: [build] include does not match the entrypoint %q; add it to the allowlist", ep)
 		}
 		*pkgFiles = append(*pkgFiles, srcFiles...)
 

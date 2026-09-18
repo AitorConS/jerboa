@@ -39,6 +39,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 		memoryMax   string
 		diskIOPS    uint64
 		diskBPS     string
+
+		diskIOEngine string
+		volumeCache  string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -171,7 +174,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				params.CPUShares = cpuShares
 			}
 			if memoryMax != "" {
-				memBytes, err := parseMemoryMax(memoryMax)
+				memBytes, err := parseByteSize("memory-max", memoryMax)
 				if err != nil {
 					return fmt.Errorf("run: %w", err)
 				}
@@ -180,10 +183,12 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			if diskIOPS > 0 {
 				params.DiskIOPS = diskIOPS
 			}
+			params.DiskIOEngine = diskIOEngine
+			params.VolumeCache = volumeCache
 			if diskBPS != "" && diskBPS != "0" {
-				bps, err := parseMemoryMax(diskBPS)
+				bps, err := parseByteSize("disk-bps", diskBPS)
 				if err != nil {
-					return fmt.Errorf("run: disk-bps: %w", err)
+					return fmt.Errorf("run: %w", err)
 				}
 				params.DiskBPS = bps
 			}
@@ -246,6 +251,8 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "memory limit (e.g. 512M; Linux hard limit, macOS RSS watchdog)")
 	cmd.Flags().Uint64Var(&diskIOPS, "disk-iops", 0, "disk I/O throttle: max IOPS for boot disk (0=no limit)")
 	cmd.Flags().StringVar(&diskBPS, "disk-bps", "", "disk I/O throttle: max bytes/sec for boot disk (e.g. 10M, 0=no limit)")
+	cmd.Flags().StringVar(&diskIOEngine, "disk-io-engine", "", "host block I/O engine: sync (default) or async (Linux io_uring, 5.10+)")
+	cmd.Flags().StringVar(&volumeCache, "volume-cache", "", "volume flush handling: writeback (default, guest fsync is durable) or unsafe (faster, may lose data on host crash)")
 	return cmd
 }
 
@@ -478,11 +485,18 @@ func verifyImageSignature(cmd *cobra.Command, endpoint *string, imageRef, verify
 	return nil
 }
 
-func parseMemoryMax(s string) (int64, error) {
+// parseByteSize parses a binary byte size such as "512M", "1G", "10MB" or
+// "10MiB". flag names the flag being parsed so the error points at it.
+func parseByteSize(flag, s string) (int64, error) {
 	if s == "" {
 		return 0, nil
 	}
 	s = strings.TrimSpace(strings.ToUpper(s))
+	// Accept the "B", "iB" and "iB"-style spellings users type: 10M, 10MB, 10MiB.
+	if strings.HasSuffix(s, "B") {
+		s = strings.TrimSuffix(s, "B")
+		s = strings.TrimSuffix(s, "I")
+	}
 	multiplier := int64(1)
 	switch {
 	case strings.HasSuffix(s, "G"):
@@ -497,10 +511,10 @@ func parseMemoryMax(s string) (int64, error) {
 	}
 	val, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("memory-max: invalid value %q (use e.g. 512M, 1G)", s)
+		return 0, fmt.Errorf("%s: invalid value %q (use e.g. 512M, 1G)", flag, s)
 	}
 	if val <= 0 {
-		return 0, fmt.Errorf("memory-max: must be positive, got %d", val)
+		return 0, fmt.Errorf("%s: must be positive, got %d", flag, val)
 	}
 	return val * multiplier, nil
 }

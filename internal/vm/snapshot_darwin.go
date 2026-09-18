@@ -72,7 +72,7 @@ func (m *FirecrackerManager) SnapshotCreate(ctx context.Context, id, name string
 	if err != nil {
 		return info, fmt.Errorf("snapshot create %s: %w", v.ID, err)
 	}
-	estimate := int64(mem)<<20 + fileSize(fcRootfsPath(v.ID)) + fileSize(m.kernelImage) + 1<<20
+	estimate := int64(mem)<<20 + fileSize(m.rootfsPath(v.ID)) + fileSize(m.kernelImage) + 1<<20
 	res, err := m.snapshots.Reserve(name, estimate)
 	if err != nil {
 		return info, fmt.Errorf("snapshot create %s: %w", v.ID, err)
@@ -362,7 +362,7 @@ func (m *FirecrackerManager) SnapshotRestore(ctx context.Context, id, name strin
 	}
 	prepareNativeFCHealth(v)
 	m.hchecker.Start(ctx, v)
-	go m.monitor(v, cmd, socket, filepath.Join(workDir, "config.json"), m.vmmLogPath(v.ID), fcRootfsPath(v.ID))
+	go m.monitor(v, cmd, socket, filepath.Join(workDir, "config.json"), m.vmmLogPath(v.ID), m.rootfsPath(v.ID))
 	slog.Info("snapshot restored", "vm_id", v.ID, "snapshot", name, "pid", pid)
 	return nil
 }

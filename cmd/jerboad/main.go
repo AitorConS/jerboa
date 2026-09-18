@@ -67,6 +67,8 @@ func newRootCmd() *cobra.Command {
 		fcKernelPath   string
 		fcSecurityPath string
 		toolsDir       string
+		vmDiskDir      string
+		fcMetricsDir   string
 		vmLogMaxBytes  int64
 		allowInsecure  bool
 		snapshotDir    string
@@ -118,10 +120,16 @@ func newRootCmd() *cobra.Command {
 				}
 				fcOpts = append(fcOpts, vm.WithFCSecurity(data))
 			}
+			if fcMetricsDir != "" {
+				if runtime.GOOS != "linux" {
+					return fmt.Errorf("--fc-metrics-dir is only supported on Linux")
+				}
+				fcOpts = append(fcOpts, vm.WithFCMetricsDir(fcMetricsDir))
+			}
 			if runtime.GOOS == "darwin" {
 				fcOpts = append(fcOpts, snapshotStoreOption(snapshotDir, snapshot.Limits{MaxCount: snapshotCount, MaxBytes: snapshotBytes}))
 			}
-			return serve(cmd.Context(), endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir, fcOpts...)
+			return serve(cmd.Context(), endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir, vmDiskDir, fcOpts...)
 		},
 	}
 	root.Flags().StringVarP(&hostFlag, "host", "H", "",
@@ -140,6 +148,8 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
 	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON (outbound/DNS permissions)")
+	root.Flags().StringVar(&fcMetricsDir, "fc-metrics-dir", "",
+		"Linux Firecracker: write per-VM device metrics (block I/O counts, flushes, latency) to this directory for profiling; empty disables")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
 		"Firecracker kernel (Linux: auto-downloaded; macOS: tools-dir/kernel.img)")
 	root.Flags().StringVar(&toolsDir, "tools-dir", "",
@@ -152,6 +162,8 @@ func newRootCmd() *cobra.Command {
 		"maximum total bytes of stored snapshots (0 disables the limit)")
 	root.Flags().StringVar(&storePath, "store", defaultStorePath(),
 		"image store root directory")
+	root.Flags().StringVar(&vmDiskDir, "vm-disk-dir", defaultVMDiskPath(),
+		"directory for per-VM private boot disks; place it on the image store's filesystem so disks are cloned instead of copied")
 	root.Flags().StringVar(&vmStoreType, "vm-store", "file",
 		"VM state store backend: file (default) or sqlite")
 	root.Flags().Int64Var(&vmLogMaxBytes, "vm-log-max-bytes", 0,
@@ -176,7 +188,7 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir string, fcOpts ...vm.FCOption) error {
+func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir, vmDiskDir string, fcOpts ...vm.FCOption) error {
 	setupLogger(logFormat)
 
 	// Where the kernel build toolchain (mkfs, boot.img, kernel.img) lives. An
@@ -231,10 +243,10 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			}
 		}
 		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
-		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors))
+		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors), vm.WithFCDiskDir(vmDiskDir))
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, fcOpts...)
 	case "qemu":
-		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")))
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir))
 	default:
 		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
@@ -317,6 +329,8 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			return fmt.Errorf("restore native runtime: %w", err)
 		}
 	}
+	// Runs after restore and adoption so disks of re-adopted running VMs stay.
+	vm.SweepBootDisks(vmDiskDir, store)
 	var clusterLister apiserver.ClusterMemberLister
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {
@@ -508,6 +522,14 @@ func newVMStore(storeType, dir string) (vm.Store, error) {
 	default:
 		return nil, fmt.Errorf("unknown vm-store backend %q (use file or sqlite)", storeType)
 	}
+}
+
+func defaultVMDiskPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".jerboa/vm-disks"
+	}
+	return home + "/.jerboa/vm-disks"
 }
 
 func vmsDir() string {

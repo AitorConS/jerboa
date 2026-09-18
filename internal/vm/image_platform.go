@@ -47,3 +47,26 @@ func (m *QEMUManager) ValidateImagePlatform(architecture string, emulate bool) e
 	}
 	return nil
 }
+
+// imageLayoutCompact mirrors image.LayoutCompact (vm does not import image).
+const imageLayoutCompact = "compact"
+
+// ValidateImageLayout rejects image layouts QEMU cannot boot. QEMU boots x86
+// guests through the BIOS boot code, which compact images omit; native ARM64
+// on macOS loads the kernel directly and boots either layout.
+func (m *QEMUManager) ValidateImageLayout(layout string, emulate bool) error {
+	if layout != imageLayoutCompact {
+		return nil
+	}
+	if runtime.GOOS == "darwin" && !emulate {
+		return nil
+	}
+	return fmt.Errorf("compact images have no boot code and cannot boot with QEMU BIOS boot; " +
+		"rebuild with --layout standard or run on Firecracker")
+}
+
+// ValidateImageLayout accepts every layout: Firecracker always loads the
+// kernel directly and only reads the root filesystem from the image.
+func (m *FirecrackerManager) ValidateImageLayout(_ string, _ bool) error {
+	return nil
+}

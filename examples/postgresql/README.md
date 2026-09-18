@@ -89,11 +89,14 @@ one (not the package's original `2023-…` build time), confirming the writes
 persisted on the volume across `jerboa rm`. Wipe the data with
 `jerboa volume rm pgdata` (and re-seed to start fresh).
 
-> **Always stop with `jerboa stop`** (graceful). Postgres then checkpoints and
-> removes `postmaster.pid`. An ungraceful kill leaves a stale `postmaster.pid`
-> on the volume, and the next boot refuses to start
-> (*"pre-existing shared memory block … is still in use"*); re-seeding the volume
-> clears it.
+> **Stop with `jerboa stop`.** On QEMU, and on Firecracker on macOS, the guest
+> is told to shut down, so postgres checkpoints and removes `postmaster.pid`.
+> Firecracker on Linux has no such channel, so the stop is always ungraceful
+> and the lock stays on the volume: the next boot then refuses to start
+> (*"pre-existing shared memory block … is still in use"*). The data survives
+> either way — postgres replays its write-ahead log — so delete
+> `postmaster.pid` from the volume to boot again, rather than re-seeding, which
+> resets the database. See [troubleshooting](../../docs/troubleshooting.md).
 
 ## Notes
 

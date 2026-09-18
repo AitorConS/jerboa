@@ -303,13 +303,29 @@ macOS forwards both TCP and UDP.
 
 ### `pre-existing shared memory block ... is still in use` (PostgreSQL)
 
-PostgreSQL found a stale `postmaster.pid` from an ungraceful shutdown — the
-previous VM was killed (`stop --force`, host reboot) instead of stopped
-cleanly, and the lock lives on the persistent volume.
+PostgreSQL found a stale `postmaster.pid` on its volume. It records the guest
+PID of the previous postmaster, and because Nanos always runs the application
+as PID 2, the entry always looks like a live process, so PostgreSQL refuses to
+start.
 
-**Fix**: always stop database VMs with plain `jerboa stop` so they checkpoint
-and clear their lock. To clear an already-stale lock, re-seed the volume
-(`jerboa volume seed` — note this resets the data to the seed state).
+The lock is left behind whenever the guest is not told to shut down:
+
+- **QEMU** (Linux and macOS) and **Firecracker on macOS** deliver a shutdown to
+  the guest, so `jerboa stop` lets PostgreSQL checkpoint and clear its lock.
+  A `stop --force`, a `kill` or a host reboot still leaves the lock behind.
+- **Firecracker on Linux** has no shutdown channel the guest acts on (its only
+  option, `SendCtrlAltDel`, writes to an i8042 port Nanos does not implement),
+  so *every* stop is ungraceful and the lock is always left behind.
+
+**Your data is safe.** Volumes forward the guest's flushes to host storage, so
+PostgreSQL's crash recovery replays the write-ahead log on the next start,
+including transactions committed after the last checkpoint.
+
+**Fix**: remove `postmaster.pid` from the volume, then start the VM again. Do
+this only when no other VM has that volume mounted — deleting the lock of a
+live cluster is how a cluster gets corrupted. Re-seeding the volume also
+clears it, but `jerboa volume seed` resets the data to the seed state, so
+reach for it only when you want to discard the database.
 
 ### The database is empty after mounting a volume
 

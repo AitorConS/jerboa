@@ -416,6 +416,13 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		}
 	}
 
+	if m := resolvedManifest; m != nil {
+		if validator, ok := s.mgr.(interface{ ValidateImageLayout(string, bool) error }); ok {
+			if err := validator.ValidateImageLayout(m.Layout, p.EmulateX86); err != nil {
+				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+			}
+		}
+	}
 	if validator, ok := s.mgr.(interface{ ValidateImagePlatform(string, bool) error }); ok {
 		if err := validator.ValidateImagePlatform(architecture, p.EmulateX86); err != nil {
 			return nil, &api.RPCError{Code: -32602, Message: err.Error()}
@@ -514,6 +521,8 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		MemoryMax:      p.MemoryMax,
 		DiskIOPS:       p.DiskIOPS,
 		DiskBPS:        p.DiskBPS,
+		DiskIOEngine:   p.DiskIOEngine,
+		VolumeCache:    p.VolumeCache,
 	}
 	if p.HealthCheck != nil {
 		cfg.HealthCheck = &vm.HealthCheckConfig{
@@ -848,6 +857,8 @@ func toDetail(v *vm.VM) api.VMDetail {
 		RestartPolicy:   string(v.Cfg.Restart.Policy),
 		DiskIOPS:        v.Cfg.DiskIOPS,
 		DiskBPS:         v.Cfg.DiskBPS,
+		DiskIOEngine:    v.Cfg.DiskIOEngine,
+		VolumeCache:     v.Cfg.VolumeCache,
 		Warnings:        v.Warnings(),
 	}
 	startedAt, stoppedAt := v.GetTimes()

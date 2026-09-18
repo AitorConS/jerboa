@@ -67,6 +67,9 @@ func validateVMConfig(cfg Config) error {
 	if cfg.CPUs < 0 {
 		return fmt.Errorf("validate config: CPUs must be >= 0, got %d", cfg.CPUs)
 	}
+	if err := validateDiskIO(cfg); err != nil {
+		return err
+	}
 
 	if cfg.NetworkName != "" && !logicalNetworkNameRe.MatchString(cfg.NetworkName) {
 		return fmt.Errorf("validate config: NetworkName %q is invalid (1-128 chars, [a-zA-Z0-9_.:-])", cfg.NetworkName)
