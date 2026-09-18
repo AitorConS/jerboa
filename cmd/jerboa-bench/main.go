@@ -80,6 +80,7 @@ type runRecord struct {
 	CreateMs      float64      `json:"create_ms"`
 	ReadyMs       float64      `json:"ready_ms"`
 	StopMs        float64      `json:"stop_ms"`
+	StoppedMs     float64      `json:"stopped_ms"`
 	RemoveMs      float64      `json:"remove_ms"`
 	MemReadyBytes int64        `json:"mem_ready_bytes"`
 	MemIdleBytes  int64        `json:"mem_idle_bytes,omitempty"`
@@ -187,8 +188,8 @@ func run(ctx context.Context, o options, stdout io.Writer) error {
 	plan := schedule(labels(runtimes), o.runs, o.warmup, o.seed)
 	for i, s := range plan {
 		rec := runOnce(ctx, o, byLabel[s.Runtime], s, i, probe, metricRe)
-		fmt.Fprintf(os.Stderr, "[%d/%d] %-10s warmup=%-5v create=%7.1fms ready=%7.1fms stop=%7.1fms rm=%7.1fms mem=%s %s\n",
-			i+1, len(plan), s.Runtime, s.Warmup, rec.CreateMs, rec.ReadyMs, rec.StopMs, rec.RemoveMs, mib(rec.MemReadyBytes), rec.Error)
+		fmt.Fprintf(os.Stderr, "[%d/%d] %-10s warmup=%-5v create=%7.1fms ready=%7.1fms stop=%7.1fms stopped=%7.1fms rm=%7.1fms mem=%s %s\n",
+			i+1, len(plan), s.Runtime, s.Warmup, rec.CreateMs, rec.ReadyMs, rec.StopMs, rec.StoppedMs, rec.RemoveMs, mib(rec.MemReadyBytes), rec.Error)
 		rep.Runs = append(rep.Runs, rec)
 		if rec.Error != "" && !o.keepGoing {
 			_ = writeReport(o, rep)
@@ -291,6 +292,7 @@ func runOnce(ctx context.Context, o options, rt benchRuntime, s slot, order int,
 		cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		_ = rt.Stop(cctx, inst)
+		_ = rt.WaitStopped(cctx, inst)
 		_ = rt.Remove(cctx, inst)
 	}()
 
@@ -319,6 +321,12 @@ func runOnce(ctx context.Context, o options, rt benchRuntime, s slot, order int,
 	rec.StopMs, err = timed(func() error { return rt.Stop(ctx, inst) })
 	if err != nil {
 		return fail("stop", err)
+	}
+	settleCtx, cancelSettle := context.WithTimeout(ctx, o.readyTimeout)
+	rec.StoppedMs, err = timed(func() error { return rt.WaitStopped(settleCtx, inst) })
+	cancelSettle()
+	if err != nil {
+		return fail("wait stopped", err)
 	}
 	rec.RemoveMs, err = timed(func() error { return rt.Remove(ctx, inst) })
 	if err != nil {
@@ -362,6 +370,7 @@ func summarizeRuntime(runs []runRecord, label string, seed int64) map[string]sum
 		metrics["create_ms"] = append(metrics["create_ms"], r.CreateMs)
 		metrics["ready_ms"] = append(metrics["ready_ms"], r.ReadyMs)
 		metrics["stop_ms"] = append(metrics["stop_ms"], r.StopMs)
+		metrics["stopped_ms"] = append(metrics["stopped_ms"], r.StoppedMs)
 		metrics["remove_ms"] = append(metrics["remove_ms"], r.RemoveMs)
 		if r.MemReadyBytes > 0 {
 			metrics["mem_ready_mib"] = append(metrics["mem_ready_mib"], float64(r.MemReadyBytes)/(1<<20))
@@ -435,11 +444,11 @@ func writeReport(o options, rep report) error {
 	}
 	defer func() { _ = f.Close() }()
 	w := csv.NewWriter(f)
-	_ = w.Write([]string{"order", "runtime", "iteration", "warmup", "create_ms", "ready_ms", "stop_ms", "remove_ms",
+	_ = w.Write([]string{"order", "runtime", "iteration", "warmup", "create_ms", "ready_ms", "stop_ms", "stopped_ms", "remove_ms",
 		"mem_ready_bytes", "mem_idle_bytes", "load_published_rps", "load_published_p99_ms", "load_direct_rps", "load_direct_p99_ms", "load_metric", "error"})
 	for _, r := range rep.Runs {
 		row := []string{strconv.Itoa(r.Order), r.Runtime, strconv.Itoa(r.Iteration), strconv.FormatBool(r.Warmup),
-			f2(r.CreateMs), f2(r.ReadyMs), f2(r.StopMs), f2(r.RemoveMs),
+			f2(r.CreateMs), f2(r.ReadyMs), f2(r.StopMs), f2(r.StoppedMs), f2(r.RemoveMs),
 			strconv.FormatInt(r.MemReadyBytes, 10), strconv.FormatInt(r.MemIdleBytes, 10)}
 		var pubRPS, pubP99, dirRPS, dirP99, metric string
 		for i, l := range r.Load {
@@ -494,7 +503,7 @@ func printSummary(w io.Writer, rep report, order []string) {
 
 // sortMetricNames orders the lifecycle phases first, then everything else.
 func sortMetricNames(names []string) {
-	rank := map[string]int{"create_ms": 0, "ready_ms": 1, "stop_ms": 2, "remove_ms": 3, "mem_ready_mib": 4, "mem_idle_mib": 5}
+	rank := map[string]int{"create_ms": 0, "ready_ms": 1, "stop_ms": 2, "stopped_ms": 3, "remove_ms": 4, "mem_ready_mib": 5, "mem_idle_mib": 6}
 	key := func(s string) string {
 		if r, ok := rank[s]; ok {
 			return strconv.Itoa(r) + s

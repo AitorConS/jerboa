@@ -92,9 +92,15 @@ type FirecrackerManager struct {
 	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
 	shutdownGrace      time.Duration                     // outer bound after requesting guest shutdown
-	metrics            MetricsSink
-	diskDir            string
-	metricsDir         string
+	// guestShutdown reports whether the VMM has a shutdown channel this guest
+	// acts on. Upstream Firecracker only offers SendCtrlAltDel, which writes to
+	// the i8042 reset port; Nanos implements no i8042 or ACPI handler, so the
+	// guest never sees it. The macOS VMM raises a power button the guest does
+	// handle, so its platform hook sets this.
+	guestShutdown bool
+	metrics       MetricsSink
+	diskDir       string
+	metricsDir    string
 	// applyLimits places the firecracker process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -364,9 +370,22 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 
+	// Ask the guest to shut down where that works. Otherwise terminate the VMM
+	// directly instead of waiting out the grace period for a request the guest
+	// cannot answer: the root disk is a per-VM clone discarded on exit, and
+	// volume writes the guest already flushed are on host storage (volumes
+	// default to cache_type Writeback).
+	//
 	// id may be a name or ID prefix; the API socket is named after the resolved ID.
-	if err := m.shutdownAPI(m.vmSockPath(v.ID)); err != nil {
-		slog.Debug("firecracker stop: SendCtrlAltDel failed, falling back to SIGTERM", "vm_id", v.ID, "err", err)
+	requested := false
+	if m.guestShutdown {
+		if err := m.shutdownAPI(m.vmSockPath(v.ID)); err != nil {
+			slog.Debug("firecracker stop: guest shutdown request failed, falling back to SIGTERM", "vm_id", v.ID, "err", err)
+		} else {
+			requested = true
+		}
+	}
+	if !requested {
 		if sigErr := proc.signal(syscall.SIGTERM); sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
 			_ = proc.kill()
 			return nil

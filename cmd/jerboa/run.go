@@ -174,7 +174,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				params.CPUShares = cpuShares
 			}
 			if memoryMax != "" {
-				memBytes, err := parseMemoryMax(memoryMax)
+				memBytes, err := parseByteSize("memory-max", memoryMax)
 				if err != nil {
 					return fmt.Errorf("run: %w", err)
 				}
@@ -186,9 +186,9 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 			params.DiskIOEngine = diskIOEngine
 			params.VolumeCache = volumeCache
 			if diskBPS != "" && diskBPS != "0" {
-				bps, err := parseMemoryMax(diskBPS)
+				bps, err := parseByteSize("disk-bps", diskBPS)
 				if err != nil {
-					return fmt.Errorf("run: disk-bps: %w", err)
+					return fmt.Errorf("run: %w", err)
 				}
 				params.DiskBPS = bps
 			}
@@ -485,11 +485,18 @@ func verifyImageSignature(cmd *cobra.Command, endpoint *string, imageRef, verify
 	return nil
 }
 
-func parseMemoryMax(s string) (int64, error) {
+// parseByteSize parses a binary byte size such as "512M", "1G", "10MB" or
+// "10MiB". flag names the flag being parsed so the error points at it.
+func parseByteSize(flag, s string) (int64, error) {
 	if s == "" {
 		return 0, nil
 	}
 	s = strings.TrimSpace(strings.ToUpper(s))
+	// Accept the "B", "iB" and "iB"-style spellings users type: 10M, 10MB, 10MiB.
+	if strings.HasSuffix(s, "B") {
+		s = strings.TrimSuffix(s, "B")
+		s = strings.TrimSuffix(s, "I")
+	}
 	multiplier := int64(1)
 	switch {
 	case strings.HasSuffix(s, "G"):
@@ -504,10 +511,10 @@ func parseMemoryMax(s string) (int64, error) {
 	}
 	val, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("memory-max: invalid value %q (use e.g. 512M, 1G)", s)
+		return 0, fmt.Errorf("%s: invalid value %q (use e.g. 512M, 1G)", flag, s)
 	}
 	if val <= 0 {
-		return 0, fmt.Errorf("memory-max: must be positive, got %d", val)
+		return 0, fmt.Errorf("%s: must be positive, got %d", flag, val)
 	}
 	return val * multiplier, nil
 }

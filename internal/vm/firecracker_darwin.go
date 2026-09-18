@@ -26,6 +26,7 @@ const (
 func platformInitFC(m *FirecrackerManager) {
 	m.vmSockPath = nativeFCSocketPath
 	m.shutdownAPI = nativeFCShutdown
+	m.guestShutdown = true // the native VMM raises a power button Nanos handles
 	m.shutdownGrace = nativeFCStopGracePeriod
 }
 

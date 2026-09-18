@@ -292,6 +292,7 @@ func TestStore_readRefs_parse_error(t *testing.T) {
 }
 
 func TestStore_writeRefs_error(t *testing.T) {
+	skipIfRoot(t)
 	dir := t.TempDir()
 	root := filepath.Join(dir, "images")
 	require.NoError(t, os.MkdirAll(root, 0o755))

@@ -82,6 +82,9 @@ type benchRuntime interface {
 	MemoryBytes(ctx context.Context, inst instance) (int64, string, error)
 	GuestIP(ctx context.Context, inst instance) (string, error)
 	Stop(ctx context.Context, inst instance) error
+	// WaitStopped blocks until the instance has fully reached its stopped
+	// state, which can lag the Stop call returning.
+	WaitStopped(ctx context.Context, inst instance) error
 	Remove(ctx context.Context, inst instance) error
 	Versions(ctx context.Context) map[string]string
 }
@@ -237,6 +240,33 @@ func (j *jerboaRuntime) Stop(ctx context.Context, inst instance) error {
 	return err
 }
 
+// WaitStopped polls until the VM leaves the stopping state. jerboa stop can
+// return once the hypervisor process is signalled, before the daemon's monitor
+// has recorded the VM as stopped, and a remove in that window is rejected with
+// "vm is stopping, must be stopped first".
+func (j *jerboaRuntime) WaitStopped(ctx context.Context, inst instance) error {
+	for {
+		out, err := command(ctx, j.bin, j.cli("inspect", inst.ID)...)
+		if err != nil {
+			return err
+		}
+		var d struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			return fmt.Errorf("parse jerboa inspect: %w", err)
+		}
+		if d.State == "stopped" || d.State == "created" {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("vm %s is still %s: %w", inst.ID, d.State, ctx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func (j *jerboaRuntime) Remove(ctx context.Context, inst instance) error {
 	_, err := command(ctx, j.bin, j.cli("rm", inst.ID)...)
 	return err
@@ -377,6 +407,9 @@ func (d *dockerRuntime) Stop(ctx context.Context, inst instance) error {
 	_, err := command(ctx, "docker", "stop", inst.ID)
 	return err
 }
+
+// WaitStopped is a no-op: docker stop only returns once the container has exited.
+func (d *dockerRuntime) WaitStopped(_ context.Context, _ instance) error { return nil }
 
 func (d *dockerRuntime) Remove(ctx context.Context, inst instance) error {
 	_, err := command(ctx, "docker", "rm", inst.ID)
