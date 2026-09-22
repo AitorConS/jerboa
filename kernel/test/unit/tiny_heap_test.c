@@ -11,6 +11,7 @@ static u64 page_alloc(heap h, bytes size)
     assert(size == h->pagesize && live < 8);
     void *p = malloc(size);
     assert(p);
+    memset(p, 0xa5, size);
     pages[live++] = p;
     return u64_from_pointer(p);
 }
@@ -31,10 +32,21 @@ int main(void)
     struct heap parent = {.alloc = page_alloc, .dealloc = page_free, .pagesize = 4096};
     for (int count = 1; count <= 200; count += 199) {
         heap h = make_tiny_heap(&parent);
+        void *allocations[200];
         for (int i = 0; i < count; i++) {
-            void *p = allocate(h, 64);
+            bytes size = (i % 67) + 1;
+            void *p = allocate(h, size);
             assert(p != INVALID_ADDRESS);
-            memset(p, 0xa5, 64);
+            assert((u64_from_pointer(p) & 7) == 0);
+            assert(tagof(p) == tag_unknown);
+            memset(p, 0xa5, size);
+            allocations[i] = p;
+        }
+        /* A later allocation's tag must not overwrite its predecessor. */
+        for (int i = 0; i < count; i++) {
+            unsigned char *p = allocations[i];
+            for (bytes j = 0; j < (i % 67) + 1; j++)
+                assert(p[j] == 0xa5);
         }
         assert(allocate(h, 4096) == INVALID_ADDRESS);
         destroy_heap(h);

@@ -51,7 +51,9 @@ def main():
             for connections, requests in ((5, 5), (24, 50)):
                 result = subprocess.run([args.bin_dir + "/network_test", target, "-" + mode,
                                          "-connections", str(connections), "-requests", str(requests)],
-                                        capture_output=True, text=True, timeout=60, check=True)
+                                        capture_output=True, text=True, timeout=60)
+                if result.returncode:
+                    raise RuntimeError(f"network_test exited {result.returncode}:\n{result.stdout}\n{result.stderr}")
                 counts = re.findall(r"c: (\d+) active: (\d+) req: (\d+) resp: (\d+)", result.stdout)
                 assert counts, result.stdout
                 count, active, _sent, responses = map(int, counts[-1])
@@ -59,7 +61,9 @@ def main():
                 print(f"PASS HTTP {mode}: {connections} connections, {responses} responses", flush=True)
         target = "127.0.0.1:" + str(servers[1].server_address[1])
         result = subprocess.run([args.bin_dir + "/udp_test", target, "-iterations", "200", "-localport", "0"],
-                                capture_output=True, text=True, timeout=30, check=True)
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode:
+            raise RuntimeError(f"udp_test exited {result.returncode}:\n{result.stdout}\n{result.stderr}")
         assert "success" in result.stdout, result.stdout + result.stderr
         print("PASS UDP: 200 iterations", flush=True)
     finally:

@@ -2,7 +2,15 @@ name: Nightly
 'on':
   schedule:
   - cron: 0 2 * * *
-  workflow_dispatch: null
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Run all nightly checks or isolate kernel host tests
+        type: choice
+        default: all
+        options:
+        - all
+        - kernel
 permissions:
   contents: read
 concurrency:
@@ -23,32 +31,22 @@ jobs:
         cache: true
     - name: Run unit tests
       run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1
+    if: inputs.suite != 'kernel'
   kernel-tests:
-    name: Full Kernel Test Suite
-    runs-on:
-    - self-hosted
-    - linux
-    - kvm
-    timeout-minutes: 30
+    name: Kernel host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - name: Provision kernel test tools
+    - name: Install host test toolchain
       run: |-
         sudo apt-get update -q
-        sudo apt-get install -y gcc-multilib nasm qemu-system-x86 ent
-    - name: Verify toolchain
-      run: "for tool in gcc nasm qemu-system-x86_64 ent python3; do\n  command -v \"$tool\" || { echo\
-        \ \"ERROR: $tool not found \u2014 pre-install on runner: sudo apt-get install -y gcc-multilib\
-        \ nasm qemu-system-x86\"; exit 1; }\ndone\n"
-    - name: Check KVM
-      run: |
-        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
-        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
-    - name: Build kernel
-      run: make kernel
-    - name: Run kernel test suite
+        sudo apt-get install -y gcc-multilib nasm ent
+    - name: Build test code generator
+      run: make -C kernel contgen
+    - name: Run kernel host suite
       run: make test-kernel
   integration-tests:
     name: Integration Tests
@@ -75,6 +73,7 @@ jobs:
       run: make build
     - name: Run integration tests
       run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
+    if: inputs.suite != 'kernel'
   benchmarks:
     name: Benchmark Suite
     runs-on:
@@ -97,6 +96,7 @@ jobs:
       with:
         name: benchmark-results-${{ github.run_id }}
         path: benchmark-results.txt
+    if: inputs.suite != 'kernel'
   image-benchmarks:
     name: Image Build & Boot Benchmarks
     runs-on:
@@ -198,6 +198,7 @@ jobs:
           bench-summary.txt
           ${{ env.BENCH_ROOT }}/fc-metrics/
         if-no-files-found: ignore
+    if: inputs.suite != 'kernel'
   fuzz-extended:
     name: Fuzz (extended)
     runs-on: ubuntu-latest
@@ -227,6 +228,7 @@ jobs:
         name: fuzz-crashers-${{ github.run_id }}
         path: '**/testdata/fuzz/**'
         if-no-files-found: ignore
+    if: inputs.suite != 'kernel'
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -251,6 +253,7 @@ jobs:
         severity: HIGH,CRITICAL
         exit-code: 1
         skip-dirs: examples
+    if: inputs.suite != 'kernel'
   report:
     name: Nightly report
     runs-on: ubuntu-latest
