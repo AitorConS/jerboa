@@ -323,6 +323,20 @@ def promote():
         for remote,local in [('channels/stable.json','manifest.json'),('channels/stable.json.minisig','manifest.json.minisig'),('desktop/latest.yml','latest.yml')]:
             p=Path(tmp)/'pointer';download(BASE+'/'+remote,p)
             if digest(p)!=digest(root/local):raise ValueError('Pointer mismatch: '+remote)
+    # Website release date is the first completed promotion, not build time.
+    published_key=f'releases/{v}/published.json'
+    with tempfile.TemporaryDirectory() as tmp:
+        prior=existing(published_key,str(Path(tmp)/'published.json'))
+        if prior:
+            published=json.loads(prior.read_text())
+            if published['version']!=v or published['inventory_sha256']!=digest(root/'inventory.json')['sha256']:
+                raise ValueError('Publication record belongs to another candidate')
+        else:
+            published={'version':v,'date':datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
+                       'inventory_sha256':digest(root/'inventory.json')['sha256']}
+        write_json('published.json',published);sign('published.json',f'published:{v}')
+        put('published.json',published_key,content_type='application/json')
+        put('published.json.minisig',published_key+'.minisig',content_type='text/plain')
     print('PROMOTED',v)
 
 
