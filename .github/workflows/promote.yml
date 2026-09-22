@@ -50,6 +50,7 @@ jobs:
         run-id: ${{ inputs.candidate_run }}
         github-token: ${{ github.token }}
     - name: Verify and promote existing bytes
+      id: promote
       run: |-
         go build -o bin/jerboa-sign ./cmd/jerboa-sign
         python3 scripts/release/candidate.py promote
@@ -57,8 +58,13 @@ jobs:
         JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
         KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
     - name: Trigger website synchronization
+      id: website
       run: python3 scripts/release/candidate.py website
       env:
         GH_TOKEN: ${{ secrets.DESKTOP_REPO_TOKEN }}
     - name: Release summary
+      if: always()
       run: python3 scripts/release/candidate.py summary
+      env:
+        PROMOTION_RESULT: ${{ steps.promote.outcome }}
+        WEBSITE_RESULT: ${{ steps.website.outcome }}

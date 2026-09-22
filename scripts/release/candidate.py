@@ -348,8 +348,22 @@ def website():
 
 
 def summary():
-    inv=json.loads(Path('candidate/inventory.json').read_text())
-    text=f"## Release {inv['version']}\n\nCandidate run: {inv['run_id']}\n\nEngine: `{inv['engine_sha']}`\n\nDesktop: `{inv['desktop_sha']}`\n\nArtifacts: {len(inv['assets'])}\n\nPromotion is a separate workflow; this summary alone does not mean stable changed.\n"
+    inventory=Path('candidate/inventory.json')
+    promotion=os.environ.get('PROMOTION_RESULT')
+    if inventory.exists():
+        inv=json.loads(inventory.read_text())
+        text=f"## Release {inv['version']}\n\nCandidate run: {inv['run_id']}\n\nEngine: `{inv['engine_sha']}`\n\nDesktop: `{inv['desktop_sha']}`\n\nArtifacts: {len(inv['assets'])}\n\n"
+    else:
+        text='## Release promotion\n\nNo candidate inventory was downloaded.\n\n'
+    if promotion=='success':
+        text+='Publication: **complete**, with public downloads and channel pointers verified.\n\n'
+    elif promotion is not None:
+        text+=f'Publication step: **{promotion or "not started"}**. Inspect the failed step before retrying; pointers may be partially updated.\n\n'
+    else:
+        text+='Candidate assembled. **Stable has not been changed by this workflow.**\n\n'
+    if promotion is not None:
+        web=os.environ.get('WEBSITE_RESULT','not started')
+        text+=f'Website dispatch: **{web}**. A successful dispatch means queued, not deployed; verify release-sync and Vercel separately.\n'
     with open(os.environ.get('GITHUB_STEP_SUMMARY','release-summary.md'),'a') as f:f.write(text)
 
 
