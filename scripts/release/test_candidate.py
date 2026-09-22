@@ -68,4 +68,47 @@ class ProtocolTests(unittest.TestCase):
                 self.assertFalse(any(k.startswith('channels/') or k=='desktop/latest.yml' for k in calls))
             finally:os.chdir(old)
 
+    def test_resume_after_manifest_pointer_failure_reuses_candidate(self):
+        # Exercise the real inventory checks and immutable writes against an
+        # in-memory object store, including a failure between detached pointers.
+        with tempfile.TemporaryDirectory() as td:
+            old=os.getcwd();os.chdir(td)
+            try:
+                root=Path('candidate');payload=root/'payload/cli/v1.0.0/a'
+                payload.parent.mkdir(parents=True);payload.write_bytes(b'verified release bytes')
+                m=self.manifest()
+                for asset in c.assets(m):asset.update(c.digest(payload))
+                c.write_json(root/'manifest.json',m)
+                (root/'latest.yml').write_text('version: 1.0.0\n')
+                inv={'version':'v1.0.0','run_id':'123','engine_sha':'a'*40,
+                     'assets':{'cli/v1.0.0/a':c.digest(payload)},
+                     'manifest':c.digest(root/'manifest.json'),'feed':c.digest(root/'latest.yml')}
+                c.write_json(root/'inventory.json',inv)
+                for name in ['manifest.json','inventory.json']:(root/(name+'.minisig')).write_bytes(b'signature')
+                c.write_json('authorized-run.json',{'run_id':'123','engine_sha':'a'*40})
+                store={};writes=[];fail_once=[True]
+                def existing(key,target):
+                    if key not in store:return None
+                    Path(target).write_bytes(store[key]);return Path(target)
+                def aws(command,*args):
+                    self.assertEqual(command,'put-object')
+                    key=args[args.index('--key')+1]
+                    if key=='channels/stable.json.minisig' and fail_once[0]:
+                        fail_once[0]=False;raise RuntimeError('interrupted pointer update')
+                    store[key]=Path(args[args.index('--body')+1]).read_bytes();writes.append(key)
+                def download(url,target):Path(target).write_bytes(store[url[len(c.BASE)+1:]])
+                def sign(path,comment):Path(str(path)+'.minisig').write_bytes(b'signed:'+Path(path).read_bytes())
+                with patch.object(c,'existing',side_effect=existing),patch.object(c,'aws',side_effect=aws),patch.object(c,'download',side_effect=download),patch.object(c,'sign',side_effect=sign),patch.object(c,'verify_signature'),patch.dict(os.environ,{'BUCKET':'test','MACOS_EVIDENCE':'https://example.org/report','GITHUB_RUN_ID':'456'}):
+                    with self.assertRaisesRegex(RuntimeError,'interrupted'):c.promote()
+                    self.assertIn('channels/stable.json',store)
+                    self.assertNotIn('desktop/latest.yml',store)
+                    c.promote()
+                    self.assertEqual(store['channels/stable.json'],(root/'manifest.json').read_bytes())
+                    self.assertEqual(store['desktop/latest.yml'],(root/'latest.yml').read_bytes())
+                    published=store['releases/v1.0.0/published.json']
+                    c.promote()
+                    self.assertEqual(store['releases/v1.0.0/published.json'],published)
+                    self.assertEqual(writes.count('cli/v1.0.0/a'),1)
+            finally:os.chdir(old)
+
 if __name__=='__main__':unittest.main()
