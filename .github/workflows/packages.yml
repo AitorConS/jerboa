@@ -65,16 +65,10 @@ jobs:
       run: "if [ -f \"${BUILD_SCRIPT}\" ]; then\n  bash \"${BUILD_SCRIPT}\"\nelse\n  echo \"Build script\
         \ ${BUILD_SCRIPT} not found \u2014 skipping\"\n  exit 1\nfi\n"
     - name: Create package archive
-      run: |
-        BINARY="dist/pkg/${{ matrix.package }}/${{ matrix.version }}"
-        if [ ! -d "$BINARY" ]; then
-          echo "Error: package output directory not found at $BINARY"
-          exit 1
-        fi
-        ./dist/jerboa pkg create ${{ matrix.package }}:${{ matrix.version }} \
-          "$BINARY" \
-          --description "${{ matrix.package }} ${{ matrix.version }} runtime" \
-          --runtime ${{ matrix.package }}
+      run: python3 scripts/release/archive-package.py
+      env:
+        PACKAGE_NAME: ${{ matrix.package }}
+        PACKAGE_VERSION: ${{ matrix.version }}
     - name: Upload package artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:

@@ -23,13 +23,13 @@ tar -xf "$TMPDIR/python.tar.xz" -C "$TMPDIR"
 # Build with the runner's compiler; static flags also reach extension modules
 # and break their shared linking. Package dependent libraries explicitly below.
 cd "$TMPDIR/Python-${VERSION}"
-./configure --prefix="$TMPDIR/install" --disable-shared \
+./configure --prefix=/usr/local --disable-shared \
   --enable-optimizations=no --with-ensurepip=no
 make -j"$(nproc)" 2>&1
-make install 2>&1
+make install DESTDIR="$TMPDIR/install" 2>&1
 
 # Locate the python3 binary
-BINARY="$TMPDIR/install/bin/python3"
+BINARY="$TMPDIR/install/usr/local/bin/python3"
 if [ ! -f "$BINARY" ]; then
   echo "Error: python3 binary not found at $BINARY"
   find "$TMPDIR/install" -name "python3*" -type f
@@ -41,6 +41,9 @@ OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp "$BINARY" "$OUTDIR/python3"
 chmod +x "$OUTDIR/python3"
+mkdir -p "$OUTDIR/rootfs/usr/local/lib"
+cp -R "$TMPDIR/install/usr/local/lib/python${VERSION%.*}" "$OUTDIR/rootfs/usr/local/lib/"
+PYTHONHOME="$OUTDIR/rootfs/usr/local" "$OUTDIR/python3" -c 'import json, ssl, zlib; print("Python runtime resources verified")' 
 
 # Collect shared libraries if dynamically linked
 ldd "$OUTDIR/python3" 2>/dev/null | grep "=>" | awk '{print $3}' | while read lib; do
