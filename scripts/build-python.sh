@@ -43,6 +43,8 @@ cp "$BINARY" "$OUTDIR/python3"
 chmod +x "$OUTDIR/python3"
 mkdir -p "$OUTDIR/rootfs/usr/local/lib"
 cp -R "$TMPDIR/install/usr/local/lib/python${VERSION%.*}" "$OUTDIR/rootfs/usr/local/lib/"
+# Build-only relocatable objects are not runtime ELF files and must not ship.
+find "$OUTDIR/rootfs" -type f \( -name '*.o' -o -name '*.a' \) -delete
 PYTHONHOME="$OUTDIR/rootfs/usr/local" "$OUTDIR/python3" -c 'import json, ssl, zlib; print("Python runtime resources verified")' 
 
 # Collect shared libraries if dynamically linked
