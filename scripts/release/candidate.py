@@ -344,7 +344,6 @@ def website():
     inv=json.loads(Path('candidate/inventory.json').read_text())
     body={'ref':'main','inputs':{'version':inv['version']}}
     run('gh','api','--method','POST','repos/AitorConS/Jerboa_Docs/actions/workflows/release-sync.yml/dispatches','--input','-',input=json.dumps(body).encode())
-    run('gh','api','--method','POST','repos/AitorConS/jerboa/actions/workflows/docs.yml/dispatches','--input','-',input=json.dumps({'ref':'main'}).encode())
 
 
 def summary():
