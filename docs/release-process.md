@@ -26,7 +26,7 @@ runner timestamp in that API; queue and approval latency are explicitly unknown,
 calculated by subtracting workflow creation time. Compare p50/p95 over a representative
 sample before claiming the 3–5 minute PR target has been achieved.
 
-Nightly kernel host tests run on hosted Linux: they do not use KVM. For diagnosis,
+Kernel host tests are required in full CI and also run nightly on hosted Linux: they do not use KVM. For diagnosis,
 manual `nightly.yml` dispatch accepts `suite: kernel`; scheduled/default runs still
 execute all suites. Native Mac validation remains manual and distribution remains
 preview, as selected for this rollout.

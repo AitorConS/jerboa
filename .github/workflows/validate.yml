@@ -210,6 +210,7 @@ jobs:
     - integration-tests
     - e2e-tests
     - release-tests
+    - kernel-host-tests
     steps:
     - name: Require expected jobs
       run: |-
@@ -217,10 +218,27 @@ jobs:
         import json,os
         jobs=json.loads(os.environ["JOBS"])
         full=os.environ["FULL"]=="true"
-        optional={"kernel-build","integration-tests","e2e-tests"} if not full else set()
+        optional={"kernel-build","kernel-host-tests","integration-tests","e2e-tests"} if not full else set()
         bad={k:v["result"] for k,v in jobs.items() if v["result"]!="success" and not(k in optional and v["result"]=="skipped")}
         assert not bad,bad
         CHECK
       env:
         JOBS: ${{ toJSON(needs) }}
         FULL: ${{ inputs.full }}
+  kernel-host-tests:
+    name: Kernel host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install host test toolchain
+      run: |-
+        sudo apt-get update -q
+        sudo apt-get install -y gcc-multilib nasm ent
+    - name: Build test code generator
+      run: make -C kernel contgen
+    - name: Run kernel host suite
+      run: make test-kernel
+    if: inputs.full
