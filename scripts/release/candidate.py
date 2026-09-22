@@ -204,7 +204,8 @@ def assemble():
     verify_linux_versions(manifest, payload, v)
     write_json(root / 'manifest.json', manifest)
     record = {**spec, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
-              'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml')}
+              'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
+              'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip')}
     write_json(root / 'inventory.json', record)
     sign(root / 'manifest.json', f'release:{v}')
     sign(root / 'inventory.json', f'candidate:{spec["run_id"]} version:{v}')

@@ -49,7 +49,7 @@ are retained; these workflows contain no automated deletion.
 Dispatch **Promote release** (`promote.yml`) on main with the successful candidate run
 ID and the URL of native Mac test evidence. The `release` environment must require
 an owner review. The reviewer checks that the evidence identifies the exact run and
-app hash, and that installation/VM creation/stop completed successfully. This is an
+app hash (matching `inventory.native_macos_app.sha256`), and that installation/VM creation/stop completed successfully. This is an
 explicit transitional human gate, not an automated claim of native validation.
 
 The coordinator rejects a failed/non-main candidate, wrong workflow, mixed versions,

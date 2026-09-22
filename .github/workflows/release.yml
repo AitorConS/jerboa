@@ -481,6 +481,10 @@ jobs:
       run: |-
         go build -o bin/jerboa-manifest ./cmd/jerboa-manifest
         go build -o bin/jerboa-sign ./cmd/jerboa-sign
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: macos-app
+        path: native-macos
     - name: Assemble and sign complete inventory
       run: python3 scripts/release/candidate.py assemble
       env:
