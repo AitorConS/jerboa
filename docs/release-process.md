@@ -13,8 +13,8 @@ consumes signed published metadata. A VERSION.md edit alone never publishes anyt
 
 `main.yml` is a small entry point with one required status, **CI required**. It calls
 `validate.yml`; the final check fails on missing, failed or cancelled selected jobs.
-Documentation-only PRs skip code validation. Kernel, distro and workflow changes run
-the full validation suite even on PRs. Main pushes and release candidates run full
+Documentation-only PRs skip code validation. Kernel, distro, workflow and integration/E2E
+test changes run the full validation suite even on PRs. Main pushes and release candidates run full
 validation. Other PRs run tidy, lint, unit/race/coverage, vulnerability and release
 protocol checks. Keep the `kvm` environment review for code that will run on owned
 machines. Do not weaken that review to shorten the queue.

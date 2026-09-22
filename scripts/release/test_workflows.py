@@ -19,5 +19,7 @@ class WorkflowContracts(unittest.TestCase):
   self.assertEqual(scope.classify(['docs/foo.md']),(False,False))
   self.assertEqual(scope.classify(['internal/api/client.go']),(True,False))
   self.assertEqual(scope.classify(['kernel/platform/pc/main.c']),(True,True))
+  self.assertEqual(scope.classify(['tests/integration/lifecycle_test.go']),(True,True))
+  self.assertEqual(scope.classify(['tests/e2e/build_test.go']),(True,True))
   self.assertEqual(scope.classify(['.github/workflows/release.yml']),(True,True))
 if __name__=='__main__':unittest.main()
