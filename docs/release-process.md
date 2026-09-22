@@ -1,3 +1,9 @@
+---
+layout: default
+title: Release operations
+nav_order: 14
+---
+
 # Release operations
 
 The engine repository owns product publication. Desktop builds packages; the website
