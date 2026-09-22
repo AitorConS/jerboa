@@ -15,13 +15,13 @@ immutable release inputs.
 
 ## CI and the public R2 release channel
 
-The main workflow builds native macOS releases when `VERSION.md` changes or
-when a maintainer dispatches a publication. `build-macos` is a required
-dependency of `publish-r2` and runs on the GitHub-hosted `macos-26` Apple
-Silicon runner. It installs ARM64 ELF binutils with Homebrew, Go 1.27.1 and
-Rust 1.97.0. The fork is checked out at immutable commit
-`6750fc374d4758a8181d75e5299e7137a110dd41`; update that pin together with the
-integration tests when changing the fork API. Native dependencies are built
+The `release.yml` workflow builds a complete product candidate on explicit
+request. `build-macos` runs on the GitHub-hosted `macos-26` Apple Silicon
+runner and is required before candidate assembly. It installs ARM64 ELF
+binutils with Homebrew, Go 1.27.1 and Rust 1.97.0. The Desktop and Firecracker
+commits are explicit immutable inputs recorded in the signed inventory.
+The default Firecracker revision is `6750fc374d4758a8181d75e5299e7137a110dd41`;
+validate the fork API before selecting a different revision. Native dependencies are built
 from the fork's SHA-256-locked sources and bundled with their licenses.
 
 The job builds the kernel, native tools and Firecracker, runs the Go tests and
@@ -33,10 +33,14 @@ intact Hypervisor entitlement, the bundled engine version, and `--version` of
 the CLI, daemon and Firecracker run from inside `Contents/Resources`.
 
 GitHub-hosted macOS runners expose no Hypervisor.framework, so CI boots no VMs.
-Before bumping `VERSION.md`, run the Firecracker functional suites
+Before promoting a candidate, run the Firecracker functional suites
 (`test-firecracker-macos.py`, `test-firecracker-network.py`,
 `test-firecracker-stats.py` and `test-jerboa-snapshots.py`) locally on macOS 26
-against a relocated bundle, as described under [Verification](#verification).
+against the actual candidate app, as described under [Verification](#verification).
+`scripts/release/native-macos.sh` records the candidate run and app archive hash.
+The separate `promote.yml` workflow requires that evidence and a release review,
+verifies all platforms and only then updates stable and the website. See
+[release operations]({% link release-process.md %}).
 
 Releases are not Developer ID signed or notarized yet. Every Mach-O keeps its
 ad-hoc signature and the DMG is unsigned, so Gatekeeper blocks the first launch

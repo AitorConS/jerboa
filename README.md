@@ -205,9 +205,15 @@ built from [`docs/`](docs/) in this repository:
 - [Observability](docs/observability.md)
 - [Troubleshooting](docs/troubleshooting.md)
 
+## CI and releases
+
+CI validates changes without publishing. The candidate workflow builds every platform
+from pinned revisions; a separate reviewed promotion publishes the verified artifacts
+and synchronizes website downloads. See [release operations](docs/release-process.md).
+
 ## Versioning
 
-- CLI/daemon version: [`VERSION.md`](VERSION.md) (currently `0.51.2`, wire protocol 2)
+- CLI/daemon version: [`VERSION.md`](VERSION.md) (source version; wire protocol 2)
 - Kernel version: [`kernel/VERSION`](kernel/VERSION)
 
 Check installed versions against the latest release:
