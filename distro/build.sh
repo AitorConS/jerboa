@@ -36,9 +36,15 @@ echo "==> building linux jerboad (${version})"
 # -trimpath/-s -w match the Makefile: symbols and DWARF are dead weight in the
 # shipped rootfs (~10MB smaller binary). -X stamps the release version so the
 # baked daemon reports it (matches the version the manifest publishes).
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -trimpath \
-    -ldflags="-s -w -X main.version=${version}" \
-    -o "${ctx}/jerboad" ./cmd/jerboad
+if [ -n "${JERBOA_DAEMON_BINARY:-}" ]; then
+    cp "${JERBOA_DAEMON_BINARY}" "${ctx}/jerboad"
+    chmod +x "${ctx}/jerboad"
+    "${ctx}/jerboad" --version | grep -F -- "${version}"
+else
+    GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -trimpath \
+        -ldflags="-s -w -X main.version=${version}" \
+        -o "${ctx}/jerboad" ./cmd/jerboad
+fi
 
 echo "==> staging kernel toolchain"
 mkdir -p "${ctx}/tools"

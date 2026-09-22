@@ -7,6 +7,7 @@ NAME="${PACKAGE_NAME:-sqlite}"
 VERSION="${PACKAGE_VERSION:-3.45.1}"
 SOURCE_URL="${SOURCE_URL:-https://sqlite.org/2024/sqlite-tools-linux-x64-${VERSION//./0}.zip}"
 
+PACKAGE_ROOT="$(pwd)"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -22,7 +23,7 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-OUTDIR="dist/pkg/${NAME}/${VERSION}"
+OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp "$BINARY" "$OUTDIR/sqlite3"
 chmod +x "$OUTDIR/sqlite3"

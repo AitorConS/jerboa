@@ -1,318 +1,276 @@
 name: Nightly
-
-on:
+'on':
   schedule:
-    - cron: '0 2 * * *'  # 02:00 UTC daily
-  workflow_dispatch:      # allow manual trigger
-
-# Least privilege by default.
+  - cron: 0 2 * * *
+  workflow_dispatch: null
 permissions:
   contents: read
-
-# Only one nightly at a time.
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
-
 jobs:
   unit-tests:
-    name: Unit Tests (self-hosted)
-    runs-on: [self-hosted, linux, kvm]
+    name: Unit Tests
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          # Self-hosted runner: the module cache persists on disk between runs,
-          # so setup-go's tarball restore would extract over existing read-only
-          # files and fail ("tar: Cannot open: File exists").
-          cache: false
-
-      - name: Run unit tests
-        run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: Run unit tests
+      run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1
   kernel-tests:
     name: Full Kernel Test Suite
-    runs-on: [self-hosted, linux, kvm]
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Verify toolchain
-        run: |
-          for tool in gcc nasm qemu-system-x86_64 ent python3; do
-            command -v "$tool" || { echo "ERROR: $tool not found — pre-install on runner: sudo apt-get install -y gcc-multilib nasm qemu-system-x86"; exit 1; }
-          done
-
-      - name: Check KVM
-        run: |
-          test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
-          test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
-
-      - name: Build kernel
-        run: make kernel
-
-      - name: Run kernel test suite
-        run: make test-kernel
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Provision kernel test tools
+      run: |-
+        sudo apt-get update -q
+        sudo apt-get install -y gcc-multilib nasm qemu-system-x86 ent
+    - name: Verify toolchain
+      run: "for tool in gcc nasm qemu-system-x86_64 ent python3; do\n  command -v \"$tool\" || { echo\
+        \ \"ERROR: $tool not found \u2014 pre-install on runner: sudo apt-get install -y gcc-multilib\
+        \ nasm qemu-system-x86\"; exit 1; }\ndone\n"
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    - name: Build kernel
+      run: make kernel
+    - name: Run kernel test suite
+      run: make test-kernel
   integration-tests:
     name: Integration Tests
-    needs: [unit-tests]
-    runs-on: [self-hosted, linux, kvm]
+    needs:
+    - unit-tests
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          # Self-hosted runner: the module cache persists on disk between runs,
-          # so setup-go's tarball restore would extract over existing read-only
-          # files and fail ("tar: Cannot open: File exists").
-          cache: false
-
-      - name: Check KVM
-        run: |
-          test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
-          test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
-
-      - name: Build CLI binaries
-        run: make build
-
-      - name: Run integration tests
-        run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: false
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    - name: Build CLI binaries
+      run: make build
+    - name: Run integration tests
+      run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
   benchmarks:
     name: Benchmark Suite
-    runs-on: [self-hosted, linux, kvm]
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          # Self-hosted runner: the module cache persists on disk between runs,
-          # so setup-go's tarball restore would extract over existing read-only
-          # files and fail ("tar: Cannot open: File exists").
-          cache: false
-
-      - name: Run benchmarks
-        run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: benchmark-results-${{ github.run_id }}
-          path: benchmark-results.txt
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: false
+    - name: Run benchmarks
+      run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: benchmark-results.txt
   image-benchmarks:
     name: Image Build & Boot Benchmarks
-    runs-on: [self-hosted, linux, kvm]
-    # ~33 runs x up to 4 runtimes x (boot + 5s idle sample + 5s load + stop).
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          # Self-hosted runner: the module cache persists on disk between runs,
-          # so setup-go's tarball restore would extract over existing read-only
-          # files and fail ("tar: Cannot open: File exists").
-          cache: false
-
-      - name: Check KVM
-        run: |
-          test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
-          test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
-
-      - name: Verify toolchain
-        run: |
-          for tool in gcc nasm qemu-system-x86_64 firecracker; do
-            command -v "$tool" || { echo "ERROR: $tool not found — see runner setup docs (apt for gcc/nasm/qemu, GitHub releases for firecracker)"; exit 1; }
-          done
-
-      - name: Build kernel and tools
-        run: make kernel && make -C kernel tools
-
-      - name: Build CLI
-        run: make build
-
-      # Both daemons run at once so jerboa-bench can interleave runtimes in a
-      # seeded random order. Each gets its own HOME (VM, network and image
-      # state live under ~/.jerboa), network name and subnet.
-      - name: Start QEMU and Firecracker daemons
-        run: |
-          BENCH_ROOT=$(mktemp -d)
-          BENCH_TOOLS="${BENCH_ROOT}/tools"
-          mkdir -p "${BENCH_TOOLS}" "${BENCH_ROOT}/qemu" "${BENCH_ROOT}/fc"
-          # Stage the freshly built kernel toolchain so the QEMU daemon resolves
-          # mkfs/boot.img/kernel.img locally instead of downloading a release.
-          cp kernel/output/tools/bin/mkfs "${BENCH_TOOLS}/mkfs"
-          cp kernel/output/platform/pc/boot/boot.img "${BENCH_TOOLS}/boot.img"
-          cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
-          echo "BENCH_ROOT=${BENCH_ROOT}" >> "$GITHUB_ENV"
-          HOME="${BENCH_ROOT}/qemu" ./dist/jerboad --host "unix://${BENCH_ROOT}/qemu.sock" --tools-dir "${BENCH_TOOLS}" \
-            --store "${BENCH_ROOT}/qemu/images" > "${BENCH_ROOT}/qemu.log" 2>&1 &
-          echo "QEMU_PID=$!" >> "$GITHUB_ENV"
-          # The Firecracker daemon downloads kernel-fc.img on first start; it
-          # uses the staged mkfs so both images come from this commit.
-          HOME="${BENCH_ROOT}/fc" ./dist/jerboad --host "unix://${BENCH_ROOT}/fc.sock" --hypervisor firecracker \
-            --tools-dir "${BENCH_TOOLS}" --store "${BENCH_ROOT}/fc/images" \
-            --fc-metrics-dir "${BENCH_ROOT}/fc-metrics" > "${BENCH_ROOT}/fc.log" 2>&1 &
-          echo "FC_PID=$!" >> "$GITHUB_ENV"
-          for i in $(seq 1 120); do
-            [ -S "${BENCH_ROOT}/qemu.sock" ] && [ -S "${BENCH_ROOT}/fc.sock" ] && break
-            sleep 1
-          done
-          [ -S "${BENCH_ROOT}/qemu.sock" ] || { cat "${BENCH_ROOT}/qemu.log"; exit 1; }
-          [ -S "${BENCH_ROOT}/fc.sock" ] || { cat "${BENCH_ROOT}/fc.log"; exit 1; }
-          HOME="${BENCH_ROOT}/qemu" ./dist/jerboa --host "unix://${BENCH_ROOT}/qemu.sock" network create benchq --subnet 10.231.0.0/24
-          HOME="${BENCH_ROOT}/fc" ./dist/jerboa --host "unix://${BENCH_ROOT}/fc.sock" network create benchfc --subnet 10.232.0.0/24
-
-      - name: Run jerboa-bench
-        run: |
-          go build -o dist/jerboa-bench ./cmd/jerboa-bench
-          RUNTIMES=(
-            --runtime "qemu=jerboa,host=unix://${BENCH_ROOT}/qemu.sock,network=benchq,store=${BENCH_ROOT}/qemu/images"
-            --runtime "fc=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images"
-            --runtime "fc-compact=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images,layout=compact"
-          )
-          if docker info >/dev/null 2>&1; then
-            RUNTIMES+=(--runtime docker=docker)
-          else
-            echo "::notice::docker unavailable on this runner; benchmarking Jerboa backends only"
-          fi
-          ./dist/jerboa-bench --jerboa ./dist/jerboa "${RUNTIMES[@]}" \
-            --runs 30 --warmup 3 --seed "${GITHUB_RUN_ID}" \
-            --idle-sample 5s --load-duration 5s --load-concurrency 16 --load-direct \
-            --out bench-image.json | tee bench-summary.txt
-
-      - name: Stop daemons
-        if: always()
-        run: |
-          [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
-          [ -n "${FC_PID}" ] && kill "${FC_PID}" 2>/dev/null || true
-
-      - name: Write job summary
-        if: always()
-        run: |
-          {
-            echo "## Image & Runtime Benchmarks"
-            echo ""
-            echo "Same static test binary in every runtime; 30 randomized runs after 3 warmups."
-            echo "Memory: Jerboa = VMM process RSS, Docker = container cgroup usage."
-            echo ""
-            echo '```'
-            cat bench-summary.txt 2>/dev/null || echo "benchmark did not complete"
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload benchmark results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: image-benchmarks-${{ github.run_id }}
-          path: |
-            bench-image.json
-            bench-image.csv
-            bench-summary.txt
-            ${{ env.BENCH_ROOT }}/fc-metrics/
-          if-no-files-found: ignore
-
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: false
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    - name: Verify toolchain
+      run: "for tool in gcc nasm qemu-system-x86_64 firecracker; do\n  command -v \"$tool\" || { echo\
+        \ \"ERROR: $tool not found \u2014 see runner setup docs (apt for gcc/nasm/qemu, GitHub releases\
+        \ for firecracker)\"; exit 1; }\ndone\n"
+    - name: Build kernel and tools
+      run: make kernel && make -C kernel tools
+    - name: Build CLI
+      run: make build
+    - name: Start QEMU and Firecracker daemons
+      run: |
+        BENCH_ROOT=$(mktemp -d)
+        BENCH_TOOLS="${BENCH_ROOT}/tools"
+        mkdir -p "${BENCH_TOOLS}" "${BENCH_ROOT}/qemu" "${BENCH_ROOT}/fc"
+        # Stage the freshly built kernel toolchain so the QEMU daemon resolves
+        # mkfs/boot.img/kernel.img locally instead of downloading a release.
+        cp kernel/output/tools/bin/mkfs "${BENCH_TOOLS}/mkfs"
+        cp kernel/output/platform/pc/boot/boot.img "${BENCH_TOOLS}/boot.img"
+        cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
+        echo "BENCH_ROOT=${BENCH_ROOT}" >> "$GITHUB_ENV"
+        HOME="${BENCH_ROOT}/qemu" ./dist/jerboad --host "unix://${BENCH_ROOT}/qemu.sock" --tools-dir "${BENCH_TOOLS}" \
+          --store "${BENCH_ROOT}/qemu/images" > "${BENCH_ROOT}/qemu.log" 2>&1 &
+        echo "QEMU_PID=$!" >> "$GITHUB_ENV"
+        # The Firecracker daemon downloads kernel-fc.img on first start; it
+        # uses the staged mkfs so both images come from this commit.
+        HOME="${BENCH_ROOT}/fc" ./dist/jerboad --host "unix://${BENCH_ROOT}/fc.sock" --hypervisor firecracker \
+          --tools-dir "${BENCH_TOOLS}" --store "${BENCH_ROOT}/fc/images" \
+          --fc-metrics-dir "${BENCH_ROOT}/fc-metrics" > "${BENCH_ROOT}/fc.log" 2>&1 &
+        echo "FC_PID=$!" >> "$GITHUB_ENV"
+        for i in $(seq 1 120); do
+          [ -S "${BENCH_ROOT}/qemu.sock" ] && [ -S "${BENCH_ROOT}/fc.sock" ] && break
+          sleep 1
+        done
+        [ -S "${BENCH_ROOT}/qemu.sock" ] || { cat "${BENCH_ROOT}/qemu.log"; exit 1; }
+        [ -S "${BENCH_ROOT}/fc.sock" ] || { cat "${BENCH_ROOT}/fc.log"; exit 1; }
+        HOME="${BENCH_ROOT}/qemu" ./dist/jerboa --host "unix://${BENCH_ROOT}/qemu.sock" network create benchq --subnet 10.231.0.0/24
+        HOME="${BENCH_ROOT}/fc" ./dist/jerboa --host "unix://${BENCH_ROOT}/fc.sock" network create benchfc --subnet 10.232.0.0/24
+    - name: Run jerboa-bench
+      run: |
+        go build -o dist/jerboa-bench ./cmd/jerboa-bench
+        RUNTIMES=(
+          --runtime "qemu=jerboa,host=unix://${BENCH_ROOT}/qemu.sock,network=benchq,store=${BENCH_ROOT}/qemu/images"
+          --runtime "fc=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images"
+          --runtime "fc-compact=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images,layout=compact"
+        )
+        if docker info >/dev/null 2>&1; then
+          RUNTIMES+=(--runtime docker=docker)
+        else
+          echo "::notice::docker unavailable on this runner; benchmarking Jerboa backends only"
+        fi
+        ./dist/jerboa-bench --jerboa ./dist/jerboa "${RUNTIMES[@]}" \
+          --runs 30 --warmup 3 --seed "${GITHUB_RUN_ID}" \
+          --idle-sample 5s --load-duration 5s --load-concurrency 16 --load-direct \
+          --out bench-image.json | tee bench-summary.txt
+    - name: Stop daemons
+      if: always()
+      run: |
+        [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
+        [ -n "${FC_PID}" ] && kill "${FC_PID}" 2>/dev/null || true
+    - name: Write job summary
+      if: always()
+      run: |
+        {
+          echo "## Image & Runtime Benchmarks"
+          echo ""
+          echo "Same static test binary in every runtime; 30 randomized runs after 3 warmups."
+          echo "Memory: Jerboa = VMM process RSS, Docker = container cgroup usage."
+          echo ""
+          echo '```'
+          cat bench-summary.txt 2>/dev/null || echo "benchmark did not complete"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: Upload benchmark results
+      if: always()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: image-benchmarks-${{ github.run_id }}
+        path: |
+          bench-image.json
+          bench-image.csv
+          bench-summary.txt
+          ${{ env.BENCH_ROOT }}/fc-metrics/
+        if-no-files-found: ignore
   fuzz-extended:
     name: Fuzz (extended)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          cache: true
-
-      - name: Fuzz every target for several minutes
-        # A deeper nightly counterpart to the per-PR fuzz-smoke job: each parser
-        # target gets a long burst to find crashers the 20s PR budget misses.
-        run: |
-          set -euo pipefail
-          for pkg in $(go list ./cmd/... ./internal/...); do
-            for fn in $(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
-              echo "::group::fuzz ${fn} (${pkg})"
-              go test -run '^$' -fuzz "^${fn}$" -fuzztime=3m "$pkg"
-              echo "::endgroup::"
-            done
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: Fuzz every target for several minutes
+      run: |
+        set -euo pipefail
+        for pkg in $(go list ./cmd/... ./internal/...); do
+          for fn in $(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
+            echo "::group::fuzz ${fn} (${pkg})"
+            go test -run '^$' -fuzz "^${fn}$" -fuzztime=3m "$pkg"
+            echo "::endgroup::"
           done
-
-      - name: Upload any fuzz crashers
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: fuzz-crashers-${{ github.run_id }}
-          path: '**/testdata/fuzz/**'
-          if-no-files-found: ignore
-
+        done
+    - name: Upload any fuzz crashers
+      if: failure()
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: fuzz-crashers-${{ github.run_id }}
+        path: '**/testdata/fuzz/**'
+        if-no-files-found: ignore
   security-scan:
     name: Security Scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.1'
-          cache: true
-
-      - name: govulncheck
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
-          govulncheck ./...
-
-      - name: trivy filesystem scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          severity: HIGH,CRITICAL
-          exit-code: 1
-          skip-dirs: examples
-
-  notify-on-failure:
-    name: Notify on Failure
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+        govulncheck ./...
+    - name: trivy filesystem scan
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25
+      with:
+        scan-type: fs
+        scan-ref: .
+        severity: HIGH,CRITICAL
+        exit-code: 1
+        skip-dirs: examples
+  report:
+    name: Nightly report
     runs-on: ubuntu-latest
-    needs: [unit-tests, kernel-tests, integration-tests, benchmarks, security-scan, image-benchmarks, fuzz-extended]
-    if: failure()
+    if: always()
+    needs:
+    - unit-tests
+    - kernel-tests
+    - integration-tests
+    - benchmarks
+    - image-benchmarks
+    - fuzz-extended
+    - security-scan
     steps:
-      - name: Notify
-        # Requires NOTIFY_WEBHOOK secret configured in repo settings.
-        # Supports Discord or Slack — set NOTIFY_TYPE variable to "discord" or "slack".
-        env:
-          NOTIFY_WEBHOOK: ${{ secrets.NOTIFY_WEBHOOK }}
-          NOTIFY_TYPE: ${{ vars.NOTIFY_TYPE }}  # "discord" or "slack"
-        run: |
-          PAYLOAD="{\"content\": \"🔴 Nightly CI failed on \`main\`. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
-          if [ "$NOTIFY_TYPE" = "slack" ]; then
-            PAYLOAD="{\"text\": \"🔴 Nightly CI failed on \`main\`. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}"
-          fi
-          curl -s -X POST "$NOTIFY_WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD"
+    - name: Write job results
+      run: |-
+        python3 - <<'CHECK'
+        import json,os
+        jobs=json.loads(os.environ["JOBS"])
+        with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+         for name,job in jobs.items():f.write(f"- {name}: {job['result']}\n")
+        CHECK
+      env:
+        JOBS: ${{ toJSON(needs) }}

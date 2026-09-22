@@ -1,0 +1,226 @@
+name: Validate
+'on':
+  workflow_call:
+    inputs:
+      full:
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  tidy-check:
+    name: go mod tidy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: Check go.mod / go.sum are tidy
+      run: |
+        go mod tidy
+        git diff --exit-code go.mod go.sum || {
+          echo "go.mod or go.sum is out of sync. Run 'go mod tidy' locally and commit the result."
+          exit 1
+        }
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
+      with:
+        version: v2.13.2
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: Run unit tests
+      run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
+    - name: Installer platform and verification regressions
+      run: python3 scripts/test-install.py
+    - name: Coverage summary
+      run: go tool cover -func=coverage.out | tail -1
+    - name: Enforce coverage threshold (60%)
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep '^total' | awk '{print $3}' | tr -d '%')
+        echo "Total coverage: ${COVERAGE}%"
+        if awk "BEGIN { exit !(${COVERAGE} + 0 < 60) }"; then
+          echo "::error::Coverage ${COVERAGE}% is below the 60% minimum threshold. Add tests to bring it back up."
+          exit 1
+        fi
+    - name: Upload coverage artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: coverage-out
+        path: coverage.out
+  vuln-check:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@v1.5.0
+        govulncheck ./...
+  kernel-build:
+    name: Kernel Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Install cross-compiler toolchain
+      run: |
+        # The GitHub ubuntu image ships a Google Chrome apt source that
+        # periodically serves a corrupt index ("Hash Sum mismatch"), failing
+        # apt-get update. Our packages are all in the Ubuntu archive, whose
+        # indices do refresh, so tolerate a failed update and let the install
+        # resolve from the lists that updated fine.
+        sudo apt-get update -q || true
+        sudo apt-get install -y gcc-multilib nasm qemu-utils
+    - name: Build kernel
+      run: |-
+        make kernel && make -C kernel tools
+        tar -czf kernel-linux.tar.gz kernel/output
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: kernel-linux
+        path: kernel-linux.tar.gz
+        if-no-files-found: error
+        retention-days: 30
+    if: inputs.full
+  integration-tests:
+    name: Integration Tests
+    environment: kvm
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: false
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    - name: Build CLI binaries
+      run: make build
+    - name: Run integration tests
+      run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
+    if: inputs.full
+    needs:
+    - lint
+    - unit-tests
+    - kernel-build
+  e2e-tests:
+    name: E2E Tests
+    environment: kvm
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
+    timeout-minutes: 45
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: false
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: kernel-linux
+        path: .
+    - name: Restore tested kernel
+      run: tar -xzf kernel-linux.tar.gz
+    - name: Build CLI binaries
+      run: make build
+    - name: Run E2E tests
+      run: go test -tags e2e -count=1 -timeout 30m -v ./tests/e2e/...
+    if: inputs.full
+    needs:
+    - lint
+    - unit-tests
+    - kernel-build
+  release-tests:
+    name: Release protocol tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: Test release and workflow contracts
+      run: python3 -m unittest discover -s scripts/release -p "test_*.py"
+    - name: Lint workflows
+      run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck=""
+  result:
+    name: Validation result
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+    - tidy-check
+    - lint
+    - unit-tests
+    - vuln-check
+    - kernel-build
+    - integration-tests
+    - e2e-tests
+    - release-tests
+    steps:
+    - name: Require expected jobs
+      run: |-
+        python3 - <<'CHECK'
+        import json,os
+        jobs=json.loads(os.environ["JOBS"])
+        full=os.environ["FULL"]=="true"
+        optional={"kernel-build","integration-tests","e2e-tests"} if not full else set()
+        bad={k:v["result"] for k,v in jobs.items() if v["result"]!="success" and not(k in optional and v["result"]=="skipped")}
+        assert not bad,bad
+        CHECK
+      env:
+        JOBS: ${{ toJSON(needs) }}
+        FULL: ${{ inputs.full }}

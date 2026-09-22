@@ -7,6 +7,7 @@ NAME="${PACKAGE_NAME:-node}"
 VERSION="${PACKAGE_VERSION:-20.11.0}"
 SOURCE_URL="${SOURCE_URL:-https://nodejs.org/dist/v${VERSION}/node-v${VERSION}-linux-x64.tar.xz}"
 
+PACKAGE_ROOT="$(pwd)"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -17,7 +18,7 @@ echo "Source: ${SOURCE_URL}"
 curl -fSL -o "$TMPDIR/node.tar.xz" "$SOURCE_URL"
 
 # Extract
-tar -xJf "$TMPDIR/node.tar.xz" -C "$TMPDIR"
+tar -xf "$TMPDIR/node.tar.xz" -C "$TMPDIR"
 
 # Locate the node binary
 BINARY="$TMPDIR/node-v${VERSION}-linux-x64/bin/node"
@@ -31,7 +32,7 @@ file "$BINARY"
 ldd "$BINARY" 2>/dev/null || echo "Static binary (ldd skipped)"
 
 # Create output directory
-OUTDIR="dist/pkg/${NAME}/${VERSION}"
+OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp "$BINARY" "$OUTDIR/node"
 chmod +x "$OUTDIR/node"
