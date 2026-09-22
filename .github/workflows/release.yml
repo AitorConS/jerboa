@@ -113,6 +113,10 @@ jobs:
         go build -ldflags="-s -w -X main.version=${CLI_VERSION}" \
           -o dist/jerboad-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboad
+    - name: Record CLI candidate hash
+      if: matrix.goos == 'windows'
+      run: python3 scripts/release/candidate.py cli --file dist/jerboa-windows-amd64.exe --version "$CLI_VERSION"
+        --out dist/manifest.json
     - name: Upload binaries
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -318,7 +322,7 @@ jobs:
         path: cli
     - name: Stage candidate CLI with explicit version and checksum
       run: |-
-        python scripts/release/candidate.py cli --file cli/jerboa-windows-amd64.exe --version "$VERSION" --out cli/manifest.json
+        ./cli/jerboa-windows-amd64.exe --version
         cd desktop
         npm ci
         node scripts/stage-candidate.mjs ../cli/manifest.json ../cli/jerboa-windows-amd64.exe "$VERSION"

@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tarfile
 from urllib.parse import urlparse
 
 BASE = 'https://releases.jerboa.dev'
@@ -130,6 +131,30 @@ def assets(manifest):
         yield from (component.get('platforms') or component.get('files') or {'file': component}).values()
 
 
+def verify_linux_versions(manifest, payload, expected):
+    # This job runs on Linux amd64. Check actual release binary contents, not
+    # just filenames/metadata, including the daemon embedded in the WSL rootfs.
+    for name in ['cli', 'daemon']:
+        asset = manifest['components'][name]['platforms']['linux-amd64']
+        binary = payload / asset['url'][len(BASE)+1:]
+        binary.chmod(0o755)
+        output = run(binary.resolve(), '--version', text=True)
+        if expected not in output.split():
+            raise ValueError('Binary version mismatch: ' + output)
+    distro = manifest['components']['distro']['url'][len(BASE)+1:]
+    with tarfile.open(payload/distro) as archive, tempfile.TemporaryDirectory() as tmp:
+        members = [m for m in archive if m.name.lstrip('./') == 'usr/local/bin/jerboad']
+        if len(members) != 1 or not members[0].isfile():
+            raise ValueError('Distro daemon missing, duplicated or non-regular')
+        binary=Path(tmp)/'jerboad'
+        with archive.extractfile(members[0]) as source:
+            binary.write_bytes(source.read())
+        binary.chmod(0o755)
+        output=run(binary,'--version',text=True)
+        if expected not in output.split():
+            raise ValueError('Distro binary version mismatch: ' + output)
+
+
 def assemble():
     spec = json.loads(Path('release-lock.json').read_text())
     v = version(spec['version']); n = v[1:]
@@ -176,6 +201,7 @@ def assemble():
     feed = f'version: {n}\nfiles:\n  - url: {installer}\n    sha512: {h}\n    size: {binary.stat().st_size}\npath: {installer}\nsha512: {h}\nreleaseDate: "{date}T00:00:00.000Z"\n'
     (root / 'latest.yml').write_text(feed)
     assert_manifest(manifest, v)
+    verify_linux_versions(manifest, payload, v)
     write_json(root / 'manifest.json', manifest)
     record = {**spec, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml')}
@@ -303,6 +329,7 @@ def website():
     inv=json.loads(Path('candidate/inventory.json').read_text())
     body={'ref':'main','inputs':{'version':inv['version']}}
     run('gh','api','--method','POST','repos/AitorConS/Jerboa_Docs/actions/workflows/release-sync.yml/dispatches','--input','-',input=json.dumps(body).encode())
+    run('gh','api','--method','POST','repos/AitorConS/jerboa/actions/workflows/docs.yml/dispatches','--input','-',input=json.dumps({'ref':'main'}).encode())
 
 
 def summary():

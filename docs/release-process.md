@@ -112,8 +112,8 @@ only the explicitly pinned, signed stable kernel. It refuses an implicit kernel 
 
 `packages.yml` runs independently on changed recipes or a manual package selection.
 Builds use isolated hosted Linux machines and `fail-fast: false`. Package failures do
-not turn a successful product promotion red. The index is updated only when selected
-builds succeed. Existing package-index storage is retained; migrating package archives
+not turn a successful product promotion red. Pushes validate recipes without publishing. The index is updated only when selected
+builds succeed on a manual run with `publish: true`. Existing package-index storage is retained; migrating package archives
 to immutable per-recipe revisions is a separate format migration, not a product-release
 side effect.
 

@@ -14,6 +14,10 @@ name: Package Build
         required: true
         default: all
         type: string
+      publish:
+        description: Publish the tested package selection to the package index
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -88,7 +92,7 @@ jobs:
     - build-package
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && inputs.publish
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
