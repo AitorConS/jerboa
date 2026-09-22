@@ -12,9 +12,18 @@ static u64 alloc(heap h, u64 size)
 {
     tiny t = (tiny)h;
 
-    if (size > t->parent->pagesize - sizeof(void *))
+    /* Host x86-64 values keep their type tag in the byte before the
+     * allocation. Every result must also preserve pointer/value alignment. */
+    u64 prefix = 0;
+#ifndef __aarch64__
+    prefix = sizeof(u64);
+#endif
+    if (size > t->parent->pagesize)
         return INVALID_PHYSICAL;
-    if ((t->offset +size) > t->parent->pagesize) {
+    size = pad(size, sizeof(u64));
+    if (size > t->parent->pagesize - sizeof(void *) - prefix)
+        return INVALID_PHYSICAL;
+    if ((t->offset + prefix + size) > t->parent->pagesize) {
         void *new = allocate(t->parent, t->parent->pagesize);
         if (new == INVALID_ADDRESS)
             return INVALID_PHYSICAL;
@@ -23,8 +32,11 @@ static u64 alloc(heap h, u64 size)
         t->offset = sizeof(void *);
         return alloc(h, size);
     }
-    u64 res = u64_from_pointer(t->base) + t->offset;
-    t->offset += size;
+    u64 res = u64_from_pointer(t->base) + t->offset + prefix;
+    t->offset += prefix + size;
+#ifndef __aarch64__
+    tag(pointer_from_u64(res), tag_unknown);
+#endif
     return res;
 }
 

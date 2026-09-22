@@ -1,11 +1,9 @@
 name: Kernel Build
 
-# Builds and validates the kernel toolset when kernel/ changes. It no longer
-# publishes anywhere: distribution is via the R2 signed manifest, and the kernel
-# component there is carried forward by main.yml's publish-r2 job (the artifacts,
-# including kernel-fc.img which no workflow rebuilds, already live in R2 under
-# kernel/<ver>/). Cutting a NEW kernel version to R2 — including regenerating
-# kernel-fc.img — is a manual/future step tracked in roadmap.md Phase 7.
+# Builds a kernel toolset candidate; never writes stable. Product candidates
+# currently carry the explicitly pinned signed kernel from R2. A new kernel,
+# including kernel-fc.img, needs QEMU/Firecracker boot evidence and a reviewed
+# distribution change; see docs/release-process.md and roadmap.md Phase 7.
 
 on:
   push:
@@ -26,6 +24,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: 1.27.1
+          cache: true
 
       - name: Install toolchain
         run: |
@@ -58,7 +61,7 @@ jobs:
           # as kernel.img) to produce a lean kernel-fc.img candidate. NOTE: this
           # is rebuilt from repo source and is NOT byte-identical to the manually
           # produced v0.2.0 kernel-fc.img in R2 — it must pass the Firecracker
-          # boot benchmark (main.yml) before it is published as a new kernel
+          # native boot validation before it is published as a new kernel
           # version. See roadmap.md Phase 7.
           strip -g kernel/output/platform/pc/bin/kernel.elf -o dist/kernel-fc.img
           chmod +x dist/mkfs-linux-amd64 dist/dump-linux-amd64
