@@ -19,6 +19,13 @@ import (
 	"github.com/AitorConS/jerboa/internal/vm"
 )
 
+// Avoid speculative keep-alive connections competing with graceful shutdown.
+// Tests own no global default-client connection pool.
+var testHTTPClient = &http.Client{
+	Transport: &http.Transport{DisableKeepAlives: true},
+	Timeout:   3 * time.Second,
+}
+
 // awaitServerReady polls the always-open /health endpoint until the server is
 // accepting connections, or fails the test. It replaces fixed time.Sleep calls,
 // which raced the server's startup: on a slow/loaded machine the old tests
@@ -36,8 +43,9 @@ func awaitServerReady(t *testing.T, addr string) {
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		require.NoError(t, err)
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := testHTTPClient.Do(req)
 		if err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				return
@@ -90,6 +98,7 @@ func TestServe_StartAndShutdown(t *testing.T) {
 	c := NewCollectors("coverage-version")
 	addr := listenAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	doneCh := make(chan error, 1)
 	go func() {
@@ -100,16 +109,18 @@ func TestServe_StartAndShutdown(t *testing.T) {
 
 	// /metrics is served. The assertion is unconditional now: previously it was
 	// wrapped in `if err == nil`, so a startup-race failure passed silently.
-	resp, err := http.Get("http://" + addr + "/metrics")
+	resp, err := testHTTPClient.Get("http://" + addr + "/metrics")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
-	resp, err = http.Get("http://" + addr + "/health")
+	resp, err = testHTTPClient.Get("http://" + addr + "/health")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 	require.Equal(t, "ok", string(body))
 
@@ -136,24 +147,27 @@ func TestServe_TokenAuth(t *testing.T) {
 	awaitServerReady(t, addr)
 
 	// /metrics without a token is rejected.
-	resp, err := http.Get("http://" + addr + "/metrics")
+	resp, err := testHTTPClient.Get("http://" + addr + "/metrics")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	// /metrics with the token is served.
 	req, err := http.NewRequest(http.MethodGet, "http://"+addr+"/metrics", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer s3cret")
-	resp, err = http.DefaultClient.Do(req)
+	resp, err = testHTTPClient.Do(req)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	// /health stays open for liveness probes.
-	resp, err = http.Get("http://" + addr + "/health")
+	resp, err = testHTTPClient.Get("http://" + addr + "/health")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	cancel()
@@ -164,6 +178,7 @@ func TestServe_ContextCancellation(t *testing.T) {
 	c := NewCollectors("coverage-version")
 	addr := listenAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	doneCh := make(chan error, 1)
 	go func() {

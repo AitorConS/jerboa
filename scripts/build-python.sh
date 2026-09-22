@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Build Python runtime package for unikernel images.
-# Compiles CPython from source as a static binary using musl.
+# Compiles CPython and collects its runtime libraries.
 set -euo pipefail
 
 NAME="${PACKAGE_NAME:-python}"
 VERSION="${PACKAGE_VERSION:-3.12.0}"
 SOURCE_URL="${SOURCE_URL:-https://www.python.org/ftp/python/${VERSION}/Python-${VERSION}.tar.xz}"
 
+PACKAGE_ROOT="$(pwd)"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
@@ -17,16 +18,13 @@ echo "Source: ${SOURCE_URL}"
 curl -fSL -o "$TMPDIR/python.tar.xz" "$SOURCE_URL"
 
 # Extract
-tar -xJf "$TMPDIR/python.tar.xz" -C "$TMPDIR"
+tar -xf "$TMPDIR/python.tar.xz" -C "$TMPDIR"
 
-# Build with musl for static linking
+# Build with the runner's compiler; static flags also reach extension modules
+# and break their shared linking. Package dependent libraries explicitly below.
 cd "$TMPDIR/Python-${VERSION}"
-CPPFLAGS="-static" LDFLAGS="-static" ./configure \
-  --prefix="$TMPDIR/install" \
-  --disable-shared \
-  --enable-optimizations=no \
-  --with-ensurepip=no \
-  2>&1 || { echo "Configure failed, trying without static flags..."; ./configure --prefix="$TMPDIR/install" --disable-shared --enable-optimizations=no --with-ensurepip=no; }
+./configure --prefix="$TMPDIR/install" --disable-shared \
+  --enable-optimizations=no --with-ensurepip=no
 make -j"$(nproc)" 2>&1
 make install 2>&1
 
@@ -39,7 +37,7 @@ if [ ! -f "$BINARY" ]; then
 fi
 
 # Create output directory
-OUTDIR="dist/pkg/${NAME}/${VERSION}"
+OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp "$BINARY" "$OUTDIR/python3"
 chmod +x "$OUTDIR/python3"

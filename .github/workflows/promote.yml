@@ -1,0 +1,64 @@
+name: Promote release
+'on':
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: Successful Build release candidate run ID
+        type: string
+        required: true
+      macos_evidence:
+        description: HTTPS link to native Mac validation evidence for this candidate (required until native
+          runner is available)
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-stable
+  cancel-in-progress: false
+jobs:
+  promote:
+    name: Promote complete release
+    runs-on: ubuntu-latest
+    environment: release
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+      ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      BUCKET: ${{ vars.R2_BUCKET }}
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE_RUN: ${{ inputs.candidate_run }}
+      MACOS_EVIDENCE: ${{ inputs.macos_evidence }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - name: Require successful trusted candidate
+      run: python3 scripts/release/candidate.py authorize
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: release-candidate
+        path: candidate
+        run-id: ${{ inputs.candidate_run }}
+        github-token: ${{ github.token }}
+    - name: Verify and promote existing bytes
+      run: |-
+        go build -o bin/jerboa-sign ./cmd/jerboa-sign
+        python3 scripts/release/candidate.py promote
+      env:
+        JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
+        KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
+    - name: Trigger website synchronization
+      run: python3 scripts/release/candidate.py website
+      env:
+        GH_TOKEN: ${{ secrets.DESKTOP_REPO_TOKEN }}
+    - name: Release summary
+      run: python3 scripts/release/candidate.py summary

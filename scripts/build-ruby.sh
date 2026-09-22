@@ -7,13 +7,14 @@ NAME="${PACKAGE_NAME:-ruby}"
 VERSION="${PACKAGE_VERSION:-3.2.2}"
 SOURCE_URL="${SOURCE_URL:-https://cache.ruby-lang.org/pub/ruby/3.2/ruby-${VERSION}.tar.gz}"
 
+PACKAGE_ROOT="$(pwd)"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Building ${NAME}:${VERSION}..."
 
 curl -fSL -o "$TMPDIR/ruby.tar.gz" "$SOURCE_URL"
-tar -xzf "$TMPDIR/ruby.tar.gz" -C "$TMPDIR"
+tar -xf "$TMPDIR/ruby.tar.gz" -C "$TMPDIR"
 
 cd "$TMPDIR/ruby-${VERSION}"
 ./configure \
@@ -33,7 +34,7 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-OUTDIR="dist/pkg/${NAME}/${VERSION}"
+OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp "$BINARY" "$OUTDIR/ruby"
 chmod +x "$OUTDIR/ruby"

@@ -49,6 +49,11 @@ func createTestPackageArchive(t *testing.T, files map[string]string) []byte {
 
 func startPkgServer(t *testing.T) (*httptest.Server, func(idx pkg.Index, archives map[string][]byte)) {
 	t.Helper()
+	// A self-hosted runner may have legacy packages in the real user store.
+	// Every HTTP fixture must use its own download cache and package metadata.
+	originalStore := pkgStoreDir
+	pkgStoreDir = t.TempDir()
+	t.Cleanup(func() { pkgStoreDir = originalStore })
 	mux := http.NewServeMux()
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)

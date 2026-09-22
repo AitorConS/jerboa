@@ -207,6 +207,9 @@ func Serve(ctx context.Context, addr, token string, c *Collectors) error {
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("metrics server shutdown", "err", err)
+			// Shutdown does not close active connections after its deadline.
+			// Force them closed so cancellation cannot leave handlers behind.
+			_ = srv.Close()
 		}
 		return nil
 	case err := <-errCh:

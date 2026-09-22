@@ -7,13 +7,14 @@ NAME="${PACKAGE_NAME:-php}"
 VERSION="${PACKAGE_VERSION:-8.3.3}"
 SOURCE_URL="${SOURCE_URL:-https://www.php.net/distributions/php-${VERSION}.tar.gz}"
 
+PACKAGE_ROOT="$(pwd)"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Building ${NAME}:${VERSION}..."
 
 curl -fSL -o "$TMPDIR/php.tar.gz" "$SOURCE_URL"
-tar -xzf "$TMPDIR/php.tar.gz" -C "$TMPDIR"
+tar -xf "$TMPDIR/php.tar.gz" -C "$TMPDIR"
 
 cd "$TMPDIR/php-${VERSION}"
 ./configure \
@@ -33,7 +34,7 @@ if [ ! -f "$BINARY" ]; then
   exit 1
 fi
 
-OUTDIR="dist/pkg/${NAME}/${VERSION}"
+OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp "$BINARY" "$OUTDIR/php"
 chmod +x "$OUTDIR/php"

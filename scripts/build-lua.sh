@@ -7,18 +7,19 @@ NAME="${PACKAGE_NAME:-lua}"
 VERSION="${PACKAGE_VERSION:-5.4.6}"
 SOURCE_URL="${SOURCE_URL:-https://www.lua.org/ftp/lua-${VERSION}.tar.gz}"
 
+PACKAGE_ROOT="$(pwd)"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Building ${NAME}:${VERSION}..."
 
 curl -fSL -o "$TMPDIR/lua.tar.gz" "$SOURCE_URL"
-tar -xzf "$TMPDIR/lua.tar.gz" -C "$TMPDIR"
+tar -xf "$TMPDIR/lua.tar.gz" -C "$TMPDIR"
 
 cd "$TMPDIR/lua-${VERSION}"
 make -j"$(nproc)" linux 2>&1 || make linux 2>&1
 
-OUTDIR="dist/pkg/${NAME}/${VERSION}"
+OUTDIR="${PACKAGE_ROOT}/dist/pkg/${NAME}/${VERSION}"
 mkdir -p "$OUTDIR"
 cp src/lua "$OUTDIR/"
 cp src/luac "$OUTDIR/"

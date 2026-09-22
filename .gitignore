@@ -34,3 +34,11 @@ examples/**/packages/
 
 # macOS Finder metadata
 .DS_Store
+
+# Python release tooling
+__pycache__/
+*.pyc
+/bin/
+/candidate/
+/release-lock.json
+/kernel-linux.tar.gz
