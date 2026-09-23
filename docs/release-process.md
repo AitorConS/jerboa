@@ -75,6 +75,11 @@ checks signed published metadata, verifies both download URLs, preserves existin
 editorial notes and commits generated metadata. Verify the website workflow and Vercel
 status separately; successful dispatch means queued, not deployed.
 
+Public documentation is maintained in `AitorConS/Jerboa_Public_Docs`, with its own
+CI and scheduled/manual sync workflow. Product promotion does not dispatch a
+documentation deployment. The old engine `Deploy Docs` workflow has been removed;
+keep `docs/` as an input to the public documentation sync.
+
 The rootfs contains the source-built QEMU kernel validated in the candidate; the
 manifest's kernel component is the separately pinned download toolset (including the
 existing Firecracker kernel). Native Mac carries its source-built ARM64 kernel. The

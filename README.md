@@ -188,14 +188,16 @@ kernel/             Nanos-derived kernel tree and tooling
 distro/             Windows WSL2 distro rootfs build
 scripts/            installers and package build scripts
 examples/           sample projects (Go, Node, Python, Ruby, databases, ...)
-docs/               documentation site source (docs.jerboa.dev)
+docs/               documentation source consumed by Jerboa_Public_Docs
 tests/integration/, tests/e2e/   higher-level test suites
 ```
 
 ## Documentation
 
 Full documentation is published at [docs.jerboa.dev](https://docs.jerboa.dev),
-built from [`docs/`](docs/) in this repository:
+maintained and deployed from [Jerboa_Public_Docs](https://github.com/AitorConS/Jerboa_Public_Docs).
+Its sync workflow still consumes [`docs/`](docs/) from this repository; the engine
+no longer builds or deploys the old Jekyll site. Local source references:
 
 - [Getting Started](docs/getting-started.md)
 - [Build Concepts](docs/build-concepts.md)
