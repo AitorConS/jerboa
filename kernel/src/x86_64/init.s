@@ -107,6 +107,9 @@ extern pvh_start
 
 bits 32
 pvh_start32:
+        ; PVH does not provide a stack. Initialize it before the first call,
+        ; while paging is still disabled. This memory is mapped below.
+        mov esp, 0xa000 ; INITIAL_MAP_SIZE
         PREPARE_LONG_MODE eax
         ; set up minimal mapping to be able to run in 64-bit mode, carving page
         ; tables from the top of the first 1MB of memory (which will not be
@@ -138,8 +141,7 @@ pvh_start32:
         mov dword [edx + esi], ecx
         or dword [edx + esi], 0x83
         mov dword [edx + esi + 4], 0
-        ; set stack pointer to INITIAL_MAP_SIZE, and map stack memory
-        mov esp, 0xa000
+        ; map the bootstrap stack memory
         mov dword [edx], 0x83
         mov dword [edx + 4], 0
         ; map kernel code
