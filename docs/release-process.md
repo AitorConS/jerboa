@@ -37,11 +37,21 @@ preview, as selected for this rollout.
    and Firecracker commits. The runtime SHA must have passed the native runtime tests.
 2. Update `VERSION.md` to a **new** version if the intended stable bytes differ from
    any already-published version. Merge that change; it does not publish.
-3. Dispatch **Build release candidate** (`release.yml`) on `main`, providing that
-   version, Desktop SHA, Firecracker SHA and the existing pinned kernel version.
+3. Select the Linux kernel toolset explicitly:
+   - For kernel changes, update `kernel/VERSION` to a new version and merge it.
+     Choose `kernel_source: build` (the default) and provide that version with a
+     `v` prefix. The workflow stages the same-run validated Linux kernel build;
+     it never substitutes the currently published kernel.
+   - For a release intentionally reusing the published Linux tools, choose
+     `kernel_source: stable` and their exact published version. The signed stable
+     manifest and every downloaded file are verified. Do not use this option
+     when the release is meant to deliver Linux kernel fixes.
+   Dispatch **Build release candidate** (`release.yml`) on `main`, providing the
+   product version, Desktop SHA, Firecracker SHA, kernel source and kernel version.
 4. Approve the KVM validation environment after reviewing the source revisions.
-5. Wait for validation, Linux builds, Mac packaging, Windows packaging and the full
-   Windows installer smoke. Windows consumes the current run's CLI artifact plus an
+5. Wait for validation, the selected toolset's QEMU/KVM and Firecracker boot
+   checks, Linux builds, Mac packaging, Windows packaging and the full Windows
+   installer smoke. Windows consumes the current run's CLI artifact plus an
    explicit version/hash manifest; it never fetches stable to decide what to package.
 6. Download `release-candidate` and `macos-app` from the run. The candidate includes a
    signed manifest, a signed inventory with source revisions, exact payload hashes,
@@ -80,11 +90,20 @@ CI and scheduled/manual sync workflow. Product promotion does not dispatch a
 documentation deployment. The old engine `Deploy Docs` workflow has been removed;
 keep `docs/` as an input to the public documentation sync.
 
-The rootfs contains the source-built QEMU kernel validated in the candidate; the
-manifest's kernel component is the separately pinned download toolset (including the
-existing Firecracker kernel). Native Mac carries its source-built ARM64 kernel. The
-signed inventory hashes the complete rootfs and installers, so these inputs are not
-silently inferred from the current channel on a retry.
+The Linux download toolset and WSL rootfs contain the same selected `mkfs`,
+`dump`, `boot.img`, `kernel.img` and `kernel-fc.img` bytes. Assembly reads the
+rootfs archive and verifies each embedded tool against the selected toolset.
+The manifest's kernel version and the distro's kernel version must agree.
+Native Mac continues to carry its source-built ARM64 kernel and native tools,
+validated using the candidate app on a physical Mac. Linux x86_64 tools are never
+substituted into the Mac app.
+
+The signed inventory includes the selection mode, engine SHA, candidate run,
+per-file hashes and QEMU/Firecracker boot evidence bound to those hashes. The
+boot job verifies bytes before and after execution; assembly and promotion check
+the same identity again. The complete rootfs and installers are also hashed.
+Promotion uploads the candidate's existing bytes, including new kernel paths,
+before updating stable. It neither builds a kernel nor resolves one from stable.
 
 ## Reattempts and partial failures
 
@@ -121,10 +140,29 @@ signing credentials are external prerequisites, not fabricated by CI.
 
 ## Kernel and package releases
 
-`kernel-release.yml` builds/validates candidate toolsets; it does not publish. A new
-kernel requires QEMU and Firecracker boot validation and a new kernel version before
-being made available to product candidates. The current coordinator carries forward
-only the explicitly pinned, signed stable kernel. It refuses an implicit kernel change.
+`kernel-release.yml` remains a standalone build diagnostic and does not publish.
+Product releases no longer need a separate kernel publication: `release.yml`
+selects the toolset, boots it on QEMU/KVM and Firecracker, packages it in the
+candidate and signs its hashes. `promote.yml` publishes product and kernel together
+through the existing immutable-object protocol.
+
+For the first release containing the benchmark/kernel corrections, use
+`kernel_source: build` and `kernel_version: v0.2.1` (matching `kernel/VERSION`).
+No product version or stable pointer is advanced just by merging this workflow.
+For later source builds, choose a new kernel version whenever the bytes differ
+from a published toolset; source revisions embedded in the kernel can also change
+bytes after engine-only edits. Use explicit `stable` reuse for CLI-only releases
+when no new Linux kernel is intended. Reusing a kernel version with different
+bytes, or promoting a lower kernel version, is rejected before changing stable.
+Retries with identical published bytes remain safe.
+
+The `kvm` runner needs `cc` with static libc support, QEMU x86_64, Firecracker and
+read/write access to `/dev/kvm`. The boot job uses isolated disks, records both
+hypervisor versions and console-log hashes, and fails on timeout, non-successful
+exit or missing guest output. It uploads `kernel-boot-logs` and only uploads
+`validated-kernel` after both boots succeed. Missing or expired artifacts require
+rebuilding/revalidating the candidate; they never trigger a download fallback.
+Native Mac validation and owner approval of `release` remain required.
 
 `packages.yml` runs independently on changed recipes or a manual package selection.
 Builds use isolated hosted Linux machines and `fail-fast: false`. Package failures do
