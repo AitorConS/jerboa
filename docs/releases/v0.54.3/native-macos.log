@@ -1,0 +1,7 @@
+jerboa version v0.54.3
+jerboad version v0.54.3
+Firecracker 1.18.0-dev / experimental Darwin HVF backend
+Firecracker/HVF: 4 CPU, bind=omitted, HTTP/UDP, environment, volume count=1, port collision and guest exit OK
+Firecracker/HVF: 1 CPU, bind=127.0.0.1:, HTTP/UDP, environment, volume count=2, port collision and guest exit OK
+Firecracker/HVF: 1 CPU, bind=0.0.0.0:, HTTP/UDP, environment, volume count=3, port collision and guest exit OK
+Daemon recovery, failed-guest restart and forced stop OK
