@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 
@@ -37,7 +38,7 @@ func (c *Client) VolumeImport(ctx context.Context, p VolumeImportParams, disk io
 	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("connect for volume import: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
@@ -50,28 +51,28 @@ func (c *Client) VolumeImport(ctx context.Context, p VolumeImportParams, disk io
 	}
 	raw, err := json.Marshal(p)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("encode volume import parameters: %w", err)
 	}
 	if err := enc.Encode(Request{JSONRPC: "2.0", ID: 1, Method: "Volume.Import", Params: raw}); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("send volume import request: %w", err)
 	}
 	w := NewFrameWriter(conn)
 	if _, err := io.Copy(w, disk); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("stream volume import: %w", err)
 	}
 	if err := w.Close(); err != nil {
 		return nil, err
 	}
 	var response Response
 	if err := dec.Decode(&response); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read volume import response: %w", err)
 	}
 	if response.Error != nil {
 		return nil, response.Error
 	}
 	var result volume.Volume
 	if err := json.Unmarshal(response.Result, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode imported volume: %w", err)
 	}
 	return &result, nil
 }

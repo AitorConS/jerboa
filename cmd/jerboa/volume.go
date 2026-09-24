@@ -21,11 +21,11 @@ func newVolumeCmd(endpoint *string, storePath *string, outputFmt *string, verbos
 		Short: "Manage persistent volumes",
 	}
 	cmd.AddCommand(
-		newVolumeCreateCmd(endpoint, storePath, verbose),
+		newVolumeCreateCmd(endpoint, verbose),
 		newVolumeLsCmd(endpoint, outputFmt),
 		newVolumeRmCmd(endpoint),
 		newVolumeInspectCmd(endpoint),
-		newVolumeSeedCmd(endpoint, storePath, verbose),
+		newVolumeSeedCmd(endpoint, verbose),
 		newVolumeMigrateCmd(endpoint, storePath),
 	)
 	return cmd
@@ -48,12 +48,12 @@ func newVolumeMigrateCmd(endpoint, storePath *string) *cobra.Command {
 			}
 			f, err := os.Open(v.DiskPath)
 			if err != nil {
-				return err
+				return fmt.Errorf("open migration source: %w", err)
 			}
 			defer func() { _ = f.Close() }()
 			info, err := f.Stat()
 			if err != nil {
-				return err
+				return fmt.Errorf("stat migration source: %w", err)
 			}
 			client, err := api.Dial(*endpoint)
 			if err != nil {
@@ -94,7 +94,7 @@ func newVolumeMigrateCmd(endpoint, storePath *string) *cobra.Command {
 // the data persists across VM lifecycles. The files are resolved from --pkg,
 // optionally narrowed to a subtree with --src (whose contents become the volume
 // root), streamed to the daemon, and written into the volume's disk with mkfs.
-func newVolumeSeedCmd(endpoint *string, storePath *string, verbose *bool) *cobra.Command {
+func newVolumeSeedCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
 		pkgs      []string
 		pkgSource string
@@ -118,7 +118,7 @@ survives recreating the VM.
 			if len(pkgs) == 0 {
 				return fmt.Errorf("volume seed: at least one --pkg is required")
 			}
-			return seedVolumeFromPkgs(cmd, endpoint, storePath, verbose, args[0], pkgs, pkgSource, src)
+			return seedVolumeFromPkgs(cmd, endpoint, verbose, args[0], pkgs, pkgSource, src)
 		},
 	}
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "package providing the seed files (repeatable)")
@@ -130,7 +130,7 @@ survives recreating the VM.
 // seedVolumeFromPkgs resolves pkgs, narrows them to the src subtree, and writes
 // the result into the named volume via the daemon's mkfs. Shared by
 // `volume seed` and `volume create --seed-pkg`.
-func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, storePath *string, verbose *bool, name string, pkgs []string, pkgSource, src string) error {
+func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, verbose *bool, name string, pkgs []string, pkgSource, src string) error {
 	if err := builder.ValidatePkgSource(pkgSource); err != nil {
 		return fmt.Errorf("volume seed: %w", err)
 	}
@@ -222,7 +222,7 @@ func remapSeedFiles(files []pkg.File, src string) ([]pkg.File, error) {
 	return out, nil
 }
 
-func newVolumeCreateCmd(endpoint *string, storePath *string, verbose *bool) *cobra.Command {
+func newVolumeCreateCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
 		size      string
 		seedPkgs  []string
@@ -256,7 +256,7 @@ subtree whose contents become the volume root:
 				return fmt.Errorf("volume create: %w", err)
 			}
 			if len(seedPkgs) > 0 {
-				if err := seedVolumeFromPkgs(cmd, endpoint, storePath, verbose, name, seedPkgs, pkgSource, src); err != nil {
+				if err := seedVolumeFromPkgs(cmd, endpoint, verbose, name, seedPkgs, pkgSource, src); err != nil {
 					return err
 				}
 			}

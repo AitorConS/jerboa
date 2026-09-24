@@ -222,7 +222,6 @@ func TestComposeUp_InvalidFile(t *testing.T) {
 
 func TestComposeUpWithCtx(t *testing.T) {
 	client, _ := startComposeDaemon(t)
-	storePath := t.TempDir()
 
 	diskPath := filepath.Join(t.TempDir(), "disk.img")
 	require.NoError(t, os.WriteFile(diskPath, []byte("fake"), 0o600))
@@ -233,7 +232,7 @@ func TestComposeUpWithCtx(t *testing.T) {
 			"svc": {Image: diskPath, Memory: "256M"},
 		},
 	}
-	state, err := composeUpWithCtx(context.Background(), client, f, storePath)
+	state, err := composeUpWithCtx(context.Background(), client, f)
 	require.NoError(t, err)
 	require.NotEmpty(t, state.Services["svc"])
 }

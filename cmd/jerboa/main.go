@@ -89,7 +89,7 @@ func newRootCmd() *cobra.Command {
 		"show raw build and download output (useful for debugging)")
 
 	root.AddCommand(
-		newRunCmd(&endpoint, &storePath),
+		newRunCmd(&endpoint),
 		newBuildCmd(&endpoint, &verbose),
 		newInitCmd(),
 		newImagesCmd(&endpoint, &outputFmt),
@@ -103,7 +103,7 @@ func newRootCmd() *cobra.Command {
 		newRmCmd(&endpoint),
 		newInspectCmd(&endpoint),
 		newExecCmd(&endpoint),
-		newComposeCmd(&endpoint, &storePath, &outputFmt),
+		newComposeCmd(&endpoint, &outputFmt),
 		newVolumeCmd(&endpoint, &storePath, &outputFmt, &verbose),
 		newKernelCmd(&verbose),
 		newVersionCmd(),

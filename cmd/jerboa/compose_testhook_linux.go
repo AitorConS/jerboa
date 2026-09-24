@@ -14,7 +14,7 @@ import (
 // composeUpWithCtx mirrors the `compose up` RunE logic with an injectable
 // context and client. It exists only for the in-process daemon tests, which
 // run on Linux, so it lives behind a linux build constraint.
-func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, storePath string) (compose.State, error) {
+func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File) (compose.State, error) {
 	order, err := compose.TopologicalSort(f.Services)
 	if err != nil {
 		return compose.State{}, err

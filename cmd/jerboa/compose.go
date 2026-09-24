@@ -38,21 +38,21 @@ func removeWhenStopped(ctx context.Context, client *api.Client, id string) error
 	return fmt.Errorf("compose: %w", err)
 }
 
-func newComposeCmd(socketPath, storePath, outputFmt *string) *cobra.Command {
+func newComposeCmd(socketPath, outputFmt *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "compose",
 		Short: "Manage multi-service unikernel applications",
 	}
 	cmd.AddCommand(
-		newComposeUpCmd(socketPath, storePath),
-		newComposeDownCmd(socketPath, storePath),
+		newComposeUpCmd(socketPath),
+		newComposeDownCmd(socketPath),
 		newComposePsCmd(socketPath, outputFmt),
 		newComposeLogsCmd(socketPath),
 	)
 	return cmd
 }
 
-func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
+func newComposeUpCmd(socketPath *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "up <compose-file>",
 		Short: "Start all services defined in a compose file",
@@ -214,7 +214,7 @@ func validateStaticIP(ip, subnet string) error {
 	return nil
 }
 
-func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
+func newComposeDownCmd(socketPath *string) *cobra.Command {
 	var force bool
 	var removeVolumes bool
 	cmd := &cobra.Command{

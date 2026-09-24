@@ -16,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newRunCmd(socketPath, storePath *string) *cobra.Command {
+func newRunCmd(socketPath *string) *cobra.Command {
 	var (
 		memory      string
 		cpus        int
