@@ -100,6 +100,14 @@ Usa el ZIP interior jerboa-desktop-X.Y.Z-macos-arm64.zip; si descargaste desde
 el navegador, extrae primero el contenedor del artefacto de GitHub.
 El script verifica firmas, versiones y funcionamiento nativo de las VMs.
 Calcula automaticamente el SHA-256 del ZIP y lo incluye en el JSON.
+Para comprobarlo tu mismo:
+  macOS: shasum -a 256 RUTA_AL_ZIP
+  Linux: sha256sum RUTA_AL_ZIP
+  Windows PowerShell: Get-FileHash RUTA_AL_ZIP -Algorithm SHA256
+
+Compara el resultado con app_sha256 del informe y con native_macos_app.sha256
+en inventory.json del candidato. El SHA de Git identifica un commit; este
+SHA-256 identifica los bytes de un archivo. No son intercambiables.
 
 Conserva el JSON y los logs en un informe HTTPS accesible al revisor. La evidencia
 debe identificar ese candidate_run y el hash exacto de la app. No uses resultados
