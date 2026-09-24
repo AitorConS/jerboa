@@ -270,6 +270,7 @@ func TestManifestValue(t *testing.T) {
 		input string
 		want  string
 	}{
+		{"", `""`},
 		{"/", "/"},
 		{"1", "1"},
 		{"/packages", "/packages"},
@@ -284,6 +285,16 @@ func TestManifestValue(t *testing.T) {
 			require.Equal(t, tc.want, manifestValue(tc.input))
 		})
 	}
+}
+
+func TestBuildManifest_EmptyValues(t *testing.T) {
+	got := BuildManifest(BuildConfig{
+		BinaryPath: "/program",
+		Args:       []string{"--save", "", "--appendonly", "no", ""},
+		Env:        map[string]string{"EMPTY": ""},
+	})
+	require.Contains(t, got, `arguments:(0:/program 1:--save 2:"" 3:--appendonly 4:no 5:"")`)
+	require.Contains(t, got, `EMPTY:""`)
 }
 
 func TestNewBuilder(t *testing.T) {

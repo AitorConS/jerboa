@@ -13,7 +13,6 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/signing"
-	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
 
@@ -86,7 +85,7 @@ func newRunCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("run: %w", err)
 			}
 
-			volSpecs, err := resolveVolumes(volumes, *storePath)
+			volSpecs, err := resolveVolumes(volumes)
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
 			}
@@ -341,20 +340,15 @@ func mergeEnv(values []string) []string {
 }
 
 // resolveVolumes converts "-v name:guestpath[:ro]" specs to VolumeMountSpec.
-// The volume name is resolved to a disk path via the volume store.
-func resolveVolumes(specs []string, storePath string) ([]api.VolumeMountSpec, error) {
+// Names are resolved by the daemon, including when it runs on another host.
+func resolveVolumes(specs []string) ([]api.VolumeMountSpec, error) {
 	if len(specs) == 0 {
 		return nil, nil
-	}
-	volRoot := volumeStorePath(storePath)
-	store, err := volume.NewStore(volRoot)
-	if err != nil {
-		return nil, fmt.Errorf("open volume store: %w", err)
 	}
 
 	out := make([]api.VolumeMountSpec, 0, len(specs))
 	for _, spec := range specs {
-		mount, err := parseVolumeSpec(spec, store)
+		mount, err := parseNamedVolumeSpec(spec)
 		if err != nil {
 			return nil, err
 		}
@@ -363,27 +357,13 @@ func resolveVolumes(specs []string, storePath string) ([]api.VolumeMountSpec, er
 	return out, nil
 }
 
-// parseVolumeSpec parses "name:guestpath" or "name:guestpath:ro".
-func parseVolumeSpec(spec string, store *volume.Store) (api.VolumeMountSpec, error) {
-	name, guestPath, readOnly, err := api.ParseVolumeMount(spec)
+// parseNamedVolumeSpec leaves lookup to the daemon that owns the volume.
+func parseNamedVolumeSpec(spec string) (api.VolumeMountSpec, error) {
+	name, path, ro, err := api.ParseVolumeMount(spec)
 	if err != nil {
 		return api.VolumeMountSpec{}, err
 	}
-
-	vol, err := store.Get(name)
-	if err != nil {
-		return api.VolumeMountSpec{}, fmt.Errorf("volume %q not found (create with 'jerboa volume create %s'): %w", name, name, err)
-	}
-	label := vol.Label
-	if label == "" {
-		label = volume.SanitizeLabel(vol.ID)
-	}
-	return api.VolumeMountSpec{
-		DiskPath:  hostPathForDaemon(vol.DiskPath),
-		GuestPath: guestPath,
-		ReadOnly:  readOnly,
-		Label:     label,
-	}, nil
+	return api.VolumeMountSpec{Name: name, GuestPath: path, ReadOnly: ro}, nil
 }
 
 // parseVolumePortString parses a port spec string into a wire port map.

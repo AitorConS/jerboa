@@ -58,8 +58,9 @@ type Network struct {
 }
 
 type networkState struct {
-	AllocatedIPs []string `json:"allocated_ips"`
-	NextIndex    int      `json:"next_index"`
+	AllocatedIPs    []string          `json:"allocated_ips"`
+	NextIndex       int               `json:"next_index"`
+	PendingReleases map[string]string `json:"pending_releases,omitempty"`
 }
 
 type Store struct {
@@ -370,6 +371,14 @@ func (s *Store) ReleaseIP(name string, ip string) error {
 	}
 	if !found {
 		return nil
+	}
+	// Revisit freed addresses. Otherwise a sequence of short-lived VMs exhausts
+	// the subnet even though all previous leases have been released.
+	st.NextIndex = 2
+	for owner, pendingIP := range st.PendingReleases {
+		if pendingIP == ip {
+			delete(st.PendingReleases, owner)
+		}
 	}
 
 	if err := writeNetworkState(dir, st); err != nil {

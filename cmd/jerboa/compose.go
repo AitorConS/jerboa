@@ -73,11 +73,11 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				return fmt.Errorf("compose up: %w", err)
 			}
 
-			volPath := volumeStorePath(*storePath)
-			volStore, err := volume.NewStore(volPath)
+			client, err := api.Dial(*socketPath)
 			if err != nil {
-				return fmt.Errorf("compose up: open volume store: %w", err)
+				return err
 			}
+			defer func() { _ = client.Close() }()
 
 			if _, err := os.Stat(stateFilePath(composeFile)); err == nil {
 				return fmt.Errorf("compose project already has state; run down first")
@@ -94,15 +94,17 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}()
 			for volName, volCfg := range f.Volumes {
-				if _, getErr := volStore.Get(volName); getErr == nil {
+				if _, getErr := client.VolumeGet(cmd.Context(), volName); getErr == nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, skipping\n", volName)
 					continue
+				} else if !api.IsNotFound(getErr) {
+					return fmt.Errorf("compose up: volume %q: %w", volName, getErr)
 				}
 				sizeBytes, parseErr := volume.ParseSize(volCfg.DefaultSize())
 				if parseErr != nil {
 					return fmt.Errorf("compose up: volume %q: %w", volName, parseErr)
 				}
-				if _, createErr := volStore.Create(volName, sizeBytes); createErr != nil {
+				if _, createErr := client.VolumeCreate(cmd.Context(), volName, sizeBytes); createErr != nil {
 					return fmt.Errorf("compose up: create volume %q: %w", volName, createErr)
 				}
 				state.CreatedVolumes = append(state.CreatedVolumes, volName)
@@ -111,16 +113,6 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "created volume %s\n", volName)
 			}
-
-			client, err := api.Dial(*socketPath)
-			if err != nil {
-				return fmt.Errorf("compose up: connect to daemon: %w", err)
-			}
-			defer func() {
-				if closeErr := client.Close(); closeErr != nil {
-					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
-				}
-			}()
 
 			for netName, netCfg := range f.Networks {
 				driver := netCfg.Driver
@@ -150,7 +142,7 @@ func newComposeUpCmd(socketPath, storePath *string) *cobra.Command {
 				if mem == "" {
 					mem = "256M"
 				}
-				params, buildErr := buildServiceRunParams(svc, mem, *storePath)
+				params, buildErr := buildServiceRunParams(svc, mem)
 				if buildErr != nil {
 					return fmt.Errorf("compose up: service %q: %w", name, buildErr)
 				}
@@ -275,17 +267,10 @@ func newComposeDownCmd(socketPath, storePath *string) *cobra.Command {
 				}
 			}
 			if removeVolumes {
-				store, err := volume.NewStore(volumeStorePath(*storePath))
-				if err != nil {
-					return fmt.Errorf("compose: %w", err)
-				}
 				remaining := []string{}
 				for _, name := range state.CreatedVolumes {
-					vol, err := store.Get(name)
-					if err == nil {
-						err = client.VolumeRemove(cmd.Context(), name, hostPathForDaemon(vol.DiskPath))
-					}
-					if err != nil && !os.IsNotExist(err) {
+					err := client.VolumeRemove(cmd.Context(), name, "")
+					if err != nil && !api.IsNotFound(err) {
 						remaining = append(remaining, name)
 						failures = append(failures, err)
 					}
@@ -476,7 +461,7 @@ func stateServiceNames(state compose.State) []string {
 // buildServiceRunParams converts a compose.Service into an api.RunParams. The
 // service image is sent as a reference (resolved by the daemon) or a direct
 // path, mirroring the run command.
-func buildServiceRunParams(svc compose.Service, mem, storePath string) (api.RunParams, error) {
+func buildServiceRunParams(svc compose.Service, mem string) (api.RunParams, error) {
 	imageRef, imagePath, err := splitImageArg(svc.Image)
 	if err != nil {
 		return api.RunParams{}, fmt.Errorf("image: %w", err)
@@ -495,7 +480,7 @@ func buildServiceRunParams(svc compose.Service, mem, storePath string) (api.RunP
 		}
 		params.PortMaps = append(params.PortMaps, pm)
 	}
-	volSpecs, err := resolveVolumes(svc.Volumes, storePath)
+	volSpecs, err := resolveVolumes(svc.Volumes)
 	if err != nil {
 		return api.RunParams{}, fmt.Errorf("volumes: %w", err)
 	}

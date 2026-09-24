@@ -20,20 +20,17 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 		return compose.State{}, err
 	}
 
-	volPath := volumeStorePath(storePath)
-	volStore, err := volume.NewStore(volPath)
-	if err != nil {
-		return compose.State{}, fmt.Errorf("open volume store: %w", err)
-	}
-
 	var createdVolumes []string
 	for volName, volCfg := range f.Volumes {
-		if _, getErr := volStore.Get(volName); getErr != nil {
+		if _, getErr := client.VolumeGet(ctx, volName); getErr != nil {
+			if !api.IsNotFound(getErr) {
+				return compose.State{}, getErr
+			}
 			sizeBytes, parseErr := volume.ParseSize(volCfg.DefaultSize())
 			if parseErr != nil {
 				return compose.State{}, fmt.Errorf("volume %q: %w", volName, parseErr)
 			}
-			if _, createErr := volStore.Create(volName, sizeBytes); createErr != nil {
+			if _, createErr := client.VolumeCreate(ctx, volName, sizeBytes); createErr != nil {
 				return compose.State{}, fmt.Errorf("create volume %q: %w", volName, createErr)
 			}
 			createdVolumes = append(createdVolumes, volName)
@@ -52,7 +49,7 @@ func composeUpWithCtx(ctx context.Context, client *api.Client, f compose.File, s
 		if mem == "" {
 			mem = "256M"
 		}
-		params, err := buildServiceRunParams(svc, mem, storePath)
+		params, err := buildServiceRunParams(svc, mem)
 		if err != nil {
 			return compose.State{}, fmt.Errorf("service %q: %w", name, err)
 		}

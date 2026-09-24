@@ -60,6 +60,8 @@ type PortMapSpec struct {
 
 // VolumeMountSpec is the wire representation of a volume mount.
 type VolumeMountSpec struct {
+	// Name is resolved by the daemon; DiskPath is retained for legacy clients.
+	Name      string `json:"name,omitempty"`
 	DiskPath  string `json:"disk_path"`
 	GuestPath string `json:"guest_path"`
 	ReadOnly  bool   `json:"read_only,omitempty"`
@@ -194,7 +196,7 @@ type IDParams struct {
 // negotiate it in the Auth.Hello handshake and refuse to talk across a mismatch,
 // so a stale binary on either side fails fast with a clear message instead of
 // misbehaving mid-session. Bump it on any breaking change to the RPC wire format.
-const ProtoVersion = 2
+const ProtoVersion = 3
 
 // AuthParams is the payload of the Auth.Hello handshake. When the daemon is
 // configured with a token, the first request on every connection must be

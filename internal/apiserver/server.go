@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -129,6 +130,16 @@ func NewServer(mgr vm.Manager, netStore *network.Store, endpoint string, shutdow
 
 // Serve accepts connections and handles them until ctx is canceled.
 func (s *Server) Serve(ctx context.Context) error {
+	if s.netStore != nil {
+		live := make(map[string]bool)
+		for _, v := range s.mgr.List() {
+			live[v.ID] = true
+		}
+		if err := s.netStore.RecoverReleases(live); err != nil {
+			_ = s.listener.Close()
+			return fmt.Errorf("recover network leases: %w", err)
+		}
+	}
 	go func() {
 		<-ctx.Done()
 		if err := s.listener.Close(); err != nil {
@@ -248,6 +259,11 @@ var attachHandled = struct{}{}
 
 func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, dec *json.Decoder) (any, *api.RPCError) {
 	switch req.Method {
+	case "Volume.Import":
+		br := bufio.NewReader(io.MultiReader(dec.Buffered(), conn))
+		skipLeadingWhitespace(br)
+		s.handleVolumeImport(ctx, req.Params, api.NewFrameReader(br), conn, req.ID)
+		return attachHandled, nil
 	case "Image.Build":
 		// Build streams its context after the request. Read the decoder's
 		// leftover buffer first, then the raw connection. json.Encoder writes a
@@ -306,6 +322,8 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleNetworkRemove(req.Params)
 	case "Volume.Remove":
 		return s.handleVolumeRemove(req.Params)
+	case "Volume.Create", "Volume.Get", "Volume.List":
+		return s.handleVolume(req.Method, req.Params)
 	case "Network.AllocateIP":
 		return s.handleNetworkAllocateIP(req.Params)
 	case "Network.ReleaseIP":
@@ -427,6 +445,9 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		if err := validator.ValidateImagePlatform(architecture, p.EmulateX86); err != nil {
 			return nil, &api.RPCError{Code: -32602, Message: err.Error()}
 		}
+	}
+	if rerr := s.resolveNamedVolumes(p.Volumes); rerr != nil {
+		return nil, rerr
 	}
 	if rerr := s.ensureVolumesFormatted(ctx, p.Volumes); rerr != nil {
 		return nil, rerr
@@ -575,9 +596,50 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 
 func (s *Server) autoRemove(ctx context.Context, v *vm.VM) {
 	<-v.Done()
-	if err := s.mgr.Remove(ctx, v.ID); err != nil {
+	if err := s.removeVM(ctx, v.ID); err != nil {
 		slog.Debug("auto-remove vm", "vm_id", v.ID, "err", err)
 	}
+}
+
+// removeVM serializes deletion with run/start so a released address cannot be
+// reused while its old VM is still registered. Restart replacements retain the
+// same address and deliberately remove their predecessor through the manager.
+func (s *Server) removeVM(ctx context.Context, id string) error {
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	v, err := s.mgr.Get(id)
+	if err != nil {
+		return err
+	}
+	release := s.netStore != nil && v.Cfg.NetworkName != "" && v.Cfg.IPAddress != ""
+	if release {
+		for _, other := range s.mgr.List() {
+			if other.ID != v.ID && other.Cfg.NetworkName == v.Cfg.NetworkName && other.Cfg.IPAddress == v.Cfg.IPAddress {
+				release = false
+			}
+		}
+		if _, err := s.netStore.Get(v.Cfg.NetworkName); err != nil {
+			if !os.IsNotExist(err) {
+				return err
+			}
+			release = false
+		}
+	}
+	if release {
+		if err := s.netStore.PrepareRelease(v.Cfg.NetworkName, v.ID, v.Cfg.IPAddress); err != nil {
+			return err
+		}
+	}
+	if err := s.mgr.Remove(ctx, v.ID); err != nil {
+		return err
+	}
+	if !release {
+		return nil
+	}
+	if err := s.netStore.ReleaseIP(v.Cfg.NetworkName, v.Cfg.IPAddress); err != nil {
+		return fmt.Errorf("VM removed, but release of %s on network %s failed: %w", v.Cfg.IPAddress, v.Cfg.NetworkName, err)
+	}
+	return nil
 }
 
 // recordVMError increments the VM error counter, if metrics are enabled.
@@ -732,7 +794,7 @@ func (s *Server) handleRemove(ctx context.Context, params json.RawMessage) (any,
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
-	if err := s.mgr.Remove(ctx, p.ID); err != nil {
+	if err := s.removeVM(ctx, p.ID); err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil

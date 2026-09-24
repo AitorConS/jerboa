@@ -34,7 +34,23 @@ func (s *Server) handleVolumeRemove(raw json.RawMessage) (any, *api.RPCError) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, &api.RPCError{Code: -32602, Message: err.Error()}
 	}
-	fail := func(err error) *api.RPCError { return &api.RPCError{Code: -32000, Message: err.Error()} }
+	fail := volumeRPCError
+	if p.DiskPath == "" {
+		if s.volStore == nil {
+			return nil, fail(fmt.Errorf("volume store disabled"))
+		}
+		vol, err := s.volStore.Get(p.Name)
+		if err != nil {
+			return nil, fail(err)
+		}
+		if err := s.volumeUnused(vol.DiskPath); err != nil {
+			return nil, fail(err)
+		}
+		if err := s.volStore.Remove(p.Name); err != nil {
+			return nil, fail(err)
+		}
+		return map[string]string{"status": "ok"}, nil
+	}
 	if err := s.volumeUnused(p.DiskPath); err != nil {
 		return nil, fail(err)
 	}

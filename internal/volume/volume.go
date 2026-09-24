@@ -148,7 +148,7 @@ func (s *Store) List() ([]*Volume, error) {
 	}
 	out := make([]*Volume, 0, len(entries))
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || e.Name()[0] == '.' {
 			continue
 		}
 		v, err := s.readMeta(e.Name())

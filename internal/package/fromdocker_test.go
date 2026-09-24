@@ -2,12 +2,40 @@ package pkg
 
 import (
 	"archive/tar"
+	"debug/elf"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestELFClosureIncludesGlibcRuntimeHelpers(t *testing.T) {
+	for _, tc := range []struct {
+		arch    string
+		machine elf.Machine
+	}{{"aarch64", elf.EM_AARCH64}, {"x86_64", elf.EM_X86_64}} {
+		t.Run(tc.arch, func(t *testing.T) {
+			libdir := "lib/" + tc.arch + "-linux-gnu/"
+			contents := map[string]string{
+				"bin/app":                  string(syntheticELF(tc.machine, "", []string{"libc.so.6"}, "")),
+				libdir + "libc.so.6":       string(syntheticELF(tc.machine, "", nil, "")),
+				libdir + "libgcc_s.so.1":   string(syntheticELF(tc.machine, "", []string{"libc.so.6"}, "")),
+				libdir + "libnss_dns.so.2": string(syntheticELF(tc.machine, "", nil, "")),
+			}
+			var entries []tar.Header
+			for name := range contents {
+				entries = append(entries, tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0644})
+			}
+			cfs := newContainerFS(t, writeSyntheticTar(t, entries, contents))
+			got, err := cfs.elfClosure("/bin/app")
+			require.NoError(t, err)
+			require.Len(t, got, 4, "circular dependency must not duplicate libc")
+			require.Contains(t, got, "/"+libdir+"libgcc_s.so.1")
+			require.Contains(t, got, "/"+libdir+"libnss_dns.so.2")
+		})
+	}
+}
 
 // writeSyntheticTar builds a tar file describing a container filesystem, without
 // creating any real files or symlinks on the host. Regular-file sizes are filled

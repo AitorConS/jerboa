@@ -1,29 +1,20 @@
 package main
 
 import (
-	"path/filepath"
 	"testing"
 
-	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/stretchr/testify/require"
 )
 
 func TestResolveVolumes(t *testing.T) {
-	storePath := filepath.Join(t.TempDir(), "images")
-	volRoot := volumeStorePath(storePath)
-	store, err := volume.NewStore(volRoot)
-	require.NoError(t, err)
-
-	_, err = store.Create("data", 8*1024*1024)
-	require.NoError(t, err)
-
-	vols, err := resolveVolumes([]string{"data:/mnt/data:ro"}, storePath)
+	vols, err := resolveVolumes([]string{"data:/mnt/data:ro"})
 	require.NoError(t, err)
 	require.Len(t, vols, 1)
+	require.Equal(t, "data", vols[0].Name)
 	require.Equal(t, "/mnt/data", vols[0].GuestPath)
 	require.True(t, vols[0].ReadOnly)
-
-	_, err = resolveVolumes([]string{"missing:/mnt"}, storePath)
+	require.Empty(t, vols[0].DiskPath)
+	_, err = resolveVolumes([]string{"data:relative"})
 	require.Error(t, err)
 }
 
