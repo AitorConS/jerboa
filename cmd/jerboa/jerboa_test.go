@@ -53,6 +53,9 @@ func startDaemonWithStore(t *testing.T, storePath string) (*api.Client, string) 
 	imgStore, err := image.NewStore(storePath)
 	require.NoError(t, err)
 	srv.SetImageStore(imgStore)
+	volStore, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	srv.SetVolumeStore(volStore)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx) }()
@@ -444,44 +447,6 @@ func TestBuildEnv_MissingFile(t *testing.T) {
 	require.Error(t, err)
 }
 
-// --- parseVolumeSpec ---
-
-func TestParseVolumeSpec_ValidRW(t *testing.T) {
-	store, err := makeVolumeStore(t)
-	require.NoError(t, err)
-
-	spec, err := parseVolumeSpec("data:/mnt/data", store)
-	require.NoError(t, err)
-	require.Equal(t, "/mnt/data", spec.GuestPath)
-	require.False(t, spec.ReadOnly)
-}
-
-func TestParseVolumeSpec_ValidRO(t *testing.T) {
-	store, err := makeVolumeStore(t)
-	require.NoError(t, err)
-
-	spec, err := parseVolumeSpec("data:/mnt/data:ro", store)
-	require.NoError(t, err)
-	require.True(t, spec.ReadOnly)
-}
-
-func TestParseVolumeSpec_NotFound(t *testing.T) {
-	store, err := makeVolumeStore(t)
-	require.NoError(t, err)
-
-	_, err = parseVolumeSpec("missing:/mnt", store)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not found")
-}
-
-func TestParseVolumeSpec_BadFormat(t *testing.T) {
-	store, err := makeVolumeStore(t)
-	require.NoError(t, err)
-
-	_, err = parseVolumeSpec("nocodon", store)
-	require.Error(t, err)
-}
-
 // --- volume CLI ---
 
 func TestVolume_CreateAndList(t *testing.T) {
@@ -604,17 +569,4 @@ func TestParseHealthCheck_Invalid(t *testing.T) {
 
 	_, err = parseHealthCheck(":8080")
 	require.Error(t, err)
-}
-
-// --- helpers ---
-
-func makeVolumeStore(t *testing.T) (*volume.Store, error) {
-	t.Helper()
-	dir := t.TempDir()
-	store, err := volume.NewStore(dir)
-	if err != nil {
-		return nil, err
-	}
-	_, err = store.Create("data", 1<<20)
-	return store, err
 }

@@ -285,9 +285,9 @@ User=${JERBOA_USER}
 ${kvm_unit}
 Environment=HOME=${JERBOA_HOME}
 WorkingDirectory=${JERBOA_HOME}
-# firecracker networking: tap device creation, ip/iptables, ip_forward sysctl.
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+# Networking: TAP/routing, raw sockets, and the service-discovery DNS port.
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 EnvironmentFile=${ENV_FILE}
 ExecStart=${PREFIX}/jerboad --host ${endpoint} --hypervisor ${HYPERVISOR}
 Restart=on-failure

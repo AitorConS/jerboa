@@ -17,6 +17,7 @@ func TestNativeQEMUUsesHVFAndPrivateNetworkStream(t *testing.T) {
 		PortMaps: []PortMap{{HostPort: 8080, GuestPort: 80, BindAddr: "127.0.0.1"}}}
 	args := strings.Join(m.buildCmd(context.Background(), cfg, "unix:/tmp/qmp.sock").Args, " ")
 	require.Contains(t, args, "-accel hvf -cpu host")
+	require.Contains(t, args, "-machine virt,gic-version=3,highmem=on")
 	require.Contains(t, args, "-kernel /tools/kernel.img")
 	require.Contains(t, args, "file=/images/a,,b.img")
 	require.Contains(t, args, "addr.path=/tmp/net.sock,server=off,reconnect-ms=1000")

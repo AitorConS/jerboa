@@ -24,6 +24,11 @@
    queueing a ton with the polled ATA driver. There's only one queue globally anyhow. */
 #define MAX_PAGE_COMPLETION_VECS 16384
 
+/* Bound writeback requests independently of SG coalescing. A random workload
+ * can otherwise submit thousands of separate I/Os per file while holding the
+ * node lock, exhausting memory needed to complete and reclaim those writes. */
+#define PAGECACHE_WRITEBACK_MAX_PAGES 256
+
 typedef struct pagecache_page_entry {
     union {
         pteptr pte_ptr;
@@ -240,6 +245,7 @@ static boolean realloc_pagelocked(pagecache pc, pagecache_page pp)
     fetch_and_add(&pc->total_pages, 1);
     change_page_state_locked(pc, pp, PAGECACHE_PAGESTATE_ALLOC);
     pp->evicted = false;
+    pp->dirty_pending = false;
     return true;
 }
 
@@ -453,6 +459,7 @@ static pagecache_page allocate_page_nodelocked(pagecache_node pn, u64 offset)
     pp->node = pn;
     pp->l.next = pp->l.prev = 0;
     pp->evicted = false;
+    pp->dirty_pending = false;
     pp->phys = physical_from_virtual(p);
     list_init(&pp->bh_completions);
     assert(rbtree_insert_node(&pn->pages, &pp->rbnode));
@@ -535,8 +542,24 @@ static pagecache_page touch_or_fill_page_by_num_nodelocked(pagecache_node pn, u6
 /* called with node locked */
 static boolean pagecache_set_dirty(pagecache_node pn, range r)
 {
+    pagecache pc = pn->pv->pc;
+    /* Track whole pages so each pending range owns exactly one reference per
+     * page, including disjoint writes to different blocks of the same page. */
+    r.start &= ~MASK(pc->page_order);
+    r.end = pad(r.end, cache_pagesize(pc));
     if (!rangemap_insert_range(&pn->dirty, r))
         return false;
+    pagecache_lock_state(pc);
+    for (u64 i = r.start >> pc->page_order; i < r.end >> pc->page_order; i++) {
+        pagecache_page pp = page_lookup_nodelocked(pn, i);
+        assert(pp != INVALID_ADDRESS);
+        if (!pp->dirty_pending) {
+            pp->refcount++;
+            refcount_reserve(&pn->refcount);
+            pp->dirty_pending = true;
+        }
+    }
+    pagecache_unlock_state(pc);
     pagecache_debug("node %p, added dirty range %R\n", pn, r);
     pagecache_volume pv = pn->pv;
     pagecache_lock_volume(pv);
@@ -683,6 +706,17 @@ closure_function(1, 3, void, pagecache_write_sg,
         return;
     }
 
+    /* Apply backpressure before reserving extents or consuming the last pages.
+     * Writeback itself needs memory for filesystem metadata and I/O descriptors;
+     * waiting until a cache allocation fails can leave nothing to flush with.
+     * No pagecache/filesystem locks are held while the cleaner waits for I/O. */
+    heap phys = (heap)heap_physical(get_kernel_heaps());
+    u64 total = heap_total(phys);
+    u64 free = total - heap_allocated(phys);
+    u64 reserve = MAX(total >> MEM_CLEAN_THRESHOLD_SHIFT, MEM_CLEAN_THRESHOLD);
+    if (free < reserve)
+        mem_clean(reserve - free, true);
+
     u64 start_offset = q.start & MASK(pc->page_order);
     u64 end_offset = q.end & MASK(pc->page_order);
     range r = range_rshift(q, pc->page_order);
@@ -792,6 +826,121 @@ closure_function(1, 3, void, pagecache_write_sg,
         }
     }
     apply(sh, sstring_is_null(err_msg) ? STATUS_OK : timm_sstring(ss("result"), err_msg));
+}
+
+/* Keep a writer's context alive through asynchronous page fills. The mutex is
+ * released by its owner, and no filesystem or page-cache spinlock is held while
+ * waiting for I/O. Shrink uses the same gate before draining writeback. */
+closure_function(3, 1, void, pagecache_write_task,
+                 pagecache_node, pn, sg_list, sg, range, q,
+                 status_handler complete)
+{
+    apply(bound(pn)->cache_write_raw, bound(sg), bound(q), complete);
+}
+
+static void pagecache_node_lock_writer(pagecache_node pn)
+{
+    mutex_lock(&pn->write_lock);
+}
+
+static void pagecache_node_unlock_writer(pagecache_node pn)
+{
+    mutex_unlock(&pn->write_lock);
+}
+
+void pagecache_node_begin_truncate(pagecache_node pn)
+{
+    pagecache_node_lock_writer(pn);
+    pagecache_lock_node(pn);
+    pn->truncating = true;
+    pagecache_unlock_node(pn);
+}
+
+void pagecache_node_end_truncate(pagecache_node pn)
+{
+    pagecache_lock_node(pn);
+    pn->truncating = false;
+    pagecache_unlock_node(pn);
+    pagecache_node_unlock_writer(pn);
+}
+
+closure_function(1, 3, void, pagecache_write_serialized,
+                 pagecache_node, pn,
+                 sg_list sg, range q, status_handler complete)
+{
+    pagecache_node pn = bound(pn);
+    pagecache_node_lock_writer(pn);
+    status s = wait_for_task(stack_closure(pagecache_write_task, pn, sg, q));
+    pagecache_node_unlock_writer(pn);
+    async_apply_status_handler(complete, s);
+}
+
+closure_function(1, 1, void, pagecache_sync_task,
+                 pagecache_node, pn,
+                 status_handler complete)
+{
+    pagecache_node_scan(bound(pn), irange(0, infinity), complete);
+}
+
+status pagecache_node_sync_locked(pagecache_node pn)
+{
+    assert(mutex_is_acquired(&pn->write_lock));
+    return wait_for_task(stack_closure(pagecache_sync_task, pn));
+}
+
+status pagecache_node_zero_locked(pagecache_node pn, range r)
+{
+    assert(mutex_is_acquired(&pn->write_lock));
+    return wait_for_task(stack_closure(pagecache_write_task, pn, 0, r));
+}
+
+closure_function(1, 1, void, pagecache_wait_read,
+                 pagecache_page, pp,
+                 status_handler complete)
+{
+    pagecache_page pp = bound(pp);
+    pagecache pc = pp->node->pv->pc;
+    pagecache_lock_state(pc);
+    if (page_state(pp) == PAGECACHE_PAGESTATE_READING) {
+        enqueue_page_completion_statelocked(pc, pp, complete);
+        complete = 0;
+    }
+    pagecache_unlock_state(pc);
+    if (complete)
+        apply(complete, STATUS_OK);
+}
+
+/* Extents already describe holes in this range. Wait for old reads before
+ * clearing resident copies; new reads therefore either see zeros from disk or
+ * these zeroed pages. No allocation proportional to file size is required. */
+void pagecache_node_zero_cached_range(pagecache_node pn, range r)
+{
+    assert(mutex_is_acquired(&pn->write_lock));
+    pagecache pc = pn->pv->pc;
+restart:
+    pagecache_lock_node(pn);
+    pagecache_lock_state(pc);
+    pagecache_page pp = (pagecache_page)rbtree_find_first(&pn->pages);
+    for (; pp != INVALID_ADDRESS; pp = (pagecache_page)rbnode_get_next((rbnode)pp)) {
+        range i = range_intersection(byte_range_from_page(pc, pp), r);
+        if (page_state(pp) == PAGECACHE_PAGESTATE_FREE || range_empty(i))
+            continue;
+        if (page_state(pp) == PAGECACHE_PAGESTATE_READING) {
+            pp->refcount++;
+            pagecache_unlock_state(pc);
+            pagecache_unlock_node(pn);
+            status s = wait_for_task(stack_closure(pagecache_wait_read, pp));
+            if (!is_ok(s))
+                timm_dealloc(s);
+            pagecache_lock_state(pc);
+            pagecache_page_release_locked(pc, pp, false);
+            pagecache_unlock_state(pc);
+            goto restart;
+        }
+        zero(pp->kvirt + (i.start & MASK(pc->page_order)), range_span(i));
+    }
+    pagecache_unlock_state(pc);
+    pagecache_unlock_node(pn);
 }
 
 /* evict pages from new and active lists, then rebalance */
@@ -1020,6 +1169,27 @@ static void commit_dirty_node_complete(pagecache_node pn, status_handler complet
         timm_dealloc(s);
 }
 
+/* Release a queued commit's references for pages removed by truncation.
+ * The node lock is held; a newer dirty range retains its own references. */
+static void pagecache_discard_commit_range(pagecache_node pn, range r)
+{
+    pagecache pc = pn->pv->pc;
+    pagecache_lock_state(pc);
+    u64 end = (r.end + MASK(pc->page_order)) >> pc->page_order;
+    for (u64 i = r.start >> pc->page_order; i < end; i++) {
+        pagecache_page pp = page_lookup_nodelocked(pn, i);
+        assert(pp != INVALID_ADDRESS);
+        if (page_state(pp) == PAGECACHE_PAGESTATE_DIRTY && !pp->dirty_pending && !pp->write_count) {
+            change_page_state_locked(pc, pp, PAGECACHE_PAGESTATE_NEW);
+            pagecache_page_release_locked(pc, pp, false);
+            refcount_release(&pn->refcount);
+        }
+        pagecache_page_release_locked(pc, pp, false);
+        refcount_release(&pn->refcount);
+    }
+    pagecache_unlock_state(pc);
+}
+
 define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
                         pagecache_node, pn, buffer, dirty, status_handler, complete,
                         status s)
@@ -1032,7 +1202,20 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
     if (!is_ok(s)) {
         pagecache_lock_node(pn);
         while (buffer_length(dirty) > 0) {
-            pagecache_set_dirty(pn, *(range *)buffer_ref(dirty, 0));
+            range r = *(range *)buffer_ref(dirty, 0);
+            pagecache_set_dirty(pn, r);
+            pagecache_lock_state(pc);
+            u64 end = (r.end + MASK(pc->page_order)) >> pc->page_order;
+            for (u64 i = r.start >> pc->page_order; i < end; i++) {
+                pagecache_page pp = page_lookup_nodelocked(pn, i);
+                if (page_state(pp) != PAGECACHE_PAGESTATE_DIRTY) {
+                    pp->refcount++;
+                    change_page_state_locked(pc, pp, PAGECACHE_PAGESTATE_DIRTY);
+                }
+                pagecache_page_release_locked(pc, pp, false);
+                refcount_release(&pn->refcount);
+            }
+            pagecache_unlock_state(pc);
             buffer_consume(dirty, sizeof(range));
         }
         pagecache_unlock_node(pn);
@@ -1049,15 +1232,19 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
 
     merge m = allocate_merge(pc->h, (status_handler)closure_self());
     status_handler sh = apply_merge(m);
-    u64 committing = 0;
+    u64 committing = 0, submitted_pages = 0;
     pagecache_lock_node(pn);
     u64 limit = pn->length;
-    while (buffer_length(dirty) > 0 && committing < PAGECACHE_MAX_SG_ENTRIES) {
+    while (buffer_length(dirty) > 0 && submitted_pages < PAGECACHE_WRITEBACK_MAX_PAGES) {
         range *rp = buffer_ref(dirty, 0);
         if (rp->start >= limit) {
+            pagecache_discard_commit_range(pn, *rp);
             buffer_consume(dirty, sizeof(range));
             continue;
         }
+        u64 page_limit = pad(limit, cache_pagesize(pc));
+        if (rp->end > page_limit)
+            pagecache_discard_commit_range(pn, irange(page_limit, rp->end));
         rp->end = MIN(rp->end, limit);
         sg_list sg = allocate_sg_list();
         if (sg == INVALID_ADDRESS) {
@@ -1102,11 +1289,15 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
                 pp->refcount++;
             change_page_state_locked(pc, pp, PAGECACHE_PAGESTATE_WRITING);
             pp->write_count++;
+            /* Transfer the queued operation's reference to the write above. */
+            pagecache_page_release_locked(pc, pp, false);
+            refcount_release(&pn->refcount);
             pagecache_unlock_state(pc);
             page_count++;
+            submitted_pages++;
             start += len;
             pp = (pagecache_page)rbnode_get_next((rbnode)pp);
-            if (committing >= PAGECACHE_MAX_SG_ENTRIES && start < r.end) {
+            if (submitted_pages >= PAGECACHE_WRITEBACK_MAX_PAGES && start < r.end) {
                 r.end = start;
                 break;
             }
@@ -1125,19 +1316,39 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
 }
 
 closure_function(2, 1, boolean, dirty_range_handler,
-                 rangemap, rm, buffer, b,
+                 pagecache_node, pn, buffer, b,
                  rmnode n)
 {
-    buffer b = bound(b);
-    assert(buffer_write(b, &n->r, sizeof(n->r)));
-    rangemap_remove_range(bound(rm), n);
+    pagecache_node pn = bound(pn);
+    pagecache pc = pn->pv->pc;
+    assert(buffer_write(bound(b), &n->r, sizeof(n->r)));
+    /* Two queued commits can cover the same page. The DIRTY state's reference
+     * alone cannot protect the second commit after the first finishes. */
+    pagecache_lock_state(pc);
+    u64 end = (n->r.end + MASK(pc->page_order)) >> pc->page_order;
+    for (u64 i = n->r.start >> pc->page_order; i < end; i++) {
+        pagecache_page pp = page_lookup_nodelocked(pn, i);
+        assert(pp != INVALID_ADDRESS && pp->dirty_pending);
+        pp->dirty_pending = false; /* transfer the map's reference to this commit */
+    }
+    pagecache_unlock_state(pc);
+    rangemap_remove_range(&pn->dirty, n);
     return true;
 }
 
-static void pagecache_commit_dirty_node(pagecache_node pn, status_handler complete)
+static boolean pagecache_commit_dirty_node(pagecache_node pn, status_handler complete)
 {
     pagecache_debug("committing dirty node %p\n", pn);
     pagecache_lock_node(pn);
+    /* Shared mappings can be dirtied while shrink drains the cache. Only
+     * its owner may submit writeback until extent removal and length publication
+     * finish. Other scans leave their dirty ranges queued for the next pass. */
+    if (pn->truncating && !mutex_is_acquired(&pn->write_lock)) {
+        pagecache_unlock_node(pn);
+        if (complete)
+            apply(complete, timm("result", "truncate in progress", "fsstatus", "%d", -EAGAIN));
+        return false;
+    }
     heap h = pn->pv->pc->h;
     status_handler sh;
     u64 range_count = rangemap_count(&pn->dirty);
@@ -1152,7 +1363,7 @@ static void pagecache_commit_dirty_node(pagecache_node pn, status_handler comple
             goto oom;
         }
         rangemap_range_lookup(&pn->dirty, irange(0, infinity),
-                              stack_closure(dirty_range_handler, &pn->dirty, b));
+                              stack_closure(dirty_range_handler, pn, b));
         op->common.type = PAGECACHE_NODE_OP_COMMIT;
         list_push_back(&pn->ops, &op->common.l);
         sh = init_closure(&op->commit, pagecache_commit_dirty_ranges, pn, b, complete);
@@ -1171,11 +1382,12 @@ static void pagecache_commit_dirty_node(pagecache_node pn, status_handler comple
     pagecache_unlock_node(pn);
     if (!busy && sh)
         apply(sh, STATUS_OK);
-    return;
+    return true;
   oom:
     pagecache_unlock_node(pn);
     if (complete)
         apply(complete, timm_oom);
+    return false;
 }
 
 static void pagecache_commit_dirty_pages(pagecache pc)
@@ -1192,7 +1404,11 @@ static void pagecache_commit_dirty_pages(pagecache pc)
             pagecache_unlock_volume(pv);
             if (l) {
                 pn = struct_from_list(l, pagecache_node, l);
-                pagecache_commit_dirty_node(pn, 0);
+                /* Leave the node dirty for a later scan. Retrying it here
+                 * without releasing the global lock prevents completions
+                 * and reclaim from making progress under memory pressure. */
+                if (!pagecache_commit_dirty_node(pn, 0))
+                    break;
             } else {
                 pn = 0;
             }
@@ -1224,7 +1440,13 @@ void pagecache_node_finish_pending_writes(pagecache_node pn, status_handler comp
 void pagecache_sync_node(pagecache_node pn, status_handler complete)
 {
     pagecache_debug("%s: pn %p, complete %p (%F)\n", func_ss, pn, complete, complete);
-    pagecache_node_scan(pn, irange(0, infinity), complete);
+    pagecache_node_lock_writer(pn);
+    status s = pagecache_node_sync_locked(pn);
+    pagecache_node_unlock_writer(pn);
+    if (complete)
+        async_apply_status_handler(complete, s);
+    else if (!is_ok(s))
+        timm_dealloc(s);
 }
 
 closure_function(1, 1, boolean, purge_range_handler,
@@ -1243,6 +1465,10 @@ closure_function(1, 1, boolean, purge_range_handler,
             pagecache_page_release_locked(pc, pp, false);
             refcount_release(&pn->refcount);
         }
+        assert(pp->dirty_pending);
+        pp->dirty_pending = false;
+        pagecache_page_release_locked(pc, pp, false);
+        refcount_release(&pn->refcount);
         node_offset += page_size;
         pp = (pagecache_page)rbnode_get_next((rbnode)pp);
     } while (node_offset < n->r.end);
@@ -2118,6 +2344,7 @@ closure_func_basic(thunk, void, pagecache_node_free)
     if (pn->fs_reserve)
         deallocate_closure(pn->fs_reserve);
     deallocate_closure(pn->cache_write);
+    deallocate_closure(pn->cache_write_raw);
     pagecache pc = pn->pv->pc;
     destruct_rbtree(&pn->pages, stack_closure(pagecache_page_release, pc));
     deallocate(pc->h, pn, sizeof(*pn));
@@ -2155,17 +2382,20 @@ pagecache_node pagecache_allocate_node(pagecache_volume pv, sg_io fs_read, sg_io
     pn->pv = pv;
     init_rangemap(&pn->mappings, h);
     spin_lock_init(&pn->pages_lock);
+    mutex_init(&pn->write_lock, 0);
     list_init_member(&pn->l);
     init_rangemap(&pn->dirty, h);
     init_rbtree(&pn->pages, (rb_key_compare)&pv->pc->page_compare,
                 (rbnode_handler)&pv->pc->page_print_key);
     pn->length = 0;
     pn->cache_read = closure(h, pagecache_read_sg, pn);
-    pn->cache_write = closure(h, pagecache_write_sg, pn);
+    pn->cache_write = closure(h, pagecache_write_serialized, pn);
+    pn->cache_write_raw = closure(h, pagecache_write_sg, pn);
     pn->fs_read = fs_read;
     pn->fs_write = fs_write;
     pn->fs_reserve = fs_reserve;
     list_init(&pn->ops);
+    pn->truncating = false;
     init_closure_func(&pn->free, thunk, pagecache_node_free);
     init_refcount(&pn->refcount, 1,
                   init_closure_func(&pn->queue_free, thunk, pagecache_node_queue_free));

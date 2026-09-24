@@ -73,6 +73,7 @@ typedef struct vnet {
     u16 port;
     caching_heap rxbuffers;
     caching_heap txhandlers;
+    u64 tx_queued_bytes; /* atomic, includes software-queued and in-flight packets */
     closure_struct(mem_cleaner, mem_cleaner);
     bytes net_header_len;
     int rxbuflen;
@@ -101,10 +102,17 @@ typedef struct xpbuf
 } __attribute__((aligned(8))) *xpbuf;
 
 
-closure_function(1, 1, void, tx_complete,
-                 struct pbuf *, p,
+/* Bound the software queue as well as the hardware ring. Otherwise UDP can
+ * retain unbounded pbufs while a slow host drains the transmit queue. */
+#define VNET_TX_QUEUE_BYTES (4 * MB)
+#define VNET_TX_PACKET_OVERHEAD 512
+
+closure_function(2, 1, void, tx_complete,
+                 vnet, vn, struct pbuf *, p,
                  u64 len)
 {
+    fetch_and_add(&bound(vn)->tx_queued_bytes,
+                  -(u64)(bound(p)->tot_len + VNET_TX_PACKET_OVERHEAD));
     pbuf_free(bound(p));
     closure_finish();
 }
@@ -115,16 +123,29 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
     vnet vn = netif->state;
 
     virtqueue txq = vn->txq_map[current_cpu()->id];
+    u64 charge = p->tot_len + VNET_TX_PACKET_OVERHEAD;
+    if (fetch_and_add(&vn->tx_queued_bytes, charge) + charge > VNET_TX_QUEUE_BYTES)
+        goto drop;
     vqmsg m = allocate_vqmsg(txq);
-    assert(m != INVALID_ADDRESS);
+    if (m == INVALID_ADDRESS)
+        goto drop;
+    u32 descriptors = 1;
+    for (struct pbuf *q = p; q; q = q->next)
+        descriptors++;
+    if (!vqmsg_reserve(m, descriptors)) {
+        deallocate_vqmsg(txq, m);
+        goto drop;
+    }
+    vqfinish complete = closure((heap)vn->txhandlers, tx_complete, vn, p);
+    if (complete == INVALID_ADDRESS) {
+        deallocate_vqmsg(txq, m);
+        goto drop;
+    }
     vqmsg_push(txq, m, vn->empty_phys, vn->net_header_len, false);
-
     pbuf_ref(p);
-
-    for (struct pbuf * q = p; q != NULL; q = q->next)
+    for (struct pbuf *q = p; q; q = q->next)
         vqmsg_push(txq, m, physical_from_virtual(q->payload), q->len, false);
-
-    vqmsg_commit(txq, m, closure((heap)vn->txhandlers, tx_complete, p));
+    vqmsg_commit(txq, m, complete);
     
     MIB2_STATS_NETIF_ADD(netif, ifoutoctets, p->tot_len);
     if (((u8_t *)p->payload)[0] & 1) {
@@ -138,6 +159,17 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
 
     LINK_STATS_INC(link.xmit);
 
+    return ERR_OK;
+  drop:
+    fetch_and_add(&vn->tx_queued_bytes, -charge);
+    /* Poll completions even when the admission budget is exhausted. TX queues
+     * may have interrupts disabled while polling, so dropping without polling
+     * could prevent completed packets from ever releasing their budget. */
+    virtqueue_kick(txq);
+    LINK_STATS_INC(link.drop);
+    MIB2_STATS_NETIF_INC(netif, ifoutdiscards);
+    /* Tail drop at the device queue, like a congested physical interface.
+     * TCP retransmits; UDP loss remains observable by the receiver. */
     return ERR_OK;
 }
 
@@ -303,8 +335,10 @@ static int post_receive(vnet vn, vnet_rx rx)
         x->p.custom_free_function = receive_buffer_release;
         int desc_count;
         vqmsg m = vnet_rxq_push(vn, x, &desc_count);
-        if (m == INVALID_ADDRESS)
+        if (m == INVALID_ADDRESS) {
+            deallocate((heap)vn->rxbuffers, x, sizeof(*x) + rxbuflen);
             break;
+        }
         new_entries += desc_count;
         vqmsg_commit_seqno(rxq, m, init_closure_func(&x->input, vqfinish, vnet_input), &x->seqno,
                            new_entries >= free_entries);
@@ -547,6 +581,7 @@ static void virtio_net_attach(vtdev dev)
     backed_heap contiguous = dev->contiguous;
     vnet vn = allocate(h, sizeof(struct vnet));
     assert(vn != INVALID_ADDRESS);
+    vn->tx_queued_bytes = 0;
     init_closure_func(&vn->ndev.setup, netif_dev_setup, virtio_net_setup);
     vn->net_header_len = (dev->features & VIRTIO_F_VERSION_1) ||
         (dev->features & VIRTIO_NET_F_MRG_RXBUF) != 0 ?

@@ -61,10 +61,12 @@ typedef struct pagecache_node {
        changing to a rw lock or semaphore */
 #ifdef KERNEL
     struct spinlock pages_lock;
+    struct mutex write_lock;
 #endif
     struct rbtree pages;
     struct rangemap dirty;
     struct list ops;
+    boolean truncating;
     u64 length;
 
     /* shared and private mappings associated with this node; protected by pagecache global lock */
@@ -72,6 +74,7 @@ typedef struct pagecache_node {
 
     sg_io cache_read;
     sg_io cache_write;
+    sg_io cache_write_raw;
     sg_io fs_read;
     sg_io fs_write;
     pagecache_node_reserve fs_reserve;
@@ -138,4 +141,5 @@ struct pagecache_page {
 
     closure_struct(thunk, read_release);
     boolean evicted;
+    boolean dirty_pending; /* reference owned by the node dirty-range map */
 };

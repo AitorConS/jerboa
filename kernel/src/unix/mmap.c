@@ -1434,15 +1434,28 @@ closure_function(2, 1, boolean, madvise_vmap_validate,
                  int, advice, sysreturn *, rv,
                  rmnode n)
 {
+    if (bound(advice) == MADV_DONTNEED &&
+        (((vmap)n)->flags & VMAP_MMAP_TYPE_MASK) != VMAP_MMAP_TYPE_ANONYMOUS) {
+        *bound(rv) = -EINVAL;
+        return false;
+    }
     return true;
 }
 
 sysreturn madvise(void *addr, s64 length, int advice)
 {
-    if ((u64_from_pointer(addr) & PAGEMASK) || (length < 0))
+    if ((u64_from_pointer(addr) & PAGEMASK) || (length < 0) ||
+        (u64_from_pointer(addr) + (u64)length < u64_from_pointer(addr)))
         return -EINVAL;
+    if (length == 0)
+        return 0;
     u32 clear_mask = 0, set_mask = 0;
     switch (advice) {
+    case MADV_DONTNEED:
+        break;
+    case MADV_FREE:
+        /* Do not promise lazy reclamation until dirty tracking supports it. */
+        return -EINVAL;
     case MADV_HUGEPAGE:
         set_mask = VMAP_FLAG_THP;
         break;
@@ -1463,10 +1476,18 @@ sysreturn madvise(void *addr, s64 length, int advice)
     if (res == RM_MATCH) {
         while (range_span(q)) {
             vmap vm = (vmap)rangemap_lookup(vmaps, q.start);
-            vmap_update_flags_intersection(vmaps, q, clear_mask, set_mask, vm);
-            q.start = MIN(q.end, vm->node.r.end);
+            u64 end = MIN(q.end, vm->node.r.end);
+            if (advice == MADV_DONTNEED) {
+                range discard = range_intersection(q, vm->node.r);
+                if (!try_unmap_and_free_phys(discard.start, range_span(discard))) {
+                    rv = -ENOMEM;
+                    break;
+                }
+            } else {
+                vmap_update_flags_intersection(vmaps, q, clear_mask, set_mask, vm);
+            }
+            q.start = end;
         }
-        rv = 0;
     } else {
         if (rv == 0)    /* either the address range is not mapped, or there are unmapped gaps */
             rv = -ENOMEM;

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -38,6 +39,14 @@ write_footer(FILE * fp, unsigned long total)
     fprintf(fp, "const unsigned long vdso_raw_length = %ld;\n", total);
 }
 
+static uint64_t read_le(const unsigned char *p, unsigned count)
+{
+    uint64_t value = 0;
+    for (unsigned i = 0; i < count; i++)
+        value |= (uint64_t)p[i] << (8 * i);
+    return value;
+}
+
 int main(int argc, char ** argv)
 {
     int fd;
@@ -60,28 +69,44 @@ int main(int argc, char ** argv)
     if (fp_out == NULL)
         die("failed to open %s: %s\n", argv[2], strerror(errno));
 
-    write_header(fp_out);
-
-    for (total = 0; ; total++) {
-        unsigned char byte;
-        ssize_t ret;
-
-        ret = read(fd, &byte, sizeof(unsigned char));
-        if (ret == -1)
-            die("failed to read %s: %s\n", argv[1], strerror(errno));
-
-        if (ret == 0)
-            break;
-
-        if (ret != sizeof(unsigned char))
-            die("read %ld bytes instead of %ld\n", ret, sizeof(unsigned char));
-
-        fprintf(fp_out, "%s0x%02X,%s", 
-            (total % 8 == 0) ? "\n    " : "",
-            byte,
-            (total % 8 != 7) ? " " : ""
-        );
+    /* Map only the ELF load segment. Debug/section tables in the file are not
+     * part of the runtime image: including them shifts the following vvar page
+     * away from the address selected by the linker. All supported targets use
+     * little-endian ELF64, independently of the build host. */
+    unsigned char *elf = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    if (elf == MAP_FAILED || st.st_size < 64)
+        die("invalid ELF header\n");
+    if (memcmp(elf, "\177ELF\2\1\1", 7) != 0)
+        die("expected little-endian ELF64\n");
+    uint64_t phoff = read_le(elf + 32, 8);
+    unsigned phsize = read_le(elf + 54, 2), phnum = read_le(elf + 56, 2);
+    if (phsize < 56 || phoff > (uint64_t)st.st_size ||
+        (uint64_t)phnum * phsize > (uint64_t)st.st_size - phoff)
+        die("invalid ELF program headers\n");
+    uint64_t load_size = 0;
+    for (unsigned i = 0; i < phnum; i++) {
+        unsigned char *ph = elf + phoff + i * phsize;
+        if (read_le(ph, 4) != 1) /* PT_LOAD */
+            continue;
+        uint64_t filesz = read_le(ph + 32, 8);
+        if (load_size || read_le(ph + 8, 8) || read_le(ph + 16, 8) ||
+            filesz != read_le(ph + 40, 8) || filesz > (uint64_t)st.st_size ||
+            filesz < phoff + (uint64_t)phnum * phsize)
+            die("expected one zero-based VDSO load segment without BSS\n");
+        load_size = filesz;
     }
+    if (!load_size)
+        die("missing VDSO load segment\n");
+    /* Section tables are absent from the runtime image. Dynamic symbol and
+     * version tables remain in PT_LOAD and are what libc/Go actually use. */
+    memset(elf + 40, 0, 8); /* e_shoff */
+    memset(elf + 58, 0, 6); /* e_shentsize, e_shnum, e_shstrndx */
+    write_header(fp_out);
+    for (total = 0; total < load_size; total++)
+        fprintf(fp_out, "%s0x%02X,%s", (total % 8 == 0) ? "\n    " : "",
+                elf[total], (total % 8 != 7) ? " " : "");
+    munmap(elf, st.st_size);
+    close(fd);
 
     /* pad to multiple of page size */
     unsigned long rem = total & (PAGESIZE - 1);

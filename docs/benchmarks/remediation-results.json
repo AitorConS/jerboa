@@ -1,0 +1,1813 @@
+{
+  "scope": "Development validation, 2026-09-24. Separate runs; not a reproduction of every original article configuration. Memory/startup Docker and Jerboa execute sequentially with matching settings. Network/disk are completion and integrity regressions, without matching Docker performance controls.",
+  "jerboa_base_commit": "50e45ad365bc0fd740bf32179166ca5d0c93ce43",
+  "firecracker_macos": {
+    "base_commit": "227b6887650d7b71dcc7f128b1ae2b2b31f798ce",
+    "branch": "fix/benchmark-network-backpressure",
+    "binary_sha256": "0cbeacaa8988c6f6602991f6d0ed36d2cb9e5f15c0cfbc132862295281bbc5b4",
+    "previous_binary_sha256": "746fb4409f4c5b65c9446b5769836b79133bbde0ef10996afc19eb0e5501a227"
+  },
+  "memory_startup": {
+    "macos": {
+      "metadata": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "kernel_sha256": "09eeb3eb4c10ff25976bbf6b70d1dc0f9d463e4e304c1683969ca9ae1fa67994",
+        "cases": [
+          "memory",
+          "startup"
+        ],
+        "docker_image": "bench-tools:latest"
+      },
+      "memory-1k-seq": {
+        "completed": true,
+        "mib_per_second": 9942.23
+      },
+      "docker-memory-1k-seq": {
+        "mib_per_second": 11338.78
+      },
+      "memory-1k-rnd": {
+        "completed": true,
+        "mib_per_second": 2658.72
+      },
+      "docker-memory-1k-rnd": {
+        "mib_per_second": 2740.76
+      },
+      "memory-1m-seq": {
+        "completed": true,
+        "mib_per_second": 50657.03
+      },
+      "docker-memory-1m-seq": {
+        "mib_per_second": 50954.34
+      },
+      "jerboa-startup": {
+        "prepared_first_ms": 161.90066700073658,
+        "warm_ms": [
+          165.12183300073957,
+          170.6218750005064,
+          162.1383749989036,
+          160.67287500118255,
+          168.3876670031168,
+          169.42674999882001,
+          164.95137499805423,
+          163.02845799873467,
+          163.24237500157324,
+          165.77858299933723
+        ],
+        "warm_median_ms": 165.0366039993969
+      },
+      "docker-startup": {
+        "prepared_first_ms": 154.16008299871464,
+        "warm_ms": [
+          127.8201250024722,
+          130.0278749986319,
+          141.76574999873992,
+          129.61558299866738,
+          132.69795900123427,
+          136.72108399987337,
+          132.88004200148862,
+          131.99216700013494,
+          137.01250000303844,
+          129.65383299888344
+        ],
+        "warm_median_ms": 132.3450630006846
+      }
+    },
+    "linux": {
+      "metadata": {
+        "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.43",
+        "kernel_sha256": "d13a1b296011d736756f5ecdaeadcc900626e7acaeb844e3ad713bc3080b482d",
+        "cases": [
+          "memory",
+          "startup",
+          "disk"
+        ],
+        "docker_image": "bench-tools:latest"
+      },
+      "memory-1k-seq": {
+        "completed": true,
+        "mib_per_second": 2965.5
+      },
+      "docker-memory-1k-seq": {
+        "mib_per_second": 3743.8
+      },
+      "memory-1k-rnd": {
+        "completed": true,
+        "mib_per_second": 1102.21
+      },
+      "docker-memory-1k-rnd": {
+        "mib_per_second": 1238.56
+      },
+      "memory-1m-seq": {
+        "completed": true,
+        "mib_per_second": 13283.41
+      },
+      "docker-memory-1m-seq": {
+        "mib_per_second": 13249.28
+      },
+      "jerboa-startup": {
+        "prepared_first_ms": 421.68201226741076,
+        "warm_ms": [
+          429.4402562081814,
+          415.59647768735886,
+          431.6237620078027,
+          417.29451809078455,
+          424.655030015856,
+          410.870345775038,
+          416.52155900374055,
+          411.9612257927656,
+          409.30647728964686,
+          420.99043913185596
+        ],
+        "warm_median_ms": 416.90803854726255
+      },
+      "docker-startup": {
+        "prepared_first_ms": 432.7581240795553,
+        "warm_ms": [
+          394.81008891016245,
+          396.6388748958707,
+          386.71485474333167,
+          391.18029130622745,
+          405.8430423028767,
+          372.1097409725189,
+          401.8596392124891,
+          376.48255098611116,
+          390.82966512069106,
+          411.97649808600545
+        ],
+        "warm_median_ms": 392.99519010819495
+      }
+    }
+  },
+  "network": {
+    "macos": {
+      "metadata": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "kernel_sha256": "90ed283a46ceae5291f252b8df4405e0ed5c7421870ce1977e6af65953dd93e9",
+        "cases": [
+          "network"
+        ],
+        "docker_image": null
+      },
+      "cases": {
+        "iperf-tcp": {
+          "version": "iperf 3.18",
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.012996,
+            "seconds": 20.012996,
+            "bytes": 228851712,
+            "bits_per_second": 91481240.2900595,
+            "sender": true
+          }
+        },
+        "iperf-udp": {
+          "version": "iperf 3.18",
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.214716,
+            "seconds": 20.214716,
+            "bytes": 539455160,
+            "bits_per_second": 213490077.22888613,
+            "jitter_ms": 0.26982069564678374,
+            "lost_packets": 1380692,
+            "packets": 1760590,
+            "lost_percent": 78.4206945045558,
+            "sender": false
+          }
+        }
+      }
+    },
+    "linux": {
+      "metadata": {
+        "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.43",
+        "kernel_sha256": "8eebbedb359ef8e414607794a94f660bd14c88187c1f9cf00b85af40b145fa76",
+        "cases": [
+          "network"
+        ],
+        "docker_image": null
+      },
+      "cases": {
+        "iperf-tcp": {
+          "version": "iperf 3.18",
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.007439,
+            "seconds": 20.007439,
+            "bytes": 1687158784,
+            "bits_per_second": 674612591.4466114,
+            "sender": true
+          }
+        },
+        "iperf-udp": {
+          "version": "iperf 3.18",
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 30.445693,
+            "seconds": 30.445693,
+            "bytes": 2230250580,
+            "bits_per_second": 586027213.7671493,
+            "jitter_ms": 33.55887370219304,
+            "lost_packets": 190041,
+            "packets": 1760640,
+            "lost_percent": 10.79376096182332,
+            "sender": false
+          }
+        }
+      }
+    }
+  },
+  "disk": {
+    "macos": {
+      "metadata": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "kernel_sha256": "90ed283a46ceae5291f252b8df4405e0ed5c7421870ce1977e6af65953dd93e9",
+        "cases": [
+          "redis",
+          "disk"
+        ],
+        "docker_image": null
+      },
+      "cases": {
+        "fio-randread": [
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 4783.153614
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 4693.255112
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 4751.287479
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 4845.752571
+          }
+        ],
+        "fio-randwrite": [
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60032,
+            "iops": 2407.366071
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60031,
+            "iops": 2526.944412
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60033,
+            "iops": 2595.822298
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60032,
+            "iops": 2419.39299
+          }
+        ]
+      }
+    },
+    "linux": {
+      "metadata": {
+        "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.43",
+        "kernel_sha256": "d13a1b296011d736756f5ecdaeadcc900626e7acaeb844e3ad713bc3080b482d",
+        "cases": [
+          "memory",
+          "startup",
+          "disk"
+        ],
+        "docker_image": "bench-tools:latest"
+      },
+      "cases": {
+        "fio-randread": [
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 1853.135781
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 1849.069182
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 1590.123498
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 1646.139231
+          }
+        ],
+        "fio-randwrite": [
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 201.41331
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60009,
+            "iops": 213.817927
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60009,
+            "iops": 290.373111
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "runtime_ms": 60001,
+            "iops": 197.480042
+          }
+        ]
+      }
+    }
+  },
+  "redis": {
+    "macos": {
+      "metadata": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "kernel_sha256": "90ed283a46ceae5291f252b8df4405e0ed5c7421870ce1977e6af65953dd93e9",
+        "cases": [
+          "network",
+          "redis"
+        ],
+        "docker_image": null
+      },
+      "completed_requests": 100000
+    },
+    "linux": {
+      "metadata": {
+        "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.43",
+        "kernel_sha256": "d13a1b296011d736756f5ecdaeadcc900626e7acaeb844e3ad713bc3080b482d",
+        "cases": [
+          "redis"
+        ],
+        "docker_image": null
+      },
+      "completed_requests": 100000
+    }
+  },
+  "limitations": [
+    "TCP_INFO total_retrans is not implemented; reported zero is not evidence of zero retransmissions.",
+    "UDP offered load is 1 Gbit/s; loss is reported, not treated as a successful bandwidth target.",
+    "macOS default companion quota is 64 MiB/s plus 100000 packets/s; about 521 Mbit/s UDP payload at 1420-byte datagrams. Small below-quota losses are measured and are not explained by quota.",
+    "ARM64 writable mapped pages are conservatively dirty; extra writeback is possible.",
+    "Reboot checks use fsync and orderly shutdown; whole-journal power-loss atomicity is not established."
+  ],
+  "memory_original_kernel_control_macos": {
+    "metadata": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "kernel_sha256": "625a088184acdfc5bdd4aafea4abe7cac30deb14a48af6e169f38881e163101c",
+      "cases": [
+        "memory"
+      ],
+      "docker_image": null
+    },
+    "memory-1k-seq": {
+      "completed": true,
+      "mib_per_second": 1772.61
+    },
+    "memory-1k-rnd": {
+      "completed": true,
+      "mib_per_second": 1182.93
+    },
+    "memory-1m-seq": {
+      "completed": true,
+      "mib_per_second": 49483.2
+    }
+  },
+  "followup": {
+    "status": "completed: demonstrated network stalls and TFS shrink/regrow corrected; measured performance limits retained",
+    "date": "2026-09-24",
+    "network_diagnostic_runs": {
+      "rx_backpressure": {
+        "path": "/tmp/jr-network-rx-backpressure/results.json",
+        "metadata": {
+          "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+          "kernel_sha256": "90ed283a46ceae5291f252b8df4405e0ed5c7421870ce1977e6af65953dd93e9",
+          "cases": [
+            "network"
+          ],
+          "docker_image": null
+        },
+        "cases": {
+          "iperf-tcp": {
+            "parameters": {
+              "protocol": "TCP",
+              "num_streams": 1,
+              "blksize": 131072,
+              "omit": 0,
+              "duration": 20,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 0,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 20.01353,
+              "seconds": 20.01353,
+              "bytes": 526385152,
+              "bits_per_second": 210411717.27326465,
+              "sender": true
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 20,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 1000000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 20.202288,
+              "seconds": 20.202288,
+              "bytes": 541258560,
+              "bits_per_second": 214335548.52796873,
+              "jitter_ms": 0.23434605359411215,
+              "lost_packets": 1379405,
+              "packets": 1760573,
+              "lost_percent": 78.3497758968245,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          }
+        }
+      },
+      "readiness": {
+        "path": "/tmp/jr-network-events/results.json",
+        "metadata": {
+          "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+          "kernel_sha256": "90ed283a46ceae5291f252b8df4405e0ed5c7421870ce1977e6af65953dd93e9",
+          "cases": [
+            "network"
+          ],
+          "docker_image": null
+        },
+        "cases": {
+          "iperf-tcp": {
+            "parameters": {
+              "protocol": "TCP",
+              "num_streams": 1,
+              "blksize": 131072,
+              "omit": 0,
+              "duration": 20,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 0,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 20.002485,
+              "seconds": 20.002485,
+              "bytes": 1268514816,
+              "bits_per_second": 507342889.046036,
+              "sender": true
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 20,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 1000000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 20.05204,
+              "seconds": 20.05204,
+              "bytes": 1306827420,
+              "bits_per_second": 521374351.93626183,
+              "jitter_ms": 0.03212254279491866,
+              "lost_packets": 840355,
+              "packets": 1760656,
+              "lost_percent": 47.729625929411576,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          }
+        }
+      },
+      "initial_60_second_matrix": {
+        "path": "/tmp/jr-network-matrix/results.json",
+        "metadata": {
+          "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+          "kernel_sha256": "90ed283a46ceae5291f252b8df4405e0ed5c7421870ce1977e6af65953dd93e9",
+          "cases": [
+            "network"
+          ],
+          "docker_image": null,
+          "firecracker_sha256": "2bd9114b673ec5d475472f821177d18e0e23003275b69a1a542ea32383d933ad",
+          "network_seconds": 60,
+          "udp_rates": [
+            "100M",
+            "400M",
+            "1G"
+          ]
+        },
+        "cases": {
+          "iperf-tcp": {
+            "parameters": {
+              "protocol": "TCP",
+              "num_streams": 1,
+              "blksize": 131072,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 0,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.002058,
+              "seconds": 60.002058,
+              "bytes": 3804758016,
+              "bits_per_second": 507283668.97015435,
+              "sender": true
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp-100m": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 100000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.001271,
+              "seconds": 60.001271,
+              "bytes": 750002820,
+              "bits_per_second": 99998257.7035743,
+              "jitter_ms": 0.013042141464411693,
+              "lost_packets": 0,
+              "packets": 528171,
+              "lost_percent": 0,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp-400m": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 400000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.001385,
+              "seconds": 60.001385,
+              "bytes": 2999978620,
+              "bits_per_second": 399987916.2789326,
+              "jitter_ms": 0.018942181874642416,
+              "lost_packets": 0,
+              "packets": 2112661,
+              "lost_percent": 0,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp-1g": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 0,
+              "tos": 0,
+              "target_bitrate": 1000000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.050819,
+              "seconds": 60.050819,
+              "bytes": 3913358120,
+              "bits_per_second": 521339516.7849418,
+              "jitter_ms": 0.04336007913933303,
+              "lost_packets": 2525681,
+              "packets": 5281567,
+              "lost_percent": 47.819787888857014,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-tcp-reverse": {
+            "parameters": {
+              "protocol": "TCP",
+              "num_streams": 1,
+              "blksize": 131072,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 1,
+              "tos": 0,
+              "target_bitrate": 0,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.000428,
+              "seconds": 60.000428,
+              "bytes": 3800825856,
+              "bits_per_second": 506773165.8180838,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp-100m-reverse": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 1,
+              "tos": 0,
+              "target_bitrate": 100000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.001018,
+              "seconds": 60.001018,
+              "bytes": 749999980,
+              "bits_per_second": 99998300.6954982,
+              "jitter_ms": 0.020108851717864324,
+              "lost_packets": 0,
+              "packets": 528169,
+              "lost_percent": 0,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp-400m-reverse": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 1,
+              "tos": 0,
+              "target_bitrate": 400000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.000837,
+              "seconds": 60.000837,
+              "bytes": 2999978620,
+              "bits_per_second": 399991569.45093954,
+              "jitter_ms": 0.013619813479550387,
+              "lost_packets": 0,
+              "packets": 2112661,
+              "lost_percent": 0,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          },
+          "iperf-udp-1g-reverse": {
+            "parameters": {
+              "protocol": "UDP",
+              "num_streams": 1,
+              "blksize": 1420,
+              "omit": 0,
+              "duration": 60,
+              "bytes": 0,
+              "blocks": 0,
+              "reverse": 1,
+              "tos": 0,
+              "target_bitrate": 1000000000,
+              "bidir": 0,
+              "fqrate": 0,
+              "interval": 1
+            },
+            "received": {
+              "start": 0,
+              "end": 60.000029,
+              "seconds": 60.000029,
+              "bytes": 3910319320,
+              "bits_per_second": 521375657.335099,
+              "jitter_ms": 0.0303386049510891,
+              "lost_packets": 2523293,
+              "packets": 5277039,
+              "lost_percent": 47.77433065010228,
+              "sender": false
+            },
+            "zero_progress_intervals": 0
+          }
+        }
+      }
+    },
+    "tfs": {
+      "reproduced_before": "/tmp/jr-truncate-followup-control/console.log",
+      "macos_expanded": "/tmp/jr-truncate-delivery",
+      "macos_enospc": "/tmp/jr-truncate-sparse-final",
+      "linux_expanded": "/home/aitorcons/jerboa-remediation/runs/truncate-delivery",
+      "linux_enospc": "/home/aitorcons/jerboa-remediation/runs/truncate-sparse-final",
+      "note": "Expanded dirty/writeback, simultaneous truncation, MAP_SHARED, boundary and error tests passed on macOS ARM64 and Linux x86_64 at 128 MiB, including reboot. Full-filesystem dense and sparse shrink/regrow passed on both architectures including reboot.",
+      "sparse_control": {
+        "path": "/tmp/jr-truncate-sparse-control",
+        "passed": false,
+        "reason": "Old partial-page clearing allocated storage for a hole on a full filesystem."
+      },
+      "macos_sparse_final": "/tmp/jr-truncate-sparse-final"
+    },
+    "network_failed_control": {
+      "platform": "Linux x86_64",
+      "path": "/home/aitorcons/jerboa-remediation/runs/followup-final",
+      "case": "iperf-udp-1g",
+      "duration_seconds": 60,
+      "error": "control socket has closed unexpectedly",
+      "counted_as_pass": false,
+      "cause": "VirtIO polling TX EVENT_IDX interrupt threshold was not rearmed while queued messages remained; rearmed each batch with a completion-race check."
+    },
+    "sustained_macos": {
+      "path": "/tmp/jr-followup-final",
+      "metadata": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "kernel_sha256": "e8e1fa91b087da096c922bba9c76294d4999ae69afd3ea4815a288e6eb2691e2",
+        "cases": [
+          "network",
+          "disk"
+        ],
+        "docker_image": null,
+        "firecracker_sha256": "f5207c01c190e82289b8937dc27ff661b9454a27c379a17f52bd3869a06a478b",
+        "network_seconds": 60,
+        "udp_rates": [
+          "100M",
+          "400M",
+          "1G"
+        ]
+      },
+      "cases": {
+        "iperf-tcp": {
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.004094,
+            "seconds": 60.004094,
+            "bytes": 3800825856,
+            "bits_per_second": 506742204.0902742,
+            "sender": true
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-100m": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 100000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.001231,
+            "seconds": 60.001231,
+            "bytes": 750001400,
+            "bits_per_second": 99998135.0382628,
+            "jitter_ms": 0.014409462710743311,
+            "lost_packets": 0,
+            "packets": 528170,
+            "lost_percent": 0,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-400m": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 400000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.001806,
+            "seconds": 60.001806,
+            "bytes": 2999818160,
+            "bits_per_second": 399963715.7588223,
+            "jitter_ms": 0.02021847641998585,
+            "lost_packets": 120,
+            "packets": 2112668,
+            "lost_percent": 0.00568002165981593,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-1g": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.053583,
+            "seconds": 60.053583,
+            "bytes": 3908589760,
+            "bits_per_second": 520680307.7844664,
+            "jitter_ms": 0.06064549348347854,
+            "lost_packets": 2529160,
+            "packets": 5281688,
+            "lost_percent": 47.88529461603781,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-tcp-reverse": {
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.000131,
+            "seconds": 60.000131,
+            "bytes": 3801219072,
+            "bits_per_second": 506828103.0253084,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-100m-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 100000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.000451,
+            "seconds": 60.000451,
+            "bytes": 749992880,
+            "bits_per_second": 99998299.01278576,
+            "jitter_ms": 0.011903929030101115,
+            "lost_packets": 0,
+            "packets": 528164,
+            "lost_percent": 0,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-400m-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 400000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.000335,
+            "seconds": 60.000335,
+            "bytes": 2999636400,
+            "bits_per_second": 399949286.94981456,
+            "jitter_ms": 0.011747021613824694,
+            "lost_packets": 229,
+            "packets": 2112649,
+            "lost_percent": 0.010839472150840012,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-1g-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.000592,
+            "seconds": 60.000592,
+            "bytes": 3909305440,
+            "bits_per_second": 521235582.47558624,
+            "jitter_ms": 0.07715292736339263,
+            "lost_packets": 2524336,
+            "packets": 5277368,
+            "lost_percent": 47.793508029054735,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "fio-randread": [
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60002,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60002,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60002,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60002,
+            "write_runtime_ms": 0
+          }
+        ],
+        "fio-randwrite": [
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60021
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60020
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60021
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60047
+          }
+        ]
+      },
+      "vmm_metrics": {
+        "samples": 906,
+        "max_drop_counters": {
+          "net_rx_dropped_packets_total": 0,
+          "net_ipc_rx_dropped_packets_total": 0,
+          "net_ipc_tx_dropped_packets_total": 0
+        },
+        "scope": "Sampled VMM counters, not all guest/switch drop locations."
+      }
+    },
+    "delivery_macos": {
+      "path": "/tmp/jr-delivery",
+      "metadata": {
+        "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+        "kernel_sha256": "dfb4d9d915bafa1507ae41c2639d534c587a13edfb0c9699ccea70eb08d1d5d5",
+        "cases": [
+          "network",
+          "disk"
+        ],
+        "docker_image": null,
+        "firecracker_sha256": "0cbeacaa8988c6f6602991f6d0ed36d2cb9e5f15c0cfbc132862295281bbc5b4",
+        "network_seconds": 20,
+        "udp_rates": [
+          "400M",
+          "1G"
+        ]
+      },
+      "cases": {
+        "iperf-tcp": {
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.003582,
+            "seconds": 20.003582,
+            "bytes": 1268252672,
+            "bits_per_second": 507210227.448264,
+            "sender": true
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-400m": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 400000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.000906,
+            "seconds": 20.000906,
+            "bytes": 999965420,
+            "bits_per_second": 399968049.44736,
+            "jitter_ms": 0.033660689484814155,
+            "lost_packets": 0,
+            "packets": 704201,
+            "lost_percent": 0,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-1g": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.051626,
+            "seconds": 20.051626,
+            "bytes": 1305885960,
+            "bits_per_second": 521009502.1720433,
+            "jitter_ms": 0.07744359203056596,
+            "lost_packets": 840964,
+            "packets": 1760602,
+            "lost_percent": 47.764703610450525,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-tcp-reverse": {
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.00144,
+            "seconds": 20.00144,
+            "bytes": 1268252672,
+            "bits_per_second": 507264545.7527058,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-400m-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 400000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.002892,
+            "seconds": 20.002892,
+            "bytes": 1000080440,
+            "bits_per_second": 399974339.7104779,
+            "jitter_ms": 0.02383975194925184,
+            "lost_packets": 2,
+            "packets": 704284,
+            "lost_percent": 0.0002839715119779184,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-1g-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 20,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 20.000104,
+            "seconds": 20.000104,
+            "bytes": 1303561420,
+            "bits_per_second": 521421856.60634565,
+            "jitter_ms": 0.013953525486437138,
+            "lost_packets": 838462,
+            "packets": 1756463,
+            "lost_percent": 47.625869204404616,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "fio-randread": [
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60000,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60001,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60001,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60000,
+            "write_runtime_ms": 0
+          }
+        ],
+        "fio-randwrite": [
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60085
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60083
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60085
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60085
+          }
+        ]
+      }
+    },
+    "builds": {
+      "macos": {
+        "kernel/output/platform/virt/bin/kernel.img": "dfb4d9d915bafa1507ae41c2639d534c587a13edfb0c9699ccea70eb08d1d5d5",
+        "dist/macos-arm64/jerboa": "222694cd061612628d7a1eee05ffb43c0219546abb6558ce9d133f692dfbcbb5",
+        "dist/macos-arm64/jerboad": "80112c2d94487de1e44581c856d0e4d3174a841672145e7664f12829b158afc1",
+        "/Users/aitorcons/orca/workspaces/firecracker-macos/taniwha/build/macos-arm64/firecracker": "0cbeacaa8988c6f6602991f6d0ed36d2cb9e5f15c0cfbc132862295281bbc5b4"
+      },
+      "linux": {
+        "kernel/output/platform/pc/bin/kernel.img": "f41435ee8f5a3f7ad3168eac458a09810004377a3f71fbb8a3c6d781a57be31c",
+        "bin/jerboa": "f4cae90cf2c66474277844942da64ce12541b6aa2cf0355d8e9b047fba9a89d9",
+        "bin/jerboad": "02fe1049f5e527ddcafb1f774d3ac6210eb2da4adae252352aea6120cacdc0a6",
+        "/usr/local/bin/firecracker": "96d25e000e5fcbf5b11dca0e1275b5d7dc0922ff8b8206aeaed98e515a8468dc"
+      }
+    },
+    "sustained_linux": {
+      "path": "/home/aitorcons/jerboa-remediation/runs/followup-events",
+      "metadata": {
+        "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.43",
+        "kernel_sha256": "cdf0afbf1bb73adf0a8c2849cecb660872c70780dc2c921da237e5ffa021a07a",
+        "cases": [
+          "network",
+          "disk"
+        ],
+        "docker_image": null,
+        "firecracker_sha256": "96d25e000e5fcbf5b11dca0e1275b5d7dc0922ff8b8206aeaed98e515a8468dc",
+        "network_seconds": 60,
+        "udp_rates": [
+          "100M",
+          "400M",
+          "1G"
+        ]
+      },
+      "cases": {
+        "iperf-tcp": {
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.016467,
+            "seconds": 60.016467,
+            "bytes": 5282070528,
+            "bits_per_second": 704082834.865971,
+            "sender": true
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-100m": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 100000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.005924,
+            "seconds": 60.005924,
+            "bytes": 749997140,
+            "bits_per_second": 99989746.3457108,
+            "jitter_ms": 0.17503425278763382,
+            "lost_packets": 9,
+            "packets": 528176,
+            "lost_percent": 0.0017039774620581018,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-400m": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 400000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.009207,
+            "seconds": 60.009207,
+            "bytes": 2883129660,
+            "bits_per_second": 384358308.217604,
+            "jitter_ms": 0.00823026520310983,
+            "lost_packets": 82338,
+            "packets": 2112711,
+            "lost_percent": 3.897267539194902,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-1g": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 0,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.013099,
+            "seconds": 60.013099,
+            "bytes": 6390586460,
+            "bits_per_second": 851892212.3984966,
+            "jitter_ms": 0.026826196480764737,
+            "lost_packets": 781019,
+            "packets": 5281432,
+            "lost_percent": 14.787052688338164,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-tcp-reverse": {
+          "parameters": {
+            "protocol": "TCP",
+            "num_streams": 1,
+            "blksize": 131072,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 0,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.000334,
+            "seconds": 60.000334,
+            "bytes": 5317984256,
+            "bits_per_second": 709060620.3625466,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-100m-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 100000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.000882,
+            "seconds": 60.000882,
+            "bytes": 749994300,
+            "bits_per_second": 99997770.03278053,
+            "jitter_ms": 0.02956270403086142,
+            "lost_packets": 0,
+            "packets": 528165,
+            "lost_percent": 0,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-400m-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 400000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.001184,
+            "seconds": 60.001184,
+            "bytes": 2932227580,
+            "bits_per_second": 390955962.46900725,
+            "jitter_ms": 0.008236246541778075,
+            "lost_packets": 47726,
+            "packets": 2112675,
+            "lost_percent": 2.2590317961825646,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "iperf-udp-1g-reverse": {
+          "parameters": {
+            "protocol": "UDP",
+            "num_streams": 1,
+            "blksize": 1420,
+            "omit": 0,
+            "duration": 60,
+            "bytes": 0,
+            "blocks": 0,
+            "reverse": 1,
+            "tos": 0,
+            "target_bitrate": 1000000000,
+            "bidir": 0,
+            "fqrate": 0,
+            "interval": 1
+          },
+          "received": {
+            "start": 0,
+            "end": 60.001409,
+            "seconds": 60.001409,
+            "bytes": 6427235240,
+            "bits_per_second": 856944574.7515695,
+            "jitter_ms": 0.02937892428371753,
+            "lost_packets": 755399,
+            "packets": 5281621,
+            "lost_percent": 14.302408294726183,
+            "sender": false
+          },
+          "zero_progress_intervals": 0
+        },
+        "fio-randread": [
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60001,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60001,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60001,
+            "write_runtime_ms": 0
+          },
+          {
+            "job": "randread",
+            "error": 0,
+            "read_runtime_ms": 60001,
+            "write_runtime_ms": 0
+          }
+        ],
+        "fio-randwrite": [
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60691
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60668
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60291
+          },
+          {
+            "job": "randwrite",
+            "error": 0,
+            "read_runtime_ms": 0,
+            "write_runtime_ms": 60705
+          }
+        ]
+      }
+    },
+    "checks": {
+      "go_race_macos": {
+        "passed": true,
+        "log": "/tmp/jerboa-remediation/followup-go-tests.log"
+      },
+      "kernel_host_tests": {
+        "passed": true,
+        "log": "/tmp/jerboa-remediation/followup-final-kernel-tests.log"
+      },
+      "firecracker_stream_asan_ubsan_seatbelt_rx": {
+        "passed": true,
+        "log": "/tmp/jerboa-remediation/followup-final-stream-tests.log"
+      },
+      "firecracker_pause_snapshot_with_pending_rx": {
+        "passed": true,
+        "log": "/tmp/jerboa-remediation/followup-final-stream-api.log"
+      },
+      "firecracker_budget": {
+        "passed": true,
+        "log": "/tmp/jerboa-remediation/followup-final-budget.log"
+      }
+    },
+    "regression_evidence": {
+      "macos": {
+        "basic": "/tmp/jr-basic-delivery",
+        "tcp_integrity": "/tmp/jr-tcp-delivery",
+        "sequential_1g_reboot_enospc": "/tmp/jr-disk-followup",
+        "four_random_writers_1g_reboot": "/tmp/jr-random-followup",
+        "final_fio": "/tmp/jr-delivery"
+      },
+      "linux": {
+        "basic": "runs/basic-delivery",
+        "four_random_writers_1g_reboot": "runs/random-delivery",
+        "sequential_1g_reboot_enospc": "runs/disk-reserve (rechecked by disk-delivery.log with final kernel)",
+        "fio": "runs/followup-events",
+        "local_log_copy": "/tmp/jerboa-remediation/linux-delivery-evidence"
+      },
+      "passed": true
+    },
+    "cleanup": {
+      "test_vms_and_daemons_stopped": true,
+      "installed_runtimes_unchanged": true,
+      "removed_only_rebuildable_copies": [
+        "runs/followup-final/home/.jerboa/{packages,images}",
+        "runs/followup-events/home/.jerboa/{packages,images}",
+        "runs/followup-disk/home/.jerboa/{packages,images}"
+      ],
+      "preserved": "Logs, results, hashes, regression disks and original packages/volumes retained; deleted-file SHA256 manifests in isolated Linux tree and local evidence copy.",
+      "linux_free_after_cleanup": "1.4 GiB"
+    }
+  },
+  "historical_sections": "Top-level network and disk preserve the prior campaign; followup contains current corrected measurements and final build identities."
+}

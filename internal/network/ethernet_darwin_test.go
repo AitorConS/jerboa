@@ -76,7 +76,7 @@ func TestEthernetSplitFrameAndSlowWriter(t *testing.T) {
 		require.Equal(t, len(frame), n)
 	}
 	require.Less(t, time.Since(start), time.Second)
-	require.LessOrEqual(t, len(c.writes), 64)
+	require.LessOrEqual(t, len(c.writes), ethernetQueueFrames)
 }
 func TestNativeFailedDialReturnsNilInterface(t *testing.T) {
 	n, err := NewNativeNetwork("172.29.0.0/24", "172.29.0.1", nil)
@@ -87,4 +87,20 @@ func TestNativeFailedDialReturnsNilInterface(t *testing.T) {
 	c, err := n.DialContext(ctx, "tcp", "172.29.0.9:8080")
 	require.Error(t, err)
 	require.Nil(t, c)
+}
+
+func TestEthernetWriterBoundsBytesUnderLargeFrameBurst(t *testing.T) {
+	a, b := net.Pipe()
+	defer b.Close()
+	c := newEthernetConn(a, "", "")
+	defer c.Close()
+	frame := make([]byte, maxEthernetFrame+4)
+	binary.BigEndian.PutUint32(frame, maxEthernetFrame)
+	for range 1000 {
+		n, err := c.Write(frame)
+		require.NoError(t, err)
+		require.Equal(t, len(frame), n)
+	}
+	require.LessOrEqual(t, c.queuedBytes.Load(), int64(ethernetQueueBytes))
+	require.Less(t, len(c.writes), ethernetQueueFrames)
 }

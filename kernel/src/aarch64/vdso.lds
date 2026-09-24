@@ -63,6 +63,11 @@ PHDRS
 /* Pretend like we are Linux 2.6 */
 VERSION
 {
+    LINUX_2.6.39 {
+        global:
+            __kernel_clock_gettime;
+            __kernel_gettimeofday;
+    };
     LINUX_2.6 {
         global:
             rt_sigreturn;

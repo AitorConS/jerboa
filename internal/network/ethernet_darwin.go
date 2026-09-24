@@ -7,27 +7,33 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-const maxEthernetFrame = 65536
+const (
+	maxEthernetFrame    = 65536
+	ethernetQueueFrames = 256
+	ethernetQueueBytes  = 4 * 1024 * 1024
+)
 
 // ethernetConn validates before gvproxy allocates a frame or learns its source.
 // The bounded writer prevents a slow guest from blocking the entire switch.
 type ethernetConn struct {
 	net.Conn
-	ip      net.IP
-	mac     net.HardwareAddr
-	frame   [maxEthernetFrame + 4]byte
-	pending []byte
-	writes  chan []byte
-	done    chan struct{}
-	once    sync.Once
+	ip          net.IP
+	mac         net.HardwareAddr
+	frame       [maxEthernetFrame + 4]byte
+	pending     []byte
+	writes      chan []byte
+	queuedBytes atomic.Int64
+	done        chan struct{}
+	once        sync.Once
 }
 
 func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
 	hw, _ := net.ParseMAC(mac)
-	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, 64), done: make(chan struct{})}
+	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, ethernetQueueFrames), done: make(chan struct{})}
 	go e.writer()
 	return e
 }
@@ -91,9 +97,16 @@ func (e *ethernetConn) Write(b []byte) (int, error) {
 		return 0, net.ErrClosed
 	default:
 	}
+	// Reserve before copying so concurrent switch writers share one byte limit.
+	size := int64(len(b))
+	if e.queuedBytes.Add(size) > ethernetQueueBytes {
+		e.queuedBytes.Add(-size)
+		return len(b), nil
+	}
 	select {
 	case e.writes <- append([]byte(nil), b...):
 	default:
+		e.queuedBytes.Add(-size)
 	} // drop whole frames under backpressure
 	return len(b), nil
 }
@@ -104,6 +117,7 @@ func (e *ethernetConn) writer() {
 		case <-e.done:
 			return
 		case b := <-e.writes:
+			size := int64(len(b))
 			e.Conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			for len(b) > 0 {
 				n, err := e.Conn.Write(b)
@@ -112,6 +126,7 @@ func (e *ethernetConn) writer() {
 				}
 				b = b[n:]
 			}
+			e.queuedBytes.Add(-size)
 		}
 	}
 }

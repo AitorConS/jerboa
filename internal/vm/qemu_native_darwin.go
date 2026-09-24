@@ -69,7 +69,7 @@ func (m *QEMUManager) buildNativeCmd(ctx context.Context, cfg Config, qmp string
 	if cfg.DiskBPS > 0 {
 		drive += fmt.Sprintf(",throttling.bps-total=%d", cfg.DiskBPS)
 	}
-	args := []string{"-machine", "virt,gic-version=3,highmem=off", "-accel", "hvf", "-cpu", "host",
+	args := []string{"-machine", "virt,gic-version=3,highmem=on", "-accel", "hvf", "-cpu", "host",
 		"-kernel", m.kernelPath, "-m", cfg.Memory, "-display", "none", "-serial", "stdio", "-monitor", "none", "-no-reboot",
 		"-drive", drive, "-device", "virtio-blk-pci,drive=root", "-device", "virtio-rng-pci",
 		"-device", "pvpanic-pci", "-action", "panic=exit-failure"}

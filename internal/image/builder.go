@@ -481,7 +481,7 @@ const manifestValueTerminals = " \t\n\r()[]"
 // manifestValue returns v formatted for use as a manifest tuple value, quoting
 // it when it contains characters the tuple parser would treat as terminators.
 func manifestValue(v string) string {
-	if !strings.ContainsAny(v, manifestValueTerminals+"\"\\") {
+	if v != "" && !strings.ContainsAny(v, manifestValueTerminals+"\"\\") {
 		return v
 	}
 	var b strings.Builder

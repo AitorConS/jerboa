@@ -401,6 +401,21 @@ func (c *containerFS) elfClosure(binPath string) ([]string, error) {
 			}
 			searchDirs = append(searchDirs, dir)
 		}
+		// glibc loads these at runtime rather than declaring DT_NEEDED entries.
+		// In particular pthread_cancel aborts if libgcc_s is omitted. Keep the
+		// source image's available runtime helpers and walk their dependencies
+		// normally; do not borrow libraries from the build host or another arch.
+		if path.Base(cur) == "libc.so.6" {
+			for _, soname := range []string{"libgcc_s.so.1", "libnss_dns.so.2", "libnss_files.so.2"} {
+				for _, dir := range searchDirs {
+					candidate := path.Join(dir, soname)
+					if _, err := c.resolve(candidate); err == nil {
+						queue = append(queue, pending{guest: candidate, inherited: inherited})
+						break
+					}
+				}
+			}
+		}
 		for _, soname := range info.needed {
 			candidate := ""
 			if strings.Contains(soname, "/") {

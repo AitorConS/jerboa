@@ -102,12 +102,15 @@ typedef struct storage {
     u64 capacity;
     u64 block_size;
     u32 seg_max;
+    caching_heap requests;
+    closure_struct(mem_cleaner, mem_cleaner);
 } *storage;
 
 static virtio_blk_req allocate_virtio_blk_req(storage st, u32 type, u64 sector, u64 *phys)
 {
-    virtio_blk_req req = alloc_map(st->v->contiguous, sizeof(struct virtio_blk_req), phys);
+    virtio_blk_req req = allocate((heap)st->requests, sizeof(struct virtio_blk_req));
     if (req != INVALID_ADDRESS) {
+        *phys = physical_from_virtual(req);
         req->type = type;
         req->reserved = 0;
         req->sector = sector;
@@ -116,21 +119,20 @@ static virtio_blk_req allocate_virtio_blk_req(storage st, u32 type, u64 sector, 
     return req;
 }
 
-static void deallocate_virtio_blk_req(storage st, virtio_blk_req req, u64 phys)
+static void deallocate_virtio_blk_req(storage st, virtio_blk_req req)
 {
-    dealloc_unmap(st->v->contiguous, req, phys,
-                  pad(sizeof(struct virtio_blk_req), st->v->contiguous->h.pagesize));
+    deallocate((heap)st->requests, req, sizeof(struct virtio_blk_req));
 }
 
-closure_function(4, 1, void, complete,
-                 storage, s, status_handler, f, virtio_blk_req, req, u64, phys,
+closure_function(3, 1, void, complete,
+                 storage, s, status_handler, f, virtio_blk_req, req,
                  u64 len)
 {
     status st = 0;
     // 1 is io error, 2 is unsupported operation
     if (bound(req)->status) st = timm("result", "%d", bound(req)->status);
     async_apply_status_handler(bound(f), st);
-    deallocate_virtio_blk_req(bound(s), bound(req), bound(phys));
+    deallocate_virtio_blk_req(bound(s), bound(req));
     closure_finish();
 }
 
@@ -162,7 +164,7 @@ static inline void storage_rw_internal(storage st, boolean write, void * buf,
     vqmsg_push(vq, m, physical_from_virtual(buf), nsectors * st->block_size, !write);
     u64 statusp = req_phys + VIRTIO_BLK_REQ_HEADER_SIZE;
     vqmsg_push(vq, m, statusp, VIRTIO_BLK_REQ_STATUS_SIZE, true);
-    vqfinish c = closure(st->v->general, complete, st, sh, req, req_phys);
+    vqfinish c = closure(st->v->general, complete, st, sh, req);
     vqmsg_commit(vq, m, c);
     return;
   out_inval:
@@ -174,7 +176,7 @@ static void virtio_storage_io_commit(storage st, virtqueue vq, vqmsg msg, virtio
                                      u64 req_phys, status_handler completion)
 {
     vqmsg_push(vq, msg, req_phys + VIRTIO_BLK_REQ_HEADER_SIZE, VIRTIO_BLK_REQ_STATUS_SIZE, true);
-    vqfinish c = closure(st->v->general, complete, st, completion, req, req_phys);
+    vqfinish c = closure(st->v->general, complete, st, completion, req);
     assert(c != INVALID_ADDRESS);
     vqmsg_commit(vq, msg, c);
 }
@@ -240,7 +242,7 @@ static void storage_flush(storage st, status_handler s)
     assert(m != INVALID_ADDRESS);
     vqmsg_push(vq, m, req_phys, VIRTIO_BLK_REQ_HEADER_SIZE, false);
     vqmsg_push(vq, m, req_phys + VIRTIO_BLK_REQ_HEADER_SIZE, VIRTIO_BLK_REQ_STATUS_SIZE, true);
-    vqfinish c = closure(st->v->general, complete, st, s, req, req_phys);
+    vqfinish c = closure(st->v->general, complete, st, s, req);
     assert(c != INVALID_ADDRESS);
     vqmsg_commit(vq, m, c);
 }
@@ -271,11 +273,24 @@ closure_func_basic(storage_req_handler, void, virtio_storage_req_handler,
     }
 }
 
+closure_func_basic(mem_cleaner, u64, virtio_blk_mem_cleaner,
+                   u64 clean_bytes)
+{
+    storage st = struct_from_field(closure_self(), storage, mem_cleaner);
+    return cache_drain(st->requests, clean_bytes, PAGESIZE);
+}
+
 static void virtio_blk_attach(heap general, storage_attach a, vtdev v)
 {
     storage s = allocate(general, sizeof(struct storage));
     assert(s != INVALID_ADDRESS);
     s->v = v;
+    /* Request headers are small DMA objects. A whole mapped page per header
+     * can exhaust guest RAM when a device accepts only one data segment. */
+    s->requests = allocate_objcache(general, (heap)v->contiguous,
+                                    sizeof(struct virtio_blk_req), PAGESIZE, true);
+    assert(s->requests != INVALID_ADDRESS);
+    mm_register_mem_cleaner(init_closure_func(&s->mem_cleaner, mem_cleaner, virtio_blk_mem_cleaner));
 
     s->block_size = (v->features & VIRTIO_BLK_F_BLK_SIZE) ?
             vtdev_cfg_read_4(v, VIRTIO_BLK_R_BLOCK_SIZE) : SECTOR_SIZE;

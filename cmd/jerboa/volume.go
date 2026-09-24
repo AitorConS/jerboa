@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -20,13 +21,72 @@ func newVolumeCmd(endpoint *string, storePath *string, outputFmt *string, verbos
 		Short: "Manage persistent volumes",
 	}
 	cmd.AddCommand(
-		newVolumeCreateCmd(endpoint, storePath, verbose),
-		newVolumeLsCmd(storePath, outputFmt),
-		newVolumeRmCmd(endpoint, storePath),
-		newVolumeInspectCmd(storePath),
-		newVolumeSeedCmd(endpoint, storePath, verbose),
+		newVolumeCreateCmd(endpoint, verbose),
+		newVolumeLsCmd(endpoint, outputFmt),
+		newVolumeRmCmd(endpoint),
+		newVolumeInspectCmd(endpoint),
+		newVolumeSeedCmd(endpoint, verbose),
+		newVolumeMigrateCmd(endpoint, storePath),
 	)
 	return cmd
+}
+
+func newVolumeMigrateCmd(endpoint, storePath *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "migrate <name>",
+		Short: "Copy a stopped legacy local volume into the daemon's store",
+		Long:  "Copy a legacy client-owned volume into the daemon's store. Stop all VMs using the source first. The source is preserved and an existing destination is never overwritten.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			store, err := volume.NewStore(volumeStorePath(*storePath))
+			if err != nil {
+				return err
+			}
+			v, err := store.Get(args[0])
+			if err != nil {
+				return err
+			}
+			f, err := os.Open(v.DiskPath)
+			if err != nil {
+				return fmt.Errorf("open migration source: %w", err)
+			}
+			defer func() { _ = f.Close() }()
+			info, err := f.Stat()
+			if err != nil {
+				return fmt.Errorf("stat migration source: %w", err)
+			}
+			client, err := api.Dial(*endpoint)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = client.Close() }()
+			vms, err := client.List(cmd.Context())
+			if err != nil {
+				return err
+			}
+			for _, vm := range vms {
+				detail, err := client.Inspect(cmd.Context(), vm.ID)
+				if err != nil {
+					return err
+				}
+				for _, mount := range detail.Volumes {
+					if mount.DiskPath == hostPathForDaemon(v.DiskPath) {
+						return fmt.Errorf("volume is referenced by VM %s; remove the VM before migrating", vm.ID)
+					}
+				}
+			}
+			label := v.Label
+			if label == "" {
+				label = volume.SanitizeLabel(v.ID)
+			}
+			_, err = client.VolumeImport(cmd.Context(), api.VolumeImportParams{Name: v.ID, Label: label, SizeBytes: info.Size()}, f)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), v.ID)
+			return nil
+		},
+	}
 }
 
 // newVolumeSeedCmd populates a volume with an initialized filesystem taken from
@@ -34,7 +94,7 @@ func newVolumeCmd(endpoint *string, storePath *string, outputFmt *string, verbos
 // the data persists across VM lifecycles. The files are resolved from --pkg,
 // optionally narrowed to a subtree with --src (whose contents become the volume
 // root), streamed to the daemon, and written into the volume's disk with mkfs.
-func newVolumeSeedCmd(endpoint *string, storePath *string, verbose *bool) *cobra.Command {
+func newVolumeSeedCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
 		pkgs      []string
 		pkgSource string
@@ -58,7 +118,7 @@ survives recreating the VM.
 			if len(pkgs) == 0 {
 				return fmt.Errorf("volume seed: at least one --pkg is required")
 			}
-			return seedVolumeFromPkgs(cmd, endpoint, storePath, verbose, args[0], pkgs, pkgSource, src)
+			return seedVolumeFromPkgs(cmd, endpoint, verbose, args[0], pkgs, pkgSource, src)
 		},
 	}
 	cmd.Flags().StringArrayVar(&pkgs, "pkg", nil, "package providing the seed files (repeatable)")
@@ -70,18 +130,19 @@ survives recreating the VM.
 // seedVolumeFromPkgs resolves pkgs, narrows them to the src subtree, and writes
 // the result into the named volume via the daemon's mkfs. Shared by
 // `volume seed` and `volume create --seed-pkg`.
-func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, storePath *string, verbose *bool, name string, pkgs []string, pkgSource, src string) error {
+func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, verbose *bool, name string, pkgs []string, pkgSource, src string) error {
 	if err := builder.ValidatePkgSource(pkgSource); err != nil {
 		return fmt.Errorf("volume seed: %w", err)
 	}
 	warnMangledImagePath(cmd.ErrOrStderr(), "--src", src)
 	sp := newSpinner(cmd.ErrOrStderr(), *verbose)
 
-	store, err := volume.NewStore(volumeStorePath(*storePath))
+	client, err := api.Dial(*endpoint)
 	if err != nil {
 		return fmt.Errorf("volume seed: %w", err)
 	}
-	vol, err := store.Get(name)
+	defer func() { _ = client.Close() }()
+	vol, err := client.VolumeGet(cmd.Context(), name)
 	if err != nil {
 		return fmt.Errorf("volume seed: volume %q not found (create it with 'jerboa volume create %s'): %w", name, name, err)
 	}
@@ -110,18 +171,12 @@ func seedVolumeFromPkgs(cmd *cobra.Command, endpoint *string, storePath *string,
 	}
 
 	sp.Start("Seeding volume on daemon")
-	client, err := api.Dial(*endpoint)
-	if err != nil {
-		sp.Fail("Volume seeding failed")
-		return fmt.Errorf("volume seed: connect to daemon: %w", err)
-	}
-	defer func() { _ = client.Close() }()
 
 	pr := seedContextReader(seedFiles)
 	defer func() { _ = pr.Close() }()
 	res, err := client.VolumeSeed(cmd.Context(), api.VolumeSeedParams{
 		VolumeName: name,
-		DiskPath:   hostPathForDaemon(vol.DiskPath),
+		DiskPath:   vol.DiskPath,
 		Label:      label,
 		SizeBytes:  vol.SizeBytes,
 	}, pr)
@@ -167,7 +222,7 @@ func remapSeedFiles(files []pkg.File, src string) ([]pkg.File, error) {
 	return out, nil
 }
 
-func newVolumeCreateCmd(endpoint *string, storePath *string, verbose *bool) *cobra.Command {
+func newVolumeCreateCmd(endpoint *string, verbose *bool) *cobra.Command {
 	var (
 		size      string
 		seedPkgs  []string
@@ -191,16 +246,17 @@ subtree whose contents become the volume root:
 			if err != nil {
 				return fmt.Errorf("volume create: invalid size: %w", err)
 			}
-			store, err := volume.NewStore(volumeStorePath(*storePath))
+			client, err := api.Dial(*endpoint)
 			if err != nil {
 				return fmt.Errorf("volume create: %w", err)
 			}
-			v, err := store.Create(name, sizeBytes)
+			defer func() { _ = client.Close() }()
+			v, err := client.VolumeCreate(cmd.Context(), name, sizeBytes)
 			if err != nil {
 				return fmt.Errorf("volume create: %w", err)
 			}
 			if len(seedPkgs) > 0 {
-				if err := seedVolumeFromPkgs(cmd, endpoint, storePath, verbose, name, seedPkgs, pkgSource, src); err != nil {
+				if err := seedVolumeFromPkgs(cmd, endpoint, verbose, name, seedPkgs, pkgSource, src); err != nil {
 					return err
 				}
 			}
@@ -215,17 +271,18 @@ subtree whose contents become the volume root:
 	return cmd
 }
 
-func newVolumeLsCmd(storePath *string, outputFmt *string) *cobra.Command {
+func newVolumeLsCmd(endpoint *string, outputFmt *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "ls",
 		Aliases: []string{"list"},
 		Short:   "List volumes",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			store, err := volume.NewStore(volumeStorePath(*storePath))
+			client, err := api.Dial(*endpoint)
 			if err != nil {
 				return fmt.Errorf("volume ls: %w", err)
 			}
-			vols, err := store.List()
+			defer func() { _ = client.Close() }()
+			vols, err := client.VolumeList(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("volume ls: %w", err)
 			}
@@ -246,27 +303,19 @@ func newVolumeLsCmd(storePath *string, outputFmt *string) *cobra.Command {
 	}
 }
 
-func newVolumeRmCmd(endpoint, storePath *string) *cobra.Command {
+func newVolumeRmCmd(endpoint *string) *cobra.Command {
 	return &cobra.Command{
 		Use:     "rm <name>",
 		Aliases: []string{"remove"},
 		Short:   "Remove a volume",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := volume.NewStore(volumeStorePath(*storePath))
+			client, err := api.Dial(*endpoint)
 			if err != nil {
 				return fmt.Errorf("volume rm: %w", err)
 			}
-			vol, err := store.Get(args[0])
-			if err != nil {
-				return err
-			}
-			client, err := api.Dial(*endpoint)
-			if err != nil {
-				return err
-			}
 			defer func() { _ = client.Close() }()
-			if err := client.VolumeRemove(cmd.Context(), args[0], hostPathForDaemon(vol.DiskPath)); err != nil {
+			if err := client.VolumeRemove(cmd.Context(), args[0], ""); err != nil {
 				return fmt.Errorf("volume rm: %w", err)
 			}
 			fmt.Fprintln(cmd.OutOrStdout(), args[0])
@@ -275,17 +324,18 @@ func newVolumeRmCmd(endpoint, storePath *string) *cobra.Command {
 	}
 }
 
-func newVolumeInspectCmd(storePath *string) *cobra.Command {
+func newVolumeInspectCmd(endpoint *string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "inspect <name>",
 		Short: "Show detailed information about a volume",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := volume.NewStore(volumeStorePath(*storePath))
+			client, err := api.Dial(*endpoint)
 			if err != nil {
 				return fmt.Errorf("volume inspect: %w", err)
 			}
-			v, err := store.Get(args[0])
+			defer func() { _ = client.Close() }()
+			v, err := client.VolumeGet(cmd.Context(), args[0])
 			if err != nil {
 				return fmt.Errorf("volume inspect: %w", err)
 			}

@@ -81,6 +81,10 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run(ok=False,HYPERVISOR='invalid')
     run(ok=False,HYPERVISOR='firecracker')
     run()
+    unit=(root/'etc/systemd/system/jerboad.service').read_text()
+    for key in ['AmbientCapabilities', 'CapabilityBoundingSet']:
+        capabilities=next(line.split('=',1)[1].split() for line in unit.splitlines() if line.startswith(key+'='))
+        assert set(capabilities)=={'CAP_NET_ADMIN','CAP_NET_RAW','CAP_NET_BIND_SERVICE'}
     token=(root/'etc/jerboa/daemon.env').read_text()
     config=(root/'home/.jerboa/config.toml').read_text()
     assert token.strip().split('=',1)[1] in config

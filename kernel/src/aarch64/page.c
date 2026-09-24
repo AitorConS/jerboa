@@ -25,9 +25,10 @@ void invalidate(u64 page)
 
 void flush_tlb(boolean full_flush)
 {
-    asm volatile("dsb ish" ::: "memory");
     if (full_flush)
-        asm volatile("tlbi vmalle1is");
+        asm volatile("dsb ishst; tlbi vmalle1is" ::: "memory");
+    /* Complete local and broadcast invalidations before reusing physical pages. */
+    asm volatile("dsb ish; isb" ::: "memory");
 }
 
 extern void *START, *READONLY_END, *END;

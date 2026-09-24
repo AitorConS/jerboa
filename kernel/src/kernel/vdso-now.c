@@ -62,12 +62,31 @@ vdso_now_none(void)
     return VDSO_NO_NOW;
 }
 
+#ifdef __aarch64__
+static inline timestamp vdso_now_arm_counter(void)
+{
+    u64 count;
+    /* Order the counter read after prior memory accesses, on all ARMv8 CPUs. */
+    asm volatile("isb; mrs %0, CNTVCT_EL0" : "=r"(count) :: "memory");
+    u64 frequency = __vdso_dat->machine.counter_frequency;
+    if (!frequency)
+        return VDSO_NO_NOW;
+    u64 secs = count / frequency;
+    u64 fraction = count - secs * frequency;
+    return seconds(secs) | ((fraction << 32) / frequency);
+}
+#endif
+
 typedef timestamp (*vdso_now_fn)(void);
 
 static inline vdso_now_fn
 vdso_get_now_fn(vdso_clock_id id)
 {
     switch (id) {
+#ifdef __aarch64__
+    case VDSO_CLOCK_ARM_COUNTER:
+        return vdso_now_arm_counter;
+#endif
     case VDSO_CLOCK_PVCLOCK:
         return vdso_now_pvclock;
     default:

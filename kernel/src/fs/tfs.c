@@ -255,14 +255,15 @@ void zero_blocks(tfs fs, range blocks, merge m)
     range r = blocks;
     while (range_span(r) > 0) {
         u64 length = MIN(range_span(r), blocks_per_page);
-        sg_buf sgb = sg_list_tail_add(sg, length);
+        u64 bytes = length << fs->fs.blocksize_order;
+        sg_buf sgb = sg_list_tail_add(sg, bytes);
         if (sgb == INVALID_ADDRESS) {
             apply(zero_blocks_completion, timm("result", "failed to allocate sg buf"));
             return;
         }
         sgb->buf = fs->zero_page;
         sgb->offset = 0;
-        sgb->size = U64_FROM_BIT(fs->page_order);
+        sgb->size = bytes;
         sgb->refcount = 0;
         r.start += length;
     }
@@ -364,20 +365,38 @@ int filesystem_write_eav(tfs fs, tuple t, symbol a, value v, boolean cleanup)
         return -ENOSPC;
 }
 
+static int tfs_shrink(tfsfile f, u64 len);
+
 static int tfs_truncate(filesystem fs, fsfile f, u64 len)
 {
+    boolean shrinking = len < f->length;
+    int s = 0;
+    if (shrinking) {
+        s = tfs_shrink((tfsfile)f, len);
+        if (s != 0)
+            goto out;
+    }
     if (f->md) {
         value v = value_from_u64(len);
-        if (v == INVALID_ADDRESS)
-            return -ENOMEM;
+        if (v == INVALID_ADDRESS) {
+            s = -ENOMEM;
+            goto out;
+        }
         symbol l = sym(filelength);
-        int s = filesystem_write_eav((tfs)fs, f->md, l, v, false);
+        s = filesystem_write_eav((tfs)fs, f->md, l, v, false);
         if (s != 0)
-            return s;
+            goto out;
         set(f->md, l, v);
         f->status |= FSF_DIRTY_DATASYNC;
     }
-    return 0;
+    if (shrinking)
+        fsfile_set_length(f, len);
+out:
+#ifdef KERNEL
+    if (shrinking)
+        pagecache_node_end_truncate(f->cache_node);
+#endif
+    return s;
 }
 
 /* create a new extent in the filesystem
@@ -426,14 +445,19 @@ static int create_extent(tfs fs, range blocks, boolean uninited, extent *ex)
     return 0;
 }
 
+static void deallocate_extent(tfs fs, extent ex)
+{
+    if (ex->uninited && ex->uninited != INVALID_ADDRESS)
+        refcount_release(&ex->uninited->refcount);
+    deallocate(fs->fs.h, ex, sizeof(*ex));
+}
+
 static void destroy_extent(tfs fs, extent ex)
 {
     range q = irangel(ex->start_block, ex->allocated);
     if (!filesystem_free_storage(fs, q))
         msg_err("TFS: failed to mark extent at %R as free", q);
-    if (ex->uninited && ex->uninited != INVALID_ADDRESS)
-        refcount_release(&ex->uninited->refcount);
-    deallocate(fs->fs.h, ex, sizeof(*ex));
+    deallocate_extent(fs, ex);
 }
 
 static int add_extent_to_file(tfsfile f, extent ex)
@@ -478,7 +502,7 @@ static int add_extent_to_file(tfsfile f, extent ex)
     return 0;
 }
 
-static void remove_extent_from_file(tfsfile f, extent ex)
+static int remove_extent_from_file(tfsfile f, extent ex)
 {
     /* The tuple corresponding to this extent will be destroyed when the
      * filesystem log is compacted. */
@@ -488,10 +512,13 @@ static void remove_extent_from_file(tfsfile f, extent ex)
         tuple extents = get(md, sym(extents));
         assert(extents);
         symbol offs = intern_u64(ex->node.r.start);
-        filesystem_write_eav(tfs_from_file(f), extents, offs, 0, false);
+        int s = filesystem_write_eav(tfs_from_file(f), extents, offs, 0, false);
+        if (s != 0)
+            return s;
         set(extents, offs, 0);
     }
     rangemap_remove_node(f->extentmap, &ex->node);
+    return 0;
 }
 
 define_closure_function(2, 1, void, uninited_complete,
@@ -645,6 +672,108 @@ static int update_extent_length(tfsfile f, extent ex, u64 new_length)
     return 0;
 }
 
+/* Called with the filesystem mutex held. Drop it before draining the cache:
+ * writeback needs that mutex, and never waits for the cache writer gate. */
+static int tfs_shrink(tfsfile f, u64 len)
+{
+    tfs fs = tfs_from_file(f);
+    int result = 0;
+    buffer releases = 0;
+#ifdef KERNEL
+    pagecache_node pn = f->f.cache_node;
+    filesystem_unlock(&fs->fs);
+    pagecache_node_begin_truncate(pn);
+    filesystem_lock(&fs->fs);
+    /* Another truncation may have completed while this caller waited for the
+     * writer gate. Recheck before constructing a tail range. */
+    u64 old_length = f->f.length;
+    if (len >= old_length)
+        return 0;
+    filesystem_unlock(&fs->fs);
+    status s = pagecache_node_sync_locked(pn);
+    if (is_ok(s) && (len & MASK(fs->fs.blocksize_order))) {
+        /* Only a retained, initialized partial block needs disk zeroing. A
+         * hole or an uninitialized extent is already zero: allocating a block
+         * for it would make shrinking a full sparse filesystem fail ENOSPC. */
+        filesystem_lock(&fs->fs);
+        extent ex = (extent)rangemap_lookup(f->extentmap, len >> fs->fs.blocksize_order);
+        boolean clear_tail = ex != INVALID_ADDRESS && (!ex->uninited ||
+            (ex->uninited != INVALID_ADDRESS && ex->uninited->initialized));
+        filesystem_unlock(&fs->fs);
+        if (clear_tail) {
+            s = pagecache_node_zero_locked(pn, irange(len,
+                MIN(old_length, pad(len, fs_blocksize(&fs->fs)))));
+            if (is_ok(s))
+                s = pagecache_node_sync_locked(pn);
+        }
+    }
+    filesystem_lock(&fs->fs);
+    if (!is_ok(s)) {
+        s64 fsstatus;
+        result = get_s64(s, sym(fsstatus), &fsstatus) ? fsstatus : -EIO;
+        timm_dealloc(s);
+        goto out;
+    }
+#endif
+    releases = allocate_buffer(fs->fs.h, rangemap_count(f->extentmap) * sizeof(range));
+    if (releases == INVALID_ADDRESS) {
+        result = -ENOMEM;
+        goto out;
+    }
+    u64 end = pad(len, fs_blocksize(&fs->fs)) >> fs->fs.blocksize_order;
+    u64 removed_end = end;
+    rmnode n = rangemap_first_node(f->extentmap);
+    while (n != INVALID_ADDRESS) {
+        extent ex = (extent)n;
+        n = rangemap_next_node(f->extentmap, n);
+        range removed = range_intersection(irange(end, infinity), ex->node.r);
+        if (ex->node.r.start >= end) {
+            result = remove_extent_from_file(f, ex);
+            if (result != 0)
+                break;
+            range release = irangel(ex->start_block, ex->allocated);
+            assert(buffer_write(releases, &release, sizeof(release)));
+            deallocate_extent(fs, ex);
+        } else if (ex->node.r.end > end) {
+            u64 keep = end - ex->node.r.start;
+            result = update_extent_length(f, ex, keep);
+            if (result != 0)
+                break;
+            removed_end = removed.end;
+            /* Log both fields before freeing storage. If the second update
+             * fails, retain the old allocation; it cannot alias another file. */
+            range release = irange(ex->start_block + keep, ex->start_block + ex->allocated);
+            result = update_extent_allocated(f, ex, keep);
+            if (result != 0)
+                break;
+            if (!range_empty(release))
+                assert(buffer_write(releases, &release, sizeof(release)));
+        }
+        if (!range_empty(removed))
+            removed_end = removed.end;
+    }
+#ifdef KERNEL
+    filesystem_unlock(&fs->fs);
+    pagecache_node_zero_cached_range(pn, range_lshift(irange(end, removed_end), fs->fs.blocksize_order));
+    filesystem_lock(&fs->fs);
+#else
+    (void)removed_end;
+#endif
+    /* Old reads may still have used these blocks. The cache barrier above
+     * finishes them before another file can reuse the physical storage. */
+    while (buffer_length(releases)) {
+        range release;
+        assert(buffer_read(releases, &release, sizeof(release)));
+        if (!filesystem_free_storage(fs, release))
+            msg_err("TFS: failed to free truncated extent range %R", release);
+    }
+out:
+    if (releases && releases != INVALID_ADDRESS)
+        deallocate_buffer(releases);
+    /* tfs_truncate publishes length before releasing the writer gate. */
+    return result;
+}
+
 static int extend(tfsfile f, extent ex, sg_list sg, range blocks, merge m, u64 *edge)
 {
     tfs fs = tfs_from_file(f);
@@ -751,7 +880,9 @@ static status extents_range_handler(tfs fs, tfsfile f, range q, sg_list sg, merg
 
             if (m && !sg && range_contains(blocks, ex->node.r)) {
                 blocks.start = ex->node.r.end;
-                remove_extent_from_file(f, ex);
+                fss = remove_extent_from_file(f, ex);
+                if (fss != 0)
+                    return timm("result", "unable to remove extent", "fsstatus", "%d", fss);
                 destroy_extent(fs, ex);
                 prev = INVALID_ADDRESS; /* prev isn't used in zero, but just to be safe */
             } else if (blocks.end > ex->node.r.start) {

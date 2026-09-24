@@ -139,6 +139,18 @@ vqmsg allocate_vqmsg(virtqueue vq)
     return m;
 }
 
+/* Only for an allocated message that has not been committed to the queue. */
+void deallocate_vqmsg(virtqueue vq, vqmsg m)
+{
+    deallocate_buffer(m->descv);
+    deallocate(vq->dev->general, m, sizeof(*m));
+}
+
+boolean vqmsg_reserve(vqmsg m, u32 descriptors)
+{
+    return buffer_extend(m->descv, (u64)descriptors * sizeof(struct vring_desc));
+}
+
 void vqmsg_push(virtqueue vq, vqmsg m, u64 phys_addr, u32 len, boolean write)
 {
     assert(buffer_extend(m->descv, sizeof(struct vring_desc)));
@@ -423,10 +435,18 @@ static void virtqueue_fill(virtqueue vq)
         /* If the queue is full and there are messages waiting to be sent, enable interrupts even if
          * we are in polling mode, because we want to be notified as soon as a new message can be
          * sent. */
-        if (!vq->events_enabled && !list_empty(&vq->msg_queue)) {
+        if (!list_empty(&vq->msg_queue)) {
+            /* EVENT_IDX is a one-shot threshold. Rearm it after every polled
+             * batch, including when events were already enabled. Otherwise
+             * a saturated TX queue stalls after its first interrupt and only
+             * progresses when an unrelated new transmission polls it. */
             vq_enable_events(vq);
-            goto begin;
-        } else if (vq->events_enabled && list_empty(&vq->msg_queue)) {
+            memory_barrier();
+            /* A completion can race the rearm. Consume it here rather than
+             * waiting for an interrupt that the device already suppressed. */
+            if (vq->last_used_idx != vq->used->idx)
+                goto begin;
+        } else if (vq->events_enabled) {
             vq_disable_events(vq);
         }
     }
