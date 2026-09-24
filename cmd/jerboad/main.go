@@ -399,7 +399,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	}
 
 	// Enable on-demand TFS formatting of attached volumes (lazy mkfs resolver).
-	// Volumes are created as sparse files on the client (mkfs is Linux-only);
+	// Volumes are created as sparse files in the daemon-owned store;
 	// the daemon formats them with a label the first time they are attached.
 	vmSrv.EnableVolumeFormatResolver(func(rctx context.Context) (volume.Formatter, error) {
 		slog.Info("jerboad: resolving mkfs toolchain for volume format", "tools_dir", toolsDir)

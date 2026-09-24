@@ -128,16 +128,6 @@ func newRootCmd() *cobra.Command {
 // daemon. Local-only command groups and the bare root are excluded so that
 // e.g. `jerboa config` or `jerboa kernel` never spin up WSL.
 func needsDaemon(cmd *cobra.Command) bool {
-	// `volume seed` is the one volume subcommand that always talks to the
-	// daemon (it streams seed files to mkfs), so it must trigger daemon
-	// auto-boot even though the rest of the volume group is local-only.
-	// `volume create --seed-pkg` seeds too, so it needs the daemon as well.
-	if cmd.Name() == "seed" {
-		return true
-	}
-	if cmd.Name() == "create" && cmd.Flags().Changed("seed-pkg") {
-		return true
-	}
 	// `pkg load` downloads a package and then builds AND runs an image through
 	// the daemon (api.Dial → Image.Build/VM.Run), so despite living in the
 	// otherwise-local `pkg` group it must trigger the same Windows distro
@@ -153,8 +143,10 @@ func needsDaemon(cmd *cobra.Command) bool {
 	// other daemon-backed command — otherwise they dial the loopback default
 	// (which never reaches the WSL distro) with no auth token and fail with
 	// "connection refused" / "authentication required" (E2E finding F-019).
+	// Every volume command uses the daemon-owned store, including create,
+	// list and migration. Keep the whole group on the remote-command path.
 	localGroups := map[string]bool{
-		"config": true, "kernel": true, "pkg": true, "volume": true,
+		"config": true, "kernel": true, "pkg": true,
 		"completion": true, "help": true,
 		"daemon": true, "init": true, "version": true,
 	}

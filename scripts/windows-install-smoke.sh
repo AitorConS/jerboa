@@ -104,8 +104,8 @@ jerboa compose down "${EXAMPLES}/flask-postgres/stack.yaml" || true
 
 # ── 3. mongodb — persistent volume + bridge network, detached ─────────────────
 log "[3/3] mongodb (volume + network)"
-jerboa network create mynet                 >/dev/null 2>&1 || true
-jerboa volume  create mongodata --size 800M >/dev/null 2>&1 || true
+jerboa network create mynet || fail "mongodb network create"
+jerboa volume create mongodata --size 800M || fail "mongodb volume create"
 jerboa build "${EXAMPLES}/mongodb" --name mongodb || fail "mongodb build"
 # --port requires --network; publish 27017 so a real mongod bind is exercised.
 jerboa run mongodb:latest --name mongo -d \
