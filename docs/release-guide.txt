@@ -1,0 +1,156 @@
+PUBLICAR JERBOA Y SU KERNEL
+==========================
+
+Repositorios:
+  Motor y publicador: AitorConS/jerboa
+  Desktop: AitorConS/JerboaDesktop
+  Firecracker macOS: AitorConS/firecracker-macos
+  Web de descargas: AitorConS/Jerboa_Docs
+
+Requisitos:
+  GitHub CLI (gh) autenticado con acceso a los repositorios y Actions.
+  Permiso para aprobar los entornos kvm y release.
+  Mac fisico Apple Silicon con macOS 26 o posterior y Go para la prueba nativa.
+  Los secretos de firma, R2 y acceso a Desktop deben estar configurados en Actions.
+
+1. PREPARAR LOS CAMBIOS
+
+Fusiona las PR del motor, Desktop y Firecracker que quieras publicar.
+Comprueba que sus pruebas pasan. No uses ramas de trabajo sin validar.
+
+Cambia VERSION.md mediante una PR: numero del producto sin prefijo v.
+Ejemplo: 0.54.3. Si cambian los bytes respecto a una version publicada,
+usa una version nueva; nunca sobrescribas una version anterior.
+
+Si distribuyes cambios del kernel Linux, cambia tambien kernel/VERSION a una
+version nueva (por ejemplo 0.2.1). Fusiona la PR con CI required verde.
+Cambiar estos archivos no publica por si solo.
+
+2. OBTENER LOS SHA EXACTOS
+
+Ejecuta:
+  gh api repos/AitorConS/JerboaDesktop/commits/main --jq .sha
+  gh api repos/AitorConS/firecracker-macos/commits/main --jq .sha
+
+Copia los 40 caracteres de cada respuesta. Esos valores son desktop_sha y
+runtime_sha. Comprueba el CI de esos commits, no solo el de una revision anterior.
+El workflow captura automaticamente el SHA de Jerboa seleccionado en main.
+
+Alternativa web: repositorio > main > Commits > abrir commit > copiar SHA completo.
+Si hubo squash merge, usa el commit resultante de main, no el SHA antiguo de la PR.
+
+3. ELEGIR EL KERNEL
+
+Para incluir los cambios del kernel:
+  kernel_source = build
+  kernel_version = v + el contenido de kernel/VERSION
+
+Ejemplo: archivo 0.2.1 -> entrada v0.2.1.
+El kernel se obtiene de la compilacion validada de esa misma ejecucion.
+No necesitas publicar el kernel por separado.
+
+Solo si quieres reutilizar intencionadamente las herramientas Linux publicadas:
+  kernel_source = stable
+  kernel_version = la version exacta del kernel estable
+
+Para consultar esa version:
+  curl -fsSL https://releases.jerboa.dev/channels/stable.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["components"]["kernel"]["version"])'
+
+Esta consulta muestra el valor; el workflow verifica despues la firma y los hashes.
+No uses stable si pretendes distribuir correcciones nuevas del kernel Linux.
+Mac incluye su propio kernel ARM64 compilado con la aplicacion candidata.
+
+4. CONSTRUIR EL CANDIDATO
+
+Abre:
+  https://github.com/AitorConS/jerboa/actions/workflows/release.yml
+
+Run workflow, rama main. Rellena:
+  version: vMAJOR.MINOR.PATCH, coincidente con VERSION.md
+  desktop_sha: SHA completo del paso 2
+  runtime_sha: SHA completo del paso 2
+  kernel_source: build o stable
+  kernel_version: vMAJOR.MINOR.PATCH del paso 3
+
+Aprueba el entorno kvm tras revisar las revisiones seleccionadas. Puede haber
+mas de una solicitud, incluyendo la prueba del conjunto de kernels seleccionado.
+El runner KVM necesita cc con libc estatica, QEMU, Firecracker y acceso a /dev/kvm.
+
+Espera a que termine TODO el workflow correctamente. Compila y prueba el motor,
+prepara Linux/WSL, Mac y Windows, valida el instalador Windows y ensambla el
+candidato firmado. Los kernels Linux elegidos se arrancan con QEMU y Firecracker.
+La distribucion y las descargas usan los mismos archivos comprobados.
+Stable todavia no cambia.
+
+Guarda el numero de la URL de la ejecucion:
+  https://github.com/AitorConS/jerboa/actions/runs/NUMERO
+Ese NUMERO es candidate_run. No es el numero de la PR ni el SHA del commit.
+
+5. DESCARGAR Y PROBAR EN MAC
+
+Descarga los artefactos release-candidate y macos-app desde la ejecucion.
+Por terminal, reemplaza NUMERO y usa directorios nuevos:
+  gh run download NUMERO -R AitorConS/jerboa -n release-candidate -D /tmp/jerboa-candidate
+  gh run download NUMERO -R AitorConS/jerboa -n macos-app -D /tmp/jerboa-candidate-app
+
+Desde el checkout de Jerboa correspondiente al candidato:
+  bash scripts/release/native-macos.sh RUTA_AL_ZIP_DE_LA_APP NUMERO /tmp/jerboa-native-result.json
+
+Usa el ZIP interior jerboa-desktop-X.Y.Z-macos-arm64.zip; si descargaste desde
+el navegador, extrae primero el contenedor del artefacto de GitHub.
+El script verifica firmas, versiones y funcionamiento nativo de las VMs.
+Calcula automaticamente el SHA-256 del ZIP y lo incluye en el JSON.
+
+Conserva el JSON y los logs en un informe HTTPS accesible al revisor. La evidencia
+debe identificar ese candidate_run y el hash exacto de la app. No uses resultados
+de otra compilacion aunque tenga el mismo numero de version.
+
+6. PUBLICAR
+
+Abre:
+  https://github.com/AitorConS/jerboa/actions/workflows/promote.yml
+
+Run workflow, rama main:
+  candidate_run: NUMERO del candidato que termino correctamente
+  macos_evidence: URL HTTPS del informe de la prueba nativa
+
+Aprueba el entorno release despues de revisar la evidencia y el inventario.
+ESTE PASO SI PUBLICA: sube los archivos verificados (incluido el kernel nuevo),
+verifica las descargas publicas y actualiza stable y el feed de Desktop.
+No recompila los binarios. No crees otro candidato entre la prueba y la promocion.
+
+7. VERIFICAR EL RESULTADO Y LA WEB
+
+Comprueba que Promote release termina correctamente.
+Consulta el manifiesto estable y confirma las versiones del producto y kernel:
+  curl -fsSL https://releases.jerboa.dev/channels/stable.json | python3 -c 'import json,sys; print({k:v.get("version") for k,v in json.load(sys.stdin)["components"].items()})'
+
+La promocion dispara automaticamente:
+  https://github.com/AitorConS/Jerboa_Docs/actions/workflows/release-sync.yml
+
+Comprueba que ese workflow y el despliegue de Vercel pasan y que la web muestra
+la version y las descargas correctas. Las notas detalladas del changelog son
+manuales; la sincronizacion conserva las existentes o crea una nota generica.
+La documentacion tecnica publica tiene su propio flujo de sincronizacion.
+
+8. SI FALLA ALGO
+
+Antes de promocionar: corrige el error y valida un candidato completo. Si cambias
+los binarios debes repetir la prueba de Mac; nunca atribuyas evidencia vieja a
+un candidato reconstruido.
+
+Durante la promocion: reintenta con EL MISMO candidato. Los archivos inmutables
+identicos se reutilizan; no se sobrescriben con otros bytes. Si el fallo ocurre
+entre el manifiesto estable y su firma, reintenta inmediatamente para completar
+los punteros.
+
+Si solo falla la web: ejecuta Synchronize published release en Jerboa_Docs con la
+version estable actual. Comprueba despues Vercel.
+
+Si cambia un kernel ya publicado, usa otra version de kernel. Si cambia el producto
+ya publicado, usa otra version de producto. El publicador rechaza downgrades.
+
+Los candidatos caducan a los 30 dias. Si caducaron, reconstruye y vuelve a validar.
+No elimines las protecciones ni marques pruebas omitidas como satisfactorias.
+
+Referencia detallada: docs/release-process.md, en AitorConS/jerboa.

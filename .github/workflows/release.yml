@@ -16,10 +16,17 @@ name: Build release candidate
         type: string
         default: 6750fc374d4758a8181d75e5299e7137a110dd41
       kernel_version:
-        description: Existing verified kernel version
+        description: Kernel version (kernel/VERSION for build; published version for stable)
         required: true
         type: string
-        default: v0.2.0
+      kernel_source:
+        description: Build kernel from this revision or explicitly reuse published tools
+        required: true
+        type: choice
+        options:
+        - build
+        - stable
+        default: build
 permissions:
   contents: read
 concurrency:
@@ -34,6 +41,7 @@ jobs:
       desktop_sha: ${{ steps.lock.outputs.desktop_sha }}
       runtime_sha: ${{ steps.lock.outputs.runtime_sha }}
       kernel_version: ${{ steps.lock.outputs.kernel_version }}
+      kernel_source: ${{ steps.lock.outputs.kernel_source }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -45,6 +53,7 @@ jobs:
         DESKTOP_SHA: ${{ inputs.desktop_sha }}
         RUNTIME_SHA: ${{ inputs.runtime_sha }}
         KERNEL_VERSION: ${{ inputs.kernel_version }}
+        KERNEL_SOURCE: ${{ inputs.kernel_source }}
         VERSION: ${{ inputs.version }}
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
@@ -59,6 +68,75 @@ jobs:
     with:
       full: true
     secrets: inherit
+  kernel-stage:
+    name: Stage selected kernel toolset
+    runs-on: ubuntu-latest
+    needs: [inputs, validate]
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.1
+        cache: true
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: release-lock
+        path: .
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      if: needs.inputs.outputs.kernel_source == 'build'
+      with:
+        name: kernel-linux
+        path: .
+    - name: Restore validated build output
+      if: needs.inputs.outputs.kernel_source == 'build'
+      run: tar -xzf kernel-linux.tar.gz
+    - name: Stage toolset and record hashes
+      run: python3 scripts/release/candidate.py kernel
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: selected-kernel
+        path: kernel-candidate/
+        if-no-files-found: error
+        retention-days: 30
+  kernel-test:
+    name: Boot selected QEMU and Firecracker kernels
+    needs: [kernel-stage]
+    environment: kvm
+    runs-on: [self-hosted, linux, kvm]
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: release-lock
+        path: .
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: selected-kernel
+        path: kernel-candidate
+    - name: Check KVM and runner tools
+      run: |
+        test -r /dev/kvm && test -w /dev/kvm
+        command -v cc
+        command -v qemu-system-x86_64
+        command -v firecracker
+    - name: Boot exact staged kernels
+      run: python3 scripts/release/validate-kernel.py --work "$RUNNER_TEMP/kernel-boot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always()
+      with:
+        name: kernel-boot-logs
+        path: ${{ runner.temp }}/kernel-boot-${{ github.run_id }}-${{ github.run_attempt }}/*.log
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: validated-kernel
+        path: kernel-candidate/
+        if-no-files-found: error
+        retention-days: 30
   build-release:
     name: Build Release Binaries
     runs-on: ubuntu-latest
@@ -131,6 +209,7 @@ jobs:
     - inputs
     - validate
     - build-release
+    - kernel-test
     timeout-minutes: 25
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -142,10 +221,8 @@ jobs:
         cache: true
     - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
-        name: kernel-linux
-        path: .
-    - name: Restore tested kernel
-      run: tar -xzf kernel-linux.tar.gz
+        name: validated-kernel
+        path: kernel-candidate
     - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: binaries-linux-amd64
@@ -161,6 +238,7 @@ jobs:
       RELEASE_VERSION: ${{ needs.inputs.outputs.version }}
       VERSION: ${{ needs.inputs.outputs.version }}
       JERBOA_DAEMON_BINARY: dist/jerboad-linux-amd64
+      JERBOA_KERNEL_TOOLSET: kernel-candidate
   build-macos:
     name: Native macOS runtime and Desktop DMG
     runs-on: macos-26
@@ -435,6 +513,7 @@ jobs:
     needs:
     - inputs
     - validate
+    - kernel-test
     - build-release
     - build-distro
     - build-macos
@@ -469,6 +548,10 @@ jobs:
       with:
         name: release-lock
         path: .
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: validated-kernel
+        path: kernel-candidate
     - name: Build release utilities
       run: |-
         go build -o bin/jerboa-manifest ./cmd/jerboa-manifest

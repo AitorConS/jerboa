@@ -48,9 +48,19 @@ fi
 
 echo "==> staging kernel toolchain"
 mkdir -p "${ctx}/tools"
-cp "${root}/kernel/output/tools/bin/mkfs"             "${ctx}/tools/mkfs"
-cp "${root}/kernel/output/platform/pc/boot/boot.img"  "${ctx}/tools/boot.img"
-cp "${root}/kernel/output/platform/pc/bin/kernel.img" "${ctx}/tools/kernel.img"
+if [ -n "${JERBOA_KERNEL_TOOLSET:-}" ]; then
+    # Product candidates use the exact boot-validated files, including FC.
+    cp "${JERBOA_KERNEL_TOOLSET}/mkfs-linux-amd64" "${ctx}/tools/mkfs"
+    cp "${JERBOA_KERNEL_TOOLSET}/dump-linux-amd64" "${ctx}/tools/dump"
+    for name in boot.img kernel.img kernel-fc.img; do
+        cp "${JERBOA_KERNEL_TOOLSET}/${name}" "${ctx}/tools/${name}"
+    done
+    chmod +x "${ctx}/tools/mkfs" "${ctx}/tools/dump"
+else
+    cp "${root}/kernel/output/tools/bin/mkfs" "${ctx}/tools/mkfs"
+    cp "${root}/kernel/output/platform/pc/boot/boot.img" "${ctx}/tools/boot.img"
+    cp "${root}/kernel/output/platform/pc/bin/kernel.img" "${ctx}/tools/kernel.img"
+fi
 
 echo "==> building distro image"
 docker build -t jerboa-distro:latest "${ctx}"

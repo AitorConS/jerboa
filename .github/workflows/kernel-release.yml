@@ -1,9 +1,9 @@
 name: Kernel Build
 
-# Builds a kernel toolset candidate; never writes stable. Product candidates
-# currently carry the explicitly pinned signed kernel from R2. A new kernel,
-# including kernel-fc.img, needs QEMU/Firecracker boot evidence and a reviewed
-# distribution change; see docs/release-process.md and roadmap.md Phase 7.
+# Standalone build diagnostics; never writes stable. Product release.yml stages
+# the same-run kernel build, validates QEMU/Firecracker boots, and includes it
+# in the signed candidate. Only promote.yml publishes those tested bytes.
+# See docs/release-process.md.
 
 on:
   push:
@@ -62,7 +62,7 @@ jobs:
           # is rebuilt from repo source and is NOT byte-identical to the manually
           # produced v0.2.0 kernel-fc.img in R2 — it must pass the Firecracker
           # native boot validation before it is published as a new kernel
-          # version. See roadmap.md Phase 7.
+          # version through the product release candidate.
           strip -g kernel/output/platform/pc/bin/kernel.elf -o dist/kernel-fc.img
           chmod +x dist/mkfs-linux-amd64 dist/dump-linux-amd64
           VERSION="v$(cat kernel/VERSION | tr -d '[:space:]')"

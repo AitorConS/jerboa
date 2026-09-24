@@ -19,6 +19,10 @@ import tarfile
 from urllib.parse import urlparse
 
 BASE = 'https://releases.jerboa.dev'
+KERNEL_FILES = {'mkfs': 'mkfs-linux-amd64', 'dump': 'dump-linux-amd64',
+                'boot.img': 'boot.img', 'kernel.img': 'kernel.img',
+                'kernel-fc.img': 'kernel-fc.img'}
+
 REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64'},
             'daemon': {'linux-amd64', 'darwin-arm64'},
             'desktop': {'windows-amd64', 'darwin-arm64'}}
@@ -90,7 +94,13 @@ def lock():
     v = version(os.environ['VERSION'])
     if v != 'v' + Path('VERSION.md').read_text().strip():
         raise ValueError('Candidate version must match VERSION.md')
-    value = {'version': v, 'engine_sha': sha(os.environ['GITHUB_SHA']),
+    kernel_source = os.environ['KERNEL_SOURCE']
+    if kernel_source not in ('build', 'stable'):
+        raise ValueError('Kernel source must be build or stable')
+    kernel_version = version(os.environ['KERNEL_VERSION'])
+    if kernel_source == 'build' and kernel_version != 'v' + Path('kernel/VERSION').read_text().strip():
+        raise ValueError('Built kernel version must match kernel/VERSION')
+    value = {'kernel_source': kernel_source, 'version': v, 'engine_sha': sha(os.environ['GITHUB_SHA']),
              'desktop_sha': sha(os.environ['DESKTOP_SHA']),
              'runtime_sha': sha(os.environ['RUNTIME_SHA']),
              'kernel_version': version(os.environ['KERNEL_VERSION']),
@@ -98,7 +108,7 @@ def lock():
              'toolchains': {'go': '1.27.1', 'node': '22', 'rust': '1.97.0'}}
     write_json('release-lock.json', value)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-        for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version']:
+        for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source']:
             out.write(f'{k}={value[k]}\n')
 
 
@@ -143,7 +153,17 @@ def verify_linux_versions(manifest, payload, expected):
             raise ValueError('Binary version mismatch: ' + output)
     distro = manifest['components']['distro']['url'][len(BASE)+1:]
     with tarfile.open(payload/distro) as archive, tempfile.TemporaryDirectory() as tmp:
-        members = [m for m in archive if m.name.lstrip('./') == 'usr/local/bin/jerboad']
+        for name, asset in manifest['components']['kernel']['files'].items():
+            path = 'root/.jerboa/tools/' + name
+            entries = [m for m in archive.getmembers() if m.name.removeprefix('./') == path]
+            if len(entries) != 1 or not entries[0].isfile():
+                raise ValueError('Distro kernel tool missing or non-regular: ' + name)
+            target = Path(tmp) / name
+            with archive.extractfile(entries[0]) as source, target.open('wb') as dest:
+                shutil.copyfileobj(source, dest)
+            if digest(target) != {'sha256': asset['sha256'], 'size': asset['size']}:
+                raise ValueError('Distro kernel differs from tested toolset: ' + name)
+        members = [m for m in archive.getmembers() if m.name.lstrip('./') == 'usr/local/bin/jerboad']
         if len(members) != 1 or not members[0].isfile():
             raise ValueError('Distro daemon missing, duplicated or non-regular')
         binary=Path(tmp)/'jerboad'
@@ -155,6 +175,80 @@ def verify_linux_versions(manifest, payload, expected):
             raise ValueError('Distro binary version mismatch: ' + output)
 
 
+def verify_kernel_evidence(record, boot, spec):
+    for key in ('engine_sha', 'run_id', 'kernel_version', 'kernel_source'):
+        if record[key] != spec[key]:
+            raise ValueError('Kernel provenance mismatch: ' + key)
+    if record['kernel_source'] not in ('build', 'stable'):
+        raise ValueError('Unknown kernel source')
+    version(record['kernel_version']); sha(record['engine_sha'])
+    if set(record['files']) != set(KERNEL_FILES.values()):
+        raise ValueError('Incomplete kernel toolset')
+    if boot is not None:
+        if boot.get('toolset') != record or boot.get('checks') != {'qemu': 'pass', 'firecracker': 'pass'}:
+            raise ValueError('Kernel boot evidence does not match toolset')
+
+
+def verify_kernel_toolset(directory, spec, require_boot=False):
+    directory = Path(directory)
+    record = json.loads((directory / 'toolset.json').read_text())
+    boot = json.loads((directory / 'boot-validation.json').read_text()) if require_boot else None
+    verify_kernel_evidence(record, boot, spec)
+    for filename, expected in record['files'].items():
+        file = directory / filename
+        if file.is_symlink() or not file.is_file() or digest(file) != expected:
+            raise ValueError('Kernel toolset bytes changed: ' + filename)
+        if expected['size'] <= 0:
+            raise ValueError('Empty kernel artifact: ' + filename)
+    return record, boot
+
+
+def kernel():
+    """Stage the selected toolset once; boot validation and assembly reuse it."""
+    spec = json.loads(Path('release-lock.json').read_text())
+    root = Path('kernel-candidate'); root.mkdir(exist_ok=False)
+    source = spec['kernel_source']
+    provenance = {}
+    if source == 'build':
+        if spec['kernel_version'] != 'v' + Path('kernel/VERSION').read_text().strip():
+            raise ValueError('Built kernel version must match kernel/VERSION')
+        output = Path('kernel/output')
+        paths = {'mkfs-linux-amd64': output / 'tools/bin/mkfs',
+                 'dump-linux-amd64': output / 'tools/bin/dump',
+                 'boot.img': output / 'platform/pc/boot/boot.img',
+                 'kernel.img': output / 'platform/pc/bin/kernel.img'}
+        for filename, path in paths.items():
+            shutil.copyfile(path, root / filename)
+        run('strip', '-g', output / 'platform/pc/bin/kernel.elf', '-o', root / 'kernel-fc.img')
+    elif source == 'stable':
+        # Reuse is explicit and still needs boot checks. Never silently replace
+        # a requested build with the currently published kernel.
+        manifest = root / 'source-manifest.json'
+        download(BASE + '/channels/stable.json', manifest)
+        download(BASE + '/channels/stable.json.minisig', str(manifest) + '.minisig')
+        verify_signature(manifest)
+        component = json.loads(manifest.read_text())['components']['kernel']
+        if component['version'] != spec['kernel_version'] or set(component['files']) != set(KERNEL_FILES):
+            raise ValueError('Published kernel does not match requested toolset')
+        provenance = {'stable_manifest': digest(manifest)}
+        for name, filename in KERNEL_FILES.items():
+            asset = component['files'][name]
+            if asset['url'] != f'{BASE}/kernel/{spec["kernel_version"]}/{filename}':
+                raise ValueError('Kernel URL outside selected version')
+            download(asset['url'], root / filename)
+            if digest(root / filename) != {'sha256': asset['sha256'], 'size': asset['size']}:
+                raise ValueError('Published kernel checksum mismatch')
+    else:
+        raise ValueError('Unknown kernel source')
+    for filename in ('mkfs-linux-amd64', 'dump-linux-amd64'):
+        (root / filename).chmod(0o755)
+    record = {key: spec[key] for key in ('engine_sha', 'run_id', 'kernel_version', 'kernel_source')}
+    record.update(provenance)
+    record['files'] = {filename: digest(root / filename) for filename in KERNEL_FILES.values()}
+    write_json(root / 'toolset.json', record)
+    verify_kernel_toolset(root, spec)
+
+
 def assemble():
     spec = json.loads(Path('release-lock.json').read_text())
     v = version(spec['version']); n = v[1:]
@@ -162,24 +256,14 @@ def assemble():
     payload = root / 'payload'
     manifest = {'channel': 'stable', 'components': {}}
     components = manifest['components']
-    # Verify the source manifest before carrying forward its pinned kernel.
-    download(BASE + '/channels/stable.json', 'kernel-manifest.json')
-    download(BASE + '/channels/stable.json.minisig', 'kernel-manifest.json.minisig')
-    verify_signature('kernel-manifest.json')
-    kernel = json.loads(Path('kernel-manifest.json').read_text())['components']['kernel']
-    if kernel['version'] != spec['kernel_version']:
-        raise ValueError('Pinned kernel differs from stable; use a verified kernel release before preparing this candidate')
     def stage(source, key):
         key = safe_path(key); target = payload / key
         target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source, target)
         return {'url': BASE + '/' + key, **digest(target)}
-    components['kernel'] = kernel
-    for asset in kernel['files'].values():
-        if not asset['url'].startswith(BASE + '/kernel/' + spec['kernel_version'] + '/'):
-            raise ValueError('Kernel URL outside pinned release')
-        target = payload / safe_path(asset['url'][len(BASE)+1:]);download(asset['url'], target)
-        if digest(target) != {'sha256': asset['sha256'], 'size': asset['size']}:
-            raise ValueError('Kernel checksum mismatch')
+    kernel_record, kernel_boot = verify_kernel_toolset('kernel-candidate', spec, require_boot=True)
+    components['kernel'] = {'version': spec['kernel_version'], 'files': {
+        name: stage(Path('kernel-candidate') / filename, f'kernel/{spec["kernel_version"]}/{filename}')
+        for name, filename in KERNEL_FILES.items()}}
     for component, platforms in REQUIRED.items():
         components[component] = {'version': v, 'platforms': {}}
         for platform in sorted(platforms):
@@ -203,7 +287,7 @@ def assemble():
     assert_manifest(manifest, v)
     verify_linux_versions(manifest, payload, v)
     write_json(root / 'manifest.json', manifest)
-    record = {**spec, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
+    record = {**spec, 'kernel_toolset': kernel_record, 'kernel_boot': kernel_boot, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
               'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip')}
     write_json(root / 'inventory.json', record)
@@ -232,6 +316,13 @@ def verify_candidate(root):
         key = a['url'][len(BASE)+1:]
         if inv['assets'].get(key) != {'sha256': a['sha256'], 'size': a['size']}:
             raise ValueError('Manifest does not match inventory')
+    if 'kernel_source' in inv:
+        verify_kernel_evidence(inv['kernel_toolset'], inv['kernel_boot'], inv)
+        expected = {name: {'url': f'{BASE}/kernel/{inv["kernel_version"]}/{filename}',
+                           **inv['kernel_toolset']['files'][filename]}
+                    for name, filename in KERNEL_FILES.items()}
+        if manifest['components']['kernel'] != {'version': inv['kernel_version'], 'files': expected}:
+            raise ValueError('Kernel manifest does not match tested toolset')
     return inv, manifest
 
 
@@ -296,6 +387,10 @@ def promote():
         old_v = old['components']['cli']['version']
         if version_tuple(old_v) > version_tuple(v):
             raise ValueError('Refusing an accidental downgrade')
+        if version_tuple(old['components']['kernel']['version']) > version_tuple(manifest['components']['kernel']['version']):
+            raise ValueError('Refusing a kernel downgrade')
+        if old['components']['kernel']['version'] == manifest['components']['kernel']['version'] and old['components']['kernel'] != manifest['components']['kernel']:
+            raise ValueError('Kernel version already published with different bytes; bump kernel/VERSION')
         if old_v == v and digest(previous) != digest(root/'manifest.json'):
             raise ValueError('Version already published with another manifest; cut a new release')
     # Persist a signed promotion record before changing channel pointers.
@@ -352,6 +447,8 @@ def summary():
     if inventory.exists():
         inv=json.loads(inventory.read_text())
         text=f"## Release {inv['version']}\n\nCandidate run: {inv['run_id']}\n\nEngine: `{inv['engine_sha']}`\n\nDesktop: `{inv['desktop_sha']}`\n\nArtifacts: {len(inv['assets'])}\n\n"
+        if 'kernel_source' in inv:
+            text+=f"Kernel: `{inv['kernel_version']}` ({inv['kernel_source']}); QEMU/KVM and Firecracker boot evidence verified.\n\n"
     else:
         text='## Release promotion\n\nNo candidate inventory was downloaded.\n\n'
     if promotion=='success':
@@ -367,6 +464,6 @@ def summary():
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','assemble','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','assemble','kernel','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');a=p.parse_args()
     if a.command=='cli':cli(a)
     else:globals()[a.command]()
