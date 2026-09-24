@@ -1615,6 +1615,20 @@ static void madvise_test(void)
     test_assert((madvise(addr, map_len, MADV_HUGEPAGE) == -1) && (errno == ENOMEM));
     munmap(addr + map_len / 2, map_len / 2);
 
+    /* DONTNEED must discard contents, not merely report success. Go's
+     * allocator relies on this when reusing scavenged heap pages. */
+    map_len = 8 * PAGESIZE;
+    unsigned char *p = mmap(NULL, map_len, PROT_READ | PROT_WRITE,
+                            MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    test_assert(p != MAP_FAILED);
+    for (int round = 0; round < 100; round++) {
+        memset(p, 0x80, map_len);
+        test_assert(madvise(p + PAGESIZE, 6 * PAGESIZE, MADV_DONTNEED) == 0);
+        for (size_t i = 0; i < map_len; i++)
+            test_assert(p[i] == ((i < PAGESIZE || i >= 7 * PAGESIZE) ? 0x80 : 0));
+    }
+    test_assert(munmap(p, map_len) == 0);
+
     thp_test();
 }
 

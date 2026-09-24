@@ -30,6 +30,17 @@ static sysreturn null_read(file f, void *dest, u64 length, u64 offset)
    return 0;
 }
 
+static sysreturn zero_read(file f, void *dest, u64 length, u64 offset)
+{
+    zero(dest, length);
+    return length;
+}
+
+static u32 zero_events(file f)
+{
+    return EPOLLIN | EPOLLOUT;
+}
+
 static sysreturn null_write(file f, void *dest, u64 length, u64 offset)
 {
    return length;
@@ -209,6 +220,7 @@ static u32 cpu_online_events(file f)
 
 static const special_file special_files[] = {
     { ss_static_init("/dev/urandom"), .read = urandom_read, .write = 0, .events = urandom_events },
+    { ss_static_init("/dev/zero"), .read = zero_read, .write = null_write, .events = zero_events },
     { ss_static_init("/dev/null"), .read = null_read, .write = null_write, .events = null_events },
     { ss_static_init("/proc/meminfo"), .read = meminfo_read},
     { ss_static_init("/proc/mounts"), .open = mounts_open, .close = mounts_close,

@@ -394,17 +394,13 @@ static inline boolean flags_has_minpage(u64 flags)
     return (flags & PAGE_NO_BLOCK) != 0;
 }
 
-/* TODO: While the cpu type used under qemu is armv8.1-a, a read of
-   ID_AA64MMFR1_EL1 does not indicate that hardware management of
-   dirty pages is available (e.g. HD and HA bits are zero). If we
-   can't depend on this feature, we'll need to set shared pages to
-   read-only and track dirty state via a protection exception.
-*/
-
+/* Not all supported ARM64 CPUs expose hardware dirty-bit management. Until
+ * write-fault tracking is available, conservatively regard writable mappings
+ * as dirty. Returning false loses MAP_SHARED writes on sync and truncation.
+ * Read-only mappings still remain reclaimable without writeback. */
 static inline boolean pte_is_dirty(pte entry)
 {
-    // XXX TODO
-    return false;
+    return (entry & PAGE_READONLY) == 0;
 }
 
 static inline boolean pte_is_accessed(pte entry)
@@ -414,7 +410,8 @@ static inline boolean pte_is_accessed(pte entry)
 
 static inline void pt_pte_clean(pteptr pte)
 {
-    // XXX TODO
+    /* A writable mapping can change again without a fault, so it must continue
+     * to be considered dirty on subsequent scans. */
 }
 
 static inline boolean pte_clear_accessed(pteptr pp)

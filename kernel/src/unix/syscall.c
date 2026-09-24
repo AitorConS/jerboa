@@ -1361,7 +1361,12 @@ closure_function(1, 1, void, sync_complete,
     fdesc f = bound(f);
     if (f)
         fdesc_put(f);
-    syscall_return(t, is_ok(s) ? 0 : -EIO);
+    boolean ok = is_ok(s);
+    if (!ok) {
+        msg_err("filesystem sync failed: %v", s);
+        timm_dealloc(s);
+    }
+    syscall_return(t, ok ? 0 : -EIO);
     closure_finish();
 }
 

@@ -24,6 +24,7 @@ typedef enum {
     VDSO_CLOCK_HPET,
     VDSO_CLOCK_TSC_STABLE,
     VDSO_CLOCK_PVCLOCK,
+    VDSO_CLOCK_ARM_COUNTER,
     VDSO_CLOCK_NRCLOCKS
 } vdso_clock_id;
 

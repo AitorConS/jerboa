@@ -304,12 +304,15 @@ static inline __attribute__((always_inline)) u8 compare_and_swap_8(u8 *p, u8 old
 
 static inline __attribute__((always_inline)) void kern_pause(void)
 {
-    asm volatile("dsb sy; wfe" ::: "memory");
+    /* Generic retry loops do not arm an exclusive monitor or guarantee SEV.
+     * WFE can therefore sleep forever after the condition becomes true. */
+    asm volatile("yield" ::: "memory");
 }
 
 /* XXX make names generic */
 #if defined(KERNEL) || defined(BUILD_VDSO)
 struct arch_vdso_dat {
+    u64 counter_frequency;
 };
 
 static inline __attribute__((always_inline)) u64 rdtsc(void)

@@ -665,6 +665,7 @@ static inline u64 phys_from_linear_backed_virt(u64 virt)
 heap create_vmem_heap(void);
 
 void unmap_and_free_phys(u64 virtual, u64 length);
+boolean try_unmap_and_free_phys(u64 virtual, u64 length);
 void page_free_phys(u64 phys);
 
 heap allocate_tagged_region(kernel_heaps kh, u64 tag, bytes pagesize, boolean locking);

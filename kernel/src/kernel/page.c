@@ -609,22 +609,30 @@ static void unmap_and_free_phys_sync(u64 virtual, u64 length)
     } while (!done && progress);
 }
 
-void unmap_and_free_phys(u64 virtual, u64 length)
+/* Never rendezvous with other CPUs while the caller holds an IRQ-safe lock.
+ * Clear PTEs and the local TLB now, then reclaim pages after remote shootdown.
+ * On allocation failure a prefix may have been discarded; mappings stay valid. */
+boolean try_unmap_and_free_phys(u64 virtual, u64 length)
 {
     heap h = heap_locked(get_kernel_heaps());
     buffer phys_ranges = allocate_buffer(h, 64 * sizeof(range));
     if (phys_ranges == INVALID_ADDRESS)
-        return unmap_and_free_phys_sync(virtual, length);
+        return false;
     thunk completion = closure(h, unmap_and_free_phys_complete, phys_ranges, false);
     if (completion == INVALID_ADDRESS) {
         deallocate_buffer(phys_ranges);
-        return unmap_and_free_phys_sync(virtual, length);
+        return false;
     }
     flush_entry fe = get_page_flush_entry();
     boolean success = traverse_ptes(virtual, length,
                                     stack_closure(unmap_page, virtual, length, phys_ranges, fe));
-    page_invalidate_sync(fe, completion, !success);
-    if (!success)
+    page_invalidate_sync(fe, completion, false);
+    return success;
+}
+
+void unmap_and_free_phys(u64 virtual, u64 length)
+{
+    if (!try_unmap_and_free_phys(virtual, length))
         unmap_and_free_phys_sync(virtual, length);
 }
 

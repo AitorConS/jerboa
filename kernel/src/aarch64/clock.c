@@ -37,7 +37,9 @@ BSS_RO_AFTER_INIT closure_struct(arm_timer_percpu_init, _timer_percpu_init);
 
 void init_clock(void)
 {
-    register_platform_clock_now(init_closure(&_clock_now, arm_clock_now), VDSO_CLOCK_SYSCALL, 0);
+    /* CNTKCTL_EL1 enables EL0 virtual-counter access on every CPU. */
+    __vdso_dat->machine.counter_frequency = cntfrq();
+    register_platform_clock_now(init_closure(&_clock_now, arm_clock_now), VDSO_CLOCK_ARM_COUNTER, 0);
     register_platform_clock_timer(init_closure_func(&_deadline_timer, clock_timer,
                                                     arm_deadline_timer),
                                   init_closure(&_timer_percpu_init, arm_timer_percpu_init));

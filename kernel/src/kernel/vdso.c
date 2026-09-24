@@ -134,6 +134,17 @@ time(time_t * t)
 }
 
 #ifdef __aarch64__
+/* AArch64 libc and Go resolve the Linux __kernel_* ABI, not __vdso_*. */
+sysreturn __kernel_clock_gettime(clockid_t clk_id, struct timespec *tp)
+{
+    return do_vdso_clock_gettime(clk_id, tp);
+}
+
+sysreturn __kernel_gettimeofday(struct timeval *tv, void *tz)
+{
+    return do_vdso_gettimeofday(tv, tz);
+}
+
 sysreturn __attribute__((noreturn)) __vdso_rt_sigreturn(void)
 {
     /* these two instructions cannot change - libgcc and others look

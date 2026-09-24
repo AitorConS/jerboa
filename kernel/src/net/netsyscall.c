@@ -85,6 +85,8 @@ typedef struct netsock {
     struct sock sock;             /* must be first */
     process p;
     queue incoming;
+    u32 sndbuf;
+    u32 rcvbuf;
     err_t lwip_error;             /* lwIP error code; ERR_OK if normal */
     u8 ipv6only:1;
     union {
@@ -118,6 +120,15 @@ typedef struct netsock {
 #define TCP_CONG_CTRL_ALGO  "reno"  /* TCP congestion control algorithm name */
 
 int so_rcvbuf;
+
+/* lwIP accounts queued TCP bytes against TCP_SND_BUF. A socket may choose a
+ * smaller budget without changing the PCB accounting used by ACK handling. */
+static u64 netsock_snd_available(netsock s, struct tcp_pcb *pcb)
+{
+    /* tcp_sndbuf() clamps to 16 bits for tcp_write(), hiding queued bytes. */
+    u64 queued = TCP_SND_BUF - pcb->snd_buf;
+    return s->sndbuf > queued ? MIN(s->sndbuf - queued, U16_MAX) : 0;
+}
 
 static sysreturn netsock_bind(struct sock *sock, struct sockaddr *addr,
         socklen_t addrlen);
@@ -208,7 +219,7 @@ static u32 netsock_events_locked(netsock s)
                as is the TCP sendbuf size read. */
             rv = (in ? EPOLLIN | EPOLLRDNORM : 0) |
                 (s->info.tcp.lw->state == ESTABLISHED ?
-                 (tcp_sndbuf(s->info.tcp.lw) ? EPOLLOUT | EPOLLWRNORM : 0) :
+                 (netsock_snd_available(s, s->info.tcp.lw) ? EPOLLOUT | EPOLLWRNORM : 0) :
                  EPOLLIN | EPOLLOUT);
             break;
         case TCP_SOCK_UNDEFINED:
@@ -630,7 +641,14 @@ static sysreturn sock_read_bh_internal(netsock s, struct msghdr *msg, boolean us
     if (tcp_lw) {
         if (rv > 0) {
             tcp_lock(tcp_lw);
-            tcp_recved(tcp_lw, rv);
+            /* tcp_recved takes u16_t even with window scaling enabled. A
+             * larger read must return every byte of receive-window credit. */
+            u64 remaining = rv;
+            while (remaining > 0) {
+                u16 n = MIN(remaining, U16_MAX);
+                tcp_recved(tcp_lw, n);
+                remaining -= n;
+            }
             tcp_unlock(tcp_lw);
         }
         tcp_unref(tcp_lw);
@@ -750,13 +768,13 @@ closure_function(6, 1, sysreturn, socket_write_tcp_bh,
        bits here (and tcp_write() doesn't accept more than 2^16
        anyway), so even if we have a large transmit window due to
        LWIP_WND_SCALE, we still can't write more than 2^16. Sigh... */
-    u64 avail = tcp_sndbuf(tcp_lw);
+    u64 avail = netsock_snd_available(s, tcp_lw);
     if (avail == 0) {
         /* directly poll for loopback traffic in case the enqueued netsock_poll is backed up */
         tcp_unlock(tcp_lw);
         netif_poll_loopback();
         tcp_lock(tcp_lw);
-        avail = tcp_sndbuf(tcp_lw);
+        avail = netsock_snd_available(s, tcp_lw);
         if (avail == 0) {
           full:
             tcp_unlock(tcp_lw);
@@ -811,15 +829,22 @@ closure_function(6, 1, sysreturn, socket_write_tcp_bh,
         if (err == ERR_OK) {
             buf_offset += n;
             rv += n;
-            if ((avail = tcp_sndbuf(tcp_lw)) == 0)
+            if ((avail = netsock_snd_available(s, tcp_lw)) == 0)
                 break;
             if (!iov)
                 remain -= n;
             continue;
         }
         if (err == ERR_MEM) {
-            /* XXX some ambiguity in lwIP - investigate */
-            net_debug(" tcp_write() returned ERR_MEM\n");
+            /* A successful prefix belongs to the socket now. Flush and return
+             * it rather than sleeping with unsent data or replaying the prefix
+             * when the blocked operation is retried. */
+            if (rv > 0) {
+                err = ERR_OK;
+                break;
+            }
+            context_clear_err(ctx);
+            tcp_output(tcp_lw);
             goto full;
         } else {
             net_debug(" tcp_write() lwip error: %d\n", err);
@@ -840,8 +865,9 @@ closure_function(6, 1, sysreturn, socket_write_tcp_bh,
                 fdesc_notify_events(&s->sock.f); /* reset a triggered EPOLLOUT condition */
         } else {
             net_debug(" tcp_output() lwip error: %d\n", err);
-            rv = lwip_to_errno(err);
-            /* XXX map error to socket tcp state */
+            if (rv == 0)
+                rv = lwip_to_errno(err);
+            /* Bytes accepted by tcp_write remain queued even if output fails. */
         }
     }
     tcp_unlock(tcp_lw);
@@ -886,6 +912,10 @@ static sysreturn socket_write_udp(netsock s, void *source, struct iovec *iov, u6
 
     if (source)
         xfer_len = length;
+    if (xfer_len > 65507 || xfer_len > s->sndbuf) {
+        netsock_unlock(s);
+        return -EMSGSIZE;
+    }
     struct pbuf *pbuf = pbuf_alloc(PBUF_TRANSPORT, xfer_len, PBUF_RAM);
     if (!pbuf) {
         netsock_unlock(s);
@@ -1353,7 +1383,7 @@ static void udp_input_lower(void *z, struct udp_pcb *pcb, struct pbuf *p,
     assert(pcb == s->info.udp.lw);
     if (p) {
 	netsock_lock(s);
-	if ((s->sock.rx_len + p->tot_len > so_rcvbuf) || queue_full(s->incoming)) {
+	if ((s->sock.rx_len + p->tot_len > s->rcvbuf) || queue_full(s->incoming)) {
 	    netsock_unlock(s);
 	    pbuf_free(p);
 	    return;
@@ -1393,6 +1423,8 @@ static int allocate_sock(process p, int af, int type, u32 flags, boolean alloc_f
     s->sock.f.events = init_closure_func(&s->events, fdesc_events, socket_events);
     s->sock.f.ioctl = init_closure_func(&s->ioctl, fdesc_ioctl, netsock_ioctl);
     s->p = p;
+    s->sndbuf = TCP_SND_BUF;
+    s->rcvbuf = so_rcvbuf;
 
     s->incoming = allocate_queue(h, SOCK_QUEUE_LEN);
     if (s->incoming == INVALID_ADDRESS) {
@@ -1537,7 +1569,7 @@ static err_t tcp_input_lower(void *z, struct tcp_pcb *pcb, struct pbuf *p, err_t
     /* A null pbuf indicates connection closed. */
     netsock_lock(s);
     if (p) {
-        if ((s->sock.rx_len + p->tot_len > so_rcvbuf) || !enqueue(s->incoming, p)) {
+        if ((s->sock.rx_len + p->tot_len > s->rcvbuf) || !enqueue(s->incoming, p)) {
 	    netsock_unlock(s);
             msg_err("%s error: incoming queue full", func_ss);
             return ERR_BUF;     /* XXX verify */
@@ -2272,6 +2304,8 @@ closure_function(5, 1, sysreturn, accept_bh,
 
     /* TCP flags are inherited from listen socket. */
     child->info.tcp.flags = s->info.tcp.flags;
+    child->sndbuf = s->sndbuf;
+    child->rcvbuf = s->rcvbuf;
 
     struct tcp_pcb *tcp_lw = child->info.tcp.lw;
     if (tcp_lw)
@@ -2475,6 +2509,26 @@ static sysreturn netsock_setsockopt(struct sock *sock, int level,
         break;
     case SOL_SOCKET:
         switch (optname) {
+        case SO_SNDBUF:
+        case SO_RCVBUF:
+            rv = sockopt_copy_from_user(optval, optlen, &opt_val, sizeof(int));
+            if (rv)
+                goto out;
+            if (opt_val.val < 0) {
+                rv = -EINVAL;
+                goto out;
+            }
+            /* Match Linux's doubled accounting; clamp before multiplication.
+             * TCP cannot exceed lwIP's configured send budget. */
+            netsock_lock(s);
+            if (optname == SO_SNDBUF)
+                s->sndbuf = MAX(4608, MIN((u64)opt_val.val * 2, TCP_SND_BUF));
+            else
+                s->rcvbuf = MAX(2304, MIN((u64)opt_val.val * 2, 4 * 1024 * 1024));
+            netsock_unlock(s);
+            if (optname == SO_SNDBUF)
+                blockq_wake_one(sock->txbq);
+            break;
         case SO_REUSEADDR:
         case SO_KEEPALIVE:
         case SO_BROADCAST:
@@ -2643,12 +2697,16 @@ static void netsock_get_tcpinfo(netsock s, struct tcp_info *info)
         info->tcpi_sacked += sacks[i].right - sacks[i].left;
 #endif
     info->tcpi_retrans = lw->nrtx;
-    info->tcpi_rcv_ssthresh = info->tcpi_snd_ssthresh = lw->ssthresh;
-    info->tcpi_rtt = info->tcpi_rcv_rtt = info->tcpi_min_rtt =
-            lw->rttest * TCP_SLOW_INTERVAL * 1000;  /* microseconds */
-    info->tcpi_snd_cwnd = lw->cwnd;
+    info->tcpi_rcv_ssthresh = lw->ssthresh;
+    info->tcpi_snd_ssthresh = lw->mss ? lw->ssthresh / lw->mss : 0;
+    /* rttest is the timestamp at which a probe began, not its duration.
+     * lwIP keeps the smoothed RTT and deviation scaled by 8 and 4. */
+    info->tcpi_rtt = (u32)MAX(lw->sa, 0) * TCP_SLOW_INTERVAL * 1000 / 8;
+    info->tcpi_rttvar = (u32)MAX(lw->sv, 0) * TCP_SLOW_INTERVAL * 1000 / 4;
+    /* Linux TCP_INFO reports congestion windows in segments, not bytes. */
+    info->tcpi_snd_cwnd = lw->mss ? lw->cwnd / lw->mss : 0;
     info->tcpi_advmss = lw->mss;
-    info->tcpi_rcv_space = so_rcvbuf - s->sock.rx_len;
+    info->tcpi_rcv_space = s->rcvbuf > s->sock.rx_len ? s->rcvbuf - s->sock.rx_len : 0;
     info->tcpi_notsent_bytes = lw->snd_lbb - lw->snd_nxt;
     struct tcp_seg *ooo = lw->ooseq;
     while (ooo) {
@@ -2687,10 +2745,10 @@ static sysreturn netsock_getsockopt(struct sock *sock, int level,
             ret_optval.val = -lwip_to_errno(get_and_clear_lwip_error(s));
             break;
         case SO_SNDBUF:
-            ret_optval.val = (s->sock.type == SOCK_STREAM) ? TCP_SND_BUF : 0;
+            ret_optval.val = s->sndbuf;
             break;
         case SO_RCVBUF:
-            ret_optval.val = so_rcvbuf;
+            ret_optval.val = s->rcvbuf;
             break;
         case SO_PRIORITY:
             ret_optval.val = 0; /* default value in Linux */

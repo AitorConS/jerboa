@@ -27,6 +27,8 @@ test-integration:
 	go test -tags integration -timeout 10m ./tests/integration/...
 
 test-kernel:
+	$(MAKE) -C kernel/tools vdsogen
+	python3 tests/guest/test_vdsogen.py $(if $(OUTDIR),$(OUTDIR),$(CURDIR)/kernel/output)/tools/bin/vdsogen
 	@command -v ent >/dev/null || { echo "Fourmilab ent is required (macOS: brew install ent)"; exit 1; }
 	$(MAKE) -C kernel/test/unit test
 	python3 scripts/test-kernel-host-network.py $(if $(OUTDIR),$(OUTDIR),$(CURDIR)/kernel/output)/test/unit/bin

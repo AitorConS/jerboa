@@ -59,3 +59,10 @@ pagecache_volume pagecache_allocate_volume(u64 length, int block_order);
 void pagecache_dealloc_volume(pagecache_volume pv);
 
 void init_pagecache(heap general, heap contiguous, u64 pagesize);
+
+/* Serialize cache writers with filesystem shrink; never acquire with the filesystem locked. */
+void pagecache_node_begin_truncate(pagecache_node pn);
+void pagecache_node_end_truncate(pagecache_node pn);
+status pagecache_node_sync_locked(pagecache_node pn);
+status pagecache_node_zero_locked(pagecache_node pn, range r);
+void pagecache_node_zero_cached_range(pagecache_node pn, range r);

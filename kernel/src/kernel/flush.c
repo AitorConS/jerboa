@@ -149,6 +149,12 @@ void page_invalidate_sync(flush_entry f, thunk completion, boolean rendezvous)
     if (initialized) {
         if (f->npages == 0) {
             assert(enqueue(free_flush_entries, f));
+            if (completion) {
+                if (rendezvous)
+                    apply(completion);
+                else
+                    async_apply(completion);
+            }
             return;
         }
         init_refcount(&f->ref, total_processors,

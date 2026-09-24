@@ -18,8 +18,10 @@ sysreturn sysreturn_from_fs_status_value(status s)
     /* block r/w errors won't include an fs status, so assume I/O error if none found */
     if (get_s64(s, sym(fsstatus), &fss))
         rv = fss;
-    else
+    else {
+        msg_err("filesystem operation failed: %v", s);
         rv = -EIO;
+    }
     return rv;
 }
 

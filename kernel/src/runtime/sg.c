@@ -234,8 +234,13 @@ void deallocate_sg_list(sg_list sg)
 {
     buffer_clear(sg->b);
     /* Recycle extremely large fragment buffers */
-    if (buffer_space(sg->b) > SG_FRAG_BYTE_THRESHOLD)
-        assert(buffer_set_capacity(sg->b, SG_FRAG_BYTE_THRESHOLD) == SG_FRAG_BYTE_THRESHOLD);
+    if (buffer_space(sg->b) > SG_FRAG_BYTE_THRESHOLD) {
+        /* Cleanup must not allocate: shrinking can fail precisely when a
+         * completed write is needed to relieve memory pressure. */
+        deallocate_buffer(sg->b);
+        deallocate(sg_heap, sg, sizeof(*sg));
+        return;
+    }
     sg->count = 0;
     sg_lock();
     list_insert_after(&free_sg_lists, &sg->l);
