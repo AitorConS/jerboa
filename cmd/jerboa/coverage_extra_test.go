@@ -41,6 +41,20 @@ func TestNeedsDaemon(t *testing.T) {
 	require.True(t, needsDaemon(pkgLoad), "pkg load builds and runs through the daemon")
 }
 
+func TestVolumeCommandsNeedDaemon(t *testing.T) {
+	root := newRootCmd()
+	// Exercise the actual command tree: even an unseeded create must resolve
+	// the WSL endpoint and token before calling the daemon-owned volume API.
+	for _, name := range []string{"create", "ls", "rm", "inspect", "seed", "migrate"} {
+		t.Run(name, func(t *testing.T) {
+			cmd, _, err := root.Find([]string{"volume", name})
+			require.NoError(t, err)
+			require.Equal(t, name, cmd.Name())
+			require.True(t, needsDaemon(cmd))
+		})
+	}
+}
+
 func TestSigningStorePath(t *testing.T) {
 	// Fake the home directory so we can assert the full resolved path rather than
 	// a loose suffix (the old check passed for any path ending in ".jerboa",
