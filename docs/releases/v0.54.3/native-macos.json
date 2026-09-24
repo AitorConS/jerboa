@@ -1,9 +1,9 @@
 {
-  "candidate_run": "36045698810",
-  "app_sha256": "210936d2bd57ecaedaa3bd0792a550834243f73fef7a2dfc220194158d78694f",
+  "candidate_run": "36049371438",
+  "app_sha256": "ab7c6f7f6539709ace5070237b7fab616b2b1073712f7035cf864b58b4402458",
   "version": "v0.54.3",
   "result": "pass",
-  "tested_at": "2026-09-24T19:15:57.058327+00:00",
+  "tested_at": "2026-09-24T19:56:38.824548+00:00",
   "checks": [
     "app-signature",
     "binary-versions",
