@@ -68,13 +68,19 @@ func TestEthernetSplitFrameAndSlowWriter(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, frame, <-done)
-	// A stalled switch consumer cannot block another VM or grow without bound.
+	// A stalled guest is disconnected within a bounded wait instead of silently
+	// losing frames or blocking other switch users indefinitely.
 	start := time.Now()
+	var writeErr error
 	for range 1000 {
 		n, err := c.Write(frame)
-		require.NoError(t, err)
+		if err != nil {
+			writeErr = err
+			break
+		}
 		require.Equal(t, len(frame), n)
 	}
+	require.Error(t, writeErr)
 	require.Less(t, time.Since(start), time.Second)
 	require.LessOrEqual(t, len(c.writes), ethernetQueueFrames)
 }
@@ -96,11 +102,44 @@ func TestEthernetWriterBoundsBytesUnderLargeFrameBurst(t *testing.T) {
 	defer c.Close()
 	frame := make([]byte, maxEthernetFrame+4)
 	binary.BigEndian.PutUint32(frame, maxEthernetFrame)
+	var writeErr error
 	for range 1000 {
 		n, err := c.Write(frame)
-		require.NoError(t, err)
+		if err != nil {
+			writeErr = err
+			break
+		}
 		require.Equal(t, len(frame), n)
 	}
+	require.Error(t, writeErr)
 	require.LessOrEqual(t, c.queuedBytes.Load(), int64(ethernetQueueBytes))
 	require.Less(t, len(c.writes), ethernetQueueFrames)
+}
+
+func TestEthernetWriterBackpressureDeliversQueuedFrames(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "", "")
+	defer c.Close()
+	defer b.Close()
+	frame := make([]byte, 18)
+	binary.BigEndian.PutUint32(frame, 14)
+	_, err := c.Write(frame)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(c.writes) == 0 }, time.Second, time.Millisecond)
+	for range ethernetQueueFrames {
+		_, err := c.Write(frame)
+		require.NoError(t, err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := c.Write(frame); done <- err }()
+	select {
+	case err := <-done:
+		t.Fatalf("write bypassed full queue: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	got := make([]byte, 2*len(frame))
+	_, err = io.ReadFull(b, got)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	require.Equal(t, append(frame, frame...), got)
 }
