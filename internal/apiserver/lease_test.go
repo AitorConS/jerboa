@@ -62,3 +62,23 @@ func TestRemoveVMFailureRetainsLease(t *testing.T) {
 	require.ErrorContains(t, s.removeVM(context.Background(), v.ID), "disk failure")
 	require.ErrorIs(t, store.ReserveIP("bench", ip.String()), network.ErrIPAlreadyAllocated)
 }
+
+func TestRemoveVMReleasesStaticIP(t *testing.T) {
+	ctx := context.Background()
+	store, err := network.NewStore(t.TempDir())
+	require.NoError(t, err)
+	_, err = store.Create("bench", "10.100.0.0/24", "bridge")
+	require.NoError(t, err)
+	mgr := vm.NewMockManager()
+	s := &Server{mgr: mgr, netStore: store}
+	const ip = "10.100.0.200"
+	for range 3 {
+		require.NoError(t, store.ReserveIP("bench", ip))
+		v, err := mgr.Create(ctx, vm.Config{NetworkName: "bench", IPAddress: ip})
+		require.NoError(t, err)
+		require.NoError(t, mgr.Start(ctx, v.ID))
+		require.NoError(t, mgr.Stop(ctx, v.ID))
+		require.NoError(t, s.removeVM(ctx, v.ID))
+	}
+	require.NoError(t, store.ReserveIP("bench", ip))
+}

@@ -34,6 +34,32 @@ class ProtocolTests(unittest.TestCase):
         with patch.dict(os.environ,{'BUCKET':'test','ENDPOINT':'https://example.invalid'}),patch.object(c.subprocess,'run',return_value=subprocess.CompletedProcess([],1,'','AccessDenied')):
             with self.assertRaisesRegex(RuntimeError,'inspect'):c.existing('key','temp')
 
+    def test_installer_alias_uses_candidate_and_checks_public_bytes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root=Path(td);key='releases/v1.0.0/install.sh'
+            source=root/'payload'/key;source.parent.mkdir(parents=True)
+            source.write_bytes(b'#!/bin/sh\n# candidate installer\n')
+            inventory={'version':'v1.0.0','assets':{key:c.digest(source)}}
+            def download(url,target):
+                self.assertEqual(url,c.BASE+'/install.sh')
+                Path(target).write_bytes(source.read_bytes())
+            with patch.object(c,'put') as put,patch.object(c,'download',side_effect=download):
+                c.publish_installer(root,inventory)
+                put.assert_called_once_with(source,'install.sh',False,'text/plain')
+            with patch.object(c,'put'),patch.object(c,'download',side_effect=lambda url,p:Path(p).write_bytes(b'stale')):
+                with self.assertRaisesRegex(ValueError,'Public installer mismatch'):
+                    c.publish_installer(root,inventory)
+            source.write_bytes(b'changed after signing')
+            with patch.object(c,'put') as put:
+                with self.assertRaisesRegex(ValueError,'Candidate installer bytes changed'):
+                    c.publish_installer(root,inventory)
+                put.assert_not_called()
+
+    def test_legacy_candidate_does_not_publish_checkout_installer(self):
+        with patch.object(c,'put') as put:
+            c.publish_installer(Path('unused'),{'version':'v1.0.0','assets':{}})
+            put.assert_not_called()
+
     def manifest(self):
         v='v1.0.0';asset={'url':c.BASE+'/cli/v1.0.0/a','sha256':'a'*64,'size':1}
         m={'components':{k:{'version':v,'platforms':{p:dict(asset) for p in platforms}} for k,platforms in c.REQUIRED.items()}}
