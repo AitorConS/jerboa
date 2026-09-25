@@ -191,6 +191,10 @@ static void virtio_storage_io_sg(storage st, boolean write, sg_list sg, range bl
     virtqueue vq = st->command;
     vqmsg msg;
     u32 desc_count;
+    u64 request_bytes;
+    /* Bound a request independently of physical SG coalescing. Native VMMs
+     * accept at most 4 MiB; a writeback wave may span many such requests. */
+    const u64 request_max = 4 * MB;
     merge m = 0;
     while (range_span(blocks)) {
         if (!req) {
@@ -204,15 +208,18 @@ static void virtio_storage_io_sg(storage st, boolean write, sg_list sg, range bl
             assert(msg != INVALID_ADDRESS);
             vqmsg_push(vq, msg, req_phys, VIRTIO_BLK_REQ_HEADER_SIZE, false);
             desc_count = 0;
+            request_bytes = 0;
         }
         sg_buf sgb = sg_list_head_peek(sg);
         u64 length = sg_buf_len(sgb);
         assert((length & (st->block_size - 1)) == 0);
         length = MIN(range_span(blocks) * st->block_size, length);
+        length = MIN(length, request_max - request_bytes);
+        request_bytes += length;
         vqmsg_push(vq, msg, physical_from_virtual(sgb->buf + sgb->offset), length, !write);
         sg_consume(sg, length);
         blocks.start += length / st->block_size;
-        if (++desc_count == st->seg_max) {
+        if (++desc_count == st->seg_max || request_bytes == request_max) {
             if (!m && range_span(blocks)) {
                 m = allocate_merge(h, sh);
                 sh = apply_merge(m);

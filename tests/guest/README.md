@@ -92,3 +92,9 @@ results and reports measured loss; completion does not imply meeting the offered
 rate. On macOS it also records Firecracker metrics once per second in
 `network-metrics.json`. Default native quotas remain enabled. Run measurements
 without other benchmark guests or Docker workloads on that host.
+
+`large_write.c` writes and verifies 128 MiB in 16 MiB application writes. Run it
+with `--memory 2048` and expect `LARGE WRITE PASS`, then boot the same disk with
+`--reuse-disk --memory 2048` and expect `LARGE WRITE RESTART PASS`. This exercises
+large contiguous writeback waves, which must be split into virtio requests no
+larger than the native VMM's 4 MiB request limit.
