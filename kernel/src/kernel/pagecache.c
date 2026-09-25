@@ -24,10 +24,11 @@
    queueing a ton with the polled ATA driver. There's only one queue globally anyhow. */
 #define MAX_PAGE_COMPLETION_VECS 16384
 
-/* Bound writeback requests independently of SG coalescing. A random workload
- * can otherwise submit thousands of separate I/Os per file while holding the
- * node lock, exhausting memory needed to complete and reclaim those writes. */
-#define PAGECACHE_WRITEBACK_MAX_PAGES 256
+/* Bound both memory pinned by writeback and the number of separate requests.
+ * A page-only limit turns a sequential fsync into 1 MiB completion waves,
+ * while a request-only limit can pin an unbounded number of pages. */
+#define PAGECACHE_WRITEBACK_MAX_BYTES (16 * MB)
+#define PAGECACHE_WRITEBACK_MAX_IOS 256
 
 typedef struct pagecache_page_entry {
     union {
@@ -1232,10 +1233,17 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
 
     merge m = allocate_merge(pc->h, (status_handler)closure_self());
     status_handler sh = apply_merge(m);
-    u64 committing = 0, submitted_pages = 0;
+    /* Scale the pinned-page budget with physical memory, retaining at least
+     * the old 256-page allowance. A 2 GiB guest can write a contiguous
+     * 16 MiB extent in one completion wave. */
+    u64 phys_total = heap_total((heap)heap_physical(get_kernel_heaps()));
+    u64 max_pages = MIN(PAGECACHE_WRITEBACK_MAX_BYTES >> pc->page_order,
+                        MAX(256, (phys_total >> 7) >> pc->page_order));
+    u64 submitted_ios = 0, submitted_pages = 0;
     pagecache_lock_node(pn);
     u64 limit = pn->length;
-    while (buffer_length(dirty) > 0 && submitted_pages < PAGECACHE_WRITEBACK_MAX_PAGES) {
+    while (buffer_length(dirty) > 0 && submitted_pages < max_pages &&
+           submitted_ios < PAGECACHE_WRITEBACK_MAX_IOS) {
         range *rp = buffer_ref(dirty, 0);
         if (rp->start >= limit) {
             pagecache_discard_commit_range(pn, *rp);
@@ -1249,7 +1257,7 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
         sg_list sg = allocate_sg_list();
         if (sg == INVALID_ADDRESS) {
             msg_err("%s: unable to allocate sg list", func_ss);
-            if (committing == 0)
+            if (submitted_ios == 0)
                 s = timm("result", "unable to allocate sg list");
             break;
         }
@@ -1271,7 +1279,7 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
                 sgb = sg_list_tail_add(sg, len);
                 if (sgb == INVALID_ADDRESS) {
                     msg_warn("%s: sgbuf alloc fail", func_ss);
-                    if (committing == 0)
+                    if (submitted_ios == 0)
                         s = timm("result", "unable to allocate sg buffer");
                     r.end = start;
                     break;
@@ -1280,7 +1288,6 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
                 sgb->offset = 0;
                 sgb->size = len;
                 sgb->refcount = 0;
-                committing++;
             }
             pagecache_lock_state(pc);
             /* Reserve the page, unless it is in DIRTY state (in which case it has been reserved
@@ -1297,7 +1304,7 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
             submitted_pages++;
             start += len;
             pp = (pagecache_page)rbnode_get_next((rbnode)pp);
-            if (submitted_pages >= PAGECACHE_WRITEBACK_MAX_PAGES && start < r.end) {
+            if (submitted_pages >= max_pages && start < r.end) {
                 r.end = start;
                 break;
             }
@@ -1308,6 +1315,7 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
             rp->start = start;
         if (range_span(r) == 0)
             break;
+        submitted_ios++;
         apply(pn->fs_write, sg, r,
               closure(pc->h, pagecache_commit_complete, pc, first_page, page_count, sg, apply_merge(m)));
     }
