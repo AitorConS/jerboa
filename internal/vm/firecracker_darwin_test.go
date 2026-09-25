@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -82,6 +83,54 @@ func TestNativeFCShutdown(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("shutdown request not received")
 	}
+}
+
+func TestAwaitFCReadyReusesSupervisorConnection(t *testing.T) {
+	dir, err := os.MkdirTemp("", "fcready")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "fc.sock")
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	var requests, connections atomic.Int32
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/", r.URL.Path)
+			if requests.Add(1) < 3 {
+				_, _ = io.WriteString(w, `{"state":"Starting"}`)
+			} else {
+				_, _ = io.WriteString(w, `{"state":"Running"}`)
+			}
+		}),
+		ConnState: func(_ net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				connections.Add(1)
+			}
+		},
+	}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, awaitFCReady(ctx, socket))
+	require.EqualValues(t, 3, requests.Load())
+	require.EqualValues(t, 1, connections.Load())
+}
+
+func TestAwaitFCReadyReportsBootFailure(t *testing.T) {
+	dir, err := os.MkdirTemp("", "fcfailed")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "fc.sock")
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"state":"Failed","last_error":{"fault_code":"BOOT_FAILED"}}`)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	err = awaitFCReady(context.Background(), socket)
+	require.ErrorContains(t, err, "BOOT_FAILED")
 }
 
 func TestNativeFCNetStatsWithoutNetwork(t *testing.T) {

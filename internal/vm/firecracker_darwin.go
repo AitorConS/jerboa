@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -130,17 +131,20 @@ func (m *FirecrackerManager) checkFCConfig(ctx context.Context, path string) err
 	return nil
 }
 
-func readNativeFCState(ctx context.Context, socket string) (nativeFCState, error) {
-	var state nativeFCState
-	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+func nativeFCStateClient(socket string) (*http.Client, *http.Transport) {
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
-	defer transport.CloseIdleConnections()
+	return &http.Client{Transport: transport, Timeout: time.Second}, transport
+}
+
+func readNativeFCStateWithClient(ctx context.Context, client *http.Client) (nativeFCState, error) {
+	var state nativeFCState
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/", nil)
 	if err != nil {
 		return state, err
 	}
-	resp, err := (&http.Client{Transport: transport, Timeout: time.Second}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return state, err
 	}
@@ -149,7 +153,16 @@ func readNativeFCState(ctx context.Context, socket string) (nativeFCState, error
 		return state, fmt.Errorf("HVF status: HTTP %d", resp.StatusCode)
 	}
 	err = json.NewDecoder(resp.Body).Decode(&state)
+	if err == nil {
+		_, err = io.Copy(io.Discard, resp.Body)
+	}
 	return state, err
+}
+
+func readNativeFCState(ctx context.Context, socket string) (nativeFCState, error) {
+	client, transport := nativeFCStateClient(socket)
+	defer transport.CloseIdleConnections()
+	return readNativeFCStateWithClient(ctx, client)
 }
 
 // Adoption only requires a reachable supervisor: a user may have paused the
@@ -176,10 +189,14 @@ func awaitFCReachable(ctx context.Context, socket string) error {
 func awaitFCReady(ctx context.Context, socket string) error {
 	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
-	ticker := time.NewTicker(20 * time.Millisecond)
+	client, transport := nativeFCStateClient(socket)
+	defer transport.CloseIdleConnections()
+	// The supervisor can finish a warm boot between 20 ms polls. Reuse the
+	// connection so checking more often does not reconnect on every attempt.
+	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		s, err := readNativeFCState(ctx, socket)
+		s, err := readNativeFCStateWithClient(ctx, client)
 		if err == nil {
 			switch s.State {
 			case "Running", "Exited":

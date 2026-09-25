@@ -223,18 +223,20 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		}
 	}()
 
-	// --log-path separates Firecracker's VMM log lines from stdout so only the
-	// VM serial console reaches logBuf. If the VM crashes with empty logs,
-	// monitor appends the VMM log so `jerboa logs` surfaces the error.
+	// --log-path separates Linux Firecracker's VMM log lines from stdout so
+	// only the VM serial console reaches logBuf. The macOS adapter writes its
+	// diagnostics to stderr, which is captured below, and has no --log-path.
 	vmmLog := m.vmmLogPath(id)
 	// Firecracker opens --log-path without O_CREAT and aborts if the file is
 	// missing ("Could not initialize logger: ... No such file or directory"),
-	// so create it (and its directory) before launching.
-	if err := ensureFile(vmmLog); err != nil {
-		_ = v.transition(StateStopped)
-		_ = os.Remove(cfgPath)
-		_ = os.Remove(rootfs)
-		return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
+	// so create it before launching on Linux. The macOS adapter does not use it.
+	if runtime.GOOS != "darwin" {
+		if err := ensureFile(vmmLog); err != nil {
+			_ = v.transition(StateStopped)
+			_ = os.Remove(cfgPath)
+			_ = os.Remove(rootfs)
+			return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
+		}
 	}
 	if err := m.checkFCConfig(ctx, cfgPath); err != nil {
 		_ = v.transition(StateStopped)
