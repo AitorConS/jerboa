@@ -1241,9 +1241,9 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
                         MAX(256, (phys_total >> 7) >> pc->page_order));
     u64 submitted_ios = 0, submitted_pages = 0;
     pagecache_lock_node(pn);
-    u64 limit = pn->length;
     while (buffer_length(dirty) > 0 && submitted_pages < max_pages &&
            submitted_ios < PAGECACHE_WRITEBACK_MAX_IOS) {
+        u64 limit = pn->length;
         range *rp = buffer_ref(dirty, 0);
         if (rp->start >= limit) {
             pagecache_discard_commit_range(pn, *rp);
@@ -1316,8 +1316,12 @@ define_closure_function(3, 1, void, pagecache_commit_dirty_ranges,
         if (range_span(r) == 0)
             break;
         submitted_ios++;
+        /* Filesystem writes can wait for its mutex. Completion callbacks
+         * need the node lock, so never suspend while holding it. */
+        pagecache_unlock_node(pn);
         apply(pn->fs_write, sg, r,
               closure(pc->h, pagecache_commit_complete, pc, first_page, page_count, sg, apply_merge(m)));
+        pagecache_lock_node(pn);
     }
     pagecache_unlock_node(pn);
     apply(sh, s);
