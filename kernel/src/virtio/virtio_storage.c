@@ -306,8 +306,14 @@ static void virtio_blk_attach(heap general, storage_attach a, vtdev v)
     virtio_blk_debug("%s: capacity 0x%lx, block size 0x%x\n", func_ss, s->capacity, s->block_size);
     virtio_alloc_virtqueue(v, ss("virtio blk"), 0, &s->command);
 
-    s->seg_max = (v->features & VIRTIO_BLK_F_SEG_MAX) ?
+    /* Every request also needs a header and a status descriptor. A device's
+     * advertised segment limit may exceed the selected queue size; such a
+     * message would sit at the head of virtqueue_fill forever. */
+    u32 queue_entries = virtqueue_entries(s->command);
+    assert(queue_entries > 2);
+    u32 device_seg_max = (v->features & VIRTIO_BLK_F_SEG_MAX) ?
             vtdev_cfg_read_4(v, VIRTIO_BLK_R_SEG_MAX) : 1;
+    s->seg_max = MIN(MAX(device_seg_max, 1), queue_entries - 2);
     if (v->features & VIRTIO_BLK_F_FLUSH) {
         if (v->features & VIRTIO_BLK_F_CONFIG_WCE)
             vtdev_cfg_write_1(v, VIRTIO_BLK_R_WRITEBACK, 1 /* writeback */);
