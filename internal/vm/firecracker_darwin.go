@@ -218,7 +218,13 @@ func awaitFCReady(ctx context.Context, socket string) error {
 func waitFCProcess(cmd *exec.Cmd, socket string) error {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	ticker := time.NewTicker(50 * time.Millisecond)
+	// Short-lived guests often exit just after readiness. Observe their result
+	// promptly, then return to the normal cadence for long-running services.
+	started := time.Now()
+	fastPolling := true
+	ticker := time.NewTicker(5 * time.Millisecond)
+	client, transport := nativeFCStateClient(socket)
+	defer transport.CloseIdleConnections()
 	defer ticker.Stop()
 	var guestErr error
 	terminal := false
@@ -230,10 +236,14 @@ func waitFCProcess(cmd *exec.Cmd, socket string) error {
 			}
 			return err
 		case <-ticker.C:
+			if fastPolling && time.Since(started) >= 250*time.Millisecond {
+				ticker.Reset(50 * time.Millisecond)
+				fastPolling = false
+			}
 			if terminal {
 				continue
 			}
-			s, err := readNativeFCState(context.Background(), socket)
+			s, err := readNativeFCStateWithClient(context.Background(), client)
 			if err != nil || (s.State != "Exited" && s.State != "Failed") {
 				continue
 			}

@@ -367,3 +367,31 @@ func TestNativeFCSlirpBindContract(t *testing.T) {
 		}
 	}
 }
+
+func TestWaitFCProcessPreservesGuestExit(t *testing.T) {
+	for _, code := range []int{0, 7} {
+		t.Run(strconv.Itoa(code), func(t *testing.T) {
+			dir, err := os.MkdirTemp("", "fcexit")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			socket := filepath.Join(dir, "fc.sock")
+			listener, err := net.Listen("unix", socket)
+			require.NoError(t, err)
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"state": "Exited", "exit_code": code})
+			})}
+			go func() { _ = server.Serve(listener) }()
+			t.Cleanup(func() { _ = server.Close() })
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "/bin/sleep", "30")
+			require.NoError(t, cmd.Start())
+			err = waitFCProcess(cmd, socket)
+			if code == 0 {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "code 7")
+			}
+		})
+	}
+}
