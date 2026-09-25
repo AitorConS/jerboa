@@ -503,16 +503,38 @@ func setupTAPNetwork(cfg Config) error {
 	return network.AttachTAP(cfg.tapDevice(), bridgeName)
 }
 
+// Preserve supervisor failures even after the guest has emitted normal output.
+// The attached stream must receive the diagnostic before its writer closes.
+func recordFCExit(log io.Writer, attached io.Writer, err error) {
+	if err == nil {
+		return
+	}
+	message := fmt.Sprintf("[firecracker error] %v\n", err)
+	_, _ = io.WriteString(log, message)
+	if attached != nil {
+		_, _ = io.WriteString(attached, message)
+	}
+}
+
 func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog, rootfs string) {
 	defer recoverGoroutine("firecracker monitor", v.ID)
 	exitErr := waitFCProcess(cmd, sockPath)
 	now := time.Now()
 	v.mu.Lock()
+	explicitStop := v.explicitStop
+	var logWriter io.Writer
+	if v.logPipeWriter != nil {
+		logWriter = v.logPipeWriter
+	}
+	v.mu.Unlock()
+	if !explicitStop {
+		recordFCExit(&v.logBuf, logWriter, exitErr)
+	}
+	v.mu.Lock()
 	v.StoppedAt = &now
 	if v.logPipeWriter != nil {
 		_ = v.logPipeWriter.Close()
 	}
-	explicitStop := v.explicitStop
 	fwd := v.portFwd
 	v.portFwd = nil
 	v.mu.Unlock()
