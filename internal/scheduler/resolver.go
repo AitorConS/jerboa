@@ -104,16 +104,21 @@ func (r *Resolver) List(network string) []Record {
 	return r.records(network)
 }
 
-// NetworkForIP returns the network a running VM's IP belongs to, or "" if no
-// running VM currently holds that address. Used by the guest DNS server to
-// scope a query to the caller's own network from its source IP.
+// NetworkForIP scopes guest DNS to the network holding the source address.
+// A starting guest may query DNS before readiness is observed by the manager;
+// its reserved address already belongs to that network. Service records still
+// require StateRunning so this does not publish a service before it is ready.
 func (r *Resolver) NetworkForIP(ip string) string {
 	if strings.TrimSpace(ip) == "" {
 		return ""
 	}
-	for _, rec := range r.records("") {
-		if rec.IP == ip {
-			return rec.Network
+	for _, v := range r.vms.List() {
+		if v == nil {
+			continue
+		}
+		state := v.GetState()
+		if (state == vm.StateStarting || state == vm.StateRunning) && v.Cfg.IPAddress == ip {
+			return v.Cfg.NetworkName
 		}
 	}
 	return ""

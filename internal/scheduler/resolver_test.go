@@ -139,3 +139,26 @@ func TestResolverDottedAliasPriority(t *testing.T) {
 		})
 	}
 }
+
+func TestResolverScopesStartingGuestWithoutPublishingIt(t *testing.T) {
+	for _, state := range []vm.State{vm.StateCreated, vm.StateStarting, vm.StateRunning, vm.StateStopped} {
+		t.Run(string(state), func(t *testing.T) {
+			source := &fakeSource{vms: []*vm.VM{{ID: "booting", State: state, Cfg: vm.Config{
+				Name: "client", NetworkName: "app", IPAddress: "10.100.0.3",
+			}}}}
+			r := NewResolver(source)
+			if state == vm.StateStarting || state == vm.StateRunning {
+				require.Equal(t, "app", r.NetworkForIP("10.100.0.3"))
+			} else {
+				require.Empty(t, r.NetworkForIP("10.100.0.3"))
+			}
+			_, err := r.Resolve("client", "app")
+			if state == vm.StateRunning {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+			require.Empty(t, r.NetworkForIP("10.200.0.3"))
+		})
+	}
+}
