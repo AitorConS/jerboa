@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -24,6 +25,7 @@ type ethernetConn struct {
 	net.Conn
 	ip          net.IP
 	mac         net.HardwareAddr
+	reader      *bufio.Reader
 	frame       [maxEthernetFrame + 4]byte
 	pending     []byte
 	writes      chan []byte
@@ -36,6 +38,9 @@ type ethernetConn struct {
 func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
 	hw, _ := net.ParseMAC(mac)
 	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, ethernetQueueFrames), space: make(chan struct{}, 1), done: make(chan struct{})}
+	// Read ahead within a fixed budget so framing does not require three socket
+	// reads for every packet. Source validation still precedes switch delivery.
+	e.reader = bufio.NewReaderSize(c, maxEthernetFrame+4)
 	go e.writer()
 	return e
 }
@@ -51,18 +56,18 @@ func (e *ethernetConn) Read(b []byte) (int, error) {
 	for len(e.pending) == 0 {
 		// Idle links may stay open indefinitely; incomplete frames have a deadline.
 		e.Conn.SetReadDeadline(time.Time{})
-		if _, err := io.ReadFull(e.Conn, e.frame[:1]); err != nil {
+		if _, err := io.ReadFull(e.reader, e.frame[:1]); err != nil {
 			return 0, err
 		}
 		e.Conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.ReadFull(e.Conn, e.frame[1:4]); err != nil {
+		if _, err := io.ReadFull(e.reader, e.frame[1:4]); err != nil {
 			return 0, err
 		}
 		size := binary.BigEndian.Uint32(e.frame[:4])
 		if size < 14 || size > maxEthernetFrame {
 			return 0, fmt.Errorf("invalid Ethernet frame length %d", size)
 		}
-		if _, err := io.ReadFull(e.Conn, e.frame[4:4+size]); err != nil {
+		if _, err := io.ReadFull(e.reader, e.frame[4:4+size]); err != nil {
 			return 0, err
 		}
 		if !e.validSource(e.frame[4 : 4+size]) {

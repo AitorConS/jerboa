@@ -1,14 +1,62 @@
 package network
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"io"
 	"net"
 	"testing"
 	"time"
 )
+
+func TestEthernetCoalescedFramesPreserveSourceValidation(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "172.20.0.2", "02:01:02:03:04:05")
+	t.Cleanup(func() { c.Close(); b.Close() })
+	frame := func(size int, source byte) []byte {
+		f := make([]byte, size+4)
+		binary.BigEndian.PutUint32(f, uint32(size))
+		copy(f[10:16], c.mac)
+		binary.BigEndian.PutUint16(f[16:18], 0x0800)
+		f[18] = 0x45
+		copy(f[30:34], c.ip)
+		f[33] = source
+		return f
+	}
+	valid := frame(34, 2)
+	large := frame(maxEthernetFrame, 2)
+	spoofed := frame(34, 3)
+	wire := bytes.Join([][]byte{spoofed, valid, large, spoofed, valid}, nil)
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.Write(wire)
+		b.Close()
+		done <- err
+	}()
+	// Small caller buffers also exercise pending bytes across frame boundaries.
+	var got bytes.Buffer
+	_, err := io.CopyBuffer(struct{ io.Writer }{&got}, c, make([]byte, 7))
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	require.Equal(t, bytes.Join([][]byte{valid, large, valid}, nil), got.Bytes())
+}
+
+func TestEthernetBufferedTruncatedFrameFails(t *testing.T) {
+	for _, wire := range [][]byte{{0}, {0, 0, 0}, {0, 0, 0, 14, 1, 2}} {
+		t.Run(fmt.Sprintf("bytes-%d", len(wire)), func(t *testing.T) {
+			a, b := net.Pipe()
+			c := newEthernetConn(a, "", "")
+			t.Cleanup(func() { c.Close(); b.Close() })
+			go func() { b.Write(wire); b.Close() }()
+			n, err := c.Read(make([]byte, 18))
+			require.Error(t, err)
+			require.Zero(t, n)
+		})
+	}
+}
 
 func TestEthernetRejectsUnboundedFrames(t *testing.T) {
 	for _, size := range []uint32{0, 13, 65537, 0xffffffff} {
