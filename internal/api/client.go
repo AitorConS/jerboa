@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -323,7 +325,7 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 	defer c.mu.Unlock()
 
 	reqID := c.seq.Add(1)
-	params, _ := json.Marshal(IDParams{ID: id})
+	params, _ := json.Marshal(AttachParams{ID: id, Framed: true})
 	req := Request{
 		JSONRPC: "2.0",
 		ID:      reqID,
@@ -341,19 +343,39 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 	if resp.Error != nil {
 		return resp.Error
 	}
-
-	buf := make([]byte, 4096)
-	for {
-		n, err := c.conn.Read(buf)
-		if n > 0 {
-			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
-				return fmt.Errorf("write attach output: %w", writeErr)
-			}
-		}
-		if err != nil {
-			return nil
+	stream := bufio.NewReader(io.MultiReader(c.dec.Buffered(), c.conn))
+	// The JSON-RPC response is newline-terminated. Decode leaves that byte
+	// buffered; consume it before interpreting the following binary frames.
+	if delimiter, err := stream.ReadByte(); err != nil || delimiter != '\n' {
+		return fmt.Errorf("decode attach stream delimiter: %v, byte %q", err, delimiter)
+	}
+	var protocol struct {
+		Framed bool `json:"framed"`
+	}
+	if len(resp.Result) > 0 {
+		if err := json.Unmarshal(resp.Result, &protocol); err != nil {
+			return fmt.Errorf("decode attach protocol: %w", err)
 		}
 	}
+	if !protocol.Framed {
+		// Older daemons send an unframed console stream without exit status.
+		_, err := io.Copy(out, stream)
+		return err
+	}
+	if _, err := io.Copy(out, NewFrameReader(stream)); err != nil {
+		return fmt.Errorf("read attach output: %w", err)
+	}
+	var terminal AttachResult
+	if err := json.NewDecoder(stream).Decode(&terminal); err != nil {
+		return fmt.Errorf("decode attach terminal status: %w", err)
+	}
+	if !terminal.Done {
+		return errors.New("attach ended without terminal status")
+	}
+	if terminal.Error != "" {
+		return errors.New(terminal.Error)
+	}
+	return nil
 }
 
 // ImageBuild sends an Image.Build request and streams the build context to the

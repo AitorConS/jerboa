@@ -533,7 +533,11 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 	v.mu.Lock()
 	v.StoppedAt = &now
 	if v.logPipeWriter != nil {
-		_ = v.logPipeWriter.Close()
+		if explicitStop {
+			_ = v.logPipeWriter.Close()
+		} else {
+			_ = v.logPipeWriter.CloseWithError(exitErr)
+		}
 	}
 	fwd := v.portFwd
 	v.portFwd = nil

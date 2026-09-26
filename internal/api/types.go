@@ -150,6 +150,18 @@ type VMInfo struct {
 	Health string `json:"health,omitempty"`
 }
 
+// AttachParams requests terminal status after the console stream. Framed is
+// optional so older clients can continue to consume the raw stream.
+type AttachParams struct {
+	ID     string `json:"id"`
+	Framed bool   `json:"framed,omitempty"`
+}
+
+type AttachResult struct {
+	Done  bool   `json:"done"`
+	Error string `json:"error,omitempty"`
+}
+
 // VMDetail is the full serialisable representation of a VM.
 type VMDetail struct {
 	Architecture    string            `json:"architecture,omitempty"`

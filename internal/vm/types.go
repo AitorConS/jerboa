@@ -378,6 +378,7 @@ type VM struct {
 	logPipeReader io.Reader
 	logPipeWriter *io.PipeWriter
 	explicitStop  bool
+	attachSession *AttachSession
 	statsProvider func() RuntimeStats
 	hostCleanup   func()
 	healthDial    func(context.Context, string, string) (net.Conn, error)
@@ -397,6 +398,31 @@ type VM struct {
 // Done returns a channel that is closed when the VM reaches StateStopped.
 func (v *VM) Done() <-chan struct{} {
 	return v.done
+}
+
+// AttachSession captures one VM incarnation's reader and completion signal.
+// A snapshot restore may renew VM.done and the console pipe;
+// existing attached clients still observe the incarnation they started with.
+type AttachSession struct {
+	Reader     io.Reader
+	Done       <-chan struct{}
+	finished   chan struct{}
+	finishOnce sync.Once
+}
+
+func (s *AttachSession) Finished() <-chan struct{} { return s.finished }
+func (s *AttachSession) Finish()                   { s.finishOnce.Do(func() { close(s.finished) }) }
+
+func (v *VM) AttachSession() *AttachSession {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.attachSession == nil {
+		v.attachSession = &AttachSession{
+			Reader: v.logPipeReader, Done: v.done,
+			finished: make(chan struct{}),
+		}
+	}
+	return v.attachSession
 }
 
 // GetState returns the current state under a read lock.

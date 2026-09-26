@@ -6,11 +6,43 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAutoRemoveWaitsForAttachResult(t *testing.T) {
+	ctx := context.Background()
+	mgr := vm.NewMockManager()
+	s := &Server{mgr: mgr}
+	v, err := mgr.Create(ctx, vm.Config{Attach: true})
+	require.NoError(t, err)
+	require.NoError(t, mgr.Start(ctx, v.ID))
+	session := v.AttachSession()
+	finished := make(chan struct{})
+	go func() {
+		s.autoRemoveSession(ctx, v, session)
+		close(finished)
+	}()
+	require.NoError(t, mgr.Stop(ctx, v.ID))
+	_, err = mgr.Get(v.ID)
+	require.NoError(t, err, "a fast guest must survive until Attach receives its result")
+	select {
+	case <-finished:
+		t.Fatal("auto-remove raced the attached result")
+	default:
+	}
+	session.Finish()
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("auto-remove did not finish after Attach")
+	}
+	_, err = mgr.Get(v.ID)
+	require.Error(t, err)
+}
 
 func TestRemoveVMLease(t *testing.T) {
 	for _, automatic := range []bool{false, true} {
