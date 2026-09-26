@@ -378,13 +378,13 @@ static void acpi_powerdown_init(kernel_heaps kh)
         break;
     case 1:
         if (obj->Package.Elements[0].Type == ACPI_TYPE_INTEGER)
-            handler = closure(heap_general(kh), acpi_powerdown_sleepctrl, (ACPI_TABLE_FADT *)fadt,
+            handler = closure(heap_locked(kh), acpi_powerdown_sleepctrl, (ACPI_TABLE_FADT *)fadt,
                               obj->Package.Elements[0].Integer.Value);
         break;
     default:
         if ((obj->Package.Elements[0].Type == ACPI_TYPE_INTEGER) &&
             (obj->Package.Elements[1].Type == ACPI_TYPE_INTEGER))
-            handler = closure(heap_general(kh), acpi_powerdown_pm1, (ACPI_TABLE_FADT *)fadt,
+            handler = closure(heap_locked(kh), acpi_powerdown_pm1, (ACPI_TABLE_FADT *)fadt,
                               obj->Package.Elements[0].Integer.Value,
                               obj->Package.Elements[1].Integer.Value);
     }

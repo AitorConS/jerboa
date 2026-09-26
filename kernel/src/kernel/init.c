@@ -814,7 +814,7 @@ void kernel_runtime_init(kernel_heaps kh)
     status_handler start = closure(locked, kern_start, 0);
     assert(start != INVALID_ADDRESS);
     merge m = allocate_merge(locked, start);
-    storage_attach sa = closure(misc, attach_storage, start, apply_merge(m));
+    storage_attach sa = closure(locked, attach_storage, start, apply_merge(m));
     status_handler complete = apply_merge(m);
 
     init_debug("detect_devices");
