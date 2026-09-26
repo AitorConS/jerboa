@@ -197,7 +197,8 @@ void start_secondary_cores(kernel_heaps kh)
 {
     init_flush(heap_locked(kh));
     heap bh = (heap)heap_page_backed(kh);
-    vector bootstrap_stacks = allocate_vector(heap_general(kh), present_processors);
+    /* The vector is freed after secondary CPUs have published themselves. */
+    vector bootstrap_stacks = allocate_vector(heap_locked(kh), present_processors);
     assert(bootstrap_stacks != INVALID_ADDRESS);
     for (int i = 1; i < present_processors; i++) {
         void *stack = allocate(bh, PAGESIZE);

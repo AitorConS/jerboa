@@ -34,7 +34,8 @@ closure_function(1, 1, void, vtmmio_new_dev,
 {
     virtio_mmio_debug("new device");
     kernel_heaps kh = bound(kh);
-    heap h = heap_general(kh);
+    /* Device registration and retained queue vectors can outlive SMP startup. */
+    heap h = heap_locked(kh);
     vtmmio dev = mem_alloc(h, sizeof(*dev), MEM_NOWAIT | MEM_NOFAIL);
     dev->membase = adev->membase;
     dev->memsize = adev->memsize;
