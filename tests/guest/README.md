@@ -12,6 +12,7 @@ cc -O2 -Wall -Wextra -static -pthread clock.c -o clock
 cc -O2 -Wall -Wextra -static -pthread disk_pressure.c -o disk-pressure
 cc -O2 -Wall -Wextra -static -pthread random_write.c -o random-write
 cc -O2 -Wall -Wextra -static -pthread tcp_stream.c -o tcp-stream
+cc -O2 -Wall -Wextra -static -pthread tcp_receive_small.c -o tcp-receive-small
 ```
 
 On macOS use a Linux cross compiler or a Linux build container. Native macOS
@@ -57,6 +58,20 @@ iperf3 intervals; partial results are failures. See its `--help` for arguments.
 `tcp_stream.c` checks a 16 MiB stream byte for byte, using large writes and
 128 KiB reads to exercise send-buffer limits and receive-window credit. Run it
 with a fresh work directory and `--expect 'TCP STREAM PASS'`.
+
+`tcp_receive_small.c` sets a small receive buffer on a listening socket, checks
+that the accepted socket inherits it, delays its first read, then verifies a
+4 MiB stream and EOF byte for byte. Run it with a fresh work directory and
+`--expect 'TCP SMALL RECEIVE PASS'`.
+Its 30-second alarm makes a retained-pbuf deadlock fail rather than hang.
+Compile a second variant with `-DSEND_CHUNK=128 -DTEST_TIMEOUT=90` to exercise
+small segments and receive queue slots with the same byte and EOF checks.
+`-DCLIENT_SMALL` also sets the client receive budget before `connect()` and
+checks its TCP window clamp. `-DSHRINK_AFTER_CONNECT -DTEST_TIMEOUT=45` shrinks
+the accepted socket after data was sent under the old window;
+`-DGROW_AFTER_SHRINK` restores the larger budget after one read. Both variants
+verify the complete stream and EOF. Set `-DEXPECT_PRE_CLAMP=212992` with the
+default-window kernel to assert the window in the shrink variants.
 
 The application runner also accepts `--cases memory,startup --docker-image
 bench-tools:latest`. The Docker image must already be present and contain the

@@ -120,6 +120,7 @@ typedef struct netsock {
 #define TCP_CONG_CTRL_ALGO  "reno"  /* TCP congestion control algorithm name */
 
 int so_rcvbuf;
+static boolean so_rcvbuf_configured;
 
 /* lwIP accounts queued TCP bytes against TCP_SND_BUF. A socket may choose a
  * smaller budget without changing the PCB accounting used by ACK handling. */
@@ -159,7 +160,7 @@ static boolean net_loop_poll_queued;
 
 static boolean netsock_netif_poll(struct netif *n, void *priv)
 {
-    if (n->loop_first) {
+    if (netif_loopback_pending(n)) {
         /* there are loopback packets queued in the interface */
         netif_ref(n);
         *(struct netif **)priv = n;
@@ -169,7 +170,7 @@ static boolean netsock_netif_poll(struct netif *n, void *priv)
 }
 
 closure_function(0, 0, void, netsock_poll) {
-    net_loop_poll_queued = false;
+    __atomic_store_n(&net_loop_poll_queued, false, __ATOMIC_RELEASE);
 
     /* netif_poll() cannot be called from a netif_iterate() handler, because it may need to lock the
      * global netif mutex (e.g. when processing a loopback packet) which is already locked by
@@ -187,12 +188,12 @@ closure_function(0, 0, void, netsock_poll) {
     }
 }
 
-static void netsock_check_loop(void)
+void netsock_check_loop(void)
 {
-    /* Not race-free, but the worst that can happen is that the thunk is
-     * enqueued more than once. */
-    if (!net_loop_poll_queued) {
-        net_loop_poll_queued = true;
+    /* The poll clears this flag before draining. A producer racing with a
+     * running poll then queues another pass, so no packet is left asleep. */
+    if (net_loop_poll &&
+        !__atomic_exchange_n(&net_loop_poll_queued, true, __ATOMIC_ACQ_REL)) {
         async_apply(net_loop_poll);
     }
 }
@@ -627,12 +628,8 @@ static sysreturn sock_read_bh_internal(netsock s, struct msghdr *msg, boolean us
     context_clear_err(ctx);
 
   rx_done:
-    if (xfer_total) {
-        if (s->sock.type == SOCK_STREAM)
-            /* Calls to tcp_recved() may have enqueued new packets in the loopback interface. */
-            netsock_check_loop();
+    if (xfer_total)
         rv = xfer_total;
-    }
   out_unlock:
     if (notify)
         netsock_notify_events(s);
@@ -649,7 +646,15 @@ static sysreturn sock_read_bh_internal(netsock s, struct msghdr *msg, boolean us
                 tcp_recved(tcp_lw, n);
                 remaining -= n;
             }
+            /* Reading freed socket queue capacity. Retry a pbuf refused by
+             * tcp_input_lower now, while the PCB is locked, rather than
+             * waiting for the next 250 ms TCP timer or incoming packet. */
+            if (tcp_lw->refused_data)
+                tcp_process_refused_data(tcp_lw);
             tcp_unlock(tcp_lw);
+            /* tcp_recved() and the retry can queue loopback packets. Schedule
+             * their poll only after both operations have completed. */
+            netsock_check_loop();
         }
         tcp_unref(tcp_lw);
     }
@@ -777,6 +782,9 @@ closure_function(6, 1, sysreturn, socket_write_tcp_bh,
         avail = netsock_snd_available(s, tcp_lw);
         if (avail == 0) {
           full:
+            /* tcp_output() may have queued loopback packets even when this
+             * write has no space left and must sleep. */
+            netsock_check_loop();
             tcp_unlock(tcp_lw);
             tcp_unref(tcp_lw);
             if ((s->sock.f.flags & SOCK_NONBLOCK) || (flags & MSG_DONTWAIT) ||
@@ -1424,7 +1432,9 @@ static int allocate_sock(process p, int af, int type, u32 flags, boolean alloc_f
     s->sock.f.ioctl = init_closure_func(&s->ioctl, fdesc_ioctl, netsock_ioctl);
     s->p = p;
     s->sndbuf = TCP_SND_BUF;
-    s->rcvbuf = so_rcvbuf;
+    /* Match the configured TCP window by default, while preserving an
+     * explicit so_rcvbuf setting and the existing UDP default. */
+    s->rcvbuf = (type == SOCK_STREAM && !so_rcvbuf_configured) ? TCP_WND : so_rcvbuf;
 
     s->incoming = allocate_queue(h, SOCK_QUEUE_LEN);
     if (s->incoming == INVALID_ADDRESS) {
@@ -1475,6 +1485,9 @@ static int allocate_tcp_sock(process p, int af, struct tcp_pcb *pcb, u32 flags)
 	s->info.tcp.flags = pcb->flags & SOCK_TCP_CFG_FLAGS;
 	s->info.tcp.state = TCP_SOCK_CREATED;
 	tcp_ref(pcb);
+        tcp_lock(pcb);
+        tcp_set_recv_window(pcb, s->rcvbuf);
+        tcp_unlock(pcb);
     }
     return fd;
 }
@@ -1570,9 +1583,8 @@ static err_t tcp_input_lower(void *z, struct tcp_pcb *pcb, struct pbuf *p, err_t
     netsock_lock(s);
     if (p) {
         if ((s->sock.rx_len + p->tot_len > s->rcvbuf) || !enqueue(s->incoming, p)) {
-	    netsock_unlock(s);
-            msg_err("%s error: incoming queue full", func_ss);
-            return ERR_BUF;     /* XXX verify */
+            netsock_unlock(s);
+            return ERR_BUF; /* lwIP retains and retries this pbuf. */
         }
         s->sock.rx_len += p->tot_len;
     }
@@ -2171,6 +2183,8 @@ static err_t accept_tcp_from_lwip(void * z, struct tcp_pcb * lw, err_t err)
     sn->info.tcp.lw = lw;
     tcp_ref(lw);
     sn->info.tcp.state = TCP_SOCK_OPEN;
+    sn->rcvbuf = s->rcvbuf;
+    tcp_set_recv_window(lw, sn->rcvbuf);
     set_lwip_error(s, ERR_OK);
     tcp_arg(lw, sn);
     tcp_recv(lw, tcp_input_lower);
@@ -2316,6 +2330,7 @@ closure_function(5, 1, sysreturn, accept_bh,
     if (tcp_lw) {
         tcp_lock(tcp_lw);
         tcp_backlog_accepted(tcp_lw);
+        tcp_set_recv_window(tcp_lw, child->rcvbuf);
         tcp_lw->flags = (tcp_lw->flags & ~SOCK_TCP_CFG_FLAGS) |
                         (child->info.tcp.flags & SOCK_TCP_CFG_FLAGS);
         tcp_unlock(tcp_lw);
@@ -2528,6 +2543,23 @@ static sysreturn netsock_setsockopt(struct sock *sock, int level,
             netsock_unlock(s);
             if (optname == SO_SNDBUF)
                 blockq_wake_one(sock->txbq);
+            else if (s->sock.type == SOCK_STREAM) {
+                struct tcp_pcb *tcp_lw = netsock_tcp_get(s);
+                if (tcp_lw) {
+                    /* Another setsockopt may have updated the socket while
+                     * we waited for the PCB lock. Apply the latest cap. */
+                    netsock_lock(s);
+                    u32 current_rcvbuf = s->rcvbuf;
+                    netsock_unlock(s);
+                    if (tcp_lw->state == LISTEN)
+                        ((struct tcp_pcb_listen *)tcp_lw)->rcv_wnd_max =
+                            MIN(current_rcvbuf, TCP_WND);
+                    else
+                        tcp_set_recv_window(tcp_lw, current_rcvbuf);
+                    netsock_tcp_put(tcp_lw);
+                    netsock_check_loop();
+                }
+            }
             break;
         case SO_REUSEADDR:
         case SO_KEEPALIVE:
@@ -2829,8 +2861,17 @@ static sysreturn netsock_getsockopt(struct sock *sock, int level,
             ret_optval.val = TCP_FIN_WAIT_TIMEOUT / THOUSAND;
             break;
         case TCP_WINDOW_CLAMP:
-            ret_optval.val = TCP_WND_MAX(s->info.tcp.lw);
+        {
+            struct tcp_pcb *tcp_lw = netsock_tcp_get(s);
+            if (!tcp_lw)
+                ret_optval.val = TCP_WND;
+            else {
+                ret_optval.val = tcp_lw->state == LISTEN ?
+                    ((struct tcp_pcb_listen *)tcp_lw)->rcv_wnd_max : TCP_WND_MAX(tcp_lw);
+                netsock_tcp_put(tcp_lw);
+            }
             break;
+        }
         case TCP_INFO:
             netsock_get_tcpinfo(s, &ret_optval.tcp_info);
             ret_optlen = sizeof(ret_optval.tcp_info);
@@ -2933,7 +2974,8 @@ void register_net_syscalls(struct syscall *map)
 boolean netsyscall_init(unix_heaps uh, tuple cfg)
 {
     u64 rcvbuf;
-    if (get_u64(cfg, sym(so_rcvbuf), &rcvbuf))
+    so_rcvbuf_configured = get_u64(cfg, sym(so_rcvbuf), &rcvbuf);
+    if (so_rcvbuf_configured)
         so_rcvbuf = MIN(MAX(rcvbuf, 256), MASK(sizeof(so_rcvbuf) * 8 - 1));
     else
         so_rcvbuf = DEFAULT_SO_RCVBUF;

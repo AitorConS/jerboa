@@ -1,0 +1,257 @@
+diff --git a/src/core/netif.c b/src/core/netif.c
+index 062001b..54a9753 100644
+--- a/src/core/netif.c
++++ b/src/core/netif.c
+@@ -1239,6 +1239,16 @@ netif_loop_output_ipv6(struct netif *netif, struct pbuf *p, const ip6_addr_t *ad
+  * netif_loop_output() are put on a list that is passed to netif->input() by
+  * netif_poll().
+  */
++u8_t
++netif_loopback_pending(struct netif *netif)
++{
++  u8_t pending;
++  SYS_ARCH_LOCK(&loop_netif_mutex);
++  pending = netif->loop_first != NULL;
++  SYS_ARCH_UNLOCK(&loop_netif_mutex);
++  return pending;
++}
++
+ void
+ netif_poll(struct netif *netif)
+ {
+diff --git a/src/core/tcp.c b/src/core/tcp.c
+index 8eb938d..8573ad8 100644
+--- a/src/core/tcp.c
++++ b/src/core/tcp.c
+@@ -922,6 +922,7 @@ tcp_listen_with_backlog_and_err(struct tcp_pcb *pcb, u8_t backlog, err_t *err)
+   lpcb->refcount = 1;
+   lpcb->callback_arg = pcb->callback_arg;
+   lpcb->local_port = pcb->local_port;
++  lpcb->rcv_wnd_max = pcb->rcv_wnd_max;
+   lpcb->state = LISTEN;
+   lpcb->prio = pcb->prio;
+   lpcb->so_options = pcb->so_options;
+@@ -966,6 +967,20 @@ done:
+  * Returns how much extra window would be advertised if we sent an
+  * update now.
+  */
++static u32_t
++tcp_rcv_update_threshold(const struct tcp_pcb *pcb)
++{
++  if (TCP_WND_MAX(pcb) < TCP_WND_UPDATE_THRESHOLD) {
++#if LWIP_WND_SCALE
++    if (pcb->flags & TF_WND_SCALE) {
++      return 1U << pcb->rcv_scale;
++    }
++#endif
++    return 1;
++  }
++  return TCP_WND_UPDATE_THRESHOLD;
++}
++
+ u32_t
+ tcp_update_rcv_ann_wnd(struct tcp_pcb *pcb)
+ {
+@@ -974,7 +989,10 @@ tcp_update_rcv_ann_wnd(struct tcp_pcb *pcb)
+ 
+   LWIP_ASSERT("tcp_update_rcv_ann_wnd: invalid pcb", pcb != NULL);
+   new_right_edge = pcb->rcv_nxt + pcb->rcv_wnd;
+-  wnd = (TCP_WND / 2 >= 0xffff) ? pcb->mss : LWIP_MIN((TCP_WND / 2), pcb->mss);
++  wnd = TCP_WND_MAX(pcb) < TCP_WND_UPDATE_THRESHOLD ?
++        tcp_rcv_update_threshold(pcb) :
++        ((TCP_WND_MAX(pcb) / 2 >= 0xffff) ? pcb->mss :
++         LWIP_MIN((TCP_WND_MAX(pcb) / 2), pcb->mss));
+ 
+   if (TCP_SEQ_GEQ(new_right_edge, pcb->rcv_ann_right_edge + wnd)) {
+     /* we can advertise more window */
+@@ -1020,6 +1038,17 @@ tcp_recved(struct tcp_pcb *pcb, tcpwnd_size_t len)
+   LWIP_ASSERT("don't call tcp_recved for listen-pcbs",
+               pcb->state != LISTEN);
+ 
++  /* A smaller receive budget cannot revoke bytes already accepted under the
++   * previous window. Reads first retire that excess before opening new credit. */
++  if (pcb->rcv_wnd_debt != 0) {
++    tcpwnd_size_t paid = LWIP_MIN(len, pcb->rcv_wnd_debt);
++    pcb->rcv_wnd_debt -= paid;
++    len -= paid;
++    if (len == 0) {
++      return;
++    }
++  }
++
+   rcv_wnd = pcb->rcv_wnd + len;
+   if ((rcv_wnd > TCP_WND_MAX(pcb)) || (rcv_wnd < pcb->rcv_wnd)) {
+     /* window got too big or tcpwnd_size_t overflow */
+@@ -1035,7 +1064,7 @@ tcp_recved(struct tcp_pcb *pcb, tcpwnd_size_t len)
+    * watermark is TCP_WND/4), then send an explicit update now.
+    * Otherwise wait for a packet to be sent in the normal course of
+    * events (or more window to be available later) */
+-  if (wnd_inflation >= TCP_WND_UPDATE_THRESHOLD) {
++  if (wnd_inflation >= tcp_rcv_update_threshold(pcb)) {
+     tcp_ack_now(pcb);
+     tcp_output(pcb);
+   }
+@@ -1044,6 +1073,40 @@ tcp_recved(struct tcp_pcb *pcb, tcpwnd_size_t len)
+                           len, pcb->rcv_wnd, (u16_t)(TCP_WND_MAX(pcb) - pcb->rcv_wnd)));
+ }
+ 
++/* Bound new receive credit to the socket's budget. An already advertised
++ * right edge is kept by tcp_update_rcv_ann_wnd(), since the peer may have
++ * data in flight when an application shrinks SO_RCVBUF. */
++void
++tcp_set_recv_window(struct tcp_pcb *pcb, tcpwnd_size_t max)
++{
++  tcpwnd_size_t old_max;
++  tcpwnd_size_t new_max;
++  u32_t occupied;
++
++  LWIP_ASSERT_CORE_LOCKED();
++  LWIP_ASSERT("tcp_set_recv_window: invalid pcb", pcb != NULL);
++  LWIP_ASSERT("tcp_set_recv_window: listen pcb", pcb->state != LISTEN);
++
++  old_max = TCP_WND_MAX(pcb);
++  occupied = old_max - pcb->rcv_wnd + pcb->rcv_wnd_debt;
++  pcb->rcv_wnd_max = LWIP_MIN(max, TCP_WND);
++  new_max = TCP_WND_MAX(pcb);
++  if (occupied >= new_max) {
++    pcb->rcv_wnd_debt = occupied - new_max;
++    pcb->rcv_wnd = 0;
++  } else {
++    pcb->rcv_wnd_debt = 0;
++    pcb->rcv_wnd = new_max - occupied;
++  }
++
++  if (pcb->state == CLOSED) {
++    pcb->rcv_ann_wnd = pcb->rcv_wnd;
++  } else if (tcp_update_rcv_ann_wnd(pcb) > 0) {
++    tcp_ack_now(pcb);
++    tcp_output(pcb);
++  }
++}
++
+ /**
+  * Allocate a new local TCP port.
+  *
+@@ -1197,7 +1260,7 @@ tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port,
+   pcb->snd_lbb = iss - 1;
+   /* Start with a window that does not need scaling. When window scaling is
+      enabled and used, the window is enlarged when both sides agree on scaling. */
+-  pcb->rcv_wnd = pcb->rcv_ann_wnd = TCPWND_MIN16(TCP_WND);
++  pcb->rcv_wnd = pcb->rcv_ann_wnd = TCPWND16(pcb->rcv_wnd_max);
+   pcb->rcv_ann_right_edge = pcb->rcv_nxt;
+   pcb->snd_wnd = TCP_WND;
+   /* As initial send MSS, we use TCP_MSS but limit it to 536.
+@@ -1965,7 +2028,8 @@ tcp_alloc(u8_t prio)
+     pcb->snd_buf = TCP_SND_BUF;
+     /* Start with a window that does not need scaling. When window scaling is
+        enabled and used, the window is enlarged when both sides agree on scaling. */
+-    pcb->rcv_wnd = pcb->rcv_ann_wnd = TCPWND_MIN16(TCP_WND);
++    pcb->rcv_wnd_max = TCP_WND;
++    pcb->rcv_wnd = pcb->rcv_ann_wnd = TCPWND16(pcb->rcv_wnd_max);
+     pcb->ttl = TCP_TTL;
+     /* As initial send MSS, we use TCP_MSS but limit it to 536.
+        The send MSS is updated when an MSS option is received. */
+diff --git a/src/core/tcp_in.c b/src/core/tcp_in.c
+index 5735603..7c19f9c 100644
+--- a/src/core/tcp_in.c
++++ b/src/core/tcp_in.c
+@@ -819,6 +819,8 @@ tcp_listen_new_conn(struct tcp_pcb_listen *pcb, struct tcp_hdr *tcphdr, struct t
+   ip_addr_copy(npcb->local_ip, ip_data->current_iphdr_dest);
+   ip_addr_copy(npcb->remote_ip, ip_data->current_iphdr_src);
+   npcb->local_port = pcb->local_port;
++  npcb->rcv_wnd_max = pcb->rcv_wnd_max;
++  npcb->rcv_wnd = npcb->rcv_ann_wnd = TCPWND_MIN16(npcb->rcv_wnd_max);
+   npcb->remote_port = tcphdr->src;
+   npcb->state = SYN_RCVD;
+   npcb->rcv_nxt = client_seqno + 1;
+@@ -834,6 +836,7 @@ tcp_listen_new_conn(struct tcp_pcb_listen *pcb, struct tcp_hdr *tcphdr, struct t
+ 
+   /* Parse any options in the incoming packet. */
+   tcp_parseopt(npcb, tcphdr, tcp_data);
++  npcb->rcv_wnd = npcb->rcv_ann_wnd = TCP_WND_MAX(npcb);
+   npcb->snd_wnd = tcphdr->wnd;
+   npcb->snd_wnd_max = npcb->snd_wnd;
+ 
+@@ -2249,9 +2252,9 @@ tcp_parseopt(struct tcp_pcb *pcb, struct tcp_hdr *tcphdr, struct tcp_input_parse
+             pcb->rcv_scale = TCP_RCV_SCALE;
+             tcp_set_flags(pcb, TF_WND_SCALE);
+             /* window scaling is enabled, we can use the full receive window */
+-            LWIP_ASSERT("window not at default value", pcb->rcv_wnd == TCPWND_MIN16(TCP_WND));
+-            LWIP_ASSERT("window not at default value", pcb->rcv_ann_wnd == TCPWND_MIN16(TCP_WND));
+-            pcb->rcv_wnd = pcb->rcv_ann_wnd = TCP_WND;
++            LWIP_ASSERT("window not at initial value", pcb->rcv_wnd == TCPWND_MIN16(pcb->rcv_wnd_max));
++            LWIP_ASSERT("window not at initial value", pcb->rcv_ann_wnd == TCPWND_MIN16(pcb->rcv_wnd_max));
++            pcb->rcv_wnd = pcb->rcv_ann_wnd = pcb->rcv_wnd_max;
+           }
+           break;
+ #endif /* LWIP_WND_SCALE */
+diff --git a/src/core/tcp_out.c b/src/core/tcp_out.c
+index dff8498..4b44d96 100644
+--- a/src/core/tcp_out.c
++++ b/src/core/tcp_out.c
+@@ -2035,7 +2035,7 @@ tcp_synack(const struct tcp_pcb_listen *pcb, u32_t seqno, u32_t ackno,
+ 
+   optlen = LWIP_TCP_OPT_LENGTH(TF_SEG_OPTS_MSS);
+   p = tcp_output_alloc_header_common(ackno, optlen, 0, lwip_htonl(seqno), local_port,
+-    remote_port, TCP_SYN | TCP_ACK, PP_HTONS(TCP_WND));
++    remote_port, TCP_SYN | TCP_ACK, PP_HTONS(TCPWND16(pcb->rcv_wnd_max)));
+   if (p == NULL) {
+     LWIP_DEBUGF(TCP_DEBUG, ("tcp_synack: could not allocate memory for pbuf\n"));
+     return;
+diff --git a/src/include/lwip/netif.h b/src/include/lwip/netif.h
+index 2bd122c..55d850e 100644
+--- a/src/include/lwip/netif.h
++++ b/src/include/lwip/netif.h
+@@ -496,6 +496,7 @@ void netif_set_link_callback(struct netif *netif, netif_status_callback_fn link_
+ 
+ #if ENABLE_LOOPBACK
+ err_t netif_loop_output(struct netif *netif, struct pbuf *p);
++u8_t netif_loopback_pending(struct netif *netif);
+ void netif_poll(struct netif *netif);
+ #if !LWIP_NETIF_LOOPBACK_MULTITHREADING
+ void netif_poll_loopback(void);
+diff --git a/src/include/lwip/tcp.h b/src/include/lwip/tcp.h
+index 76bc846..dc79026 100644
+--- a/src/include/lwip/tcp.h
++++ b/src/include/lwip/tcp.h
+@@ -137,12 +137,12 @@ typedef err_t (*tcp_connected_fn)(void *arg, struct tcp_pcb *tpcb, err_t err);
+ #define RCV_WND_SCALE(pcb, wnd) (((wnd) >> (pcb)->rcv_scale))
+ #define SND_WND_SCALE(pcb, wnd) (((wnd) << (pcb)->snd_scale))
+ #define TCPWND16(x)             ((u16_t)LWIP_MIN((x), 0xFFFF))
+-#define TCP_WND_MAX(pcb)        ((tcpwnd_size_t)(((pcb)->flags & TF_WND_SCALE) ? TCP_WND : TCPWND16(TCP_WND)))
++#define TCP_WND_MAX(pcb)        ((tcpwnd_size_t)(((pcb)->flags & TF_WND_SCALE) ? (pcb)->rcv_wnd_max : TCPWND16((pcb)->rcv_wnd_max)))
+ #else
+ #define RCV_WND_SCALE(pcb, wnd) (wnd)
+ #define SND_WND_SCALE(pcb, wnd) (wnd)
+ #define TCPWND16(x)             (x)
+-#define TCP_WND_MAX(pcb)        TCP_WND
++#define TCP_WND_MAX(pcb)        ((pcb)->rcv_wnd_max)
+ #endif
+ /* Increments a tcpwnd_size_t and holds at max value rather than rollover */
+ #define TCP_WND_INC(wnd, inc)   do { \
+@@ -217,7 +217,8 @@ typedef u16_t tcpflags_t;
+   enum tcp_state state; /* TCP state */ \
+   u8_t prio; \
+   /* ports are in host byte order */ \
+-  u16_t local_port
++  u16_t local_port; \
++  tcpwnd_size_t rcv_wnd_max
+ 
+ 
+ /** the TCP protocol control block for listening pcbs */
+@@ -284,6 +285,7 @@ struct tcp_pcb {
+   /* receiver variables */
+   u32_t rcv_nxt;   /* next seqno expected */
+   tcpwnd_size_t rcv_wnd;   /* receiver window available */
++  tcpwnd_size_t rcv_wnd_debt; /* accepted bytes beyond a later reduced max */
+   tcpwnd_size_t rcv_ann_wnd; /* receiver window to announce */
+   u32_t rcv_ann_right_edge; /* announced right edge of window */
+ 
+@@ -464,6 +466,7 @@ void             tcp_backlog_accepted(struct tcp_pcb* pcb);
+ #define          tcp_accepted(pcb) do { LWIP_UNUSED_ARG(pcb); } while(0) /* compatibility define, not needed any more */
+ 
+ void             tcp_recved  (struct tcp_pcb *pcb, tcpwnd_size_t len);
++void             tcp_set_recv_window(struct tcp_pcb *pcb, tcpwnd_size_t max);
+ err_t            tcp_bind    (struct tcp_pcb *pcb, const ip_addr_t *ipaddr,
+                               u16_t port);
+ void             tcp_bind_netif(struct tcp_pcb *pcb, const struct netif *netif);
