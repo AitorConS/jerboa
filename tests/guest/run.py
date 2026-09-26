@@ -18,6 +18,7 @@ def main():
     p.add_argument("--cpus", type=int, default=4)
     p.add_argument("--memory", type=int, default=256)
     p.add_argument("--disk-size", default="2G")
+    p.add_argument("--volume-size", help="attach a separate TFS volume at /data")
     p.add_argument("--timeout", type=int, default=180)
     p.add_argument("--expect", default="BENCHMARK REGRESSIONS PASS")
     p.add_argument("--reuse-disk", action="store_true")
@@ -30,10 +31,15 @@ def main():
             p.error("work directory already contains root.img; use another directory or --reuse-disk")
         # JSON quoting is also valid for manifest strings used here.
         arguments = " ".join(f"{i}:{json.dumps(v)}" for i, v in enumerate(["/program", *a.args]))
-        manifest = (f"(children:(program:(contents:(host:{json.dumps(str(a.program.resolve()))}))) "
+        data_dir = " data:(children:())" if a.volume_size else ""
+        manifest = (f"(children:({data_dir} program:(contents:(host:{json.dumps(str(a.program.resolve()))}))) "
                     f"program:/program arguments:({arguments}) environment:())")
         subprocess.run([str(a.mkfs.resolve()), "-c", "-s", a.disk_size, str(disk)],
                        input=manifest, text=True, check=True, capture_output=True)
+    volume = (a.work / "volume.img").resolve()
+    if a.volume_size and not a.reuse_disk:
+        subprocess.run([str(a.mkfs.resolve()), "-e", "-l", "testdata", "-s",
+                        a.volume_size, str(volume)], check=True, capture_output=True)
     config = {
         "boot-source": {"kernel_image_path": str(a.kernel.resolve())},
         "machine-config": {"vcpu_count": a.cpus, "mem_size_mib": a.memory},
@@ -46,6 +52,15 @@ def main():
         config["security"] = {"mode": "hardened", "version": 1}
     else:
         config["boot-source"]["boot_args"] = "console=ttyS0 reboot=k panic=1 pci=off"
+    if a.volume_size:
+        config["drives"].append({"drive_id": "data", "path_on_host": str(volume),
+                                 "is_root_device": False, "is_read_only": False})
+        if platform.system() == "Darwin":
+            mounts = (a.work / "mounts").resolve()
+            mounts.write_text("testdata:/data")
+            config["firmware"] = {"opt/uni/mounts": str(mounts)}
+        else:
+            config["boot-source"]["boot_args"] += " mounts.testdata=/data"
     config_path = a.work / "config.json"
     config_path.write_text(json.dumps(config))
     with (a.work / "console.log").open("w") as log:

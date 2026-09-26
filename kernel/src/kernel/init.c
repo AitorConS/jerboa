@@ -684,6 +684,7 @@ closure_function(6, 1, void, mbr_read,
                     bound(start), bound(complete));
     }
   out:
+    storage_probe_end();
     closure_finish();
 }
 
@@ -693,10 +694,12 @@ closure_function(2, 3, void, attach_storage,
 {
     heap h = heap_locked(init_heaps);
     heap bh = (heap)heap_linear_backed(init_heaps);
+    storage_probe_begin();
     /* Read partition table from disk, use backed heap for guaranteed alignment */
     u8 *mbr = allocate(bh, PAGESIZE);
     if (mbr == INVALID_ADDRESS) {
         msg_err("storage: cannot allocate memory for MBR sector");
+        storage_probe_end();
         return;
     }
     status_handler sh = closure(h, mbr_read, mbr, req_handler, length, attach_id,
@@ -704,6 +707,7 @@ closure_function(2, 3, void, attach_storage,
     if (sh == INVALID_ADDRESS) {
         msg_err("storage: cannot allocate MBR read closure");
         deallocate(bh, mbr, PAGESIZE);
+        storage_probe_end();
         return;
     }
     struct storage_req req = {

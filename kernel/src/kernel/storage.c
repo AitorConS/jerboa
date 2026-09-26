@@ -29,6 +29,7 @@ static struct {
     struct list volumes;
     tuple mounts;
     boolean mounting;
+    u64 pending_probes;
     status_handler mount_complete;
     struct spinlock lock;
     u64 mount_generation;
@@ -57,7 +58,7 @@ static void storage_check_if_ready(void)
     boolean mounting = false;
     status_handler complete = 0;
     storage_lock();
-    if (!storage.mount_complete) {
+    if (!storage.mount_complete || storage.pending_probes) {
         storage_unlock();
         return;
     }
@@ -75,6 +76,24 @@ static void storage_check_if_ready(void)
     storage_unlock();
     if (complete)
         apply(complete, STATUS_OK);
+}
+
+/* A root filesystem can become ready before secondary disks finish their
+ * initial read. Keep startup behind both discovery and filesystem mounting. */
+void storage_probe_begin(void)
+{
+    storage_lock();
+    storage.pending_probes++;
+    storage_unlock();
+}
+
+void storage_probe_end(void)
+{
+    storage_lock();
+    assert(storage.pending_probes);
+    storage.pending_probes--;
+    storage_unlock();
+    storage_check_if_ready();
 }
 
 static boolean volume_match(symbol s, volume v)
@@ -218,6 +237,7 @@ void init_volumes(heap h)
     storage.root_fs = 0;
     storage.mounts = 0;
     storage.mount_complete = 0;
+    storage.pending_probes = 0;
     spin_lock_init(&storage.lock);
     storage.mount_generation = 0;
     storage.mounts_watchers = allocate_vector(h, 1);
@@ -299,7 +319,9 @@ boolean volume_add(u8 *uuid, char *label, void *priv, fs_init_handler init_handl
 
 void storage_when_ready(status_handler complete)
 {
+    storage_lock();
     storage.mount_complete = complete;
+    storage_unlock();
     storage_check_if_ready();
 }
 

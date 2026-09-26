@@ -98,3 +98,18 @@ with `--memory 2048` and expect `LARGE WRITE PASS`, then boot the same disk with
 `--reuse-disk --memory 2048` and expect `LARGE WRITE RESTART PASS`. This exercises
 large contiguous writeback waves, which must be split into virtio requests no
 larger than the native VMM's 4 MiB request limit.
+
+## Secondary volume startup
+
+Compile `volume_mount.c` as a static guest executable. Run with `--disk-size 64M
+--volume-size 1G --expect 'VOLUME MOUNT PASS'`; the runner creates an independent
+TFS volume and supplies its mount through fw_cfg on macOS or boot arguments on
+Linux. The program checks `/data` immediately, without retries, then writes,
+flushes and reads a marker. Its volume must be larger than the root disk.
+
+For a deterministic negative control, use a test VMM that delays completion of
+the secondary disk's initial read while continuing root-disk processing. The old
+kernel starts the program before that probe completes, so both statvfs sizes are
+equal and the assertion fails. The fixed kernel waits for probes and mounts.
+Do not use a delayed test VMM for performance measurements. Repeat with the
+normal VMM and `--reuse-disk` to check subsequent boots.
