@@ -301,6 +301,40 @@ On Linux and Windows, UDP mappings are accepted syntactically but the current
 forwarder skips them with a warning. Only TCP forwarding works there today.
 macOS forwards both TCP and UDP.
 
+### Guest DNS fails on Linux while connections by IP work
+
+The guest resolver sends UDP queries to `10.53.0.53:53`, an address assigned
+to the host's loopback interface. Check the daemon journal first:
+
+```sh
+sudo journalctl -u jerboad --since '10 minutes ago'
+systemctl show jerboad -p AmbientCapabilities -p CapabilityBoundingSet
+```
+
+If the bind fails with `permission denied`, the service needs
+`CAP_NET_BIND_SERVICE` in both capability lists, alongside `CAP_NET_ADMIN`
+and `CAP_NET_RAW`. Older published installers omitted that capability. Update
+the service definition from the current installer and restart the daemon when
+its guests can be stopped.
+
+A successful bind does not prove the host firewall permits guest queries.
+Check `sudo journalctl -k` for blocked UDP traffic to `10.53.0.53`, and use
+`jerboa network inspect <name>` to find the network's `bridge` field. For
+example, if UFW blocks queries arriving on `jerboa-br-app`, permit only DNS
+from that bridge:
+
+```sh
+sudo ufw allow in on jerboa-br-app to 10.53.0.53 port 53 proto udp
+```
+
+Use the actual bridge name from inspection and repeat a guest lookup. This is
+host-input traffic, so a forwarding rule alone does not allow it. Remove the
+corresponding rule when the network is removed:
+
+```sh
+sudo ufw delete allow in on jerboa-br-app to 10.53.0.53 port 53 proto udp
+```
+
 ### `pre-existing shared memory block ... is still in use` (PostgreSQL)
 
 PostgreSQL found a stale `postmaster.pid` on its volume. It records the guest
