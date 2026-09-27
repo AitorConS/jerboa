@@ -2736,6 +2736,7 @@ static void netsock_get_tcpinfo(netsock s, struct tcp_info *info)
         info->tcpi_sacked += sacks[i].right - sacks[i].left;
 #endif
     info->tcpi_retrans = lw->nrtx;
+    info->tcpi_total_retrans = lw->total_rexmits;
     info->tcpi_rcv_ssthresh = lw->ssthresh;
     info->tcpi_snd_ssthresh = lw->mss ? lw->ssthresh / lw->mss : 0;
     /* rttest is the timestamp at which a probe began, not its duration.
