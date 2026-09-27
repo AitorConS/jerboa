@@ -50,6 +50,12 @@ that ELF debug sections cannot displace the vvar page:
 python3 tests/guest/test_vdsogen.py kernel/output/tools/bin/vdsogen
 ```
 
+The page-cache eviction-list regression model runs as part of `make test-kernel`.
+It compiles the production list and state-transition helpers with ASan/UBSan and
+checks eligible-page ordering while references, writeback and page states change.
+This host test complements, but does not replace, guest memory-pressure and
+storage-integrity runs.
+
 For the original applications, `scripts/benchmark-regressions.py` creates its own
 daemon, home directory, images, network and volumes. It requires explicitly
 supplied local tools and packages. It checks all four fio jobs and complete

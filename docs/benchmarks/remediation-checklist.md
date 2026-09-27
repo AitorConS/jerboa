@@ -74,3 +74,21 @@ reboot, ENOSPC and four-job fio also pass. Sustained 60-second network matrices
 are `/tmp/jr-followup-final` and Linux `runs/followup-events`; the final macOS
 build additionally completed `/tmp/jr-delivery`. Raw values, hashes and known
 limits are retained in the report and JSON. No installed runtime was replaced.
+
+## Page-cache eligible-list candidate (2026-09-27)
+
+- [x] Add a filtered page list that preserves full-list ordering and state
+  transitions while avoiding repeated walks over already-evicted pages.
+- [x] Add a production-source host model with ASan/UBSan and run it as part of
+  `make test-kernel`.
+- [x] Run the full `make test-kernel` suite and build the ARM64 kernel image.
+- [ ] Run real guest memory-pressure, concurrent-write, truncation, ENOSPC,
+  mapping and reboot checks on macOS and Linux with identical resources.
+- [ ] Measure three interleaved original disk benchmark pairs per host against
+  the base revision; do not accept the optimization before this comparison.
+
+The host model passed with digest `13880411418874934453`; the ARM64 kernel
+linked successfully. The subsequent default `webg` image fixture failed because
+`/etc/ld.so.cache` is absent in its configured sysroot, before guest execution.
+No guest-pressure or performance result is claimed. The underlying candidate
+remains unaccepted pending those runs.

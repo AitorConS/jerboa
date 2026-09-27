@@ -72,12 +72,16 @@ static inline range byte_range_from_page(pagecache pc, pagecache_page pp)
 static inline void pagelist_enqueue(pagelist pl, pagecache_page pp)
 {
     list_insert_before(&pl->l, &pp->l);
+    if (!pp->evicted)
+        list_insert_before(&pl->eligible, &pp->eligible_l);
     pl->pages++;
 }
 
 static inline void pagelist_remove(pagelist pl, pagecache_page pp)
 {
     list_delete(&pp->l);
+    if (!pp->evicted)
+        list_delete(&pp->eligible_l);
     pl->pages--;
 }
 
@@ -91,6 +95,10 @@ static inline void pagelist_touch(pagelist pl, pagecache_page pp)
 {
     list_delete(&pp->l);
     list_insert_before(&pl->l, &pp->l);
+    if (!pp->evicted) {
+        list_delete(&pp->eligible_l);
+        list_insert_before(&pl->eligible, &pp->eligible_l);
+    }
 }
 
 static inline void pagecache_lock(pagecache pc)
@@ -283,8 +291,7 @@ static boolean touch_page_locked(pagecache_node pn, pagecache_page pp, merge m)
         return false;
     case PAGECACHE_PAGESTATE_ACTIVE:
         /* move to bottom of active list */
-        list_delete(&pp->l);
-        list_insert_before(&pc->active.l, &pp->l);
+        pagelist_touch(&pc->active, pp);
         break;
     case PAGECACHE_PAGESTATE_NEW:
         /* cache hit -> active */
@@ -375,8 +382,7 @@ static boolean touch_or_fill_page_nodelocked(pagecache_node pn, pagecache_page p
         return false;
     case PAGECACHE_PAGESTATE_ACTIVE:
         /* move to bottom of active list */
-        list_delete(&pp->l);
-        list_insert_before(&pc->active.l, &pp->l);
+        pagelist_touch(&pc->active, pp);
         break;
     case PAGECACHE_PAGESTATE_NEW:
         /* cache hit -> active */
@@ -459,6 +465,7 @@ static pagecache_page allocate_page_nodelocked(pagecache_node pn, u64 offset)
     pp->kvirt = p;
     pp->node = pn;
     pp->l.next = pp->l.prev = 0;
+    pp->eligible_l.next = pp->eligible_l.prev = 0;
     pp->evicted = false;
     pp->dirty_pending = false;
     pp->phys = physical_from_virtual(p);
@@ -474,17 +481,20 @@ static pagecache_page allocate_page_nodelocked(pagecache_node pn, u64 offset)
 static u64 evict_from_list_locked(pagecache pc, struct pagelist *pl, u64 pages)
 {
     u64 evicted = 0;
-    list_foreach(&pl->l, l) {
+    /* Marked pages may retain user references for a long time. Keep them on
+     * the full list for state transitions and balancing, but do not walk
+     * them again on every allocation under memory pressure. */
+    list_foreach(&pl->eligible, l) {
         if (evicted >= pages)
             break;
 
-        pagecache_page pp = struct_from_list(l, pagecache_page, l);
-        if (pp->evicted)
-            continue;
+        pagecache_page pp = struct_from_list(l, pagecache_page, eligible_l);
+        assert(!pp->evicted);
         assert(pp->refcount != 0);
         pagecache_debug("%s: list %s, release pp %p - %R, state %d, count %ld\n", func_ss,
                         pl == &pc->new ? ss("new") : ss("active"), pp, byte_range_from_page(pc, pp),
                         page_state(pp), pp->refcount);
+        list_delete(&pp->eligible_l);
         pp->evicted = true;
         if (pp->refcount == 1)
             evicted++;
@@ -2462,6 +2472,7 @@ void pagecache_dealloc_volume(pagecache_volume pv)
 static inline void page_list_init(struct pagelist *pl)
 {
     list_init(&pl->l);
+    list_init(&pl->eligible);
     pl->pages = 0;
 }
 
