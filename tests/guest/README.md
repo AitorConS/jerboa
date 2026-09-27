@@ -104,6 +104,34 @@ boot the same disk with `--reuse-disk` and expect `TRUNCATE RESTART PASS`.
 ENOSPC, shrinks and regrows both an allocated file and a sparse file, and checks
 every byte. Expect
 `TRUNCATE ENOSPC PASS`, then `TRUNCATE ENOSPC RESTART PASS` after reboot.
+
+`pagecache_mapped_pressure.c` has three modes. `single` isolates shared reads
+after private COW; `threads` exercises the two-thread read/yield schedule; `full`
+adds two 384 MiB write/fsync pressure phases and checks private isolation,
+visibility through a second shared mapping, file contents, and the same data
+after reboot. The shared map starts read-only. The full case makes only the
+written page writable, avoiding false dirty tracking of untouched pages on
+ARM64 while retaining the shared-write and writeback checks.
+
+Compile it as a static guest executable and run the two isolated reproductions
+with fresh work directories:
+
+```sh
+cc -O2 -Wall -Wextra -static -pthread tests/guest/pagecache_mapped_pressure.c -o ./pagecache-mapped-pressure
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-single --disk-size 1G --memory 128 --cpus 4 --expect 'MAPPED SINGLE-THREAD REPRO PASS' single
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-threads --disk-size 1G --memory 128 --cpus 2 --expect 'MAPPED TWO-THREAD REPRO PASS' threads
+```
+
+For the full pressure case, run twice with the same work directory and disk:
+
+```sh
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-full --disk-size 1G --memory 128 --cpus 4 --expect 'MAPPED PRESSURE PASS' full
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-full --memory 128 --cpus 4 --reuse-disk --expect 'MAPPED PRESSURE RESTART PASS' full
+```
+
+The second boot verifies the synced shared-file byte and all untouched bytes;
+the guest does not rely on a newly created empty marker file surviving a reboot.
+
 The original, smaller reproducer remains at `known_issues/truncate.c` as a
 before/after control; it is no longer the full regression matrix.
 
