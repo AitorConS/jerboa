@@ -1582,7 +1582,14 @@ static err_t tcp_input_lower(void *z, struct tcp_pcb *pcb, struct pbuf *p, err_t
     /* A null pbuf indicates connection closed. */
     netsock_lock(s);
     if (p) {
-        if ((s->sock.rx_len + p->tot_len > s->rcvbuf) || !enqueue(s->incoming, p)) {
+        /* A retained GRO/GSO packet (or data already in flight when the
+         * receive budget shrinks) may exceed the new socket budget. If the
+         * queue is empty, accept this one pbuf so the reader can drain it.
+         * Rejecting it forever leaves no readable data and no opportunity
+         * for tcp_process_refused_data() to make progress. No extra payload
+         * is allocated: lwIP already owns this bounded pbuf. */
+        if ((s->sock.rx_len && s->sock.rx_len + p->tot_len > s->rcvbuf) ||
+            !enqueue(s->incoming, p)) {
             netsock_unlock(s);
             return ERR_BUF; /* lwIP retains and retries this pbuf. */
         }
