@@ -186,10 +186,42 @@ index 5735603..7c19f9c 100644
            break;
  #endif /* LWIP_WND_SCALE */
 diff --git a/src/core/tcp_out.c b/src/core/tcp_out.c
-index dff8498..4b44d96 100644
+index dff8498..84b8b60 100644
 --- a/src/core/tcp_out.c
 +++ b/src/core/tcp_out.c
-@@ -2035,7 +2035,7 @@ tcp_synack(const struct tcp_pcb_listen *pcb, u32_t seqno, u32_t ackno,
+@@ -1318,6 +1318,11 @@ tcp_output(struct tcp_pcb *pcb)
+   /* Stop persist timer, above conditions are not active */
+   pcb->persist_backoff = 0;
+ 
++#ifdef LWIP_HOOK_TCP_OUTPUT_BATCH
++  /* Scope every call, but avoid allocating a batch for a single segment. */
++  LWIP_HOOK_TCP_OUTPUT_BATCH(netif, seg->next != NULL ? 1 : 2);
++#endif
++
+   /* useg should point to last segment on unacked queue */
+   useg = pcb->unacked;
+   if (useg != NULL) {
+@@ -1356,6 +1361,9 @@ tcp_output(struct tcp_pcb *pcb)
+     if (err != ERR_OK) {
+       /* segment could not be sent, for whatever reason */
+       tcp_set_flags(pcb, TF_NAGLEMEMERR);
++#ifdef LWIP_HOOK_TCP_OUTPUT_BATCH
++      LWIP_HOOK_TCP_OUTPUT_BATCH(netif, 0);
++#endif
+       netif_unref(netif);
+       return err;
+     }
+@@ -1403,6 +1411,9 @@ tcp_output(struct tcp_pcb *pcb)
+     }
+     seg = pcb->unsent;
+   }
++#ifdef LWIP_HOOK_TCP_OUTPUT_BATCH
++  LWIP_HOOK_TCP_OUTPUT_BATCH(netif, 0);
++#endif
+   netif_unref(netif);
+ #if TCP_OVERSIZE
+   if (pcb->unsent == NULL) {
+@@ -2035,7 +2046,7 @@ tcp_synack(const struct tcp_pcb_listen *pcb, u32_t seqno, u32_t ackno,
  
    optlen = LWIP_TCP_OPT_LENGTH(TF_SEG_OPTS_MSS);
    p = tcp_output_alloc_header_common(ackno, optlen, 0, lwip_htonl(seqno), local_port,

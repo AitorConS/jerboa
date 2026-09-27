@@ -96,6 +96,11 @@ typedef unsigned long size_t;
 #define LWIP_HOOK_IP4_INPUT net_ip_input_hook
 #define LWIP_HOOK_IP6_INPUT net_ip_input_hook
 
+/* Synchronous TCP output boundary for optional virtio TX batching. */
+struct netif;
+void virtio_net_tx_batch(struct netif *netif, int begin);
+#define LWIP_HOOK_TCP_OUTPUT_BATCH(netif, begin) virtio_net_tx_batch(netif, begin)
+
 typedef unsigned long u64_t;
 typedef unsigned u32_t;
 typedef int s32_t;
