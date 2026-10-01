@@ -162,3 +162,18 @@ kernel starts the program before that probe completes, so both statvfs sizes are
 equal and the assertion fails. The fixed kernel waits for probes and mounts.
 Do not use a delayed test VMM for performance measurements. Repeat with the
 normal VMM and `--reuse-disk` to check subsequent boots.
+
+`extend_gap.c` checks that writing past EOF never exposes earlier contents of
+the blocks a file is extended over: its own tail freed by a truncate, and a
+deleted file's blocks. Run it with a 256 MiB disk and argument `clean`
+(`EXTEND GAP PASS`, then `--reuse-disk` for `EXTEND GAP RESTART PASS`), and
+with `crash`: once `EXTEND GAP CRASH POINT` appears, kill the VMM (for example
+with `--timeout`), then reboot the same disk for `EXTEND GAP CRASH PASS`.
+
+`uninit_integrity.c` fills freed blocks with a stale pattern, then checks a
+fallocated file through partial, overlapping and concurrent writes, truncate
+and regrow, byte for byte. Use a 512 MiB disk and 256 MiB RAM. Modes `full`
+(`UNINIT INTEGRITY PASS`, then `UNINIT INTEGRITY RESTART PASS`), `post`
+(synced writes into the regrown range: `UNINIT POST PASS`, then
+`UNINIT POST RESTART PASS`) and `crash` (kill the VMM after
+`UNINIT CRASH POINT`, reboot for `UNINIT CRASH VERIFY PASS`).

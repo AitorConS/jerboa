@@ -777,6 +777,19 @@ out:
 static int extend(tfsfile f, extent ex, sg_list sg, range blocks, merge m, u64 *edge)
 {
     tfs fs = tfs_from_file(f);
+    /* A reservation (no merge) only records metadata: no data or zeros are
+     * written now, and the later writeback finds the range already mapped and
+     * writes just its own data. Extending an initialized extent here would map
+     * the gap and the reserved range onto blocks that still hold earlier data,
+     * possibly from another file. An uninitialized extent reads as zeros and
+     * is fully zeroed on conversion, so only that kind may grow here, and only
+     * contiguously: growing it across a gap would make its conversion zero-fill
+     * that whole gap. Otherwise the caller maps the range with a new
+     * uninitialized extent, leaving any gap as a hole. */
+    if (!m && (ex->uninited != INVALID_ADDRESS || blocks.start != ex->node.r.end)) {
+        *edge = blocks.start;
+        return 0;
+    }
     blocks.end = MIN(blocks.end, ex->node.r.start + (MAX_EXTENT_SIZE >> fs->fs.blocksize_order));
     u64 free = ex->allocated - range_span(ex->node.r);
     range r = irangel(ex->node.r.end, free);
