@@ -724,7 +724,7 @@ closure_function(1, 3, void, pagecache_write_sg,
     heap phys = (heap)heap_physical(get_kernel_heaps());
     u64 total = heap_total(phys);
     u64 free = total - heap_allocated(phys);
-    u64 reserve = MAX(total >> MEM_CLEAN_THRESHOLD_SHIFT, MEM_CLEAN_THRESHOLD);
+    u64 reserve = mem_clean_threshold(total);
     if (free < reserve)
         mem_clean(reserve - free, true);
 

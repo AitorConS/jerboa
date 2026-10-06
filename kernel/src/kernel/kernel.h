@@ -713,6 +713,15 @@ void init_scheduler_cpus(heap h);
 boolean mem_service(void);
 u64 mem_clean(u64 clean_bytes, boolean can_wait);
 
+/* Free memory below which writers and the memory service clean caches. The
+ * fixed minimum is capped at a quarter of memory: on a small guest, pinned
+ * pages (mappings, kernel) can keep free memory below 64 MiB for good, and
+ * every write would then sync storage without being able to free anything. */
+static inline u64 mem_clean_threshold(u64 total)
+{
+    return MIN(MAX(total >> MEM_CLEAN_THRESHOLD_SHIFT, MEM_CLEAN_THRESHOLD), total / 4);
+}
+
 closure_type(mem_cleaner, u64, u64 clean_bytes);
 boolean mm_register_mem_cleaner(mem_cleaner cleaner);
 
