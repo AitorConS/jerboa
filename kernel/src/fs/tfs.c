@@ -85,8 +85,148 @@ static inline extent allocate_extent(heap h, range file_blocks, range storage_bl
     e->allocated = range_span(storage_blocks);
     e->uninited = 0;
     e->pubs = 0;
+    e->map = e->map_pub = 0;
+    e->map_pages = 0;
+    e->corrupt = false;
     return e;
 }
+
+/* v6 page maps.
+ *
+ * On a v6 volume a write into an uninited extent does not zero-fill the
+ * extent: it writes its pages (zeroing only the uncovered blocks of partial
+ * pages) and marks them in ex->map. Once their data is durable, the pages are
+ * published in ex->map_pub and in the log as attribute idesc:
+ *   "ID6\0" | u32 pages | u64 start_block | bitmap | u64 fnv1a-64 of all before
+ * Pages without a bit read as zeros. A map is sized by the allocation, and an
+ * extent with a map never grows, so the last page's bit never covers blocks
+ * that were outside the extent when they were written. An idesc that fails
+ * validation marks the extent corrupt: its reads and writes fail, they never
+ * return zeros or stale blocks. */
+#define TFS_IDESC_MAGIC 0x00364449  /* "ID6\0" */
+
+static inline u64 tfs_blocks_per_page(tfs fs)
+{
+    return U64_FROM_BIT(fs->page_order - fs->fs.blocksize_order);
+}
+
+static inline u32 tfs_map_pages_for(tfs fs, u64 blocks)
+{
+    return (blocks + tfs_blocks_per_page(fs) - 1) / tfs_blocks_per_page(fs);
+}
+
+static inline boolean map_bit(u8 *map, u64 p)
+{
+    return (map[p >> 3] >> (p & 7)) & 1;
+}
+
+static inline void map_set(u8 *map, u64 p)
+{
+    map[p >> 3] |= 1 << (p & 7);
+}
+
+static u64 tfs_fnv1a(u8 *p, u64 n)
+{
+    u64 h = 0xcbf29ce484222325ull;
+    for (u64 i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 0x100000001b3ull;
+    }
+    return h;
+}
+
+/* Pages of the extent covered by its length. */
+static inline u32 tfs_map_used_pages(tfs fs, extent ex)
+{
+    return tfs_map_pages_for(fs, range_span(ex->node.r));
+}
+
+static boolean tfs_map_alloc(tfs fs, extent ex, boolean capped)
+{
+    u32 pages = tfs_map_pages_for(fs, ex->allocated);
+    u64 bytes = (pages + 7) / 8;
+#ifdef KERNEL
+    /* Over the cap, writes fall back to converting the whole extent. */
+    if (capped && fs->map_bytes + 2 * bytes > TFS_MAP_MEMORY_LIMIT)
+        return false;
+#endif
+    u8 *map = allocate_zero(fs->fs.h, bytes);
+    if (map == INVALID_ADDRESS)
+        return false;
+    u8 *pub = allocate_zero(fs->fs.h, bytes);
+    if (pub == INVALID_ADDRESS) {
+        deallocate(fs->fs.h, map, bytes);
+        return false;
+    }
+    ex->map = map;
+    ex->map_pub = pub;
+    ex->map_pages = pages;
+    fs->map_bytes += 2 * bytes;
+    return true;
+}
+
+static void tfs_map_free(tfs fs, extent ex)
+{
+    if (!ex->map)
+        return;
+    u64 bytes = (ex->map_pages + 7) / 8;
+    deallocate(fs->fs.h, ex->map, bytes);
+    deallocate(fs->fs.h, ex->map_pub, bytes);
+    ex->map = ex->map_pub = 0;
+    ex->map_pages = 0;
+    fs->map_bytes -= 2 * bytes;
+}
+
+/* Load an idesc read from the log; false if it fails validation. */
+static boolean tfs_map_load(tfs fs, extent ex, string s)
+{
+    u8 *p = buffer_ref(s, 0);
+    u64 len = buffer_length(s);
+    if (len < 4 + 4 + 8 + 8)
+        return false;
+    u32 magic, pages;
+    u64 start, sum;
+    runtime_memcpy(&magic, p, 4);
+    runtime_memcpy(&pages, p + 4, 4);
+    runtime_memcpy(&start, p + 8, 8);
+    u64 bytes = (pages + 7) / 8;
+    /* A shrink keeps the map of the larger allocation. */
+    if (magic != TFS_IDESC_MAGIC || len != 16 + bytes + 8 || start != ex->start_block ||
+        pages < tfs_map_used_pages(fs, ex))
+        return false;
+    runtime_memcpy(&sum, p + 16 + bytes, 8);
+    if (sum != tfs_fnv1a(p, 16 + bytes))
+        return false;
+    if (!tfs_map_alloc(fs, ex, false))
+        return false;
+    u32 used = MIN(tfs_map_used_pages(fs, ex), ex->map_pages);
+    for (u32 i = 0; i < used; i++)
+        if (map_bit(p + 16, i)) {
+            map_set(ex->map, i);
+            map_set(ex->map_pub, i);
+        }
+    return true;
+}
+
+#ifdef KERNEL
+static string tfs_map_encode(tfs fs, extent ex)
+{
+    u32 pages = ex->map_pages;
+    u64 bytes = (pages + 7) / 8;
+    string s = allocate_string(16 + bytes + 8);
+    if (s == INVALID_ADDRESS)
+        return s;
+    u32 magic = TFS_IDESC_MAGIC;
+    u64 start = ex->start_block;
+    buffer_write(s, &magic, 4);
+    buffer_write(s, &pages, 4);
+    buffer_write(s, &start, 8);
+    buffer_write(s, ex->map_pub, bytes);
+    u64 sum = tfs_fnv1a(buffer_ref(s, 0), 16 + bytes);
+    buffer_write(s, &sum, 8);
+    return s;
+}
+#endif
 
 
 closure_function(2, 1, boolean, tfs_storage_alloc,
@@ -303,8 +443,15 @@ void ingest_extent(tfsfile f, symbol off, tuple value)
     if (ex == INVALID_ADDRESS)
         halt("out of memory\n");
     ex->md = value;
-    if (get(value, sym(uninited)))
+    if (get(value, sym(uninited))) {
         ex->uninited = INVALID_ADDRESS;
+        string idesc = get_string(value, sym(idesc));
+        if (idesc && !tfs_map_load(fs, ex, idesc)) {
+            msg_err("TFS: extent at file block %ld has an invalid page map; its I/O will fail",
+                    file_offset);
+            ex->corrupt = true;
+        }
+    }
     assert(rangemap_insert(f->extentmap, &ex->node));
 }
 
@@ -432,10 +579,29 @@ closure_function(4, 1, boolean, read_extent,
     tfs_debug("%s: e %p, uninited %p, sg %p m %p blocks %R, i %R, len %ld, blocks %R\n",
               func_ss, e, e->uninited, bound(sg), bound(m), bound(blocks), i, len, blocks);
     uninited u = e->uninited;
-    if (!u || ((u != INVALID_ADDRESS) && u->initialized))
+    if (e->corrupt) {
+        apply(apply_merge(bound(m)), timm("result", "extent metadata invalid", "fsstatus", "%d", -EIO));
+    } else if (u == INVALID_ADDRESS && e->map) {
+        /* Written pages from storage, the others as zeros, in order. */
+        u64 bpp = tfs_blocks_per_page(fs);
+        u64 b = e_offset, end = e_offset + len;
+        while (b < end) {
+            boolean set = map_bit(e->map, b / bpp);
+            u64 run = b;
+            while (run < end && map_bit(e->map, run / bpp) == set)
+                run = MIN(end, (run / bpp + 1) * bpp);
+            if (set)
+                filesystem_storage_op(fs, sg, irange(e->start_block + b, e->start_block + run),
+                                      false, apply_merge(bound(m)));
+            else
+                sg_zero_fill(sg, (run - b) << fs->fs.blocksize_order);
+            b = run;
+        }
+    } else if (!u || ((u != INVALID_ADDRESS) && u->initialized)) {
         filesystem_storage_op(fs, sg, blocks, false, apply_merge(bound(m)));
-    else
+    } else {
         sg_zero_fill(sg, range_span(blocks) << fs->fs.blocksize_order);
+    }
     return true;
 }
 
@@ -480,6 +646,7 @@ static status_handler tfs_data_handler(tfs fs, status_handler sh);
 #ifdef KERNEL
 static void tfs_pub_detach(tfs fs, extent ex);
 static void tfs_pub_cycle(tfs fs, status_handler sh);
+static int tfs_pub_register_pages(tfsfile f, extent ex, u64 first, u64 last);
 #endif
 static tuple cleanup_directory(tuple dir);
 
@@ -600,6 +767,7 @@ static void deallocate_extent(tfs fs, extent ex)
     if (ex->pubs)
         tfs_pub_detach(fs, ex);
 #endif
+    tfs_map_free(fs, ex);
     if (ex->uninited && ex->uninited != INVALID_ADDRESS)
         refcount_release(&ex->uninited->refcount);
     deallocate(fs->fs.h, ex, sizeof(*ex));
@@ -730,6 +898,35 @@ static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
     tfs_debug("   %s: ex %p, uninited %p, sg %p, m %p, blocks %R, write %R\n",
               func_ss, ex, ex->uninited, sg, m, blocks, r);
 
+    if (ex->corrupt) {
+        apply(apply_merge(m), timm("result", "extent metadata invalid", "fsstatus", "%d", -EIO));
+        return i.end;
+    }
+#ifdef KERNEL
+    /* v6: write only the pages concerned (see tfs_map_*). */
+    if (ex->uninited == INVALID_ADDRESS && f->f.md && fs->version >= TFS_VERSION &&
+        (ex->map || tfs_map_alloc(fs, ex, true))) {
+        u64 bpp = tfs_blocks_per_page(fs);
+        u64 rs = i.start - ex->node.r.start, re = i.end - ex->node.r.start;
+        u64 p0 = rs / bpp, p1 = (re - 1) / bpp;
+        int fss = tfs_pub_register_pages(f, ex, p0, p1);
+        if (fss != 0) {
+            status s = timm("result", "failed to register page publication");
+            apply(apply_merge(m), timm_append(s, "fsstatus", "%d", fss));
+            return i.end;
+        }
+        /* Uncovered blocks of a new partial page must not keep old contents. */
+        if ((rs % bpp) && !map_bit(ex->map, p0))
+            tfs_data_write(fs, 0, irange(ex->start_block + p0 * bpp, ex->start_block + rs), m);
+        u64 tail = MIN((p1 + 1) * bpp, range_span(ex->node.r));
+        if (re < tail && !map_bit(ex->map, p1))
+            tfs_data_write(fs, 0, irange(ex->start_block + re, ex->start_block + tail), m);
+        tfs_data_write(fs, sg, r, m);
+        for (u64 p = p0; p <= p1; p++)
+            map_set(ex->map, p);
+        return i.end;
+    }
+#endif
     if (ex->uninited == INVALID_ADDRESS) {
         /* Begin process of normalizing uninited extent. The log entry that
          * marks it initialized is published once the zeros and data written
@@ -851,6 +1048,8 @@ struct tfs_pub {
     int gen;
     u64 length;         /* extent length to publish (0: none) */
     boolean init;       /* publish the removal of uninited */
+    u8 *bits;           /* pages to publish in the extent's map, or 0 */
+    u32 bits_bytes;
 };
 
 /* A cycle completes when a device flush that was issued after its
@@ -1021,37 +1220,96 @@ static void tfs_pub_arm_timer(tfs fs)
                    seconds(TFS_PUBLISH_DELAY_SECONDS), false, 0, th);
 }
 
-/* Filesystem lock held; called before the writes it covers are issued. */
-static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length)
+/* The current generation's publication entry for an extent. */
+static struct tfs_pub *tfs_pub_entry(tfsfile f, extent ex)
 {
     tfs fs = tfs_from_file(f);
-    if (!f->f.md)
-        return 0;
     struct tfs_pub *p;
     for (int i = vector_length(fs->pubs) - 1; i >= 0; i--) {
         p = vector_get(fs->pubs, i);
         if (p->gen != fs->wgen)
             break;
         if (p->ex == ex)
-            goto update;
+            return p;
     }
     p = allocate(fs->fs.h, sizeof(*p));
     if (p == INVALID_ADDRESS)
-        return -ENOMEM;
+        return p;
     p->ex = ex;
     p->f = f;
     p->gen = fs->wgen;
     p->length = 0;
     p->init = false;
+    p->bits = 0;
+    p->bits_bytes = 0;
     vector_push(fs->pubs, p);
     ex->pubs++;
-  update:
+    f->f.status |= FSF_DIRTY_DATASYNC;
+    tfs_pub_arm_timer(fs);
+    return p;
+}
+
+/* Filesystem lock held; called before the writes it covers are issued. */
+static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length)
+{
+    if (!f->f.md)
+        return 0;
+    struct tfs_pub *p = tfs_pub_entry(f, ex);
+    if (p == INVALID_ADDRESS)
+        return -ENOMEM;
     p->init |= init;
     if (length > p->length)
         p->length = length;
-    f->f.status |= FSF_DIRTY_DATASYNC;
-    tfs_pub_arm_timer(fs);
     return 0;
+}
+
+/* Pages first..last of ex's map are being written in this generation. */
+static int tfs_pub_register_pages(tfsfile f, extent ex, u64 first, u64 last)
+{
+    tfs fs = tfs_from_file(f);
+    struct tfs_pub *p = tfs_pub_entry(f, ex);
+    if (p == INVALID_ADDRESS)
+        return -ENOMEM;
+    if (!p->bits) {
+        p->bits = allocate_zero(fs->fs.h, (ex->map_pages + 7) / 8);
+        if (p->bits == INVALID_ADDRESS) {
+            p->bits = 0;
+            return -ENOMEM;
+        }
+        p->bits_bytes = (ex->map_pages + 7) / 8;
+    }
+    for (u64 i = first; i <= last; i++)
+        map_set(p->bits, i);
+    return 0;
+}
+
+static void tfs_pub_free(tfs fs, struct tfs_pub *p)
+{
+    if (p->bits)
+        deallocate(fs->fs.h, p->bits, p->bits_bytes);
+    deallocate(fs->fs.h, p, sizeof(*p));
+}
+
+static void map_clear_from(u8 *map, u32 from, u32 pages)
+{
+    for (u32 i = from; i < pages; i++)
+        map[i >> 3] &= ~(1 << (i & 7));
+}
+
+/* After a shrink: pages wholly beyond the extent lose their bits, here and in
+ * pending publications. A partial last page keeps its bit; the extent never
+ * grows again, so its blocks beyond the length stay unreachable. */
+static void tfs_map_truncate(tfs fs, extent ex)
+{
+    if (!ex->map)
+        return;
+    u32 used = tfs_map_used_pages(fs, ex);
+    map_clear_from(ex->map, used, ex->map_pages);
+    map_clear_from(ex->map_pub, used, ex->map_pages);
+    struct tfs_pub *p;
+    vector_foreach(fs->pubs, p)
+        if (p->ex == ex && p->bits)
+            map_clear_from(p->bits, used, p->bits_bytes * 8);
 }
 
 static void tfs_pub_detach(tfs fs, extent ex)
@@ -1063,6 +1321,52 @@ static void tfs_pub_detach(tfs fs, extent ex)
             ex->pubs--;
         }
     }
+}
+
+/* Publish the pages of p in the extent's map; once every page of the extent
+ * is published, the extent becomes an ordinary initialized one. */
+static int tfs_pub_stage_map(struct tfs_pub *p)
+{
+    tfsfile f = p->f;
+    extent ex = p->ex;
+    tfs fs = tfs_from_file(f);
+    u32 bytes = MIN(p->bits_bytes, (ex->map_pages + 7) / 8);
+    for (u32 i = 0; i < bytes; i++)
+        ex->map_pub[i] |= p->bits[i];
+    u32 used = tfs_map_used_pages(fs, ex);
+    boolean all = true;
+    for (u32 i = 0; i < used && all; i++)
+        all = map_bit(ex->map_pub, i);
+    symbol d = sym(idesc);
+    value old = get(ex->md, d);
+    if (all) {
+        int s = filesystem_write_eav(fs, ex->md, sym(uninited), 0, false);
+        if (s == 0 && old)
+            s = filesystem_write_eav(fs, ex->md, d, 0, false);
+        if (s != 0)
+            return s;
+        set(ex->md, sym(uninited), 0);
+        if (old) {
+            set(ex->md, d, 0);
+            deallocate_value(old);
+        }
+        tfs_map_free(fs, ex);
+        ex->uninited = 0;
+    } else {
+        string s = tfs_map_encode(fs, ex);
+        if (s == INVALID_ADDRESS)
+            return -ENOMEM;
+        int r = filesystem_write_eav(fs, ex->md, d, s, false);
+        if (r != 0) {
+            deallocate_string(s);
+            return r;
+        }
+        set(ex->md, d, s);
+        if (old)
+            deallocate_value(old);
+    }
+    f->f.status |= FSF_DIRTY_DATASYNC;
+    return 0;
 }
 
 static int tfs_pub_stage(struct tfs_pub *p)
@@ -1086,6 +1390,8 @@ static int tfs_pub_stage(struct tfs_pub *p)
         set(ex->md, a, 0);
         f->f.status |= FSF_DIRTY_DATASYNC;
     }
+    if (p->bits && ex->map)
+        return tfs_pub_stage_map(p);
     return 0;
 }
 
@@ -1104,7 +1410,7 @@ static void tfs_pub_drop(tfs fs)
     vector_foreach(fs->pubs, p) {
         if (p->ex)
             p->ex->pubs--;
-        deallocate(fs->fs.h, p, sizeof(*p));
+        tfs_pub_free(fs, p);
     }
     vector_clear(fs->pubs);
 }
@@ -1177,7 +1483,7 @@ static void tfs_pub_finish(tfs fs)
             }
             p->ex->pubs--;
         }
-        deallocate(fs->fs.h, p, sizeof(*p));
+        tfs_pub_free(fs, p);
     }
     vector_delete_range(fs->pubs, kept, n);
     u64 flags = spin_lock_irq(&fs->pub_lock);
@@ -1254,6 +1560,11 @@ static status_handler tfs_data_handler(tfs fs, status_handler sh)
     return sh;
 }
 
+static void tfs_map_truncate(tfs fs, extent ex)
+{
+    /* mkfs never creates page maps */
+}
+
 static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length)
 {
     if (!f->f.md || !init)
@@ -1311,7 +1622,9 @@ static int tfs_shrink(tfsfile f, u64 len)
         filesystem_lock(&fs->fs);
         extent ex = (extent)rangemap_lookup(f->extentmap, len >> fs->fs.blocksize_order);
         boolean clear_tail = ex != INVALID_ADDRESS && (!ex->uninited ||
-            (ex->uninited != INVALID_ADDRESS && ex->uninited->initialized));
+            (ex->uninited != INVALID_ADDRESS && ex->uninited->initialized) ||
+            (ex->map && map_bit(ex->map, ((len >> fs->fs.blocksize_order) - ex->node.r.start) /
+                                         tfs_blocks_per_page(fs))));
         filesystem_unlock(&fs->fs);
         if (clear_tail) {
             s = pagecache_node_zero_locked(pn, irange(len,
@@ -1352,6 +1665,7 @@ static int tfs_shrink(tfsfile f, u64 len)
             result = tfs_extent_shrink(f, ex, keep);
             if (result != 0)
                 break;
+            tfs_map_truncate(fs, ex);
             removed_end = removed.end;
             /* Log both fields before freeing storage. If the second update
              * fails, retain the old allocation; it cannot alias another file. */
@@ -1399,7 +1713,8 @@ static int extend(tfsfile f, extent ex, sg_list sg, range blocks, merge m, u64 *
      * contiguously: growing it across a gap would make its conversion zero-fill
      * that whole gap. Otherwise the caller maps the range with a new
      * uninitialized extent, leaving any gap as a hole. */
-    if (!m && (ex->uninited != INVALID_ADDRESS || blocks.start != ex->node.r.end)) {
+    if ((!m && (ex->uninited != INVALID_ADDRESS || blocks.start != ex->node.r.end)) || ex->map) {
+        /* An extent with a page map never grows (see tfs_map_*). */
         *edge = blocks.start;
         return 0;
     }
@@ -2289,6 +2604,7 @@ void create_filesystem(heap h,
     /* A new volume (mkfs) gets the current format; an existing one takes the version of
      * its log header when the log is read. */
     fs->version = sstring_is_null(label) ? TFS_VERSION_V5 : TFS_VERSION;
+    fs->map_bytes = 0;
     fs->tl = log_create(h, fs, !sstring_is_null(label), closure(h, log_complete, complete, fs));
 }
 
@@ -2298,6 +2614,7 @@ closure_function(1, 1, boolean, dealloc_extent_node,
                  filesystem, fs,
                  rmnode n)
 {
+    tfs_map_free((tfs)bound(fs), (extent)n);
     deallocate(bound(fs)->h, n, sizeof(struct extent));
     return true;
 }

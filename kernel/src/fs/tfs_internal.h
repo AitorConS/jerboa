@@ -35,6 +35,7 @@ typedef struct tfs {
     u64 next_extend_log_offset;
     u64 next_new_log_offset;
     u64 version;            /* log format of this volume (TFS_VERSION_V5 or TFS_VERSION) */
+    u64 map_bytes;          /* memory used by extent page maps */
 #ifdef KERNEL
     /* Released storage that the durable log may still reference (see
      * filesystem_release_storage()); protected by the filesystem lock. */
@@ -92,6 +93,13 @@ typedef struct extent {
     tuple md;                   /* shortcut to extent meta; only published state */
     uninited uninited;
     u32 pubs;                   /* pending publications referring to this extent */
+    /* v6 page maps of an uninited extent, one bit per page of the allocation
+     * (see tfs_map_*): pages whose data writes were issued, and pages whose
+     * data is published in the log (attribute idesc). 0 when unused. */
+    u8 *map;
+    u8 *map_pub;
+    u32 map_pages;
+    boolean corrupt;            /* metadata failed validation: I/O fails */
 } *extent;
 
 void ingest_extent(tfsfile f, symbol foff, tuple value);
