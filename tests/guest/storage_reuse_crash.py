@@ -69,6 +69,7 @@ def main():
         p.add_argument("--" + name, type=Path, required=True)
     p.add_argument("--volume-size", default="64M")
     p.add_argument("--max-cuts", type=int, default=400)
+    p.add_argument("--memory", type=int, default=256, help="guest MiB (128 makes the writer throttle sync)")
     p.add_argument("--fail-on", default="LEAK,FOREIGN,CORRUPT,ZERO",
                    help="failure kinds that fail the run (others are only reported)")
     a = p.parse_args()
@@ -88,7 +89,7 @@ def main():
     config = work / "config.json"
     config.write_text(json.dumps({
         "boot-source": {"kernel_image_path": str(a.kernel.resolve()), "boot_protocol": "elf"},
-        "machine-config": {"vcpu_count": 2, "mem_size_mib": 256, "power_button": True},
+        "machine-config": {"vcpu_count": 2, "mem_size_mib": a.memory, "power_button": True},
         "drives": [{"drive_id": "rootfs", "path_on_host": str(root), "is_root_device": True, "is_read_only": False},
                    {"drive_id": "data", "path_on_host": str(volume), "is_root_device": False, "is_read_only": False}],
         "firmware": {"opt/uni/mounts": str(work / "mounts")},

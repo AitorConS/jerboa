@@ -50,6 +50,9 @@
 #define TFS_LOG_INITIAL_SIZE           SECTOR_SIZE
 #define TFS_LOG_DEFAULT_EXTENSION_SIZE (512*KB)
 #define TFS_LOG_FLUSH_DELAY_SECONDS 1
+/* Unsynced writes become crash-visible within this delay (one device flush
+ * per publication cycle; fsync and sync publish at once). */
+#define TFS_PUBLISH_DELAY_SECONDS 5
 /* Minimum number of obsolete log entries needed to trigger a log compaction. */
 #define TFS_LOG_COMPACT_OBSOLETE   8192
 /* Log compaction is not triggered if the ratio between total entries and

@@ -198,7 +198,8 @@ Every surviving block must hold its own file's data, or zeros where the file
 was preallocated: another file's data (`LEAK` for the new file, `FOREIGN`
 otherwise), zeros over synced data (`ZERO`) or anything else fails. The run
 also fails if the new file never reused released blocks, since it would then
-prove nothing. `--fail-on` limits which kinds fail the run.
+prove nothing. `--fail-on` limits which kinds fail the run; `--memory 128`
+makes the writer throttle sync during the workload.
 
 `reuse_enospc.c` fills the `/data` volume (`--volume-size 64M`) until ENOSPC,
 then deletes or truncates the filler and immediately writes the same amount

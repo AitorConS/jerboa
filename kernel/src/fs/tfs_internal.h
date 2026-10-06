@@ -50,7 +50,11 @@ typedef struct tfs {
     u64 inflight[2];            /* data writes in flight per generation */
     int wgen;                   /* generation of new data writes */
     int cycle_gen;              /* generation the cycle in flight publishes */
-    boolean draining;           /* cycle waits for inflight[cycle_gen] == 0 */
+    u64 pub_cycle;              /* id of the cycle in flight (pub_lock) */
+    boolean pub_drained;        /* inflight[cycle_gen] reached 0 (pub_lock) */
+    boolean pub_eager;          /* cycle must issue its own flush (pub_lock) */
+    boolean pub_flush_issued;   /* that flush was issued (pub_lock) */
+    status_handler pub_flush_sh;  /* consumes the status of that flush */
     vector pubs;                /* struct tfs_pub *, pending publications */
     vector pub_waiters;         /* completed by the cycle in flight */
     vector pub_next_waiters;    /* need the next cycle */

@@ -149,6 +149,7 @@ boolean filesystem_free_storage(tfs fs, range blocks)
  * until a release cycle has flushed the log and then the device. The caller
  * must hold the filesystem lock and have logged the release already. */
 static void tfs_release_schedule(tfs fs);
+static void tfs_device_flush(tfs fs, status_handler sh);
 
 static void tfs_release_wake(tfs fs)
 {
@@ -197,12 +198,7 @@ closure_function(1, 1, void, tfs_release_logged,
     status_handler flushed = closure(fs->fs.h, tfs_release_flushed, fs);
     assert(flushed != INVALID_ADDRESS);
     if (is_ok(s)) {
-        struct storage_req req = {
-            .op = STORAGE_OP_FLUSH,
-            .blocks = irange(0, 0),
-            .completion = flushed,
-        };
-        apply(fs->req_handler, &req);
+        tfs_device_flush(fs, flushed);
     } else {
         apply(flushed, timm_clone(s));
     }
@@ -857,6 +853,12 @@ struct tfs_pub {
     boolean init;       /* publish the removal of uninited */
 };
 
+/* A cycle completes when a device flush that was issued after its
+ * generation drained has succeeded: either its own flush (eager cycles, for
+ * fsync and sync) or any other flush of this volume (lazy cycles, for
+ * memory-reclaim syncs and the timer, which then add no flush of their own
+ * unless none comes within TFS_PUBLISH_DELAY_SECONDS). */
+
 closure_function(3, 1, void, tfs_data_write_done,
                  tfs, fs, int, gen, status_handler, sh,
                  status s)
@@ -868,9 +870,12 @@ closure_function(3, 1, void, tfs_data_write_done,
     thunk launch = 0;
     u64 flags = spin_lock_irq(&fs->pub_lock);
     assert(fs->inflight[gen] > 0);
-    if (--fs->inflight[gen] == 0 && fs->draining && fs->cycle_gen == gen) {
-        fs->draining = false;
-        launch = fs->pub_flush;
+    if (--fs->inflight[gen] == 0 && fs->pub_active && fs->cycle_gen == gen) {
+        fs->pub_drained = true;
+        if (fs->pub_eager && !fs->pub_flush_issued) {
+            fs->pub_flush_issued = true;
+            launch = fs->pub_flush;
+        }
     }
     spin_unlock_irq(&fs->pub_lock, flags);
     apply(bound(sh), s);
@@ -892,6 +897,101 @@ static status_handler tfs_data_handler(tfs fs, status_handler sh)
     return c;
 }
 
+static void tfs_pub_finish(tfs fs);
+
+/* Runs from the runqueue: it takes the filesystem mutex, which must never
+ * block the queue that delivers storage and syscall completions. */
+closure_function(3, 0, void, tfs_flush_finish,
+                 tfs, fs, u64, cycle, boolean, ok)
+{
+    tfs fs = bound(fs);
+    filesystem_lock(&fs->fs);
+    if (!bound(ok))
+        fs->pub_error = true;
+    if (fs->pub_active && fs->pub_cycle == bound(cycle))
+        tfs_pub_finish(fs);
+    filesystem_unlock(&fs->fs);
+    filesystem_release(&fs->fs);
+    closure_finish();
+}
+
+/* The caller's completion (possibly a syscall's contextual closure) is handed
+ * on asynchronously, as the storage layer does. */
+closure_function(2, 1, void, tfs_flush_done,
+                 tfs, fs, u64, cycle,
+                 status s)
+{
+    tfs fs = bound(fs);
+    thunk t = closure(fs->fs.h, tfs_flush_finish, fs, bound(cycle), is_ok(s));
+    if (t != INVALID_ADDRESS)
+        async_apply(t);
+    else
+        filesystem_release(&fs->fs);    /* the timer finishes the cycle */
+    closure_finish();
+}
+
+closure_function(2, 1, void, tfs_flush_relay,
+                 status_handler, observer, status_handler, sh,
+                 status s)
+{
+    apply(bound(observer), is_ok(s) ? STATUS_OK : timm("result", "device flush failed"));
+    async_apply_status_handler(bound(sh), s);
+    closure_finish();
+}
+
+/* Every device flush of the volume goes through here, so that it can
+ * complete the publication cycle whose writes it covers. */
+static void tfs_device_flush(tfs fs, status_handler sh)
+{
+    u64 cycle = 0;
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    if (fs->pub_active && fs->pub_drained)
+        cycle = fs->pub_cycle;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    status_handler c = sh;
+    if (cycle) {
+        /* On allocation failure this flush just does not complete the cycle. */
+        status_handler observer = closure(fs->fs.h, tfs_flush_done, fs, cycle);
+        if (observer != INVALID_ADDRESS) {
+            c = closure(fs->fs.h, tfs_flush_relay, observer, sh);
+            if (c == INVALID_ADDRESS) {
+                deallocate_closure(observer);
+                c = sh;
+            } else {
+                filesystem_reserve(&fs->fs);    /* released by tfs_flush_finish */
+            }
+        }
+    }
+    struct storage_req req = {
+        .op = STORAGE_OP_FLUSH,
+        .blocks = irange(0, 0),
+        .completion = c,
+    };
+    apply(fs->req_handler, &req);
+}
+
+closure_function(1, 1, void, tfs_pub_flush_status,
+                 tfs, fs,
+                 status s)
+{
+    if (!is_ok(s)) {
+        msg_err("TFS: data publication flush failed: %v", s);
+        timm_dealloc(s);
+    }
+    filesystem_release(&bound(fs)->fs);
+    closure_finish();
+}
+
+closure_function(2, 0, void, tfs_pub_flush,
+                 tfs, fs, status_handler, sh)
+{
+    tfs_device_flush(bound(fs), bound(sh));
+    closure_finish();
+}
+
+static void tfs_pub_make_eager(tfs fs);
+static void tfs_pub_lazy(tfs fs);
+
 closure_function(1, 2, void, tfs_pub_timer_expired,
                  tfs, fs,
                  u64 expiry, u64 overruns)
@@ -900,7 +1000,10 @@ closure_function(1, 2, void, tfs_pub_timer_expired,
     if (overruns != timer_disabled) {
         filesystem_lock(&fs->fs);
         fs->pub_timer_armed = false;
-        tfs_pub_cycle(fs, 0);
+        if (fs->pub_active)
+            tfs_pub_make_eager(fs);     /* no flush came along */
+        else
+            tfs_pub_lazy(fs);
         filesystem_unlock(&fs->fs);
     }
     closure_finish();
@@ -915,7 +1018,7 @@ static void tfs_pub_arm_timer(tfs fs)
         return;     /* published by the next sync */
     fs->pub_timer_armed = true;
     register_timer(kernel_timers, &fs->pub_timer, CLOCK_ID_MONOTONIC_RAW,
-                   seconds(TFS_LOG_FLUSH_DELAY_SECONDS), false, 0, th);
+                   seconds(TFS_PUBLISH_DELAY_SECONDS), false, 0, th);
 }
 
 /* Filesystem lock held; called before the writes it covers are issued. */
@@ -947,8 +1050,7 @@ static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length)
     if (length > p->length)
         p->length = length;
     f->f.status |= FSF_DIRTY_DATASYNC;
-    if (!fs->pub_active)
-        tfs_pub_arm_timer(fs);
+    tfs_pub_arm_timer(fs);
     return 0;
 }
 
@@ -1007,17 +1109,58 @@ static void tfs_pub_drop(tfs fs)
     vector_clear(fs->pubs);
 }
 
-closure_function(1, 1, void, tfs_pub_flushed,
-                 tfs, fs,
-                 status s)
+/* Filesystem lock held, pubs not empty, no cycle in flight. */
+static void tfs_pub_start(tfs fs, boolean eager)
 {
-    tfs fs = bound(fs);
-    filesystem_lock(&fs->fs);
-    if (!is_ok(s)) {
-        msg_err("TFS: data publication flush failed: %v", s);
-        timm_dealloc(s);
-        fs->pub_error = true;
+    status_handler sh = closure(fs->fs.h, tfs_pub_flush_status, fs);
+    thunk t = sh == INVALID_ADDRESS ? INVALID_ADDRESS :
+              (thunk)closure(fs->fs.h, tfs_pub_flush, fs, sh);
+    if (t == INVALID_ADDRESS) {
+        if (sh != INVALID_ADDRESS)
+            deallocate_closure(sh);
+        tfs_pub_wake(fs->pub_waiters, false);
+        return;
     }
+    filesystem_reserve(&fs->fs);    /* the cycle */
+    filesystem_reserve(&fs->fs);    /* its own flush: tfs_pub_flush_status or finish */
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    fs->pub_active = true;
+    fs->pub_cycle++;
+    fs->cycle_gen = fs->wgen;
+    fs->wgen ^= 1;
+    fs->pub_drained = fs->inflight[fs->cycle_gen] == 0;
+    fs->pub_eager = eager;
+    fs->pub_flush = t;
+    fs->pub_flush_sh = sh;
+    boolean launch = eager && fs->pub_drained;
+    fs->pub_flush_issued = launch;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    if (launch) {
+        async_apply(t);
+    } else if (!eager) {
+        tfs_pub_arm_timer(fs);          /* fallback if no flush comes */
+    }
+}
+
+/* Make the cycle in flight issue its own flush. Filesystem lock held. */
+static void tfs_pub_make_eager(tfs fs)
+{
+    thunk launch = 0;
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    fs->pub_eager = true;
+    if (fs->pub_drained && !fs->pub_flush_issued) {
+        fs->pub_flush_issued = true;
+        launch = fs->pub_flush;
+    }
+    spin_unlock_irq(&fs->pub_lock, flags);
+    if (launch)
+        async_apply(launch);
+}
+
+/* A covering flush succeeded (or failed): stage the cycle's publications.
+ * Filesystem lock held. */
+static void tfs_pub_finish(tfs fs)
+{
     boolean ok = !fs->pub_error;
     int kept = 0, n = vector_length(fs->pubs);
     for (int i = 0; i < n; i++) {
@@ -1037,36 +1180,35 @@ closure_function(1, 1, void, tfs_pub_flushed,
         deallocate(fs->fs.h, p, sizeof(*p));
     }
     vector_delete_range(fs->pubs, kept, n);
+    u64 flags = spin_lock_irq(&fs->pub_lock);
     fs->pub_active = false;
+    boolean issued = fs->pub_flush_issued;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    if (!issued) {
+        deallocate_closure(fs->pub_flush);
+        deallocate_closure(fs->pub_flush_sh);
+        filesystem_release(&fs->fs);
+    }
+    fs->pub_flush = 0;
+    fs->pub_flush_sh = 0;
     tfs_pub_wake(fs->pub_waiters, ok);
     if (vector_length(fs->pub_next_waiters))
         tfs_pub_cycle(fs, 0);
     else if (vector_length(fs->pubs))
         tfs_pub_arm_timer(fs);
-    filesystem_unlock(&fs->fs);
     filesystem_release(&fs->fs);
-    closure_finish();
-}
-
-closure_function(2, 0, void, tfs_pub_flush,
-                 tfs, fs, status_handler, flushed)
-{
-    struct storage_req req = {
-        .op = STORAGE_OP_FLUSH,
-        .blocks = irange(0, 0),
-        .completion = bound(flushed),
-    };
-    apply(bound(fs)->req_handler, &req);
-    closure_finish();
 }
 
 /* Filesystem lock held. Completes sh, if given, once every publication
- * registered before this call is staged in the log (or with EIO). */
+ * registered before this call is staged in the log (or with EIO); issues the
+ * flush this needs. */
 static void tfs_pub_cycle(tfs fs, status_handler sh)
 {
     if (fs->pub_active) {
-        if (sh)
+        if (sh) {
             vector_push(fs->pub_next_waiters, sh);
+            tfs_pub_make_eager(fs);
+        }
         return;
     }
     if (sh)
@@ -1084,30 +1226,14 @@ static void tfs_pub_cycle(tfs fs, status_handler sh)
         tfs_pub_wake(fs->pub_waiters, true);
         return;
     }
-    status_handler flushed = closure(fs->fs.h, tfs_pub_flushed, fs);
-    thunk t = flushed == INVALID_ADDRESS ? INVALID_ADDRESS :
-              (thunk)closure(fs->fs.h, tfs_pub_flush, fs, flushed);
-    if (t == INVALID_ADDRESS) {
-        if (flushed != INVALID_ADDRESS)
-            deallocate_closure(flushed);
-        tfs_pub_wake(fs->pub_waiters, false);
-        return;
-    }
-    fs->pub_active = true;
-    filesystem_reserve(&fs->fs);
-    if (fs->pub_timer_armed) {
-        remove_timer(kernel_timers, &fs->pub_timer, 0);
-        fs->pub_timer_armed = false;
-    }
-    u64 flags = spin_lock_irq(&fs->pub_lock);
-    fs->cycle_gen = fs->wgen;
-    fs->wgen ^= 1;
-    boolean launch = fs->inflight[fs->cycle_gen] == 0;
-    fs->draining = !launch;
-    fs->pub_flush = t;
-    spin_unlock_irq(&fs->pub_lock, flags);
-    if (launch)
-        async_apply(t);
+    tfs_pub_start(fs, true);
+}
+
+/* Start a cycle that completes with the next covering flush. */
+static void tfs_pub_lazy(tfs fs)
+{
+    if (!fs->pub_active && !fs->pub_error && vector_length(fs->pubs))
+        tfs_pub_start(fs, false);
 }
 
 static int tfs_extent_grow(tfsfile f, extent ex, u64 length)
@@ -1433,8 +1559,9 @@ static void tfs_write(fsfile fsf,
     apply(sh, s);
 }
 
-closure_function(4, 1, void, fs_cache_sync_complete,
+closure_function(5, 1, void, fs_cache_sync_complete,
                  tfs, fs, status_handler, completion, boolean, flush_log, boolean, publish,
+                 boolean, reclaim,
                  status s)
 {
     if (!is_ok(s)) {
@@ -1457,30 +1584,44 @@ closure_function(4, 1, void, fs_cache_sync_complete,
             filesystem_unlock(&fs->fs);
             return;
         }
+        /* Memory reclaim promises no durability: let this sync's own flush
+         * publish what it covers instead of adding one. */
+        if (bound(reclaim))
+            tfs_pub_lazy(fs);
 #endif
         bound(flush_log) = false;
         log_flush(fs->tl, (status_handler)closure_self());
         filesystem_unlock(&fs->fs);
         return;
     }
+#ifdef KERNEL
+    tfs_device_flush(bound(fs), bound(completion));
+#else
     struct storage_req req = {
         .op = STORAGE_OP_FLUSH,
         .blocks = irange(0, 0),
         .completion = bound(completion),
     };
     apply(bound(fs)->req_handler, &req);
+#endif
     closure_finish();
 }
 
 static status_handler tfs_get_sync_handler(filesystem fs, fsfile fsf, boolean datasync,
                                            status_handler completion)
 {
-    boolean flush_log;
-    if (fsf)
+    boolean flush_log, reclaim = false;
+    if (fsf) {
         flush_log = datasync ? (fsf->status & FSF_DIRTY_DATASYNC) : (fsf->status & FSF_DIRTY);
-    else
+    } else {
         flush_log = true;
-    return closure(fs->h, fs_cache_sync_complete, (tfs)fs, completion, flush_log, flush_log);
+        reclaim = datasync;     /* see filesystem_flush_reclaim() */
+    }
+    boolean publish = flush_log && !reclaim;
+#ifndef KERNEL
+    publish = false;
+#endif
+    return closure(fs->h, fs_cache_sync_complete, (tfs)fs, completion, flush_log, publish, reclaim);
 }
 
 #ifdef KERNEL
@@ -2112,12 +2253,15 @@ void create_filesystem(heap h,
     spin_lock_init(&fs->pub_lock);
     fs->inflight[0] = fs->inflight[1] = 0;
     fs->wgen = fs->cycle_gen = 0;
+    fs->pub_cycle = 0;
+    fs->pub_drained = fs->pub_eager = fs->pub_flush_issued = false;
+    fs->pub_flush_sh = 0;
     fs->pubs = allocate_vector(h, 8);
     fs->pub_waiters = allocate_vector(h, 4);
     fs->pub_next_waiters = allocate_vector(h, 4);
     assert(fs->pubs != INVALID_ADDRESS && fs->pub_waiters != INVALID_ADDRESS &&
            fs->pub_next_waiters != INVALID_ADDRESS);
-    fs->draining = fs->pub_active = fs->pub_error = fs->pub_timer_armed = false;
+    fs->pub_active = fs->pub_error = fs->pub_timer_armed = false;
     fs->pub_flush = 0;
     init_timer(&fs->pub_timer);
 #else

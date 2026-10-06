@@ -507,7 +507,7 @@ static u64 mm_clean_and_wait(u64 clean_bytes, u32 flags)
          * minimize chances of skipping cleaners. */
         goto begin;
     if ((remain > 0) && root_fs) {
-        status s = wait_for(storage_sync);
+        status s = wait_for(storage_sync_reclaim);
         if (!is_ok(s)) {
             mm_debug("%s: storage sync failed: %v\n", func_ss, s);
             timm_dealloc(s);
