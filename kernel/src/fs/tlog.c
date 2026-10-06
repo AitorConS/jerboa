@@ -86,9 +86,11 @@ struct log {
     u64 tuple_bytes_remain;
 
     struct timer flush_timer;
-    vector flush_completions;
+    vector flush_completions;   /* covered by the flush in flight */
+    vector next_completions;    /* need records staged after it started */
     boolean dirty;
     boolean flushing;
+    boolean restaged;           /* records staged during a flush or compaction */
     enum {
         TLOG_STATE_INIT,
         TLOG_STATE_LINKED,
@@ -212,10 +214,16 @@ static log log_new(heap h, tfs fs)
     tl->tuple_bytes_remain = 0;
     tl->dirty = false;
     tl->flushing = false;
+    tl->restaged = false;
     init_timer(&tl->flush_timer);
     tl->flush_completions = allocate_vector(tl->h, COMPLETION_QUEUE_SIZE);
     if (tl->flush_completions == INVALID_ADDRESS)
         goto fail_dealloc_encoding_lengths;
+    tl->next_completions = allocate_vector(tl->h, COMPLETION_QUEUE_SIZE);
+    if (tl->next_completions == INVALID_ADDRESS) {
+        deallocate_vector(tl->flush_completions);
+        goto fail_dealloc_encoding_lengths;
+    }
     tl->total_entries = tl->obsolete_entries = 0;
 #ifndef TLOG_READ_ONLY
     tl->extensions = allocate_rangemap(h);
@@ -234,6 +242,7 @@ static log log_new(heap h, tfs fs)
     }
     return tl;
   fail_dealloc_completions:
+    deallocate_vector(tl->next_completions);
     deallocate_vector(tl->flush_completions);
   fail_dealloc_encoding_lengths:
     deallocate_vector(tl->encoding_lengths);
@@ -464,17 +473,38 @@ static void run_flush_completions(log tl, status s)
     }
 }
 
+static void log_arm_flush_timer(log tl);
+
+/* Callers whose records were staged after the completed flush started need
+ * another flush; records nobody waits for get the usual delayed flush. */
+static void log_flush_restaged(log tl)
+{
+    if (!tl->restaged || tl->flushing || (tl->state == TLOG_STATE_COMPACTING))
+        return;
+    if (vector_length(tl->next_completions)) {
+        status_handler sh;
+        vector_foreach(tl->next_completions, sh)
+            vector_push(tl->flush_completions, sh);
+        vector_clear(tl->next_completions);
+        log_flush(tl, 0);
+    } else {
+        log_arm_flush_timer(tl);
+    }
+}
+
 closure_function(1, 1, void, log_flush_complete,
                  log, tl,
                  status s)
 {
     /* would need to move these to runqueue if a flush is ever invoked from a tfs op */
-    tlog_lock(bound(tl));
-    bound(tl)->dirty = false;
-    run_flush_completions(bound(tl), s);
-    bound(tl)->flushing = false;
-    tlog_unlock(bound(tl));
-    refcount_release(&bound(tl)->refcount);
+    log tl = bound(tl);
+    tlog_lock(tl);
+    tl->dirty = tl->restaged;
+    run_flush_completions(tl, s);
+    tl->flushing = false;
+    log_flush_restaged(tl);
+    tlog_unlock(tl);
+    refcount_release(&tl->refcount);
     closure_finish();
 }
 
@@ -512,6 +542,14 @@ closure_function(2, 1, void, log_switch_complete,
     }
 
     run_flush_completions(old_tl, s);
+    /* Records staged during the compaction went to both logs; the rebuild
+     * flush did not necessarily include them. */
+    status_handler sh;
+    vector_foreach(old_tl->next_completions, sh)
+        log_flush(to_be_used, sh);
+    vector_clear(old_tl->next_completions);
+    if (to_be_used == old_tl)
+        log_flush_restaged(old_tl);
     filesystem_unlock(&fs->fs);
 
     refcount_release(&to_be_destroyed->refcount);
@@ -531,14 +569,20 @@ void log_flush(log tl, status_handler completion)
 #endif
         return;
     }
+    if (tl->flushing || (tl->state == TLOG_STATE_COMPACTING)) {
+        /* The flush in flight (or the compaction rebuild) covers only the
+         * records staged before it started. */
+        if (completion)
+            vector_push(tl->restaged ? tl->next_completions : tl->flush_completions, completion);
+        return;
+    }
     if (completion)
         vector_push(tl->flush_completions, completion);
-    if (tl->flushing || (tl->state == TLOG_STATE_COMPACTING))
-        return;
 #ifdef KERNEL
     remove_timer(kernel_timers, &tl->flush_timer, 0);
 #endif
     tl->flushing = true;
+    tl->restaged = false;
     refcount_reserve(&tl->refcount);
     merge m = allocate_merge(tl->h, closure(tl->h, log_flush_complete, tl));
     status_handler sh = apply_merge(m);
@@ -603,8 +647,19 @@ closure_function(1, 2, void, log_flush_timer_expired,
     closure_finish();
 }
 
+static void log_arm_flush_timer(log tl)
+{
+    /* May already be armed when records were staged during a compaction. */
+    remove_timer(kernel_timers, &tl->flush_timer, 0);
+    register_timer(kernel_timers, &tl->flush_timer, CLOCK_ID_MONOTONIC_RAW,
+                   seconds(TFS_LOG_FLUSH_DELAY_SECONDS), false, 0,
+                   closure(tl->h, log_flush_timer_expired, tl));
+}
+
 static void log_set_dirty(log tl)
 {
+    if (tl->flushing || (tl->state == TLOG_STATE_COMPACTING))
+        tl->restaged = true;
     if (tl->dirty) {
         if (buffer_length(tl->tuple_staging) >= bytes_from_sectors(&tl->fs->fs,
                 range_span(tl->current->sectors)) / 2)
@@ -612,14 +667,18 @@ static void log_set_dirty(log tl)
         return;
     }
     tl->dirty = true;
-    register_timer(kernel_timers, &tl->flush_timer, CLOCK_ID_MONOTONIC_RAW,
-                   seconds(TFS_LOG_FLUSH_DELAY_SECONDS), false, 0,
-                   closure(tl->h, log_flush_timer_expired, tl));
+    log_arm_flush_timer(tl);
 }
 #else
 /* mkfs: flush on close */
+static void log_arm_flush_timer(log tl)
+{
+}
+
 static void log_set_dirty(log tl)
 {
+    if (tl->flushing || (tl->state == TLOG_STATE_COMPACTING))
+        tl->restaged = true;
     tl->dirty = true;
     if (buffer_length(tl->tuple_staging) >=
             bytes_from_sectors(&tl->fs->fs, range_span(tl->current->sectors))) {
@@ -958,6 +1017,7 @@ void log_destroy(log tl)
     remove_timer(kernel_timers, &tl->flush_timer, 0);
 #endif
     deallocate_vector(tl->flush_completions);
+    deallocate_vector(tl->next_completions);
 #ifndef TLOG_READ_ONLY
     deallocate_rangemap(tl->extensions, stack_closure(log_dealloc_ext_node,
         tl));

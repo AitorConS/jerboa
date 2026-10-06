@@ -177,3 +177,12 @@ and regrow, byte for byte. Use a 512 MiB disk and 256 MiB RAM. Modes `full`
 (synced writes into the regrown range: `UNINIT POST PASS`, then
 `UNINIT POST RESTART PASS`) and `crash` (kill the VMM after
 `UNINIT CRASH POINT`, reboot for `UNINIT CRASH VERIFY PASS`).
+
+`fsync_race.c` checks that an fsync racing another thread's log write never
+returns before its own metadata is written. Run it with
+`fsync_race_check.py`, which needs the macOS test VMM built with
+`-DHVF_CRASH_JOURNAL` (firecracker-macos `experiments/hvf/durability`; the
+journal must also record vectored `pwritev` writes) and the `dump` tool. The
+root disk rebuilt from the writes issued before each round's progress block on
+`/data` must contain every file of that round (`FSYNC RACE PASS`); a reboot of
+the killed disk must then verify every acknowledged file.
