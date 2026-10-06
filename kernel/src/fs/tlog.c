@@ -537,8 +537,8 @@ closure_function(2, 1, void, log_switch_complete,
         }
     rangemap_foreach(to_be_destroyed->extensions, ext) {
         tlog_debug("  deallocating extension at %R\n", __func__, ext->r);
-        if (!filesystem_free_storage(fs, ext->r))
-            msg_err("tlog: failed to mark to_be_destroyed log at %R as free", ext->r);
+        /* The superblock may still link the old log until the device is flushed. */
+        filesystem_release_storage(fs, ext->r);
     }
 
     run_flush_completions(old_tl, s);

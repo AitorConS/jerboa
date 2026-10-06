@@ -139,6 +139,149 @@ boolean filesystem_free_storage(tfs fs, range blocks)
     return true;
 }
 
+#ifdef KERNEL
+/* Storage released by truncate, unlink or log compaction may still be referenced
+ * by the durable log until the log entries releasing it are written and the
+ * device is flushed. Reusing it earlier would let a crash leave the old file
+ * pointing at another file's new data. Released ranges therefore stay allocated
+ * until a release cycle has flushed the log and then the device. The caller
+ * must hold the filesystem lock and have logged the release already. */
+static void tfs_release_schedule(tfs fs);
+
+static void tfs_release_wake(tfs fs)
+{
+    status_handler sh;
+    vector_foreach(fs->release_waiters, sh)
+        async_apply_status_handler(sh, STATUS_OK);
+    vector_clear(fs->release_waiters);
+}
+
+closure_function(1, 1, void, tfs_release_flushed,
+                 tfs, fs,
+                 status s)
+{
+    tfs fs = bound(fs);
+    filesystem_lock(&fs->fs);
+    range r;
+    while (buffer_read(fs->releasing_frees, &r, sizeof(r))) {
+        if (!is_ok(s)) {
+            /* Not durable: keep the range allocated; a later cycle retries. */
+            if (!buffer_write(fs->deferred_frees, &r, sizeof(r)))
+                msg_err("TFS: cannot retain released range %R; leaving it allocated", r);
+        } else if (!filesystem_free_storage(fs, r)) {
+            msg_err("TFS: failed to free released range %R", r);
+        }
+    }
+    fs->release_active = false;
+    if (is_ok(s)) {
+        fs->release_generation++;
+        if (buffer_length(fs->deferred_frees))
+            tfs_release_schedule(fs);
+    } else {
+        msg_err("TFS: storage release not durable, retained: %v", s);
+        timm_dealloc(s);
+    }
+    tfs_release_wake(fs);
+    filesystem_unlock(&fs->fs);
+    filesystem_release(&fs->fs);
+    closure_finish();
+}
+
+closure_function(1, 1, void, tfs_release_logged,
+                 tfs, fs,
+                 status s)
+{
+    tfs fs = bound(fs);
+    status_handler flushed = closure(fs->fs.h, tfs_release_flushed, fs);
+    assert(flushed != INVALID_ADDRESS);
+    if (is_ok(s)) {
+        struct storage_req req = {
+            .op = STORAGE_OP_FLUSH,
+            .blocks = irange(0, 0),
+            .completion = flushed,
+        };
+        apply(fs->req_handler, &req);
+    } else {
+        apply(flushed, timm_clone(s));
+    }
+    closure_finish();
+}
+
+closure_function(1, 0, void, tfs_release_start,
+                 tfs, fs)
+{
+    tfs fs = bound(fs);
+    filesystem_lock(&fs->fs);
+    fs->release_scheduled = false;
+    if (!fs->release_active) {
+        if (buffer_length(fs->deferred_frees)) {
+            status_handler logged = closure(fs->fs.h, tfs_release_logged, fs);
+            if (logged != INVALID_ADDRESS) {
+                /* Every range here was released after its log entries were
+                 * staged, so this flush writes them. */
+                buffer b = fs->releasing_frees;
+                fs->releasing_frees = fs->deferred_frees;
+                fs->deferred_frees = b;
+                fs->release_active = true;
+                filesystem_reserve(&fs->fs);
+                log_flush(fs->tl, logged);
+            }
+        } else {
+            tfs_release_wake(fs);
+        }
+    }
+    filesystem_unlock(&fs->fs);
+    filesystem_release(&fs->fs);
+    closure_finish();
+}
+
+static void tfs_release_schedule(tfs fs)
+{
+    if (fs->release_scheduled || fs->release_active)
+        return;
+    thunk t = closure(fs->fs.h, tfs_release_start, fs);
+    if (t == INVALID_ADDRESS)
+        return;     /* retried with the next release or allocation failure */
+    fs->release_scheduled = true;
+    filesystem_reserve(&fs->fs);
+    async_apply(t);
+}
+
+void filesystem_release_storage(tfs fs, range blocks)
+{
+    if (!fs->storage || range_empty(blocks))
+        return;
+    if (!buffer_write(fs->deferred_frees, &blocks, sizeof(blocks))) {
+        msg_err("TFS: cannot defer release of %R; leaving it allocated", blocks);
+        return;
+    }
+    tfs_release_schedule(fs);
+}
+
+closure_function(1, 1, void, tfs_release_wait,
+                 tfs, fs,
+                 status_handler complete)
+{
+    tfs fs = bound(fs);
+    filesystem_lock(&fs->fs);
+    vector_push(fs->release_waiters, complete);
+    tfs_release_schedule(fs);
+    filesystem_unlock(&fs->fs);
+}
+
+static boolean tfs_status_enospc(status s)
+{
+    s64 fss;
+    return !is_ok(s) && get_s64(s, sym(fsstatus), &fss) && fss == -ENOSPC;
+}
+#else
+void filesystem_release_storage(tfs fs, range blocks)
+{
+    if (!filesystem_free_storage(fs, blocks))
+        msg_err("TFS: failed to free released range %R", blocks);
+}
+#endif
+
 void ingest_extent(tfsfile f, symbol off, tuple value)
 {
     tfs_debug("ingest_extent: f %p, off %b, value %v\n", f, symbol_string(off), value);
@@ -454,9 +597,7 @@ static void deallocate_extent(tfs fs, extent ex)
 
 static void destroy_extent(tfs fs, extent ex)
 {
-    range q = irangel(ex->start_block, ex->allocated);
-    if (!filesystem_free_storage(fs, q))
-        msg_err("TFS: failed to mark extent at %R as free", q);
+    filesystem_release_storage(fs, irangel(ex->start_block, ex->allocated));
     deallocate_extent(fs, ex);
 }
 
@@ -760,12 +901,12 @@ static int tfs_shrink(tfsfile f, u64 len)
     (void)removed_end;
 #endif
     /* Old reads may still have used these blocks. The cache barrier above
-     * finishes them before another file can reuse the physical storage. */
+     * finishes them before another file can reuse the physical storage, and
+     * the release waits until the shrink is durable. */
     while (buffer_length(releases)) {
         range release;
         assert(buffer_read(releases, &release, sizeof(release)));
-        if (!filesystem_free_storage(fs, release))
-            msg_err("TFS: failed to free truncated extent range %R", release);
+        filesystem_release_storage(fs, release);
     }
 out:
     if (releases && releases != INVALID_ADDRESS)
@@ -998,6 +1139,20 @@ closure_function(2, 1, status, filesystem_check_or_reserve_extent,
     }
     filesystem_lock(&fs->fs);
     status s = extents_range_handler(fs, f, q, 0, 0);
+    /* Released storage becomes reusable once its release is durable: wait
+     * for that while it makes progress, instead of failing with ENOSPC. */
+    while (tfs_status_enospc(s) && (buffer_length(fs->deferred_frees) || fs->release_active)) {
+        u64 generation = fs->release_generation;
+        filesystem_unlock(&fs->fs);
+        status w = wait_for_task((async_task)stack_closure(tfs_release_wait, fs));
+        if (!is_ok(w))
+            timm_dealloc(w);
+        filesystem_lock(&fs->fs);
+        if (fs->release_generation == generation)
+            break;
+        timm_dealloc(s);
+        s = extents_range_handler(fs, f, q, 0, 0);
+    }
     filesystem_unlock(&fs->fs);
     return s;
 }
@@ -1589,6 +1744,13 @@ void create_filesystem(heap h,
     spin_lock_init(&fs->storage_lock);
     fs->page_order = pagecache_get_page_order();
     fs->zero_page = pagecache_get_zero_page();
+    fs->deferred_frees = allocate_buffer(h, 4 * sizeof(range));
+    fs->releasing_frees = allocate_buffer(h, 4 * sizeof(range));
+    fs->release_waiters = allocate_vector(h, 4);
+    assert(fs->deferred_frees != INVALID_ADDRESS && fs->releasing_frees != INVALID_ADDRESS &&
+           fs->release_waiters != INVALID_ADDRESS);
+    fs->release_generation = 0;
+    fs->release_active = fs->release_scheduled = false;
 #else
     fs->page_order = PAGESIZE;
     fs->zero_page = allocate_zero(h, PAGESIZE);
@@ -1651,6 +1813,12 @@ void destroy_filesystem(filesystem fs)
         destruct_dir_entry(fs->root);
     filesystem_deinit(fs);
     deallocate_table(tfs->files);
+#if defined(KERNEL) && !defined(TFS_READ_ONLY)
+    /* No release cycle can be pending: each one holds a filesystem reference. */
+    deallocate_buffer(tfs->deferred_frees);
+    deallocate_buffer(tfs->releasing_frees);
+    deallocate_vector(tfs->release_waiters);
+#endif
     deallocate_rangemap(tfs->storage, stack_closure(tfs_storage_destroy, fs->h));
     deallocate(fs->h, fs, sizeof(*fs));
 }

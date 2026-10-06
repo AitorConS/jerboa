@@ -35,6 +35,15 @@ typedef struct tfs {
     u64 next_extend_log_offset;
     u64 next_new_log_offset;
     u64 version;            /* log format of this volume (TFS_VERSION_V5 or TFS_VERSION) */
+#ifdef KERNEL
+    /* Released storage that the durable log may still reference (see
+     * filesystem_release_storage()); protected by the filesystem lock. */
+    buffer deferred_frees;      /* awaiting the next release cycle */
+    buffer releasing_frees;     /* captured by the release cycle in flight */
+    vector release_waiters;     /* allocations retrying after a cycle */
+    u64 release_generation;     /* completed cycles that freed storage */
+    boolean release_active, release_scheduled;
+#endif
 } *tfs;
 
 typedef struct tfsfile {
@@ -76,6 +85,7 @@ void log_destroy(log tl);
 u64 filesystem_allocate_storage(tfs fs, u64 nblocks);
 boolean filesystem_reserve_storage(tfs fs, range storage_blocks);
 boolean filesystem_free_storage(tfs fs, range storage_blocks);
+void filesystem_release_storage(tfs fs, range storage_blocks);
 void filesystem_storage_op(tfs fs, sg_list sg, range blocks, boolean write,
                            status_handler completion);
 
