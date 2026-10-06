@@ -330,7 +330,7 @@ static void log_extension_init(log_ext ext)
     assert(!ext->open);
     buffer staging = &ext->staging;
     assert(push_buffer(staging, alloca_wrap_buffer(tfs_magic, TFS_MAGIC_BYTES)));
-    push_varint(staging, TFS_VERSION);
+    push_varint(staging, ext->tl->fs->version);
     push_varint(staging, range_span(ext->sectors));
     if (ext->sectors.start == 0) {
         assert(buffer_write(staging, ext->tl->fs->uuid, UUID_LEN));
@@ -674,7 +674,7 @@ static inline void log_tuple_produce(log tl, buffer b, u64 length)
 }
 
 static status log_hdr_parse(log_ext ext, buffer b, boolean first_ext,
-                            u64 *length, u8 *uuid, char *label)
+                            u64 *length, u8 *uuid, char *label, u64 *version_out)
 {
     if (runtime_memcmp(buffer_ref(b, 0), tfs_magic, TFS_MAGIC_BYTES))
         return timm("result", "tfs magic mismatch");
@@ -690,13 +690,14 @@ static status log_hdr_parse(log_ext ext, buffer b, boolean first_ext,
 #endif
         if (ext)
             ext->old_encoding = true;
-    } else if (version == TFS_VERSION) {
+    } else if (version == TFS_VERSION_V5 || version == TFS_VERSION) {
         if (ext)
             ext->old_encoding = false;
     } else {
         return timm("result", "tfs version mismatch (read %ld, build %ld)",
             version, TFS_VERSION);
     }
+    *version_out = version;
     *length = pop_varint(b);
     if (first_ext) {
         buffer_read(b, uuid, UUID_LEN);
@@ -735,10 +736,22 @@ closure_function(4, 1, void, log_read_complete,
     tlog_debug("-> new log extension, checking magic and version\n");
     if (!ext->open) {
         length = 0;
+        u64 version;
         s = log_hdr_parse(ext, b, ext->sectors.start == 0, &length, tl->fs->uuid,
-            tl->fs->label);
+            tl->fs->label, &version);
         if (!is_ok(s))
             goto out_apply_status;
+        /* Version 4 logs are extended with version 5 extensions, as before. All other
+         * extensions of a log must carry the version of its first one. */
+        if (version == 0x4)
+            version = TFS_VERSION_V5;
+        if (ext->sectors.start == 0) {
+            tl->fs->version = version;
+        } else if (version != tl->fs->version) {
+            s = timm("result", "tfs log extension version %ld differs from volume version %ld",
+                     version, tl->fs->version);
+            goto out_apply_status;
+        }
         /* XXX the length is really for validation...so hook it up */
         tlog_debug("%ld sectors\n", length);
         ext->open = true;
@@ -883,7 +896,9 @@ static void log_read(log tl, status_handler sh)
 status filesystem_probe(u8 *first_sector, u8 *uuid, char *label)
 {
     u64 len;
-    return log_hdr_parse(0, alloca_wrap_buffer(first_sector, SECTOR_SIZE), true, &len, uuid, label);
+    u64 version;
+    return log_hdr_parse(0, alloca_wrap_buffer(first_sector, SECTOR_SIZE), true, &len, uuid, label,
+                         &version);
 }
 
 log log_create(heap h, tfs fs, boolean initialize, status_handler sh)

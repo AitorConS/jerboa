@@ -7,7 +7,12 @@
 #include <storage.h>
 #include <tfs.h>
 
-#define TFS_VERSION 0x00000005
+/* On-disk log format. Version 6 adds per-extent initialization maps to uninitialized
+ * extents; it is written only by mkfs for new volumes. Existing version 5 volumes stay
+ * version 5: no version 6 attribute is ever written to them. Kernels and tools that
+ * only know version 5 refuse to mount version 6 when they parse the log header. */
+#define TFS_VERSION_V5 0x00000005
+#define TFS_VERSION 0x00000006
 
 typedef struct log *log;
 
@@ -29,6 +34,7 @@ typedef struct tfs {
     log temp_log;
     u64 next_extend_log_offset;
     u64 next_new_log_offset;
+    u64 version;            /* log format of this volume (TFS_VERSION_V5 or TFS_VERSION) */
 } *tfs;
 
 typedef struct tfsfile {

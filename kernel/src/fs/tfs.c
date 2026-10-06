@@ -1611,6 +1611,9 @@ void create_filesystem(heap h,
 #endif
     fs->next_extend_log_offset = INVALID_PHYSICAL;
     fs->next_new_log_offset = INVALID_PHYSICAL;
+    /* A new volume (mkfs) gets the current format; an existing one takes the version of
+     * its log header when the log is read. */
+    fs->version = sstring_is_null(label) ? TFS_VERSION_V5 : TFS_VERSION;
     fs->tl = log_create(h, fs, !sstring_is_null(label), closure(h, log_complete, complete, fs));
 }
 
