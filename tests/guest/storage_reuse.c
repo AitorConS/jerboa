@@ -13,10 +13,12 @@
  * which journals every write of the /data volume and replays the cuts a host
  * power loss could leave.
  *
- * First boot (no /reuse-phase on the root disk): three files a1..a3 on /data
- * are written and synced. a1 is truncated to 0, a2 unlinked and a3 truncated
+ * First boot (no /reuse-phase on the root disk): a stale file s is written,
+ * synced, deleted and its release made durable, so later files reuse blocks
+ * that hold its data. Three files a1..a3 on /data are written and synced. a1 is truncated to 0, a2 unlinked and a3 truncated
  * to 1 MiB, without any sync. b is then written and synced; its blocks may
- * reuse the storage the others released. The guest prints REUSE CRASH POINT
+ * reuse the storage the others released. Finally a fallocated, synced file c
+ * gets scattered writes without a sync. The guest prints REUSE CRASH POINT
  * and waits for the host to kill it.
  *
  * Later boots verify whatever survives on /data: every block of a1..a3 within
@@ -33,7 +35,14 @@
 #define A_BLOCKS 1024u          /* 4 MiB */
 #define A3_KEEP 256u            /* 1 MiB */
 #define B_BLOCKS 4096u          /* 16 MiB */
+#define S_BLOCKS 6144u          /* 24 MiB */
+#define C_BLOCKS 1024u          /* 4 MiB */
 #define PHASE "/reuse-phase"
+
+static int c_written(uint32_t n)
+{
+    return n % 37 == 5 || n % 101 == 0;
+}
 
 static void fill(unsigned char *b, char file, uint32_t n)
 {
@@ -65,6 +74,13 @@ static void sync_dir(const char *path)
 
 static void write_phase(void)
 {
+    write_file("/data/s", 'S', S_BLOCKS);
+    sync_dir("/data");
+    assert(unlink("/data/s") == 0);
+    sync_dir("/data");
+    sync();
+    sleep(2);       /* the release of s becomes durable asynchronously */
+    sync();
     write_file("/data/a1", '1', A_BLOCKS);
     write_file("/data/a2", '2', A_BLOCKS);
     write_file("/data/a3", '3', A_BLOCKS);
@@ -83,6 +99,17 @@ static void write_phase(void)
     write_file("/data/b", 'B', B_BLOCKS);
     sync_dir("/data");
     printf("REUSE B SYNCED\n");
+
+    fd = open("/data/c", O_CREAT | O_RDWR, 0644);
+    assert(fd >= 0 && fallocate(fd, 0, 0, (off_t)C_BLOCKS * BLOCK) == 0 && fsync(fd) == 0);
+    sync_dir("/data");
+    static unsigned char blk[BLOCK];
+    for (uint32_t n = 0; n < C_BLOCKS; n++)
+        if (c_written(n)) {
+            fill(blk, 'C', n);
+            assert(pwrite(fd, blk, BLOCK, (off_t)n * BLOCK) == BLOCK);
+        }
+    close(fd);
 
     fd = open(PHASE, O_CREAT | O_TRUNC | O_WRONLY, 0644);
     assert(fd >= 0 && write(fd, "verify\n", 7) == 7 && fsync(fd) == 0);
@@ -130,6 +157,39 @@ static int check_file(const char *path, char file, uint32_t max_blocks)
     return bad;
 }
 
+/* c was synced fallocated: each block is zeros, or its data if written. */
+static int check_c(void)
+{
+    int fd = open("/data/c", O_RDONLY);
+    if (fd < 0) {
+        printf("REUSE /data/c absent\n");
+        return 0;
+    }
+    static unsigned char got[BLOCK], want[BLOCK];
+    static const unsigned char zero[BLOCK];
+    int bad = 0, data = 0;
+    struct stat st;
+    assert(fstat(fd, &st) == 0);
+    for (uint32_t n = 0; n < st.st_size / BLOCK && n < C_BLOCKS; n++) {
+        assert(pread(fd, got, BLOCK, (off_t)n * BLOCK) == BLOCK);
+        if (!memcmp(got, zero, BLOCK))
+            continue;
+        fill(want, 'C', n);
+        if (c_written(n) && !memcmp(got, want, BLOCK)) {
+            data++;
+            continue;
+        }
+        const char *kind = !memcmp(got, "JRUSE-B-", 8) ? "LEAK" :
+                           !memcmp(got, "JRUSE-", 6) ? "FOREIGN" : "CORRUPT";
+        if (bad++ < 4)
+            printf("REUSE FAIL %s /data/c block %u: %.17s\n", kind, n, got);
+        printf("REUSE KIND %s\n", kind);
+    }
+    printf("REUSE /data/c data %d bad %d\n", data, bad);
+    close(fd);
+    return bad;
+}
+
 int main(void)
 {
     setvbuf(stdout, NULL, _IOLBF, 0);
@@ -137,7 +197,7 @@ int main(void)
         write_phase();
     int bad = check_file("/data/a1", '1', A_BLOCKS) +
               check_file("/data/a2", '2', A_BLOCKS) +
-              check_file("/data/a3", '3', A_BLOCKS);
+              check_file("/data/a3", '3', A_BLOCKS) + check_c();
     printf(bad ? "REUSE VERIFY FAIL\n" : "REUSE VERIFY PASS\n");
     return bad ? 1 : 0;
 }

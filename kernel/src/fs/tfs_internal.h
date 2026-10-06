@@ -43,6 +43,20 @@ typedef struct tfs {
     vector release_waiters;     /* allocations retrying after a cycle */
     u64 release_generation;     /* completed cycles that freed storage */
     boolean release_active, release_scheduled;
+    /* Data publication (see tfs_pub_register()): the log entries that expose
+     * written blocks are staged only after a device flush that follows the
+     * completion of those writes. Data writes are counted per generation. */
+    struct spinlock pub_lock;   /* inflight, wgen updates, draining */
+    u64 inflight[2];            /* data writes in flight per generation */
+    int wgen;                   /* generation of new data writes */
+    int cycle_gen;              /* generation the cycle in flight publishes */
+    boolean draining;           /* cycle waits for inflight[cycle_gen] == 0 */
+    vector pubs;                /* struct tfs_pub *, pending publications */
+    vector pub_waiters;         /* completed by the cycle in flight */
+    vector pub_next_waiters;    /* need the next cycle */
+    boolean pub_active, pub_error, pub_timer_armed;
+    thunk pub_flush;            /* starts the device flush of the cycle */
+    struct timer pub_timer;
 #endif
 } *tfs;
 
@@ -71,8 +85,9 @@ typedef struct extent {
     struct rmnode node;         /* must be first */
     u64 start_block;
     u64 allocated;
-    tuple md;                   /* shortcut to extent meta */
+    tuple md;                   /* shortcut to extent meta; only published state */
     uninited uninited;
+    u32 pubs;                   /* pending publications referring to this extent */
 } *extent;
 
 void ingest_extent(tfsfile f, symbol foff, tuple value);

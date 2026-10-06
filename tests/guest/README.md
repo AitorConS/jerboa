@@ -188,14 +188,17 @@ root disk rebuilt from the writes issued before each round's progress block on
 the killed disk must then verify every acknowledged file.
 
 `storage_reuse.c` checks that storage released by truncate or unlink is not
-reused before the release is durable. Run it with `storage_reuse_crash.py`
-and the same test VMM. It rebuilds every cut a host power loss could leave
-around each F_FULLFSYNC (the following writes with any single one dropped) and
-boots each: no surviving file may show another file's data (`LEAK`). The run
-fails if the new file never reused released blocks, since it would then prove
-nothing. Files that were never fully synced may show zeros (ZERO) at some cuts while
-data and log writes are not ordered by a flush; `--fail-on LEAK,FOREIGN,CORRUPT`
-checks only storage reuse.
+reused before the release is durable, and that written blocks are never
+published before their data: it first leaves a deleted file's data on the
+volume, then creates, truncates, deletes and writes files, including unsynced
+writes into a fallocated file. Run it with `storage_reuse_crash.py` and the
+same test VMM. It rebuilds every cut a host power loss could leave around each
+F_FULLFSYNC (the following writes with any single one dropped) and boots each.
+Every surviving block must hold its own file's data, or zeros where the file
+was preallocated: another file's data (`LEAK` for the new file, `FOREIGN`
+otherwise), zeros over synced data (`ZERO`) or anything else fails. The run
+also fails if the new file never reused released blocks, since it would then
+prove nothing. `--fail-on` limits which kinds fail the run.
 
 `reuse_enospc.c` fills the `/data` volume (`--volume-size 64M`) until ENOSPC,
 then deletes or truncates the filler and immediately writes the same amount

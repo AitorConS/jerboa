@@ -84,8 +84,10 @@ static inline extent allocate_extent(heap h, range file_blocks, range storage_bl
     e->start_block = storage_blocks.start;
     e->allocated = range_span(storage_blocks);
     e->uninited = 0;
+    e->pubs = 0;
     return e;
 }
+
 
 closure_function(2, 1, boolean, tfs_storage_alloc,
                  u64, nblocks, u64 *, start_block,
@@ -368,6 +370,7 @@ void filesystem_storage_op(tfs fs, sg_list sg, range blocks, boolean write,
     apply(fs->req_handler, &req);
 }
 
+#ifndef TFS_READ_ONLY
 closure_function(2, 1, void, zero_blocks_complete,
                  sg_list, sg, status_handler, completion,
                  status s)
@@ -379,11 +382,10 @@ closure_function(2, 1, void, zero_blocks_complete,
     closure_finish();
 }
 
-void zero_blocks(tfs fs, range blocks, merge m)
+static void zero_blocks(tfs fs, range blocks, status_handler completion)
 {
     int blocks_per_page = U64_FROM_BIT(fs->page_order - fs->fs.blocksize_order);
     tfs_debug("%s: fs %p, blocks %R\n", func_ss, fs, blocks);
-    status_handler completion = apply_merge(m);
     sg_list sg = allocate_sg_list();
     if (sg == INVALID_ADDRESS) {
         apply(completion, timm("result", "failed to allocate sg list"));
@@ -418,6 +420,7 @@ void zero_blocks(tfs fs, range blocks, merge m)
     };
     apply(fs->req_handler, &req);
 }
+#endif
 
 closure_function(4, 1, boolean, read_extent,
                  tfs, fs, sg_list, sg, merge, m, range, blocks,
@@ -475,6 +478,13 @@ static void tfs_read(fsfile fsf,
 }
 
 #ifndef TFS_READ_ONLY
+
+static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length);
+static status_handler tfs_data_handler(tfs fs, status_handler sh);
+#ifdef KERNEL
+static void tfs_pub_detach(tfs fs, extent ex);
+static void tfs_pub_cycle(tfs fs, status_handler sh);
+#endif
 static tuple cleanup_directory(tuple dir);
 
 int filesystem_write_tuple(tfs fs, tuple t)
@@ -590,6 +600,10 @@ static int create_extent(tfs fs, range blocks, boolean uninited, extent *ex)
 
 static void deallocate_extent(tfs fs, extent ex)
 {
+#ifdef KERNEL
+    if (ex->pubs)
+        tfs_pub_detach(fs, ex);
+#endif
     if (ex->uninited && ex->uninited != INVALID_ADDRESS)
         refcount_release(&ex->uninited->refcount);
     deallocate(fs->fs.h, ex, sizeof(*ex));
@@ -695,6 +709,21 @@ static uninited allocate_uninited(tfs fs, status_handler sh)
     return u;
 }
 
+/* Write data (or zeros without sg) to file blocks, counted for publication. */
+static void tfs_data_write(tfs fs, sg_list sg, range r, merge m)
+{
+    status_handler sh = apply_merge(m);
+    status_handler c = tfs_data_handler(fs, sh);
+    if (c == INVALID_ADDRESS) {
+        apply(sh, timm("result", "failed to allocate write completion"));
+        return;
+    }
+    if (sg)
+        filesystem_storage_op(fs, sg, r, true, c);
+    else
+        zero_blocks(fs, r, c);
+}
+
 static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
 {
     tfs fs = tfs_from_file(f);
@@ -706,20 +735,14 @@ static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
               func_ss, ex, ex->uninited, sg, m, blocks, r);
 
     if (ex->uninited == INVALID_ADDRESS) {
-        /* Begin process of normalizing uninited extent */
-        if (f->f.md) {
-            assert(ex->md);
-            symbol a = sym(uninited);
-            tfs_debug("%s: log write %p, %p\n", func_ss, ex->md, a);
-            int fss = filesystem_write_eav(fs, ex->md, a, 0, false);
-            if (fss != 0) {
-                status s = timm("result", "failed to write log");
-                apply(apply_merge(m), timm_append(s,
-                                           "fsstatus", "%d", fss));
-                return i.end;
-            }
-            set(ex->md, a, 0);
-            f->f.status |= FSF_DIRTY_DATASYNC;
+        /* Begin process of normalizing uninited extent. The log entry that
+         * marks it initialized is published once the zeros and data written
+         * here are durable (tfs_pub_register()). */
+        int fss = tfs_pub_register(f, ex, true, 0);
+        if (fss != 0) {
+            status s = timm("result", "failed to write log");
+            apply(apply_merge(m), timm_append(s, "fsstatus", "%d", fss));
+            return i.end;
         }
         ex->uninited = allocate_uninited(fs, apply_merge(m));
         tfs_debug("%s: new uninited %p\n", func_ss, ex->uninited);
@@ -733,20 +756,17 @@ static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
             u64 data_end = i.end - ex->node.r.start;
             u64 extent_end = range_span(ex->node.r);
             if (data_offset > 0)
-                zero_blocks(fs, range_add(irange(0, data_offset), ex->start_block), m);
+                tfs_data_write(fs, 0, range_add(irange(0, data_offset), ex->start_block), m);
             if (data_end < extent_end)
-                zero_blocks(fs, range_add(irange(data_end, extent_end), ex->start_block), m);
-            filesystem_storage_op(fs, sg, r, true, apply_merge(m));
+                tfs_data_write(fs, 0, range_add(irange(data_end, extent_end), ex->start_block), m);
+            tfs_data_write(fs, sg, r, m);
         } else {
-            zero_blocks(fs, r, m);
+            tfs_data_write(fs, 0, r, m);
         }
         apply(k, STATUS_OK);
         return i.end;
     }
-    if (sg)
-        filesystem_storage_op(fs, sg, r, true, apply_merge(m));
-    else
-        zero_blocks(fs, r, m);
+    tfs_data_write(fs, sg, r, m);
     return i.end;
   alloc_fail:
     apply(apply_merge(m), timm("result", "unable to allocate memory for uninited write"));
@@ -758,7 +778,9 @@ static int fill_gap(tfsfile f, sg_list sg, range blocks, merge m, u64 *edge)
     tfs_debug("   %s: writing new extent blocks %R\n", func_ss, blocks);
     extent ex;
     tfs fs = tfs_from_file(f);
-    int fss = create_extent(fs, blocks, m ? false : true, &ex);
+    /* Logged uninited even when written now: write_extent() publishes it
+     * initialized once its data is durable. */
+    int fss = create_extent(fs, blocks, true, &ex);
     if (fss != 0)
         return fss;
     blocks = ex->node.r;
@@ -811,6 +833,330 @@ static int update_extent_length(tfsfile f, extent ex, u64 new_length)
     ex->node.r = irangel(ex->node.r.start, new_length);
     tfs_debug("   %s: now %R\n", func_ss, ex->node.r);
     return 0;
+}
+
+/* Data publication.
+ *
+ * Log entries that make written blocks readable (an extent marked initialized,
+ * an extent grown by a write) must not become durable before those blocks: a
+ * crash would expose zeros or earlier contents, possibly another file's. Such
+ * entries are therefore not staged when the write is issued. The extent's
+ * in-memory state changes at once, its metadata tuple keeps the published
+ * state, and a pending publication is registered for the current write
+ * generation. Every data write is counted in its generation. A publication
+ * cycle switches the generation, waits for the old generation's writes to
+ * complete, flushes the device and only then stages the entries; the log
+ * flush and the final device flush of fsync follow. A failed data write or
+ * flush stops publication for the volume: later cycles fail with EIO. */
+#ifdef KERNEL
+struct tfs_pub {
+    extent ex;          /* 0 once the extent is gone */
+    tfsfile f;
+    int gen;
+    u64 length;         /* extent length to publish (0: none) */
+    boolean init;       /* publish the removal of uninited */
+};
+
+closure_function(3, 1, void, tfs_data_write_done,
+                 tfs, fs, int, gen, status_handler, sh,
+                 status s)
+{
+    tfs fs = bound(fs);
+    int gen = bound(gen);
+    if (!is_ok(s))
+        fs->pub_error = true;
+    thunk launch = 0;
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    assert(fs->inflight[gen] > 0);
+    if (--fs->inflight[gen] == 0 && fs->draining && fs->cycle_gen == gen) {
+        fs->draining = false;
+        launch = fs->pub_flush;
+    }
+    spin_unlock_irq(&fs->pub_lock, flags);
+    apply(bound(sh), s);
+    if (launch)
+        async_apply_bh(launch);
+    closure_finish();
+}
+
+/* Filesystem lock held: the generation only changes under it. */
+static status_handler tfs_data_handler(tfs fs, status_handler sh)
+{
+    int gen = fs->wgen;
+    status_handler c = closure(fs->fs.h, tfs_data_write_done, fs, gen, sh);
+    if (c == INVALID_ADDRESS)
+        return c;
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    fs->inflight[gen]++;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    return c;
+}
+
+closure_function(1, 2, void, tfs_pub_timer_expired,
+                 tfs, fs,
+                 u64 expiry, u64 overruns)
+{
+    tfs fs = bound(fs);
+    if (overruns != timer_disabled) {
+        filesystem_lock(&fs->fs);
+        fs->pub_timer_armed = false;
+        tfs_pub_cycle(fs, 0);
+        filesystem_unlock(&fs->fs);
+    }
+    closure_finish();
+}
+
+static void tfs_pub_arm_timer(tfs fs)
+{
+    if (fs->pub_timer_armed)
+        return;
+    timer_handler th = closure(fs->fs.h, tfs_pub_timer_expired, fs);
+    if (th == INVALID_ADDRESS)
+        return;     /* published by the next sync */
+    fs->pub_timer_armed = true;
+    register_timer(kernel_timers, &fs->pub_timer, CLOCK_ID_MONOTONIC_RAW,
+                   seconds(TFS_LOG_FLUSH_DELAY_SECONDS), false, 0, th);
+}
+
+/* Filesystem lock held; called before the writes it covers are issued. */
+static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length)
+{
+    tfs fs = tfs_from_file(f);
+    if (!f->f.md)
+        return 0;
+    struct tfs_pub *p;
+    for (int i = vector_length(fs->pubs) - 1; i >= 0; i--) {
+        p = vector_get(fs->pubs, i);
+        if (p->gen != fs->wgen)
+            break;
+        if (p->ex == ex)
+            goto update;
+    }
+    p = allocate(fs->fs.h, sizeof(*p));
+    if (p == INVALID_ADDRESS)
+        return -ENOMEM;
+    p->ex = ex;
+    p->f = f;
+    p->gen = fs->wgen;
+    p->length = 0;
+    p->init = false;
+    vector_push(fs->pubs, p);
+    ex->pubs++;
+  update:
+    p->init |= init;
+    if (length > p->length)
+        p->length = length;
+    f->f.status |= FSF_DIRTY_DATASYNC;
+    if (!fs->pub_active)
+        tfs_pub_arm_timer(fs);
+    return 0;
+}
+
+static void tfs_pub_detach(tfs fs, extent ex)
+{
+    struct tfs_pub *p;
+    vector_foreach(fs->pubs, p) {
+        if (p->ex == ex) {
+            p->ex = 0;
+            ex->pubs--;
+        }
+    }
+}
+
+static int tfs_pub_stage(struct tfs_pub *p)
+{
+    tfsfile f = p->f;
+    extent ex = p->ex;
+    /* A truncate since registration logged the shorter length itself. */
+    u64 length = MIN(p->length, range_span(ex->node.r));
+    u64 logged;
+    if (length && get_u64(ex->md, sym(length), &logged) && length > logged) {
+        int s = update_extent(f, ex, sym(length), length);
+        if (s != 0)
+            return s;
+    }
+    /* Length first: a torn log may then show a longer uninited extent. */
+    symbol a = sym(uninited);
+    if (p->init && get(ex->md, a)) {
+        int s = filesystem_write_eav(tfs_from_file(f), ex->md, a, 0, false);
+        if (s != 0)
+            return s;
+        set(ex->md, a, 0);
+        f->f.status |= FSF_DIRTY_DATASYNC;
+    }
+    return 0;
+}
+
+static void tfs_pub_wake(vector waiters, boolean ok)
+{
+    status_handler sh;
+    vector_foreach(waiters, sh)
+        async_apply_status_handler(sh, ok ? STATUS_OK :
+            timm("result", "data publication failed", "fsstatus", "%d", -EIO));
+    vector_clear(waiters);
+}
+
+static void tfs_pub_drop(tfs fs)
+{
+    struct tfs_pub *p;
+    vector_foreach(fs->pubs, p) {
+        if (p->ex)
+            p->ex->pubs--;
+        deallocate(fs->fs.h, p, sizeof(*p));
+    }
+    vector_clear(fs->pubs);
+}
+
+closure_function(1, 1, void, tfs_pub_flushed,
+                 tfs, fs,
+                 status s)
+{
+    tfs fs = bound(fs);
+    filesystem_lock(&fs->fs);
+    if (!is_ok(s)) {
+        msg_err("TFS: data publication flush failed: %v", s);
+        timm_dealloc(s);
+        fs->pub_error = true;
+    }
+    boolean ok = !fs->pub_error;
+    int kept = 0, n = vector_length(fs->pubs);
+    for (int i = 0; i < n; i++) {
+        struct tfs_pub *p = vector_get(fs->pubs, i);
+        if (p->gen != fs->cycle_gen) {
+            vector_set(fs->pubs, kept++, p);
+            continue;
+        }
+        if (p->ex) {
+            if (ok && tfs_pub_stage(p) != 0) {
+                msg_err("TFS: failed to stage data publication");
+                fs->pub_error = true;
+                ok = false;
+            }
+            p->ex->pubs--;
+        }
+        deallocate(fs->fs.h, p, sizeof(*p));
+    }
+    vector_delete_range(fs->pubs, kept, n);
+    fs->pub_active = false;
+    tfs_pub_wake(fs->pub_waiters, ok);
+    if (vector_length(fs->pub_next_waiters))
+        tfs_pub_cycle(fs, 0);
+    else if (vector_length(fs->pubs))
+        tfs_pub_arm_timer(fs);
+    filesystem_unlock(&fs->fs);
+    filesystem_release(&fs->fs);
+    closure_finish();
+}
+
+closure_function(2, 0, void, tfs_pub_flush,
+                 tfs, fs, status_handler, flushed)
+{
+    struct storage_req req = {
+        .op = STORAGE_OP_FLUSH,
+        .blocks = irange(0, 0),
+        .completion = bound(flushed),
+    };
+    apply(bound(fs)->req_handler, &req);
+    closure_finish();
+}
+
+/* Filesystem lock held. Completes sh, if given, once every publication
+ * registered before this call is staged in the log (or with EIO). */
+static void tfs_pub_cycle(tfs fs, status_handler sh)
+{
+    if (fs->pub_active) {
+        if (sh)
+            vector_push(fs->pub_next_waiters, sh);
+        return;
+    }
+    if (sh)
+        vector_push(fs->pub_waiters, sh);
+    status_handler w;
+    vector_foreach(fs->pub_next_waiters, w)
+        vector_push(fs->pub_waiters, w);
+    vector_clear(fs->pub_next_waiters);
+    if (fs->pub_error) {
+        tfs_pub_drop(fs);
+        tfs_pub_wake(fs->pub_waiters, false);
+        return;
+    }
+    if (!vector_length(fs->pubs)) {
+        tfs_pub_wake(fs->pub_waiters, true);
+        return;
+    }
+    status_handler flushed = closure(fs->fs.h, tfs_pub_flushed, fs);
+    thunk t = flushed == INVALID_ADDRESS ? INVALID_ADDRESS :
+              (thunk)closure(fs->fs.h, tfs_pub_flush, fs, flushed);
+    if (t == INVALID_ADDRESS) {
+        if (flushed != INVALID_ADDRESS)
+            deallocate_closure(flushed);
+        tfs_pub_wake(fs->pub_waiters, false);
+        return;
+    }
+    fs->pub_active = true;
+    filesystem_reserve(&fs->fs);
+    if (fs->pub_timer_armed) {
+        remove_timer(kernel_timers, &fs->pub_timer, 0);
+        fs->pub_timer_armed = false;
+    }
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    fs->cycle_gen = fs->wgen;
+    fs->wgen ^= 1;
+    boolean launch = fs->inflight[fs->cycle_gen] == 0;
+    fs->draining = !launch;
+    fs->pub_flush = t;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    if (launch)
+        async_apply(t);
+}
+
+static int tfs_extent_grow(tfsfile f, extent ex, u64 length)
+{
+    if (f->f.md) {
+        int s = tfs_pub_register(f, ex, false, length);
+        if (s != 0)
+            return s;
+        ex->node.r = irangel(ex->node.r.start, length);
+        return 0;
+    }
+    return update_extent_length(f, ex, length);
+}
+#else
+/* mkfs: no crash model; publish at once. */
+static status_handler tfs_data_handler(tfs fs, status_handler sh)
+{
+    return sh;
+}
+
+static int tfs_pub_register(tfsfile f, extent ex, boolean init, u64 length)
+{
+    if (!f->f.md || !init)
+        return 0;
+    assert(ex->md);
+    symbol a = sym(uninited);
+    int fss = filesystem_write_eav(tfs_from_file(f), ex->md, a, 0, false);
+    if (fss != 0)
+        return fss;
+    set(ex->md, a, 0);
+    f->f.status |= FSF_DIRTY_DATASYNC;
+    return 0;
+}
+
+static int tfs_extent_grow(tfsfile f, extent ex, u64 length)
+{
+    return update_extent_length(f, ex, length);
+}
+#endif
+
+/* Shrinking needs no barrier, but must not publish a pending growth. */
+static int tfs_extent_shrink(tfsfile f, extent ex, u64 keep)
+{
+    u64 logged;
+    if (f->f.md && ex->md && get_u64(ex->md, sym(length), &logged) && keep >= logged) {
+        ex->node.r = irangel(ex->node.r.start, keep);
+        return 0;
+    }
+    return update_extent_length(f, ex, keep);
 }
 
 /* Called with the filesystem mutex held. Drop it before draining the cache:
@@ -877,7 +1223,7 @@ static int tfs_shrink(tfsfile f, u64 len)
             deallocate_extent(fs, ex);
         } else if (ex->node.r.end > end) {
             u64 keep = end - ex->node.r.start;
-            result = update_extent_length(f, ex, keep);
+            result = tfs_extent_shrink(f, ex, keep);
             if (result != 0)
                 break;
             removed_end = removed.end;
@@ -960,7 +1306,10 @@ static int extend(tfsfile f, extent ex, sg_list sg, range blocks, merge m, u64 *
     assert(blocks.start >= ex->node.r.end); // XXX temp
     assert(ex->node.r.end <= i.start); // XXX temp
     range z = irange(ex->node.r.end, i.start);
-    int s = update_extent_length(f, ex, i.end - ex->node.r.start);
+    /* A write publishes the longer extent once its data is durable; a
+     * reservation only grows uninited extents, which read as zeros. */
+    int s = m ? tfs_extent_grow(f, ex, i.end - ex->node.r.start) :
+                update_extent_length(f, ex, i.end - ex->node.r.start);
     if (s == 0) {
         if (m) {
             if (range_span(z) > 0) {
@@ -1084,8 +1433,8 @@ static void tfs_write(fsfile fsf,
     apply(sh, s);
 }
 
-closure_function(3, 1, void, fs_cache_sync_complete,
-                 tfs, fs, status_handler, completion, boolean, flush_log,
+closure_function(4, 1, void, fs_cache_sync_complete,
+                 tfs, fs, status_handler, completion, boolean, flush_log, boolean, publish,
                  status s)
 {
     if (!is_ok(s)) {
@@ -1098,9 +1447,18 @@ closure_function(3, 1, void, fs_cache_sync_complete,
         return;
     }
     if (bound(flush_log)) {
-        bound(flush_log) = false;
         tfs fs = bound(fs);
         filesystem_lock(&fs->fs);
+#ifdef KERNEL
+        /* The cache sync completed the data writes; publish them first. */
+        if (bound(publish)) {
+            bound(publish) = false;
+            tfs_pub_cycle(fs, (status_handler)closure_self());
+            filesystem_unlock(&fs->fs);
+            return;
+        }
+#endif
+        bound(flush_log) = false;
         log_flush(fs->tl, (status_handler)closure_self());
         filesystem_unlock(&fs->fs);
         return;
@@ -1122,7 +1480,7 @@ static status_handler tfs_get_sync_handler(filesystem fs, fsfile fsf, boolean da
         flush_log = datasync ? (fsf->status & FSF_DIRTY_DATASYNC) : (fsf->status & FSF_DIRTY);
     else
         flush_log = true;
-    return closure(fs->h, fs_cache_sync_complete, (tfs)fs, completion, flush_log);
+    return closure(fs->h, fs_cache_sync_complete, (tfs)fs, completion, flush_log, flush_log);
 }
 
 #ifdef KERNEL
@@ -1751,6 +2109,17 @@ void create_filesystem(heap h,
            fs->release_waiters != INVALID_ADDRESS);
     fs->release_generation = 0;
     fs->release_active = fs->release_scheduled = false;
+    spin_lock_init(&fs->pub_lock);
+    fs->inflight[0] = fs->inflight[1] = 0;
+    fs->wgen = fs->cycle_gen = 0;
+    fs->pubs = allocate_vector(h, 8);
+    fs->pub_waiters = allocate_vector(h, 4);
+    fs->pub_next_waiters = allocate_vector(h, 4);
+    assert(fs->pubs != INVALID_ADDRESS && fs->pub_waiters != INVALID_ADDRESS &&
+           fs->pub_next_waiters != INVALID_ADDRESS);
+    fs->draining = fs->pub_active = fs->pub_error = fs->pub_timer_armed = false;
+    fs->pub_flush = 0;
+    init_timer(&fs->pub_timer);
 #else
     fs->page_order = PAGESIZE;
     fs->zero_page = allocate_zero(h, PAGESIZE);
@@ -1803,6 +2172,12 @@ void destroy_filesystem(filesystem fs)
 {
     tfs_debug("%s %p\n", func_ss, fs);
     tfs tfs = (struct tfs *)fs;
+#if defined(KERNEL) && !defined(TFS_READ_ONLY)
+    /* Before the extents are freed. Unpublished data is lost, as on a crash. */
+    if (tfs->pub_timer_armed)
+        remove_timer(kernel_timers, &tfs->pub_timer, 0);
+    tfs_pub_drop(tfs);
+#endif
     log_destroy(tfs->tl);
     table_foreach(tfs->files, k, v) {
         fs_notify_release(k, true);
@@ -1814,7 +2189,11 @@ void destroy_filesystem(filesystem fs)
     filesystem_deinit(fs);
     deallocate_table(tfs->files);
 #if defined(KERNEL) && !defined(TFS_READ_ONLY)
-    /* No release cycle can be pending: each one holds a filesystem reference. */
+    /* No release or publication cycle can be pending: each one holds a
+     * filesystem reference. */
+    deallocate_vector(tfs->pubs);
+    deallocate_vector(tfs->pub_waiters);
+    deallocate_vector(tfs->pub_next_waiters);
     deallocate_buffer(tfs->deferred_frees);
     deallocate_buffer(tfs->releasing_frees);
     deallocate_vector(tfs->release_waiters);
