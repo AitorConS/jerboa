@@ -77,10 +77,20 @@ declare_closure_struct(2, 1, void, uninited_complete,
                        struct uninited *, u, status_handler, complete,
                        status s);
 
+/* A write to an extent whose conversion is still in progress (see
+ * tfs_uninited_defer()). */
+typedef struct uninited_write {
+    struct uninited_write *next;
+    sg_list sg;                 /* 0: zeros */
+    range r;
+    status_handler sh;
+} *uninited_write;
+
 typedef struct uninited {
     tfs fs;
     struct refcount refcount;
     boolean initialized;
+    uninited_write deferred;    /* issued, in order, once initialized */
     closure_struct(uninited_complete, complete);
     closure_struct(free_uninited, free);
 } *uninited;

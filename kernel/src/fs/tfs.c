@@ -892,9 +892,29 @@ define_closure_function(2, 1, void, uninited_complete,
     uninited u = bound(u);
     if (!is_ok(s))
         s = timm_up(s, "result", "failed to convert uninited extent");
-    apply(bound(complete), s);
-
+#ifdef KERNEL
+    tfs fs = u->fs;
+    u64 flags = spin_lock_irq(&fs->pub_lock);
     u->initialized = true;
+    uninited_write w = u->deferred;
+    u->deferred = 0;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    while (w) {
+        uninited_write next = w->next;
+        if (!is_ok(s))
+            apply(w->sh, timm("result", "failed to convert uninited extent"));
+        else if (w->sg)
+            filesystem_storage_op(fs, w->sg, w->r, true, w->sh);
+        else
+            zero_blocks(fs, w->r, w->sh);
+        deallocate(fs->fs.h, w, sizeof(*w));
+        w = next;
+    }
+    apply(bound(complete), s);
+#else
+    apply(bound(complete), s);
+    u->initialized = true;
+#endif
     refcount_release(&u->refcount);
 }
 
@@ -914,6 +934,7 @@ static uninited allocate_uninited(tfs fs, status_handler sh)
     u->fs = fs;
     init_refcount(&u->refcount, 2, init_closure(&u->free, free_uninited, h, u));
     u->initialized = false;
+    u->deferred = 0;
     init_closure(&u->complete, uninited_complete, u, sh);
     return u;
 }
@@ -932,6 +953,57 @@ static void tfs_data_write(tfs fs, sg_list sg, range r, merge m)
     else
         zero_blocks(fs, r, c);
 }
+
+#ifdef KERNEL
+/* The zeros converting an uninited extent are written after its first write
+ * was issued, and may cover blocks that later writes also reach: a later
+ * write issued before the conversion completes could then be overwritten by
+ * zeros, since the device need not apply overlapping requests in order
+ * (Firecracker's Async engine does not). Such writes are counted for
+ * publication now and issued once the conversion completes. False when the
+ * conversion has already completed: write as usual. */
+static boolean tfs_uninited_defer(tfs fs, uninited u, sg_list sg, range r, merge m)
+{
+    u64 flags = spin_lock_irq(&fs->pub_lock);
+    boolean done = u->initialized;
+    spin_unlock_irq(&fs->pub_lock, flags);
+    if (done)
+        return false;
+    status_handler sh = apply_merge(m);
+    status_handler c = tfs_data_handler(fs, sh);
+    if (c == INVALID_ADDRESS) {
+        apply(sh, timm("result", "failed to allocate write completion"));
+        return true;
+    }
+    uninited_write w = allocate(fs->fs.h, sizeof(*w));
+    if (w == INVALID_ADDRESS) {
+        apply(c, timm("result", "failed to allocate deferred write"));
+        return true;
+    }
+    w->next = 0;
+    w->sg = sg;
+    w->r = r;
+    w->sh = c;
+    flags = spin_lock_irq(&fs->pub_lock);
+    if (!u->initialized) {
+        uninited_write *tail = &u->deferred;
+        while (*tail)
+            tail = &(*tail)->next;
+        *tail = w;
+        w = 0;
+    }
+    spin_unlock_irq(&fs->pub_lock, flags);
+    if (w) {
+        /* Completed meanwhile. */
+        if (sg)
+            filesystem_storage_op(fs, sg, r, true, c);
+        else
+            zero_blocks(fs, r, c);
+        deallocate(fs->fs.h, w, sizeof(*w));
+    }
+    return true;
+}
+#endif
 
 static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
 {
@@ -1008,6 +1080,10 @@ static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
         apply(k, STATUS_OK);
         return i.end;
     }
+#ifdef KERNEL
+    if (ex->uninited && tfs_uninited_defer(fs, ex->uninited, sg, r, m))
+        return i.end;
+#endif
     tfs_data_write(fs, sg, r, m);
     return i.end;
   alloc_fail:
