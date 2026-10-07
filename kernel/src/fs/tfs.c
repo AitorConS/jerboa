@@ -527,10 +527,16 @@ closure_function(2, 1, void, zero_blocks_complete,
     closure_finish();
 }
 
-static void zero_blocks(tfs fs, range blocks, status_handler completion)
+/* Zeros are written in requests of at most ZERO_CHUNK_PAGES pages, one at a
+ * time: the sg list of a single request for a whole extent (up to
+ * MAX_EXTENT_SIZE) needs a large contiguous allocation, and issuing all the
+ * chunks at once moves the same demand into the storage driver; either fails
+ * under memory pressure. */
+#define ZERO_CHUNK_PAGES 256
+
+static void zero_blocks_chunk(tfs fs, range blocks, status_handler completion)
 {
     int blocks_per_page = U64_FROM_BIT(fs->page_order - fs->fs.blocksize_order);
-    tfs_debug("%s: fs %p, blocks %R\n", func_ss, fs, blocks);
     sg_list sg = allocate_sg_list();
     if (sg == INVALID_ADDRESS) {
         apply(completion, timm("result", "failed to allocate sg list"));
@@ -564,6 +570,43 @@ static void zero_blocks(tfs fs, range blocks, status_handler completion)
         .completion = zero_blocks_completion,
     };
     apply(fs->req_handler, &req);
+}
+
+static u64 zero_chunk_blocks(tfs fs)
+{
+    return (u64)ZERO_CHUNK_PAGES << (fs->page_order - fs->fs.blocksize_order);
+}
+
+/* Writes the chunk after the one just completed; the first failure ends it. */
+closure_function(3, 1, void, zero_blocks_next,
+                 tfs, fs, range, rest, status_handler, completion,
+                 status s)
+{
+    tfs fs = bound(fs);
+    range rest = bound(rest);
+    if (!is_ok(s) || range_span(rest) == 0) {
+        apply(bound(completion), s);
+        closure_finish();
+        return;
+    }
+    u64 n = MIN(range_span(rest), zero_chunk_blocks(fs));
+    bound(rest).start += n;
+    zero_blocks_chunk(fs, irangel(rest.start, n), (status_handler)closure_self());
+}
+
+static void zero_blocks(tfs fs, range blocks, status_handler completion)
+{
+    tfs_debug("%s: fs %p, blocks %R\n", func_ss, fs, blocks);
+    if (range_span(blocks) <= zero_chunk_blocks(fs)) {
+        zero_blocks_chunk(fs, blocks, completion);
+        return;
+    }
+    status_handler next = closure(fs->fs.h, zero_blocks_next, fs, blocks, completion);
+    if (next == INVALID_ADDRESS) {
+        apply(completion, timm("result", "failed to allocate completion"));
+        return;
+    }
+    apply(next, STATUS_OK);
 }
 #endif
 
