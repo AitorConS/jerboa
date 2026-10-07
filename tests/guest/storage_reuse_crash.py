@@ -67,7 +67,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("kernel", "mkfs", "firecracker", "program", "work", "replay"):
         p.add_argument("--" + name, type=Path, required=True)
-    p.add_argument("--volume-size", default="64M")
+    p.add_argument("--volume-size", default="28M")
     p.add_argument("--max-cuts", type=int, default=400)
     p.add_argument("--memory", type=int, default=256, help="guest MiB (128 makes the writer throttle sync)")
     p.add_argument("--fail-on", default="LEAK,FOREIGN,CORRUPT,ZERO",
@@ -135,7 +135,9 @@ def main():
     for w in writes:
         a_blocks |= tagged_blocks(w["data"], w["offset"], (b"1", b"2", b"3"))
         b_blocks |= tagged_blocks(w["data"], w["offset"], (b"B",))
-    reused = len(a_blocks & b_blocks)
+    # Blocks may sit at different sector alignments: compare 512-byte sectors.
+    sectors = lambda blocks: {o // 512 + k for o in blocks for k in range(BLOCK // 512)}
+    reused = len(sectors(a_blocks) & sectors(b_blocks)) * 512 // BLOCK
     result["reused_blocks"] = reused
     print(f"journal: {len(writes)} writes, {len(flushes)} flushes, b reused {reused} blocks of a1..a3")
     if not reused:

@@ -34,7 +34,7 @@
 #define BLOCK 4096u
 #define A_BLOCKS 1024u          /* 4 MiB */
 #define A3_KEEP 256u            /* 1 MiB */
-#define B_BLOCKS 4096u          /* 16 MiB */
+#define B_BLOCKS 5120u          /* 20 MiB: on a 28 MiB volume b needs released storage */
 #define S_BLOCKS 6144u          /* 24 MiB */
 #define C_BLOCKS 1024u          /* 4 MiB */
 #define PHASE "/reuse-phase"
