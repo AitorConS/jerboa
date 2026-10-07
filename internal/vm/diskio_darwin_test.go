@@ -19,3 +19,7 @@ func TestDarwinRejectsLinuxOnlyDiskIO(t *testing.T) {
 	unsafe.VolumeCache = VolumeCacheUnsafe
 	require.ErrorContains(t, m.validateFCPlatform(unsafe), "volume-cache unsafe")
 }
+
+func TestDarwinDefaultFCIOEngineIsSync(t *testing.T) {
+	require.Equal(t, fcEngineSync, fcIOEngine(Config{}))
+}
