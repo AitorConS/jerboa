@@ -459,16 +459,20 @@ static inline boolean log_write_internal(log tl, merge m)
     return true;
 }
 
+/* Each completion gets its own status, which it may free; s stays the
+ * caller's. */
 static void run_flush_completions(log tl, status s)
 {
     if (tl->flush_completions) {
         status_handler sh;
-        vector_foreach(tl->flush_completions, sh)
+        vector_foreach(tl->flush_completions, sh) {
+            status c = (is_ok(s) || s == timm_oom) ? s : timm_clone(s);
 #ifdef KERNEL
-            async_apply_status_handler(sh, s);
+            async_apply_status_handler(sh, c);
 #else
-            apply(sh, s);
+            apply(sh, c);
 #endif
+        }
         vector_clear(tl->flush_completions);
     }
 }
@@ -505,6 +509,7 @@ closure_function(1, 1, void, log_flush_complete,
     log_flush_restaged(tl);
     tlog_unlock(tl);
     refcount_release(&tl->refcount);
+    timm_dealloc(s);
     closure_finish();
 }
 
