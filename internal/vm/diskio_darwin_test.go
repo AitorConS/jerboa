@@ -23,3 +23,7 @@ func TestDarwinRejectsLinuxOnlyDiskIO(t *testing.T) {
 func TestDarwinDefaultFCIOEngineIsSync(t *testing.T) {
 	require.Equal(t, fcEngineSync, fcIOEngine(Config{}))
 }
+
+func TestDarwinNeverSetsHugePages(t *testing.T) {
+	require.Empty(t, fcHugePages(1024))
+}

@@ -707,6 +707,7 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 		MachineConfig: fcMachineConfig{
 			VcpuCount:  cpus,
 			MemSizeMib: memMiB,
+			HugePages:  fcHugePages(memMiB),
 		},
 	}
 
@@ -981,9 +982,10 @@ type fcTokenBucket struct {
 }
 
 type fcMachineConfig struct {
-	VcpuCount  int  `json:"vcpu_count"`
-	MemSizeMib int  `json:"mem_size_mib"`
-	SMT        bool `json:"smt"`
+	VcpuCount  int    `json:"vcpu_count"`
+	MemSizeMib int    `json:"mem_size_mib"`
+	SMT        bool   `json:"smt"`
+	HugePages  string `json:"huge_pages,omitempty"`
 }
 
 type fcNetworkInterface struct {
