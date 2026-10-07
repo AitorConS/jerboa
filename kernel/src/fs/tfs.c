@@ -903,9 +903,13 @@ static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
         return i.end;
     }
 #ifdef KERNEL
-    /* v6: write only the pages concerned (see tfs_map_*). */
+    /* v6: write only the pages concerned (see tfs_map_*). Only extents filled
+     * from their start use a page map: on macOS, random first writes into
+     * extents with page maps measured slower (randwrite -20 %) than
+     * converting the whole extent, while sequential fills gain (seqwrite
+     * +55 %). A random first write converts the extent as on v5. */
     if (ex->uninited == INVALID_ADDRESS && f->f.md && fs->version >= TFS_VERSION &&
-        (ex->map || tfs_map_alloc(fs, ex, true))) {
+        (ex->map || (i.start == ex->node.r.start && tfs_map_alloc(fs, ex, true)))) {
         u64 bpp = tfs_blocks_per_page(fs);
         u64 rs = i.start - ex->node.r.start, re = i.end - ex->node.r.start;
         u64 p0 = rs / bpp, p1 = (re - 1) / bpp;
