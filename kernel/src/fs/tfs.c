@@ -165,6 +165,7 @@ static boolean tfs_map_alloc(tfs fs, extent ex, boolean capped)
     return true;
 }
 
+#ifndef TFS_READ_ONLY
 static void tfs_map_free(tfs fs, extent ex)
 {
     if (!ex->map)
@@ -176,6 +177,7 @@ static void tfs_map_free(tfs fs, extent ex)
     ex->map_pages = 0;
     fs->map_bytes -= 2 * bytes;
 }
+#endif
 
 /* Load an idesc read from the log; false if it fails validation. */
 static boolean tfs_map_load(tfs fs, extent ex, string s)
