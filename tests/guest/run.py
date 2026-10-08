@@ -22,6 +22,8 @@ def main():
     p.add_argument("--timeout", type=int, default=180)
     p.add_argument("--expect", default="BENCHMARK REGRESSIONS PASS")
     p.add_argument("--reuse-disk", action="store_true")
+    p.add_argument("--io-engine", choices=["Sync", "Async"],
+                   help="Firecracker block engine on Linux (default: Firecracker's, Sync)")
     p.add_argument("args", nargs="*")
     a = p.parse_args()
     a.work.mkdir(parents=True, exist_ok=True)
@@ -55,6 +57,9 @@ def main():
     if a.volume_size:
         config["drives"].append({"drive_id": "data", "path_on_host": str(volume),
                                  "is_root_device": False, "is_read_only": False})
+    if a.io_engine:
+        for drive in config["drives"]:
+            drive["io_engine"] = a.io_engine
         if platform.system() == "Darwin":
             mounts = (a.work / "mounts").resolve()
             mounts.write_text("testdata:/data")

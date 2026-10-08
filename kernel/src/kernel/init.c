@@ -507,7 +507,7 @@ static u64 mm_clean_and_wait(u64 clean_bytes, u32 flags)
          * minimize chances of skipping cleaners. */
         goto begin;
     if ((remain > 0) && root_fs) {
-        status s = wait_for(storage_sync);
+        status s = wait_for(storage_sync_reclaim);
         if (!is_ok(s)) {
             mm_debug("%s: storage sync failed: %v\n", func_ss, s);
             timm_dealloc(s);
@@ -569,9 +569,7 @@ boolean mem_service(void)
     heap phys = (heap)heap_physical(init_heaps);
     u64 total = heap_total(phys);
     u64 free = total - heap_allocated(phys);
-    u64 threshold = total >> MEM_CLEAN_THRESHOLD_SHIFT;
-    if (threshold < MEM_CLEAN_THRESHOLD)
-        threshold = MEM_CLEAN_THRESHOLD;
+    u64 threshold = mem_clean_threshold(total);
     mm_debug("%s: total %ld, alloc %ld, free %ld\n", func_ss,
              heap_total(phys), heap_allocated(phys), free);
     u64 cleaned;

@@ -343,6 +343,23 @@ void storage_sync(status_handler sh)
     apply(complete, STATUS_OK);
 }
 
+/* As storage_sync(), for memory reclaim (see filesystem_flush_reclaim()). */
+void storage_sync_reclaim(status_handler sh)
+{
+    storage_debug("reclaim sync (%F)", sh);
+    merge m = allocate_merge(storage.h, sh);
+    status_handler complete = apply_merge(m);
+    filesystem_flush_reclaim(storage.root_fs, apply_merge(m));
+    storage_lock();
+    list_foreach(&storage.volumes, e) {
+        volume v = struct_from_list(e, volume, l);
+        if (v->fs)
+            filesystem_flush_reclaim(v->fs, apply_merge(m));
+    }
+    storage_unlock();
+    apply(complete, STATUS_OK);
+}
+
 filesystem storage_get_fs(tuple root)
 {
     filesystem fs;

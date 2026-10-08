@@ -325,7 +325,8 @@ closure_function(4, 1, void, p9_cache_sync_complete,
         else
             list_foreach(&fs->fsfiles, e) {
                 f = struct_from_list(e, p9_fsfile, l);
-                fss = v9p_fsync(transport, f->dentry->fid, datasync);
+                /* datasync without a file only marks a reclaim sync */
+                fss = v9p_fsync(transport, f->dentry->fid, false);
                 if (fss != 0)
                     break;
             }
