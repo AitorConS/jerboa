@@ -6,12 +6,13 @@ import "fmt"
 
 // Disk I/O engines (Config.DiskIOEngine).
 const (
-	// DiskIOEngineSync performs blocking host I/O on the VMM's device thread.
-	// It is the default: no kernel requirements and the lowest startup cost.
+	// DiskIOEngineSync performs blocking host I/O on the VMM's device thread,
+	// one request at a time. It has no kernel requirements.
 	DiskIOEngineSync = "sync"
-	// DiskIOEngineAsync submits host I/O through io_uring (Linux 5.10+). It can
-	// raise throughput for parallel or latency-sensitive workloads at the cost
-	// of extra host CPU and slightly slower device setup, so it is opt-in.
+	// DiskIOEngineAsync submits host I/O through io_uring (Linux 5.10+), so
+	// independent requests overlap on the host. Firecracker uses it by default
+	// on Linux hosts where io_uring works (measured on a KVM host: random 4K
+	// reads 4.9x, random writes +7%); elsewhere the default is sync.
 	DiskIOEngineAsync = "async"
 )
 
@@ -68,11 +69,15 @@ const (
 )
 
 // fcIOEngine maps Config.DiskIOEngine to Firecracker's io_engine value.
+// An empty DiskIOEngine selects the host default (defaultFCIOEngine).
 func fcIOEngine(cfg Config) string {
-	if cfg.DiskIOEngine == DiskIOEngineAsync {
+	switch cfg.DiskIOEngine {
+	case DiskIOEngineAsync:
 		return fcEngineAsync
+	case DiskIOEngineSync:
+		return fcEngineSync
 	}
-	return fcEngineSync
+	return defaultFCIOEngine()
 }
 
 // fcVolumeCacheType maps Config.VolumeCache to Firecracker's cache_type.

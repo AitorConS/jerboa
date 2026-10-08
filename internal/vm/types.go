@@ -193,7 +193,8 @@ type Config struct {
 	// DiskBPS is the maximum bytes per second for the boot disk. 0 means no limit.
 	DiskBPS int64
 	// DiskIOEngine selects the host block I/O engine for every drive:
-	// DiskIOEngineSync (default when empty) or DiskIOEngineAsync (io_uring).
+	// DiskIOEngineSync or DiskIOEngineAsync (io_uring). Empty selects the host
+	// default: async for Firecracker on Linux hosts where io_uring works.
 	DiskIOEngine string `json:"disk_io_engine,omitempty"`
 	// VolumeCache selects how volume drives treat guest flushes:
 	// VolumeCacheWriteback (default when empty) or VolumeCacheUnsafe.
