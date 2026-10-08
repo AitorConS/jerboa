@@ -1520,12 +1520,13 @@ static int tfs_pub_stage(struct tfs_pub *p)
     return 0;
 }
 
-static void tfs_pub_wake(vector waiters, boolean ok)
+/* fss: 0, or the negative errno the waiters fail with. */
+static void tfs_pub_wake(vector waiters, int fss)
 {
     status_handler sh;
     vector_foreach(waiters, sh)
-        async_apply_status_handler(sh, ok ? STATUS_OK :
-            timm("result", "data publication failed", "fsstatus", "%d", -EIO));
+        async_apply_status_handler(sh, fss == 0 ? STATUS_OK :
+            timm("result", "data publication failed", "fsstatus", "%d", fss));
     vector_clear(waiters);
 }
 
@@ -1549,7 +1550,7 @@ static void tfs_pub_start(tfs fs, boolean eager)
     if (t == INVALID_ADDRESS) {
         if (sh != INVALID_ADDRESS)
             deallocate_closure(sh);
-        tfs_pub_wake(fs->pub_waiters, false);
+        tfs_pub_wake(fs->pub_waiters, -EIO);
         return;
     }
     filesystem_reserve(&fs->fs);    /* the cycle */
@@ -1589,10 +1590,14 @@ static void tfs_pub_make_eager(tfs fs)
 }
 
 /* A covering flush succeeded (or failed): stage the cycle's publications.
- * Filesystem lock held. */
+ * A log without room to grow (ENOSPC) is not a storage failure: the
+ * publications not staged yet stay registered for a later cycle, which
+ * retries them once space is freed (staging is idempotent), and this cycle's
+ * waiters fail with ENOSPC. Any other failure stops publication for the
+ * volume. Filesystem lock held. */
 static void tfs_pub_finish(tfs fs)
 {
-    boolean ok = !fs->pub_error;
+    int fss = fs->pub_error ? -EIO : 0;
     int kept = 0, n = vector_length(fs->pubs);
     for (int i = 0; i < n; i++) {
         struct tfs_pub *p = vector_get(fs->pubs, i);
@@ -1601,10 +1606,21 @@ static void tfs_pub_finish(tfs fs)
             continue;
         }
         if (p->ex) {
-            if (ok && tfs_pub_stage(p) != 0) {
-                msg_err("TFS: failed to stage data publication");
-                fs->pub_error = true;
-                ok = false;
+            if (fss == 0) {
+                int r = tfs_pub_stage(p);
+                if (r == -ENOSPC) {
+                    msg_err("TFS: no log space to publish written data; retrying later");
+                    fss = r;
+                } else if (r != 0) {
+                    msg_err("TFS: failed to stage data publication (%d)", r);
+                    fs->pub_error = true;
+                    fss = -EIO;
+                }
+            }
+            if (fss == -ENOSPC) {
+                p->gen = fs->wgen;      /* the next cycle's generation */
+                vector_set(fs->pubs, kept++, p);
+                continue;
             }
             p->ex->pubs--;
         }
@@ -1622,7 +1638,7 @@ static void tfs_pub_finish(tfs fs)
     }
     fs->pub_flush = 0;
     fs->pub_flush_sh = 0;
-    tfs_pub_wake(fs->pub_waiters, ok);
+    tfs_pub_wake(fs->pub_waiters, fss);
     if (vector_length(fs->pub_next_waiters))
         tfs_pub_cycle(fs, 0);
     else if (vector_length(fs->pubs))
@@ -1650,11 +1666,11 @@ static void tfs_pub_cycle(tfs fs, status_handler sh)
     vector_clear(fs->pub_next_waiters);
     if (fs->pub_error) {
         tfs_pub_drop(fs);
-        tfs_pub_wake(fs->pub_waiters, false);
+        tfs_pub_wake(fs->pub_waiters, -EIO);
         return;
     }
     if (!vector_length(fs->pubs)) {
-        tfs_pub_wake(fs->pub_waiters, true);
+        tfs_pub_wake(fs->pub_waiters, 0);
         return;
     }
     tfs_pub_start(fs, true);
