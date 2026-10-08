@@ -191,6 +191,10 @@ static void virtio_storage_io_sg(storage st, boolean write, sg_list sg, range bl
     virtqueue vq = st->command;
     vqmsg msg;
     u32 desc_count;
+    u64 request_bytes;
+    /* Bound a request independently of physical SG coalescing. Native VMMs
+     * accept at most 4 MiB; a writeback wave may span many such requests. */
+    const u64 request_max = 4 * MB;
     merge m = 0;
     while (range_span(blocks)) {
         if (!req) {
@@ -204,15 +208,18 @@ static void virtio_storage_io_sg(storage st, boolean write, sg_list sg, range bl
             assert(msg != INVALID_ADDRESS);
             vqmsg_push(vq, msg, req_phys, VIRTIO_BLK_REQ_HEADER_SIZE, false);
             desc_count = 0;
+            request_bytes = 0;
         }
         sg_buf sgb = sg_list_head_peek(sg);
         u64 length = sg_buf_len(sgb);
         assert((length & (st->block_size - 1)) == 0);
         length = MIN(range_span(blocks) * st->block_size, length);
+        length = MIN(length, request_max - request_bytes);
+        request_bytes += length;
         vqmsg_push(vq, msg, physical_from_virtual(sgb->buf + sgb->offset), length, !write);
         sg_consume(sg, length);
         blocks.start += length / st->block_size;
-        if (++desc_count == st->seg_max) {
+        if (++desc_count == st->seg_max || request_bytes == request_max) {
             if (!m && range_span(blocks)) {
                 m = allocate_merge(h, sh);
                 sh = apply_merge(m);
@@ -299,8 +306,14 @@ static void virtio_blk_attach(heap general, storage_attach a, vtdev v)
     virtio_blk_debug("%s: capacity 0x%lx, block size 0x%x\n", func_ss, s->capacity, s->block_size);
     virtio_alloc_virtqueue(v, ss("virtio blk"), 0, &s->command);
 
-    s->seg_max = (v->features & VIRTIO_BLK_F_SEG_MAX) ?
+    /* Every request also needs a header and a status descriptor. A device's
+     * advertised segment limit may exceed the selected queue size; such a
+     * message would sit at the head of virtqueue_fill forever. */
+    u32 queue_entries = virtqueue_entries(s->command);
+    assert(queue_entries > 2);
+    u32 device_seg_max = (v->features & VIRTIO_BLK_F_SEG_MAX) ?
             vtdev_cfg_read_4(v, VIRTIO_BLK_R_SEG_MAX) : 1;
+    s->seg_max = MIN(MAX(device_seg_max, 1), queue_entries - 2);
     if (v->features & VIRTIO_BLK_F_FLUSH) {
         if (v->features & VIRTIO_BLK_F_CONFIG_WCE)
             vtdev_cfg_write_1(v, VIRTIO_BLK_R_WRITEBACK, 1 /* writeback */);

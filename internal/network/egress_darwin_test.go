@@ -64,6 +64,36 @@ func TestEgressConcurrentReservationAndClose(t *testing.T) {
 	require.Empty(t, p.counts)
 }
 
+func TestPublishedFlowsHaveIndependentCapacity(t *testing.T) {
+	p := newEgressPool()
+	p.activateSource("vm")
+	var published []*nativeFlow
+	for range maxPublishedFlowsPerVM {
+		f := p.reserveTagged("vm", "tcp/127.0.0.1:6379")
+		require.NotNil(t, f)
+		published = append(published, f)
+	}
+	require.Nil(t, p.reserveTagged("vm", "tcp/127.0.0.1:6379"))
+
+	// wrk uses 100 concurrent connections; Redis can briefly overlap old and
+	// new sets of 50 connections while moving to the next command.
+	for range maxEgressFlowsPerVM {
+		require.NotNil(t, p.reserve("vm"))
+	}
+	require.Nil(t, p.reserve("vm"))
+
+	for _, f := range published {
+		f.close()
+	}
+	require.Empty(t, p.publishedCounts)
+	require.Zero(t, p.publishedTotal)
+	require.NotNil(t, p.reserveTagged("vm", "tcp/127.0.0.1:6379"))
+	p.closeSource("vm")
+	require.Empty(t, p.flows)
+	require.Empty(t, p.counts)
+	require.Empty(t, p.publishedCounts)
+}
+
 func TestPublishedConnectionClosedWhenVMRemoved(t *testing.T) {
 	n, err := NewNativeNetworkWithPolicy("172.29.0.0/24", "172.29.0.1", nil, func(string, string, uint16, bool) bool { return false })
 	require.NoError(t, err)

@@ -74,3 +74,32 @@ reboot, ENOSPC and four-job fio also pass. Sustained 60-second network matrices
 are `/tmp/jr-followup-final` and Linux `runs/followup-events`; the final macOS
 build additionally completed `/tmp/jr-delivery`. Raw values, hashes and known
 limits are retained in the report and JSON. No installed runtime was replaced.
+
+## Page-cache eligible-list candidate (2026-09-27)
+
+- [x] Add a filtered page list that preserves full-list ordering and state
+  transitions while avoiding repeated walks over already-evicted pages.
+- [x] Add a production-source host model with ASan/UBSan and run it as part of
+  `make test-kernel`.
+- [x] Run the full `make test-kernel` suite and build the ARM64 kernel image.
+- [x] Split shared-read-after-COW from the two-thread schedule reproducer; pass
+  both on macOS QEMU/HVF with base and candidate at 128 MiB.
+- [x] Run the corrected 384 MiB pressure/writeback case and reboot verification
+  on macOS QEMU/HVF with base and candidate, using 128 MiB and 4 vCPU.
+- [ ] Repeat the guest regressions on Linux with identical resources.
+- [ ] Measure three interleaved original disk benchmark pairs per host against
+  the base revision; do not accept the optimization before this comparison.
+
+The host model passed with digest `13880411418874934453`; the ARM64 kernel
+linked successfully. The first mapped-pressure test used an entire writable
+shared VMA for read-only inspection. ARM64 conservatively marks writable PTEs
+dirty, so the memory cleaner scanned and wrote back untouched pages; GDB located
+the work in `mem_service -> storage_sync -> pagecache_scan_shared_mappings`.
+The test now keeps the mapping read-only until it writes one page. Isolated
+shared-read-after-COW and two-thread tests pass on both the base (`25aa0b7`) and
+candidate (`843f45c`). Full two-phase pressure and reboot checks pass on both
+with 128 MiB and 4 vCPU; raw logs are under `/tmp/jr-pagecache-baseline-home/`
+and `/tmp/jr-pagecache-eligible-home/`. The subsequent default `webg` image
+fixture still fails because `/etc/ld.so.cache` is absent from its configured
+sysroot, before guest execution. Linux guest runs and disk benchmark pairs are
+outstanding, so the optimization remains unaccepted pending performance data.

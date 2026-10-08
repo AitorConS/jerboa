@@ -12,6 +12,7 @@ cc -O2 -Wall -Wextra -static -pthread clock.c -o clock
 cc -O2 -Wall -Wextra -static -pthread disk_pressure.c -o disk-pressure
 cc -O2 -Wall -Wextra -static -pthread random_write.c -o random-write
 cc -O2 -Wall -Wextra -static -pthread tcp_stream.c -o tcp-stream
+cc -O2 -Wall -Wextra -static -pthread tcp_receive_small.c -o tcp-receive-small
 ```
 
 On macOS use a Linux cross compiler or a Linux build container. Native macOS
@@ -49,6 +50,12 @@ that ELF debug sections cannot displace the vvar page:
 python3 tests/guest/test_vdsogen.py kernel/output/tools/bin/vdsogen
 ```
 
+The page-cache eviction-list regression model runs as part of `make test-kernel`.
+It compiles the production list and state-transition helpers with ASan/UBSan and
+checks eligible-page ordering while references, writeback and page states change.
+This host test complements, but does not replace, guest memory-pressure and
+storage-integrity runs.
+
 For the original applications, `scripts/benchmark-regressions.py` creates its own
 daemon, home directory, images, network and volumes. It requires explicitly
 supplied local tools and packages. It checks all four fio jobs and complete
@@ -57,6 +64,20 @@ iperf3 intervals; partial results are failures. See its `--help` for arguments.
 `tcp_stream.c` checks a 16 MiB stream byte for byte, using large writes and
 128 KiB reads to exercise send-buffer limits and receive-window credit. Run it
 with a fresh work directory and `--expect 'TCP STREAM PASS'`.
+
+`tcp_receive_small.c` sets a small receive buffer on a listening socket, checks
+that the accepted socket inherits it, delays its first read, then verifies a
+4 MiB stream and EOF byte for byte. Run it with a fresh work directory and
+`--expect 'TCP SMALL RECEIVE PASS'`.
+Its 30-second alarm makes a retained-pbuf deadlock fail rather than hang.
+Compile a second variant with `-DSEND_CHUNK=128 -DTEST_TIMEOUT=90` to exercise
+small segments and receive queue slots with the same byte and EOF checks.
+`-DCLIENT_SMALL` also sets the client receive budget before `connect()` and
+checks its TCP window clamp. `-DSHRINK_AFTER_CONNECT -DTEST_TIMEOUT=45` shrinks
+the accepted socket after data was sent under the old window;
+`-DGROW_AFTER_SHRINK` restores the larger budget after one read. Both variants
+verify the complete stream and EOF. Set `-DEXPECT_PRE_CLAMP=212992` with the
+default-window kernel to assert the window in the shrink variants.
 
 The application runner also accepts `--cases memory,startup --docker-image
 bench-tools:latest`. The Docker image must already be present and contain the
@@ -83,6 +104,34 @@ boot the same disk with `--reuse-disk` and expect `TRUNCATE RESTART PASS`.
 ENOSPC, shrinks and regrows both an allocated file and a sparse file, and checks
 every byte. Expect
 `TRUNCATE ENOSPC PASS`, then `TRUNCATE ENOSPC RESTART PASS` after reboot.
+
+`pagecache_mapped_pressure.c` has three modes. `single` isolates shared reads
+after private COW; `threads` exercises the two-thread read/yield schedule; `full`
+adds two 384 MiB write/fsync pressure phases and checks private isolation,
+visibility through a second shared mapping, file contents, and the same data
+after reboot. The shared map starts read-only. The full case makes only the
+written page writable, avoiding false dirty tracking of untouched pages on
+ARM64 while retaining the shared-write and writeback checks.
+
+Compile it as a static guest executable and run the two isolated reproductions
+with fresh work directories:
+
+```sh
+cc -O2 -Wall -Wextra -static -pthread tests/guest/pagecache_mapped_pressure.c -o ./pagecache-mapped-pressure
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-single --disk-size 1G --memory 128 --cpus 4 --expect 'MAPPED SINGLE-THREAD REPRO PASS' single
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-threads --disk-size 1G --memory 128 --cpus 2 --expect 'MAPPED TWO-THREAD REPRO PASS' threads
+```
+
+For the full pressure case, run twice with the same work directory and disk:
+
+```sh
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-full --disk-size 1G --memory 128 --cpus 4 --expect 'MAPPED PRESSURE PASS' full
+python3 tests/guest/run.py --kernel "$KERNEL" --mkfs "$MKFS" --firecracker "$FIRECRACKER" --program ./pagecache-mapped-pressure --work /tmp/pagecache-full --memory 128 --cpus 4 --reuse-disk --expect 'MAPPED PRESSURE RESTART PASS' full
+```
+
+The second boot verifies the synced shared-file byte and all untouched bytes;
+the guest does not rely on a newly created empty marker file surviving a reboot.
+
 The original, smaller reproducer remains at `known_issues/truncate.c` as a
 before/after control; it is no longer the full regression matrix.
 
@@ -92,3 +141,39 @@ results and reports measured loss; completion does not imply meeting the offered
 rate. On macOS it also records Firecracker metrics once per second in
 `network-metrics.json`. Default native quotas remain enabled. Run measurements
 without other benchmark guests or Docker workloads on that host.
+
+`large_write.c` writes and verifies 128 MiB in 16 MiB application writes. Run it
+with `--memory 2048` and expect `LARGE WRITE PASS`, then boot the same disk with
+`--reuse-disk --memory 2048` and expect `LARGE WRITE RESTART PASS`. This exercises
+large contiguous writeback waves, which must be split into virtio requests no
+larger than the native VMM's 4 MiB request limit.
+
+## Secondary volume startup
+
+Compile `volume_mount.c` as a static guest executable. Run with `--disk-size 64M
+--volume-size 1G --expect 'VOLUME MOUNT PASS'`; the runner creates an independent
+TFS volume and supplies its mount through fw_cfg on macOS or boot arguments on
+Linux. The program checks `/data` immediately, without retries, then writes,
+flushes and reads a marker. Its volume must be larger than the root disk.
+
+For a deterministic negative control, use a test VMM that delays completion of
+the secondary disk's initial read while continuing root-disk processing. The old
+kernel starts the program before that probe completes, so both statvfs sizes are
+equal and the assertion fails. The fixed kernel waits for probes and mounts.
+Do not use a delayed test VMM for performance measurements. Repeat with the
+normal VMM and `--reuse-disk` to check subsequent boots.
+
+`extend_gap.c` checks that writing past EOF never exposes earlier contents of
+the blocks a file is extended over: its own tail freed by a truncate, and a
+deleted file's blocks. Run it with a 256 MiB disk and argument `clean`
+(`EXTEND GAP PASS`, then `--reuse-disk` for `EXTEND GAP RESTART PASS`), and
+with `crash`: once `EXTEND GAP CRASH POINT` appears, kill the VMM (for example
+with `--timeout`), then reboot the same disk for `EXTEND GAP CRASH PASS`.
+
+`uninit_integrity.c` fills freed blocks with a stale pattern, then checks a
+fallocated file through partial, overlapping and concurrent writes, truncate
+and regrow, byte for byte. Use a 512 MiB disk and 256 MiB RAM. Modes `full`
+(`UNINIT INTEGRITY PASS`, then `UNINIT INTEGRITY RESTART PASS`), `post`
+(synced writes into the regrown range: `UNINIT POST PASS`, then
+`UNINIT POST RESTART PASS`) and `crash` (kill the VMM after
+`UNINIT CRASH POINT`, reboot for `UNINIT CRASH VERIFY PASS`).

@@ -56,7 +56,8 @@
 #endif // defined(VIRTIO_NET_DEBUG)
 
 #define VIRTIO_NET_DRV_FEATURES \
-    (VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_MAC | VIRTIO_NET_F_GUEST_TSO4 |         \
+    (VIRTIO_NET_F_GUEST_CSUM | VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4 |      \
+     VIRTIO_NET_F_MAC | VIRTIO_NET_F_GUEST_TSO4 |         \
      VIRTIO_NET_F_GUEST_TSO6 | VIRTIO_NET_F_GUEST_ECN | VIRTIO_NET_F_GUEST_UFO |    \
      VIRTIO_NET_F_MRG_RXBUF | VIRTIO_F_ANY_LAYOUT | VIRTIO_F_RING_EVENT_IDX |       \
      VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_MQ)
@@ -67,6 +68,29 @@ typedef struct vnet_rx {
     struct virtio_net_hdr_mrg_rxbuf *hdr;
 } *vnet_rx;
 
+#define VNET_GSO_MAX_FRAME 60000
+#define VNET_GSO_MAX_SEGMENTS 32
+#define VNET_GSO_MAX_HEADER 94
+#define VNET_GSO_RESERVE (VNET_GSO_MAX_FRAME + 12 + VNET_TX_PACKET_OVERHEAD)
+
+typedef struct vnet_gso_batch {
+    struct vnet_gso_batch *next;
+    context owner;
+    u64 depth;
+    boolean disabled;
+    u8 count;
+    u8 header_len;
+    u16 mss;
+    u16 next_ip_id;
+    u32 next_seq;
+    u32 frame_len;
+    void *buffer;
+    u64 phys;
+    vqmsg msg;
+    vqfinish complete;
+    virtqueue txq;
+} vnet_gso_batch;
+
 typedef struct vnet {
     struct netif_dev ndev;
     vtdev dev;
@@ -74,6 +98,8 @@ typedef struct vnet {
     caching_heap rxbuffers;
     caching_heap txhandlers;
     u64 tx_queued_bytes; /* atomic, includes software-queued and in-flight packets */
+    struct spinlock gso_lock;
+    vnet_gso_batch *gso_batches; /* keyed by current context, one per caller */
     closure_struct(mem_cleaner, mem_cleaner);
     bytes net_header_len;
     int rxbuflen;
@@ -118,7 +144,7 @@ closure_function(2, 1, void, tx_complete,
 }
 
 
-static err_t low_level_output(struct netif *netif, struct pbuf *p)
+static err_t low_level_output_scalar(struct netif *netif, struct pbuf *p)
 {
     vnet vn = netif->state;
 
@@ -172,6 +198,8 @@ static err_t low_level_output(struct netif *netif, struct pbuf *p)
      * TCP retransmits; UDP loss remains observable by the receiver. */
     return ERR_OK;
 }
+
+#include "virtio_net_gso.inc"
 
 static vqmsg vnet_rxq_push(vnet vn, xpbuf x, int *desc_count)
 {
@@ -582,6 +610,8 @@ static void virtio_net_attach(vtdev dev)
     vnet vn = allocate(h, sizeof(struct vnet));
     assert(vn != INVALID_ADDRESS);
     vn->tx_queued_bytes = 0;
+    spin_lock_init(&vn->gso_lock);
+    vn->gso_batches = 0;
     init_closure_func(&vn->ndev.setup, netif_dev_setup, virtio_net_setup);
     vn->net_header_len = (dev->features & VIRTIO_F_VERSION_1) ||
         (dev->features & VIRTIO_NET_F_MRG_RXBUF) != 0 ?

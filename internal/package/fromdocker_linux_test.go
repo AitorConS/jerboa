@@ -41,22 +41,37 @@ func TestElfClosure_RealDynamicBinary(t *testing.T) {
 	require.NotEmpty(t, info.needed, "chosen binary must have DT_NEEDED libraries")
 
 	// Assemble the tar: the binary and interpreter at their real paths, plus each
-	// direct DT_NEEDED library located under the standard search dirs.
+	// transitive DT_NEEDED library located under the standard search dirs.
+	// Some hosts link even coreutils against libselinux, whose own dependencies
+	// must be present for this to represent a complete exported filesystem.
 	type realFile struct{ guest, host string }
 	realFiles := []realFile{
 		{strings.TrimPrefix(bin, "/"), bin},
 		{strings.TrimPrefix(interp, "/"), interp},
 	}
 	libGuestPaths := map[string]bool{}
-	for _, soname := range info.needed {
-		for _, dir := range defaultLibDirs {
-			hp := filepath.Join(dir, soname)
-			if st, statErr := os.Stat(hp); statErr == nil && !st.IsDir() {
-				gp := strings.TrimPrefix(hp, "/")
-				realFiles = append(realFiles, realFile{gp, hp})
-				libGuestPaths[gp] = true
-				break
+	seen := map[string]bool{bin: true, interp: true}
+	for i := 0; i < len(realFiles); i++ {
+		data, err := os.ReadFile(realFiles[i].host)
+		require.NoError(t, err)
+		dependencyInfo, err := readELFInfo(data)
+		require.NoError(t, err)
+		for _, soname := range dependencyInfo.needed {
+			found := false
+			for _, dir := range defaultLibDirs {
+				hp := filepath.Join(dir, soname)
+				if st, statErr := os.Stat(hp); statErr == nil && !st.IsDir() {
+					gp := strings.TrimPrefix(hp, "/")
+					if !seen[hp] {
+						realFiles = append(realFiles, realFile{gp, hp})
+						seen[hp] = true
+					}
+					libGuestPaths[gp] = true
+					found = true
+					break
+				}
 			}
+			require.Truef(t, found, "fixture missing dependency %s of %s", soname, realFiles[i].host)
 		}
 	}
 	require.NotEmpty(t, libGuestPaths, "expected to locate at least one needed library on the host")

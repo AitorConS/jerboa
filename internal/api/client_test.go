@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net"
@@ -10,6 +11,50 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/stretchr/testify/require"
 )
+
+func TestClientAttachTerminalStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  string
+	}{
+		{name: "clean"},
+		{name: "guest failure", err: "HVF guest exit: Exited, code 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer ln.Close()
+			go func() {
+				conn, acceptErr := ln.Accept()
+				if acceptErr != nil {
+					return
+				}
+				defer conn.Close()
+				var req api.Request
+				if json.NewDecoder(conn).Decode(&req) != nil {
+					return
+				}
+				_ = json.NewEncoder(conn).Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"framed":true}`)})
+				frames := api.NewFrameWriter(conn)
+				_, _ = frames.Write([]byte("guest output\n"))
+				_ = frames.Close()
+				_ = json.NewEncoder(conn).Encode(api.AttachResult{Done: true, Error: tc.err})
+			}()
+			t.Setenv("JERBOA_AUTH_TOKEN", "")
+			client, err := api.Dial("tcp://" + ln.Addr().String())
+			require.NoError(t, err)
+			defer client.Close()
+			var output bytes.Buffer
+			err = client.Attach(context.Background(), "vm", &output)
+			require.Equal(t, "guest output\n", output.String())
+			if tc.err == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.err)
+			}
+		})
+	}
+}
 
 // startStubServer accepts JSON-RPC connections and replies with canned results.
 // Daemon.Version returns a real string (exercising result unmarshalling); any

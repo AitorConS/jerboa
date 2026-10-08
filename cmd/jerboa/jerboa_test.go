@@ -44,6 +44,7 @@ func startDaemon(t *testing.T) (*api.Client, string) {
 // rooted at storePath, so Image.List/Remove and run-by-ref operate on it.
 func startDaemonWithStore(t *testing.T, storePath string) (*api.Client, string) {
 	t.Helper()
+	isolateDaemonTestConfig(t)
 	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	netStore, err := network.NewStore(t.TempDir())
@@ -69,6 +70,14 @@ func startDaemonWithStore(t *testing.T, storePath string) (*api.Client, string) 
 	}, testTimeout, dialPoll, "daemon did not start")
 	t.Cleanup(func() { _ = client.Close() })
 	return client, socketPath
+}
+
+// These fixtures have no authentication service. Keep the installed client's
+// token (including one loaded from ~/.jerboa/config.toml) out of their requests.
+func isolateDaemonTestConfig(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("JERBOA_AUTH_TOKEN", "")
 }
 
 // execRoot runs the root cobra command with the given args and returns stdout.

@@ -33,8 +33,16 @@ vdso_pvclock_now_ns(volatile struct pvclock_vcpu_time_info * vclock)
     do {
         /* mask update-in-progress so we don't match */
         version = vclock->version & ~1;
+#ifdef __x86_64__
+        /* The pvclock page is cached shared memory: x86 load ordering plus
+         * a compiler barrier protects its versioned fields. Serialize the
+         * counter itself with RDTSCP or LFENCE/RDTSC as appropriate. */
+        smp_read_barrier();
+        u64 delta = rdtsc_ordered() - vclock->tsc_timestamp;
+#else
         read_barrier();
         u64 delta = rdtsc() - vclock->tsc_timestamp;
+#endif
         if (vclock->tsc_shift < 0) {
             delta >>= -vclock->tsc_shift;
         } else {
@@ -45,7 +53,11 @@ vdso_pvclock_now_ns(volatile struct pvclock_vcpu_time_info * vclock)
            regress */
         result = vclock->system_time +
             (((u128)delta * vclock->tsc_to_system_mul) >> 32);
+#ifdef __x86_64__
+        smp_read_barrier();
+#else
         read_barrier();
+#endif
     } while (version != vclock->version);
     return result;
 }

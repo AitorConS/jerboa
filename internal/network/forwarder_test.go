@@ -157,3 +157,54 @@ func TestForwarderCloseWithIdleConnection(t *testing.T) {
 		t.Fatal("Close blocked on idle connection")
 	}
 }
+
+func TestForwarderPreservesResponseAfterClientHalfClose(t *testing.T) {
+	backend, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer backend.Close()
+	serverDone := make(chan error, 1)
+	go func() {
+		c, err := backend.Accept()
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		defer c.Close()
+		_ = c.SetDeadline(time.Now().Add(3 * time.Second))
+		request, err := io.ReadAll(c)
+		if err == nil && string(request) != "request" {
+			err = fmt.Errorf("got request %q", request)
+		}
+		if err == nil {
+			_, err = c.Write([]byte("final response"))
+		}
+		serverDone <- err
+	}()
+
+	f, err := StartForwarder("127.0.0.1", []PortForward{{HostPort: 0, GuestPort: uint16(backend.Addr().(*net.TCPAddr).Port), BindAddr: "127.0.0.1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	client, err := net.Dial("tcp", f.listeners[0].Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_ = client.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := client.Write([]byte("request")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.(*net.TCPConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	response, err := io.ReadAll(client)
+	if err != nil || string(response) != "final response" {
+		t.Fatalf("response %q: %v", response, err)
+	}
+	if err := <-serverDone; err != nil {
+		t.Fatal(err)
+	}
+}

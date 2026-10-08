@@ -103,6 +103,12 @@ Key flags:
 
 Notes:
 
+- `--attach` requests an opt-in framed `VM.Attach` stream: console bytes remain
+  separate from a terminal result, so a failed VM makes the CLI exit nonzero.
+  Older daemons still send raw console bytes and cannot report terminal status
+  through attach. On ARM Firecracker, a nonzero guest exit is signaled through
+  pvpanic and currently surfaces as a generic error (CLI status 1), not the
+  guest's exact exit code.
 - Port publishing requires `--network` on Linux and Windows. On macOS, `-p` works without it.
 - Every VM on a managed network gets a guest IP: `--ip` pins it, otherwise the daemon's IPAM allocates the next free address from the network's subnet.
 - TCP forwarding works today.

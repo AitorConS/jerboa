@@ -61,6 +61,9 @@ closure_func_basic(timer_handler, void, dispatch_lwip_timer,
     rprintf("lwIP: dispatching timer\n");
 #endif
     sys_check_timeouts();
+    /* TCP timers can retransmit or send delayed ACKs on a loopback netif.
+     * Poll packets queued by those outputs even when both sockets sleep. */
+    netsock_check_loop();
     timestamp next_expiry = milliseconds(sys_timeouts_sleeptime());
     register_timer(kernel_timers, &net_timer.t, CLOCK_ID_MONOTONIC, next_expiry, false, 0,
                    (timer_handler)closure_self());

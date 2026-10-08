@@ -41,3 +41,6 @@ bytes netif_name_cpy(char *dest, struct netif *netif);
                                  ARPHRD_VOID)
 
 extern int (*net_ip_input_filter)(struct pbuf *pbuf, struct netif *input_netif);
+
+/* Schedule polling of packets queued on lwIP loopback netifs. */
+void netsock_check_loop(void);

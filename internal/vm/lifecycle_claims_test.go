@@ -4,11 +4,40 @@ package vm
 
 import (
 	"context"
+	"io"
+	"strings"
 	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestAttachSessionSurvivesRestoreGeneration(t *testing.T) {
+	oldDone := make(chan struct{})
+	close(oldDone)
+	v := &VM{ID: "vm", State: StateStopped, done: oldDone,
+		logPipeReader: strings.NewReader("old")}
+	oldSession := v.AttachSession()
+	require.NoError(t, v.beginRestore())
+	v.mu.Lock()
+	v.logPipeReader = strings.NewReader("new")
+	v.mu.Unlock()
+	newSession := v.AttachSession()
+	require.NotSame(t, oldSession, newSession)
+	oldOutput, err := io.ReadAll(oldSession.Reader)
+	require.NoError(t, err)
+	require.Equal(t, "old", string(oldOutput))
+	select {
+	case <-oldSession.Done:
+	default:
+		t.Fatal("old run must remain complete")
+	}
+	select {
+	case <-newSession.Done:
+		t.Fatal("restored run must remain open")
+	default:
+	}
+}
 
 func TestLifecycleClaimsExclusive(t *testing.T) {
 	var c lifecycleClaims

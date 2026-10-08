@@ -166,6 +166,8 @@ cmd_contgen=	$(CONTGEN) 10 10 >$@
 
 msg_vendor=	VENDOR	$@
 cmd_vendor=	$(RM) -r $(@D) && $(GIT) clone $(GITFLAGS) $(@D) && \
+	([ -z "$(GITREV)" ] || ($(GIT) -C $(@D) fetch --depth 1 origin $(GITREV) && \
+	 $(GIT) -C $(@D) checkout --detach $(GITREV))) && \
 	([ ! -f $(PATCHDIR)/$(notdir $(@D)).patch ] || (tr -d '\r' < $(PATCHDIR)/$(notdir $(@D)).patch | patch -p1 -d$(@D))) && $(TOUCH) $@
 
 ##############################################################################

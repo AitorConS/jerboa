@@ -1,6 +1,7 @@
 package network
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
@@ -15,6 +16,7 @@ const (
 	maxEthernetFrame    = 65536
 	ethernetQueueFrames = 256
 	ethernetQueueBytes  = 4 * 1024 * 1024
+	ethernetWriteWait   = 100 * time.Millisecond
 )
 
 // ethernetConn validates before gvproxy allocates a frame or learns its source.
@@ -23,9 +25,11 @@ type ethernetConn struct {
 	net.Conn
 	ip          net.IP
 	mac         net.HardwareAddr
+	reader      *bufio.Reader
 	frame       [maxEthernetFrame + 4]byte
 	pending     []byte
 	writes      chan []byte
+	space       chan struct{}
 	queuedBytes atomic.Int64
 	done        chan struct{}
 	once        sync.Once
@@ -33,7 +37,10 @@ type ethernetConn struct {
 
 func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
 	hw, _ := net.ParseMAC(mac)
-	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, ethernetQueueFrames), done: make(chan struct{})}
+	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, ethernetQueueFrames), space: make(chan struct{}, 1), done: make(chan struct{})}
+	// Read ahead within a fixed budget so framing does not require three socket
+	// reads for every packet. Source validation still precedes switch delivery.
+	e.reader = bufio.NewReaderSize(c, maxEthernetFrame+4)
 	go e.writer()
 	return e
 }
@@ -49,18 +56,18 @@ func (e *ethernetConn) Read(b []byte) (int, error) {
 	for len(e.pending) == 0 {
 		// Idle links may stay open indefinitely; incomplete frames have a deadline.
 		e.Conn.SetReadDeadline(time.Time{})
-		if _, err := io.ReadFull(e.Conn, e.frame[:1]); err != nil {
+		if _, err := io.ReadFull(e.reader, e.frame[:1]); err != nil {
 			return 0, err
 		}
 		e.Conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		if _, err := io.ReadFull(e.Conn, e.frame[1:4]); err != nil {
+		if _, err := io.ReadFull(e.reader, e.frame[1:4]); err != nil {
 			return 0, err
 		}
 		size := binary.BigEndian.Uint32(e.frame[:4])
 		if size < 14 || size > maxEthernetFrame {
 			return 0, fmt.Errorf("invalid Ethernet frame length %d", size)
 		}
-		if _, err := io.ReadFull(e.Conn, e.frame[4:4+size]); err != nil {
+		if _, err := io.ReadFull(e.reader, e.frame[4:4+size]); err != nil {
 			return 0, err
 		}
 		if !e.validSource(e.frame[4 : 4+size]) {
@@ -98,17 +105,47 @@ func (e *ethernetConn) Write(b []byte) (int, error) {
 	default:
 	}
 	// Reserve before copying so concurrent switch writers share one byte limit.
+	// A full queue must push back on the switch rather than silently dropping
+	// TCP frames. The wait is bounded so a stalled guest cannot stop the switch.
 	size := int64(len(b))
-	if e.queuedBytes.Add(size) > ethernetQueueBytes {
-		e.queuedBytes.Add(-size)
-		return len(b), nil
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	wait := func() <-chan time.Time {
+		if timer == nil {
+			timer = time.NewTimer(ethernetWriteWait)
+		}
+		return timer.C
 	}
+	for {
+		queued := e.queuedBytes.Load()
+		if queued+size <= ethernetQueueBytes && e.queuedBytes.CompareAndSwap(queued, queued+size) {
+			break
+		}
+		select {
+		case <-e.space:
+		case <-e.done:
+			return 0, net.ErrClosed
+		case <-wait():
+			_ = e.Close()
+			return 0, fmt.Errorf("Ethernet link write queue stalled")
+		}
+	}
+	frame := append([]byte(nil), b...)
 	select {
-	case e.writes <- append([]byte(nil), b...):
-	default:
+	case e.writes <- frame:
+		return len(b), nil
+	case <-e.done:
 		e.queuedBytes.Add(-size)
-	} // drop whole frames under backpressure
-	return len(b), nil
+		return 0, net.ErrClosed
+	case <-wait():
+		e.queuedBytes.Add(-size)
+		_ = e.Close()
+		return 0, fmt.Errorf("Ethernet link write queue stalled")
+	}
 }
 func (e *ethernetConn) writer() {
 	defer e.Close()
@@ -127,6 +164,10 @@ func (e *ethernetConn) writer() {
 				b = b[n:]
 			}
 			e.queuedBytes.Add(-size)
+			select {
+			case e.space <- struct{}{}:
+			default:
+			}
 		}
 	}
 }

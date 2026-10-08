@@ -1,14 +1,62 @@
 package network
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"io"
 	"net"
 	"testing"
 	"time"
 )
+
+func TestEthernetCoalescedFramesPreserveSourceValidation(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "172.20.0.2", "02:01:02:03:04:05")
+	t.Cleanup(func() { c.Close(); b.Close() })
+	frame := func(size int, source byte) []byte {
+		f := make([]byte, size+4)
+		binary.BigEndian.PutUint32(f, uint32(size))
+		copy(f[10:16], c.mac)
+		binary.BigEndian.PutUint16(f[16:18], 0x0800)
+		f[18] = 0x45
+		copy(f[30:34], c.ip)
+		f[33] = source
+		return f
+	}
+	valid := frame(34, 2)
+	large := frame(maxEthernetFrame, 2)
+	spoofed := frame(34, 3)
+	wire := bytes.Join([][]byte{spoofed, valid, large, spoofed, valid}, nil)
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.Write(wire)
+		b.Close()
+		done <- err
+	}()
+	// Small caller buffers also exercise pending bytes across frame boundaries.
+	var got bytes.Buffer
+	_, err := io.CopyBuffer(struct{ io.Writer }{&got}, c, make([]byte, 7))
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	require.Equal(t, bytes.Join([][]byte{valid, large, valid}, nil), got.Bytes())
+}
+
+func TestEthernetBufferedTruncatedFrameFails(t *testing.T) {
+	for _, wire := range [][]byte{{0}, {0, 0, 0}, {0, 0, 0, 14, 1, 2}} {
+		t.Run(fmt.Sprintf("bytes-%d", len(wire)), func(t *testing.T) {
+			a, b := net.Pipe()
+			c := newEthernetConn(a, "", "")
+			t.Cleanup(func() { c.Close(); b.Close() })
+			go func() { b.Write(wire); b.Close() }()
+			n, err := c.Read(make([]byte, 18))
+			require.Error(t, err)
+			require.Zero(t, n)
+		})
+	}
+}
 
 func TestEthernetRejectsUnboundedFrames(t *testing.T) {
 	for _, size := range []uint32{0, 13, 65537, 0xffffffff} {
@@ -68,13 +116,19 @@ func TestEthernetSplitFrameAndSlowWriter(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Equal(t, frame, <-done)
-	// A stalled switch consumer cannot block another VM or grow without bound.
+	// A stalled guest is disconnected within a bounded wait instead of silently
+	// losing frames or blocking other switch users indefinitely.
 	start := time.Now()
+	var writeErr error
 	for range 1000 {
 		n, err := c.Write(frame)
-		require.NoError(t, err)
+		if err != nil {
+			writeErr = err
+			break
+		}
 		require.Equal(t, len(frame), n)
 	}
+	require.Error(t, writeErr)
 	require.Less(t, time.Since(start), time.Second)
 	require.LessOrEqual(t, len(c.writes), ethernetQueueFrames)
 }
@@ -96,11 +150,44 @@ func TestEthernetWriterBoundsBytesUnderLargeFrameBurst(t *testing.T) {
 	defer c.Close()
 	frame := make([]byte, maxEthernetFrame+4)
 	binary.BigEndian.PutUint32(frame, maxEthernetFrame)
+	var writeErr error
 	for range 1000 {
 		n, err := c.Write(frame)
-		require.NoError(t, err)
+		if err != nil {
+			writeErr = err
+			break
+		}
 		require.Equal(t, len(frame), n)
 	}
+	require.Error(t, writeErr)
 	require.LessOrEqual(t, c.queuedBytes.Load(), int64(ethernetQueueBytes))
 	require.Less(t, len(c.writes), ethernetQueueFrames)
+}
+
+func TestEthernetWriterBackpressureDeliversQueuedFrames(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "", "")
+	defer c.Close()
+	defer b.Close()
+	frame := make([]byte, 18)
+	binary.BigEndian.PutUint32(frame, 14)
+	_, err := c.Write(frame)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(c.writes) == 0 }, time.Second, time.Millisecond)
+	for range ethernetQueueFrames {
+		_, err := c.Write(frame)
+		require.NoError(t, err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := c.Write(frame); done <- err }()
+	select {
+	case err := <-done:
+		t.Fatalf("write bypassed full queue: %v", err)
+	case <-time.After(10 * time.Millisecond):
+	}
+	got := make([]byte, 2*len(frame))
+	_, err = io.ReadFull(b, got)
+	require.NoError(t, err)
+	require.NoError(t, <-done)
+	require.Equal(t, append(frame, frame...), got)
 }

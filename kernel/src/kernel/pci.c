@@ -447,9 +447,12 @@ void init_pci(kernel_heaps kh)
 {
     // should use the global node space
     virtual_page = (heap)heap_virtual_page(kh);
-    pci_bridges = allocate_rangemap(heap_general(kh));
+    /* Device discovery overlaps asynchronous disk callbacks after SMP starts.
+     * The PCI lock protects these collections, not the shared general heap. */
+    heap h = heap_locked(kh);
+    pci_bridges = allocate_rangemap(h);
     assert(pci_bridges != INVALID_ADDRESS);
-    devices = allocate_vector(heap_general(kh), 8);
-    drivers = allocate_vector(heap_general(kh), 8);
+    devices = allocate_vector(h, 8);
+    drivers = allocate_vector(h, 8);
     spin_lock_init(&pci_lock);
 }

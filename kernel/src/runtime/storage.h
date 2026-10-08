@@ -102,6 +102,8 @@ void init_volumes(heap h);
 void storage_set_root_fs(struct filesystem *root_fs);
 void storage_set_mountpoints(tuple mounts);
 boolean volume_add(u8 *uuid, char *label, void *priv, fs_init_handler init_handler, int attach_id);
+void storage_probe_begin(void);
+void storage_probe_end(void);
 void storage_when_ready(status_handler complete);
 void storage_sync(status_handler sh);
 
