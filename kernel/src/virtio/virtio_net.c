@@ -484,6 +484,16 @@ closure_func_basic(netif_dev_setup, boolean, virtio_net_setup,
     heap h = dev->general;
     heap contiguous = (heap)dev->contiguous;
     u64 max_vq_pairs, vq_pairs;
+    /* Without guest TSO or merged RX buffers each RX buffer holds one whole
+     * frame, sized for a 1500-byte MTU by default: a larger configured MTU
+     * (e.g. a host network with jumbo frames) needs buffers to match, or every
+     * larger frame is lost. */
+    u64 mtu;
+    if (config && get_u64(config, sym(mtu), &mtu) && mtu > 1500 && mtu < U64_FROM_BIT(16) &&
+        !(dev->features & VIRTIO_NET_F_MRG_RXBUF))
+        vn->rxbuflen = MAX(vn->rxbuflen, MIN(pad(vn->net_header_len + sizeof(struct eth_hdr) +
+                                                 sizeof(struct eth_vlan_hdr) + mtu, 8),
+                                             U16_MAX & ~0x7));
     if (dev->features & VIRTIO_NET_F_MQ) {
         max_vq_pairs = vtdev_cfg_read_2(dev, VIRTIO_NET_R_MAX_VQ);
         if (max_vq_pairs == 0) {

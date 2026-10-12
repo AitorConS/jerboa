@@ -59,7 +59,7 @@
 #define LWIP_CHKSUM_ALGORITHM   3
 
 #define LWIP_WND_SCALE 1
-#define TCP_MSS 1460            /* Assuming ethernet; may want to derive this */
+#define TCP_MSS 8960            /* Upper bound: segments use min(TCP_MSS, interface MTU - 40) */
 #define TCP_WND 0x34000         /* For maximum throughput should be the same as TCP_SND_BUF */
 #define TCP_SND_BUF 0x34000     /* Same as /proc/sys/net/core/wmem_default on Linux */
 #define TCP_SNDLOWAT (0xFFFE - (4 * TCP_MSS))   /* Unused, but needed to pass lwIP sanity checks */
