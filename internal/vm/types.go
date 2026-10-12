@@ -206,6 +206,15 @@ type Config struct {
 // bridge (a TAP can be enslaved to only one VM), so callers assign a per-VM
 // unique TapName. It falls back to NetworkName for configs/tests that predate
 // the TapName/NetworkName split, where the two were the same value.
+// bridge is the Linux bridge the VM's TAP joins (BridgeName, or the shared
+// default bridge).
+func (c Config) bridge() string {
+	if c.BridgeName != "" {
+		return c.BridgeName
+	}
+	return "jerboa-br0"
+}
+
 func (c Config) tapDevice() string {
 	if c.TapName != "" {
 		return c.TapName

@@ -326,7 +326,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// failure FAILS the run instead of leaving a "running" VM whose published port
 	// silently does not work.
 	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS == "linux" {
-		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		fwd, fwdErr := network.PublishPorts(v.Cfg.IPAddress, v.Cfg.bridge(), toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
 			return fmt.Errorf("firecracker start %s: publish ports: %w", id, fwdErr)
@@ -490,10 +490,7 @@ func setupTAPNetwork(cfg Config) error {
 	if cfg.GatewayIP == "" {
 		return nil
 	}
-	bridgeName := cfg.BridgeName
-	if bridgeName == "" {
-		bridgeName = "jerboa-br0"
-	}
+	bridgeName := cfg.bridge()
 	mask := cfg.SubnetMask
 	if mask == "" {
 		mask = "24"

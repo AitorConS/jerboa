@@ -69,6 +69,7 @@ func newRootCmd() *cobra.Command {
 		toolsDir       string
 		vmDiskDir      string
 		fcMetricsDir   string
+		portPublish    string
 		vmLogMaxBytes  int64
 		allowInsecure  bool
 		snapshotDir    string
@@ -129,6 +130,14 @@ func newRootCmd() *cobra.Command {
 			if runtime.GOOS == "darwin" {
 				fcOpts = append(fcOpts, snapshotStoreOption(snapshotDir, snapshot.Limits{MaxCount: snapshotCount, MaxBytes: snapshotBytes}))
 			}
+			if runtime.GOOS == "linux" {
+				mode, err := network.InitPortPublishing(portPublish)
+				if err != nil {
+					return fmt.Errorf("jerboad: %w", err)
+				}
+				slog.Info("jerboad: published ports", "mode", mode)
+				defer network.ShutdownPortPublishing()
+			}
 			return serve(cmd.Context(), endpoint, authToken, clusterToken, obsToken, qemuBin, storePath, vmStoreType, metricsAddr, uiAddr, logFormat, traceAddr, clusterAddr, joinAddrs, hypervisor, fcBin, fcKernelPath, toolsDir, vmDiskDir, fcOpts...)
 		},
 	}
@@ -183,6 +192,8 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&obsToken, "observability-token", "",
 		"read-only bearer token required to scrape --metrics-addr and the --ui-addr dashboard (env: JERBOA_OBSERVABILITY_TOKEN); "+
 			"kept separate from --auth-token so scraping never grants daemon access; empty leaves these endpoints unauthenticated")
+	root.Flags().StringVar(&portPublish, "port-publish", network.PublishAuto,
+		"how published ports reach guests on Linux: auto (kernel NAT when available, else userspace proxy), nat or proxy")
 	root.Flags().StringVar(&joinAddrs, "join", "",
 		"Comma-separated list of seed node addresses to join (e.g. 10.0.0.2:7946,10.0.0.3:7946)")
 	return root
