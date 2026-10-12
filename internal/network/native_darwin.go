@@ -45,7 +45,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 	if err != nil || subnet.IP.To4() == nil || !subnet.Contains(net.ParseIP(gateway)) {
 		return nil, fmt.Errorf("invalid native subnet/gateway %s/%s", cidr, gateway)
 	}
-	ep, err := tap.NewLinkEndpoint(false, 1500, "02:4a:65:72:62:01", gateway, []string{netconst.DNSAnycastIP, "10.0.2.3"})
+	ep, err := tap.NewLinkEndpoint(false, netconst.NativeMTU, "02:4a:65:72:62:01", gateway, []string{netconst.DNSAnycastIP, "10.0.2.3"})
 	if err != nil {
 		return nil, err
 	}

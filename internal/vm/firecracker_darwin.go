@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"io"
 	"net"
 	"net/http"
@@ -434,7 +435,9 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		if mask == "" {
 			mask = "24"
 		}
-		netcfg = cfg.IPAddress + "/" + mask + "," + cfg.GatewayIP
+		// The network's MTU follows the gateway, which the guest needs to
+		// size its RX buffers (format IP/CIDR,GATEWAY,MTU).
+		netcfg = cfg.IPAddress + "/" + mask + "," + cfg.GatewayIP + "," + strconv.Itoa(netconst.NativeMTU)
 	}
 	for name, data := range map[string]string{"env": strings.Join(cfg.Env, "\n"), "mounts": strings.Join(mounts, "\n"), "network": netcfg} {
 		if len(data) > 65536 {
