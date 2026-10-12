@@ -60,6 +60,9 @@
 
 #define LWIP_WND_SCALE 1
 #define TCP_MSS 8960            /* Upper bound: segments use min(TCP_MSS, interface MTU - 40) */
+/* Not derived from TCP_MSS (lwIP default: MIN(TCP_WND / 4, TCP_MSS * 4)): a larger
+ * upper bound must not delay window updates on 1500-byte networks. */
+#define TCP_WND_UPDATE_THRESHOLD (4 * 1460)
 #define TCP_WND 0x34000         /* For maximum throughput should be the same as TCP_SND_BUF */
 #define TCP_SND_BUF 0x34000     /* Same as /proc/sys/net/core/wmem_default on Linux */
 #define TCP_SNDLOWAT (0xFFFE - (4 * TCP_MSS))   /* Unused, but needed to pass lwIP sanity checks */
