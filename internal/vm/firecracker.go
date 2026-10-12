@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/snapshot"
 )
@@ -788,6 +789,8 @@ func buildFCBootArgs(cfg Config) string {
 		if cfg.GatewayIP != "" {
 			args += fmt.Sprintf(" en1.gateway=%s", cfg.GatewayIP)
 		}
+		// The bridge's MTU; Nanos sizes its RX buffers and TCP segments from it.
+		args += fmt.Sprintf(" en1.mtu=%d", netconst.BridgeMTU)
 	}
 
 	// Volume mount points: Nanos reads "mounts.LABEL=/path" from boot args and,

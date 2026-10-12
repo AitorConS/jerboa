@@ -23,3 +23,9 @@ const DNSPort = 53
 // gateway terminates TCP and UDP and proxies them through host sockets), so
 // a jumbo MTU stays internal.
 const NativeMTU = 9000
+
+// BridgeMTU is the MTU of Linux network bridges, their TAPs and guests.
+// Frames between VMs stay on the bridge, and host traffic to a VM goes
+// through userspace proxies (published ports) or local services (DNS), so
+// the host's own interfaces keep their MTU.
+const BridgeMTU = 9000
