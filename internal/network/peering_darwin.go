@@ -187,6 +187,8 @@ func (p *peering) session(m *peerMember, c *net.UnixConn) {
 			p.acked(s, msg)
 		case peerDead:
 			p.dead(s, msg)
+		case peerIdle:
+			p.idle(s, msg)
 		case peerStats:
 			m.tx.Store(msg.Epoch)
 			m.rx.Store(msg.Value)
@@ -365,6 +367,16 @@ func (p *peering) dead(s *peerSession, msg peerMessage) {
 	defer p.mu.Unlock()
 	if pr, _ := p.find(s, msg); pr != nil {
 		p.removePairLocked(pr, true)
+	}
+}
+
+// idle withdraws a link that carried no frames for a while, so idle pairs do
+// not hold the per-VM budget; traffic that resumes pairs the VMs again.
+func (p *peering) idle(s *peerSession, msg peerMessage) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if pr, _ := p.find(s, msg); pr != nil {
+		p.removePairLocked(pr, false)
 	}
 }
 

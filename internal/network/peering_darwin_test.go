@@ -282,6 +282,28 @@ func TestPeeringSessionReplacementAndHello(t *testing.T) {
 	_ = va2
 }
 
+func TestPeeringIdleReclaimsWithoutBackoff(t *testing.T) {
+	f := newPeerFixture(t)
+	a, pa := f.member(t, 1)
+	b, pb := f.member(t, 2)
+	va, ea := connect(t, a, pa)
+	vb, _ := connect(t, b, pb)
+	f.p.observe(a, b.mac)
+	ma, fa := va.expect(peerAdd)
+	unix.Close(fa)
+	_, fb := vb.expect(peerAdd)
+	unix.Close(fb)
+	va.send(peerMessage{Type: peerIdle, Epoch: ea, Value: ma.Value})
+	va.expect(peerDel)
+	vb.expect(peerDel)
+	require.Zero(t, f.pairs())
+	require.Zero(t, a.pairs)
+	// Not a failure: traffic that resumes pairs them again at once.
+	f.p.observe(a, b.mac)
+	_, fa = va.expect(peerAdd)
+	unix.Close(fa)
+}
+
 func TestPeeringCap(t *testing.T) {
 	f := newPeerFixture(t)
 	a, pa := f.member(t, 1)

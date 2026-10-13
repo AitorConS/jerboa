@@ -30,7 +30,7 @@ func TestPeerMessageRejectsMalformed(t *testing.T) {
 	for name, mutate := range map[string]func(b []byte){
 		"magic":     func(b []byte) { b[0] = 'X' },
 		"type zero": func(b []byte) { b[4] = 0 },
-		"type high": func(b []byte) { b[4] = 9 },
+		"type high": func(b []byte) { b[4] = 10 },
 		"reserved":  func(b []byte) { b[6] = 1 },
 		"tail":      func(b []byte) { b[31] = 1 },
 	} {

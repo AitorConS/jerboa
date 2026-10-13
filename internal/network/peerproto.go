@@ -27,6 +27,7 @@ const (
 	peerDead    = 6 // VMM: epoch, id; the link failed and was removed
 	peerReset   = 7 // broker to VMM only
 	peerStats   = 8 // VMM: cumulative direct TX and RX bytes
+	peerIdle    = 9 // VMM: epoch, id; no frames either way for a while
 
 	peerFeatureDgram = 1
 )
@@ -58,7 +59,7 @@ var errPeerMessage = errors.New("invalid peer control message")
 
 func decodePeerMessage(b []byte) (peerMessage, error) {
 	var m peerMessage
-	if len(b) != peerMessageSize || string(b[:4]) != "JPC1" || b[6] != 0 || b[7] != 0 || b[4] < peerHello || b[4] > peerStats {
+	if len(b) != peerMessageSize || string(b[:4]) != "JPC1" || b[6] != 0 || b[7] != 0 || b[4] < peerHello || b[4] > peerIdle {
 		return m, errPeerMessage
 	}
 	m.Type, m.Flags = b[4], b[5]
