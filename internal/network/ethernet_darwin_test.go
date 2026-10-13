@@ -41,7 +41,28 @@ func TestEthernetCoalescedFramesPreserveSourceValidation(t *testing.T) {
 	_, err := io.CopyBuffer(struct{ io.Writer }{&got}, c, make([]byte, 7))
 	require.NoError(t, err)
 	require.NoError(t, <-done)
-	require.Equal(t, bytes.Join([][]byte{valid, large, valid}, nil), got.Bytes())
+	// The port first announces the VM, then delivers only valid guest frames.
+	require.Equal(t, bytes.Join([][]byte{c.announcement(), valid, large, valid}, nil), got.Bytes())
+}
+
+func TestEthernetAnnouncesVM(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "172.20.0.2", "02:01:02:03:04:05")
+	t.Cleanup(func() { c.Close(); b.Close() })
+	buf := make([]byte, 128)
+	n, err := c.Read(buf)
+	require.NoError(t, err)
+	require.Equal(t, 64, n)
+	require.Equal(t, uint32(60), binary.BigEndian.Uint32(buf[:4]))
+	f := buf[4:n]
+	require.Equal(t, []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, f[0:6])
+	require.True(t, c.validSource(f), "the announcement satisfies the port's own source contract")
+	require.Equal(t, []byte{0, 1}, f[20:22], "ARP request")
+	require.Equal(t, f[28:32], f[38:42], "gratuitous: target is its own address")
+
+	// Legacy endpoints without an identity announce nothing.
+	legacy := newEthernetConn(b, "", "")
+	require.Nil(t, legacy.pending)
 }
 
 func TestEthernetBufferedTruncatedFrameFails(t *testing.T) {

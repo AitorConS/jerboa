@@ -51,8 +51,38 @@ func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
 	// Read ahead within a fixed budget so framing does not require three socket
 	// reads for every packet. Source validation still precedes switch delivery.
 	e.reader = bufio.NewReaderSize(c, maxEthernetFrame+4)
+	e.pending = e.announcement()
 	go e.writer()
 	return e
+}
+
+// announcement is a gratuitous ARP from the VM, delivered to the switch as
+// the port's first frame (QEMU announce-self does the same after migration).
+// gvisor-tap-vsock drops unicast to MACs it has not learned instead of
+// flooding it, and a fresh switch (daemon restart, VMM reconnect) has learned
+// nothing: a VM that only receives, such as a TCP server waiting for
+// retransmissions, would stay unreachable until its peers' ARP entries
+// expired. The announcement teaches the switch the MAC at once and refreshes
+// the other guests' ARP caches.
+func (e *ethernetConn) announcement() []byte {
+	if len(e.mac) != 6 || len(e.ip) != 4 {
+		return nil
+	}
+	const size = 60 // minimum Ethernet frame
+	f := make([]byte, 4+size)
+	binary.BigEndian.PutUint32(f[:4], size)
+	eth := f[4:]
+	copy(eth[0:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(eth[6:12], e.mac)
+	binary.BigEndian.PutUint16(eth[12:14], 0x0806)
+	binary.BigEndian.PutUint16(eth[14:16], 1)      // Ethernet
+	binary.BigEndian.PutUint16(eth[16:18], 0x0800) // IPv4
+	eth[18], eth[19] = 6, 4
+	binary.BigEndian.PutUint16(eth[20:22], 1) // request
+	copy(eth[22:28], e.mac)
+	copy(eth[28:32], e.ip)
+	copy(eth[38:42], e.ip) // target protocol address: its own
+	return f
 }
 func (e *ethernetConn) Close() error {
 	var err error
