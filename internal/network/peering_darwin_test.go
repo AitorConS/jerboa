@@ -103,7 +103,7 @@ func (f *peerFixture) member(t *testing.T, last byte) (*peerMember, string) {
 }
 
 func connect(t *testing.T, m *peerMember, path string) (*fakeVMM, uint64) {
-	v := dialVMM(t, path, m.mac, peerFeatureDgram)
+	v := dialVMM(t, path, m.mac, peerFeatures)
 	w, fd := v.expect(peerWelcome)
 	require.Equal(t, -1, fd)
 	require.Equal(t, m.mac, w.MAC)
@@ -253,14 +253,15 @@ func TestPeeringSessionReplacementAndHello(t *testing.T) {
 	b, pb := f.member(t, 2)
 
 	// Wrong MAC: closed without a welcome.
-	bad := dialVMM(t, pa, b.mac, peerFeatureDgram)
+	bad := dialVMM(t, pa, b.mac, peerFeatures)
 	require.NoError(t, bad.conn.SetReadDeadline(time.Now().Add(time.Second)))
 	var one [1]byte
 	_, err := bad.conn.Read(one[:])
 	require.Error(t, err)
 
-	// No datagram feature: the connection stays open but nothing is offered.
-	plain := dialVMM(t, pb, b.mac, 0)
+	// Without the frame format this switch speaks, the connection stays open
+	// but nothing is offered.
+	plain := dialVMM(t, pb, b.mac, peerFeatureDgram)
 	plain.silent()
 	require.Nil(t, b.session)
 	plain.conn.Close()

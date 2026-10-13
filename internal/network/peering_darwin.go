@@ -153,7 +153,7 @@ func (p *peering) session(m *peerMember, c *net.UnixConn) {
 		return
 	}
 	_ = c.SetReadDeadline(time.Time{})
-	if hello.Value&peerFeatureDgram == 0 {
+	if hello.Value&peerFeatures != peerFeatures {
 		// Nothing this switch can offer; keep the connection so the VMM
 		// does not reconnect in a loop.
 		_, _ = io.Copy(io.Discard, c)

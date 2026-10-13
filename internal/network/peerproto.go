@@ -30,6 +30,10 @@ const (
 	peerIdle    = 9 // VMM: epoch, id; no frames either way for a while
 
 	peerFeatureDgram = 1
+	// Peer datagrams are a virtio_net_hdr and the Ethernet frame, so TSO
+	// frames and partial checksums cross whole; both ends must speak it.
+	peerFeatureVnet = 2
+	peerFeatures    = peerFeatureDgram | peerFeatureVnet
 )
 
 type peerMessage struct {
