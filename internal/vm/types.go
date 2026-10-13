@@ -127,6 +127,9 @@ type Config struct {
 	EmulateX86   bool   `json:"emulate_x86,omitempty"`
 	nativeSocket string //nolint:unused // Used by the macOS backend.
 	nativeMAC    string //nolint:unused // Used by the macOS backend.
+	// nativeControl is the peer control socket for direct VM-to-VM links;
+	// empty when the network does not offer them.
+	nativeControl string //nolint:unused // Used by the macOS backend.
 	// privateBootDisk marks ImagePath as a per-VM private disk (set only on the
 	// launch copy of the config), so the hypervisor may open it read-write.
 	privateBootDisk bool

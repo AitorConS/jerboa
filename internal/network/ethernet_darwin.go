@@ -33,6 +33,16 @@ type ethernetConn struct {
 	queuedBytes atomic.Int64
 	done        chan struct{}
 	once        sync.Once
+	// observe, when set, is told about destinations this port keeps sending
+	// unicast frames to (direct-link promotion). Only the reader touches flows.
+	observe  func(dst [6]byte)
+	flows    [4]flowCount
+	nextFlow int
+}
+
+type flowCount struct {
+	mac    [6]byte
+	frames int
 }
 
 func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
@@ -73,11 +83,37 @@ func (e *ethernetConn) Read(b []byte) (int, error) {
 		if !e.validSource(e.frame[4 : 4+size]) {
 			continue
 		}
+		if e.observe != nil {
+			e.count(e.frame[4 : 4+size])
+		}
 		e.pending = e.frame[:4+size]
 	}
 	n := copy(b, e.pending)
 	e.pending = e.pending[n:]
 	return n, nil
+}
+func (e *ethernetConn) count(f []byte) {
+	if f[0]&1 != 0 {
+		return // broadcast and multicast always use the switch
+	}
+	var dst [6]byte
+	copy(dst[:], f[:6])
+	slot := -1
+	for i := range e.flows {
+		if e.flows[i].mac == dst {
+			slot = i
+			break
+		}
+	}
+	if slot < 0 {
+		slot = e.nextFlow
+		e.nextFlow = (e.nextFlow + 1) % len(e.flows)
+		e.flows[slot] = flowCount{mac: dst}
+	}
+	if e.flows[slot].frames++; e.flows[slot].frames >= peerPromoteFrames {
+		e.flows[slot].frames = 0
+		e.observe(dst)
+	}
 }
 func (e *ethernetConn) validSource(f []byte) bool {
 	if len(e.mac) == 0 {
