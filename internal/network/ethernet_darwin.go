@@ -17,6 +17,11 @@ const (
 	ethernetQueueFrames = 256
 	ethernetQueueBytes  = 4 * 1024 * 1024
 	ethernetWriteWait   = 100 * time.Millisecond
+	// macOS gives Unix stream sockets 8 KiB buffers, less than one 9000-byte
+	// frame: every frame took several partial reads and writes, each a
+	// scheduler wakeup on both sides. Room for a burst of large frames keeps a
+	// frame to one system call. The kernel caps it at kern.ipc.maxsockbuf.
+	ethernetSocketBuffer = 1 << 20
 )
 
 // ethernetConn validates before gvproxy allocates a frame or learns its source.
@@ -48,6 +53,10 @@ type flowCount struct {
 func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
 	hw, _ := net.ParseMAC(mac)
 	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, ethernetQueueFrames), space: make(chan struct{}, 1), done: make(chan struct{})}
+	if u, ok := c.(*net.UnixConn); ok {
+		_ = u.SetReadBuffer(ethernetSocketBuffer)
+		_ = u.SetWriteBuffer(ethernetSocketBuffer)
+	}
 	// Read ahead within a fixed budget so framing does not require three socket
 	// reads for every packet. Source validation still precedes switch delivery.
 	e.reader = bufio.NewReaderSize(c, maxEthernetFrame+4)
