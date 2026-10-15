@@ -32,6 +32,7 @@ type NativeNetwork struct {
 	publishMu sync.Mutex
 	published map[string]*nativePublication
 	sw        *tap.Switch
+	gso       *gsoEndpoint
 	ports     *forwarder.PortsForwarder
 	dns       []net.PacketConn
 	peers     *peering // nil: direct VM-to-VM links disabled
@@ -46,7 +47,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 	if err != nil || subnet.IP.To4() == nil || !subnet.Contains(net.ParseIP(gateway)) {
 		return nil, fmt.Errorf("invalid native subnet/gateway %s/%s", cidr, gateway)
 	}
-	ep, err := tap.NewLinkEndpoint(false, netconst.NativeMTU, "02:4a:65:72:62:01", gateway, []string{netconst.DNSAnycastIP, "10.0.2.3"})
+	ep, err := tap.NewLinkEndpoint(false, netconst.NativeMTU, gatewayMAC.String(), gateway, []string{netconst.DNSAnycastIP, "10.0.2.3"})
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +56,8 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 	sw.Connect(ep)
 	s := stack.New(stack.Options{NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, arp.NewProtocol}, TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4}})
 	fail := func(err error) (*NativeNetwork, error) { s.Close(); return nil, err }
-	if e := s.CreateNIC(1, ep); e != nil {
+	gso := newGSOEndpoint(ep)
+	if e := s.CreateNIC(1, gso); e != nil {
 		return fail(fmt.Errorf("native NIC: %s", e))
 	}
 	for _, ip := range []string{gateway, netconst.DNSAnycastIP, "10.0.2.3"} {
@@ -86,7 +88,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 		}
 		return allow(id.RemoteAddress.String(), address, id.LocalPort, udp)
 	}
-	n := &NativeNetwork{stack: s, sw: sw, ports: forwarder.NewPortsForwarder(s)}
+	n := &NativeNetwork{stack: s, sw: sw, gso: gso, ports: forwarder.NewPortsForwarder(s)}
 	if NativePeeringEnabled() {
 		n.peers = newPeering()
 	}
@@ -268,6 +270,11 @@ func (n *NativeNetwork) ListenVM(path, ip, mac string) (*NativeLink, error) {
 			l.conn = c
 			l.mu.Unlock()
 			guard := newEthernetConn(c, ip, mac)
+			if hw, err := net.ParseMAC(mac); err == nil && len(hw) == 6 {
+				port := tcpip.LinkAddress(hw)
+				guard.capabilities = func(flags byte) { n.gso.setLarge(port, guard, flags&switchCapsLarge != 0) }
+				guard.closed = func() { n.gso.setLarge(port, guard, false) }
+			}
 			if m := l.member; m != nil {
 				guard.observe = func(dst [6]byte) { n.peers.observe(m, dst) }
 			}

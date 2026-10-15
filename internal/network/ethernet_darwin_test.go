@@ -27,10 +27,15 @@ func TestEthernetCoalescedFramesPreserveSourceValidation(t *testing.T) {
 		return f
 	}
 	valid := frame(34, 2)
+	// The largest frame a port takes: a whole TSO frame for the gateway.
 	large := frame(maxEthernetFrame, 2)
+	copy(large[4:10], gatewayMAC)
+	binary.BigEndian.PutUint16(large[20:22], maxEthernetFrame-14)
+	large[27] = 6
 	spoofed := frame(34, 3)
 	wire := bytes.Join([][]byte{spoofed, valid, large, spoofed, valid}, nil)
 	done := make(chan error, 1)
+	go func() { _, _ = io.Copy(io.Discard, b) }() // the VMM side reads the link's opening frames
 	go func() {
 		_, err := b.Write(wire)
 		b.Close()
