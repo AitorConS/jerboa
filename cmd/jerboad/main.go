@@ -201,7 +201,8 @@ func newRootCmd() *cobra.Command {
 		"read-only bearer token required to scrape --metrics-addr and the --ui-addr dashboard (env: JERBOA_OBSERVABILITY_TOKEN); "+
 			"kept separate from --auth-token so scraping never grants daemon access; empty leaves these endpoints unauthenticated")
 	root.Flags().StringVar(&portPublish, "port-publish", network.PublishAuto,
-		"how published ports reach guests on Linux: auto (kernel NAT when available, else userspace proxy), nat or proxy")
+		"how published ports reach guests on Linux: auto (kernel NAT for clients on this host when available, else userspace proxy), "+
+			"nat, nat-lan (kernel NAT for clients on other hosts too, as Docker does; those connections skip the host's INPUT firewall rules) or proxy")
 	root.Flags().StringVar(&nativePeering, "native-peering", "auto",
 		"direct VM-to-VM links on macOS networks: auto (when the VMM supports them) or off (every frame crosses the switch)")
 	root.Flags().StringVar(&joinAddrs, "join", "",

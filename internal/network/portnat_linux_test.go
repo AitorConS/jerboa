@@ -28,3 +28,25 @@ func TestPrepareBridgeRejectsPaths(t *testing.T) {
 	require.Error(t, nftNAT{}.prepareBridge("../all"))
 	require.Error(t, nftNAT{}.prepareBridge(""))
 }
+
+func TestNATRulesetLAN(t *testing.T) {
+	local := natRuleset(false)
+	require.NotContains(t, local, "prerouting")
+	require.Contains(t, local, "hook output")
+
+	lan := natRuleset(true)
+	require.Contains(t, lan, "type nat hook prerouting priority dstnat;")
+	// Guests keep using the proxy, and only local destinations are translated.
+	require.Contains(t, lan, "iifname \"jerboa-br*\" return\n\t\tfib daddr type local dnat ip to meta l4proto . th dport map @pub_any")
+	require.Contains(t, lan, "dnat ip to ip daddr . meta l4proto . th dport map @pub_addr")
+	require.Contains(t, lan, "hook output")
+}
+
+func TestForwardRulesOnlyAcceptTranslatedGuestTraffic(t *testing.T) {
+	rules := forwardRules()
+	require.Len(t, rules, 2)
+	for i, dir := range []string{"-o", "-i"} {
+		require.Equal(t, []string{dir, "jerboa-br+", "-m", "conntrack", "--ctstate", "DNAT",
+			"-m", "comment", "--comment", forwardComment, "-j", "ACCEPT"}, rules[i])
+	}
+}
