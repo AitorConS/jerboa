@@ -150,7 +150,7 @@ func closeForward() {
 }
 
 func runIptables(args ...string) error {
-	cmd := exec.Command("iptables", append([]string{"-w"}, args...)...) //nolint:noctx // short-lived local tool
+	cmd := exec.Command("iptables", append([]string{"-w"}, args...)...) //nolint:noctx,gosec // short-lived local tool; args are fixed rule specs
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
