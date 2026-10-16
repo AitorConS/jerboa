@@ -86,7 +86,7 @@ type FirecrackerManager struct {
 	fcSecurity  json.RawMessage
 	// noPeerControl records that the VMM rejected security.unix_control
 	// (an older build); direct VM-to-VM links are then never offered to it.
-	noPeerControl atomic.Bool
+	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
 	mkCmd         CommandFunc
 	hchecker      *HealthChecker
 	// Platform hooks for the VMM control and runtime paths.
