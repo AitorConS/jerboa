@@ -4,8 +4,10 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"hash"
@@ -30,17 +32,19 @@ var receiveBuffer = flag.Int("receive-buffer", 0, "socket receive buffer overrid
 
 func serveOne(c net.Conn) error {
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(90 * time.Second))
+	if err := c.SetDeadline(time.Now().Add(90 * time.Second)); err != nil {
+		return fmt.Errorf("deadline: %w", err)
+	}
 	var meta [16]byte
 	if _, err := io.ReadFull(c, meta[:]); err != nil {
-		return err
+		return fmt.Errorf("read header: %w", err)
 	}
 	stream := binary.BigEndian.Uint64(meta[:8])
 	remaining := binary.BigEndian.Uint64(meta[8:])
 	if *receiveBuffer > 0 {
 		if t, ok := c.(*net.TCPConn); ok {
 			if err := t.SetReadBuffer(*receiveBuffer); err != nil {
-				return err
+				return fmt.Errorf("receive buffer: %w", err)
 			}
 		}
 	}
@@ -56,7 +60,7 @@ func serveOne(c net.Conn) error {
 			n = remaining
 		}
 		if _, err := io.ReadFull(c, buf[:int(n)]); err != nil {
-			return err
+			return fmt.Errorf("stream %d: read payload: %w", stream, err)
 		}
 		fill(want[:int(n)], stream, offset)
 		actual.Write(buf[:int(n)])
@@ -72,7 +76,7 @@ func serveOne(c net.Conn) error {
 	for written := 0; written < len(digest); {
 		n, err := c.Write(digest[written:])
 		if err != nil {
-			return err
+			return fmt.Errorf("stream %d: write digest: %w", stream, err)
 		}
 		if n == 0 {
 			return io.ErrShortWrite
@@ -82,14 +86,14 @@ func serveOne(c net.Conn) error {
 	// Keep the server VM alive until the peer confirms delivery of the digest.
 	var ack [1]byte
 	if _, err := io.ReadFull(c, ack[:]); err != nil {
-		return err
+		return fmt.Errorf("stream %d: read acknowledgement: %w", stream, err)
 	}
 	if ack[0] != 0xa5 {
 		return fmt.Errorf("invalid completion acknowledgement")
 	}
 	var eof [1]byte
-	if n, err := c.Read(eof[:]); n != 0 || err != io.EOF {
-		return fmt.Errorf("expected peer half-close: n=%d err=%v", n, err)
+	if n, err := c.Read(eof[:]); n != 0 || !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected peer half-close: n=%d err=%w", n, err)
 	}
 	return nil
 }
@@ -108,19 +112,22 @@ func equal(a, b hash.Hash) bool {
 }
 
 func client(addr string, stream, length uint64) error {
-	c, err := net.DialTimeout("tcp", addr, 10*time.Second)
+	d := net.Dialer{Timeout: 10 * time.Second}
+	c, err := d.DialContext(context.Background(), "tcp", addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("dial %s: %w", addr, err)
 	}
 	defer c.Close()
-	c.SetDeadline(time.Now().Add(90 * time.Second))
+	if err := c.SetDeadline(time.Now().Add(90 * time.Second)); err != nil {
+		return fmt.Errorf("deadline: %w", err)
+	}
 	var meta [16]byte
 	binary.BigEndian.PutUint64(meta[:8], stream)
 	binary.BigEndian.PutUint64(meta[8:], length)
 	for written := 0; written < len(meta); {
 		n, err := c.Write(meta[written:])
 		if err != nil {
-			return err
+			return fmt.Errorf("stream %d: write header: %w", stream, err)
 		}
 		if n == 0 {
 			return io.ErrShortWrite
@@ -141,7 +148,7 @@ func client(addr string, stream, length uint64) error {
 		for written := 0; written < n; {
 			m, err := c.Write(buf[written:n])
 			if err != nil {
-				return err
+				return fmt.Errorf("stream %d: write payload: %w", stream, err)
 			}
 			if m == 0 {
 				return io.ErrShortWrite
@@ -152,7 +159,7 @@ func client(addr string, stream, length uint64) error {
 	}
 	var remote [sha256.Size]byte
 	if _, err := io.ReadFull(c, remote[:]); err != nil {
-		return err
+		return fmt.Errorf("stream %d: read digest: %w", stream, err)
 	}
 	sum := local.Sum(nil)
 	for i := range remote {
@@ -161,16 +168,51 @@ func client(addr string, stream, length uint64) error {
 		}
 	}
 	if n, err := c.Write([]byte{0xa5}); err != nil || n != 1 {
-		return fmt.Errorf("completion acknowledgement write: n=%d err=%v", n, err)
+		return fmt.Errorf("completion acknowledgement write: n=%d err=%w", n, err)
 	}
 	if t, ok := c.(*net.TCPConn); ok {
 		if err := t.CloseWrite(); err != nil {
-			return err
+			return fmt.Errorf("stream %d: half-close: %w", stream, err)
 		}
 	}
 	var eof [1]byte
-	if n, err := c.Read(eof[:]); n != 0 || err != io.EOF {
-		return fmt.Errorf("expected server close: n=%d err=%v", n, err)
+	if n, err := c.Read(eof[:]); n != 0 || !errors.Is(err, io.EOF) {
+		return fmt.Errorf("expected server close: n=%d err=%w", n, err)
+	}
+	return nil
+}
+
+// listenAll serves workers connections on addr and reports whether every
+// stream arrived intact.
+func listenAll(addr string, workers int) error {
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	defer ln.Close()
+	if t, ok := ln.(*net.TCPListener); ok {
+		if err := t.SetDeadline(time.Now().Add(120 * time.Second)); err != nil {
+			return fmt.Errorf("listener deadline: %w", err)
+		}
+	}
+	results := make(chan error, workers)
+	for range workers {
+		c, err := ln.Accept()
+		if err != nil {
+			return fmt.Errorf("accept: %w", err)
+		}
+		go func() { results <- serveOne(c) }()
+	}
+	failed := false
+	for range workers {
+		if err := <-results; err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			failed = true
+		}
+	}
+	if failed {
+		return errors.New("some streams failed")
 	}
 	return nil
 }
@@ -185,30 +227,8 @@ func main() {
 	length := flag.Uint64("bytes", 32<<20, "bytes per stream")
 	flag.Parse()
 	if *listen {
-		ln, err := net.Listen("tcp", *addr)
-		if err != nil {
-			panic(err)
-		}
-		defer ln.Close()
-		if t, ok := ln.(*net.TCPListener); ok {
-			t.SetDeadline(time.Now().Add(120 * time.Second))
-		}
-		results := make(chan error, *workers)
-		for i := 0; i < *workers; i++ {
-			c, err := ln.Accept()
-			if err != nil {
-				panic(err)
-			}
-			go func() { results <- serveOne(c) }()
-		}
-		failed := false
-		for i := 0; i < *workers; i++ {
-			if err := <-results; err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				failed = true
-			}
-		}
-		if failed {
+		if err := listenAll(*addr, *workers); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		time.Sleep(time.Second) // VM teardown grace after explicit peer digest acknowledgement.
@@ -216,15 +236,15 @@ func main() {
 		return
 	}
 	var wg sync.WaitGroup
-	errors := make(chan error, *workers)
+	errs := make(chan error, *workers)
 	for i := 0; i < *workers; i++ {
 		wg.Add(1)
-		go func(i int) { defer wg.Done(); errors <- client(*addr, uint64(i+1), *length) }(i)
+		go func(i int) { defer wg.Done(); errs <- client(*addr, uint64(i+1), *length) }(i)
 	}
 	wg.Wait()
-	close(errors)
+	close(errs)
 	failed := false
-	for err := range errors {
+	for err := range errs {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			failed = true

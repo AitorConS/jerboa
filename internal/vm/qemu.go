@@ -637,7 +637,7 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		if code, ok := guestExitCode(exitErr); ok && code != 0 {
 			terminalErr = fmt.Errorf("guest exited with code %d", code)
 		} else {
-			terminalErr = fmt.Errorf("QEMU exited: %v", exitErr)
+			terminalErr = fmt.Errorf("QEMU exited: %w", exitErr)
 		}
 	}
 	if v.logPipeWriter != nil {
