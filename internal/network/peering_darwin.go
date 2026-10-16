@@ -13,6 +13,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const (
+	// Peer datagrams are a virtio_net_hdr and the Ethernet frame, so TSO
+	// frames and partial checksums cross whole; both ends must speak it.
+	peerFeatureVnet = 2
+	peerFeatures    = peerFeatureDgram | peerFeatureVnet
+)
+
 // Direct VM-to-VM links (see peerproto.go). The switch keeps every frame path
 // it has today; when two members of one network exchange enough unicast
 // frames through it, it gives both VMMs the ends of a datagram socketpair and
