@@ -41,7 +41,7 @@ jobs:
         sudo apt-get install -y build-essential autoconf automake libtool pkg-config bison flex libssl-dev zlib1g-dev libffi-dev libreadline-dev libyaml-dev libgdbm-dev libsqlite3-dev libbz2-dev liblzma-dev libncurses-dev libxml2-dev libonig-dev unzip
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.1
+        go-version: 1.27.2
         cache: false
     - name: Build CLI binaries
       run: make build
