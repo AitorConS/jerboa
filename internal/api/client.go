@@ -346,8 +346,12 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 	stream := bufio.NewReader(io.MultiReader(c.dec.Buffered(), c.conn))
 	// The JSON-RPC response is newline-terminated. Decode leaves that byte
 	// buffered; consume it before interpreting the following binary frames.
-	if delimiter, err := stream.ReadByte(); err != nil || delimiter != '\n' {
-		return fmt.Errorf("decode attach stream delimiter: %v, byte %q", err, delimiter)
+	delimiter, err := stream.ReadByte()
+	if err != nil {
+		return fmt.Errorf("decode attach stream delimiter: %w", err)
+	}
+	if delimiter != '\n' {
+		return fmt.Errorf("decode attach stream delimiter: unexpected byte %q", delimiter)
 	}
 	var protocol struct {
 		Framed bool `json:"framed"`
@@ -359,8 +363,10 @@ func (c *Client) Attach(_ context.Context, id string, out io.Writer) error {
 	}
 	if !protocol.Framed {
 		// Older daemons send an unframed console stream without exit status.
-		_, err := io.Copy(out, stream)
-		return err
+		if _, err := io.Copy(out, stream); err != nil {
+			return fmt.Errorf("read attach output: %w", err)
+		}
+		return nil
 	}
 	if _, err := io.Copy(out, NewFrameReader(stream)); err != nil {
 		return fmt.Errorf("read attach output: %w", err)
