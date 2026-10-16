@@ -35,9 +35,17 @@ func TestEthernetCoalescedFramesPreserveSourceValidation(t *testing.T) {
 	spoofed := frame(34, 3)
 	wire := bytes.Join([][]byte{spoofed, valid, large, spoofed, valid}, nil)
 	done := make(chan error, 1)
-	go func() { _, _ = io.Copy(io.Discard, b) }() // the VMM side reads the link's opening frames
+	// The VMM side reads the frame that opens the link before it hangs up, as
+	// a real VMM does; hanging up first fails that write and closes the port.
+	opened := make(chan struct{})
+	go func() {
+		_, _ = io.ReadFull(b, make([]byte, len(c.switchCapabilities())))
+		close(opened)
+		_, _ = io.Copy(io.Discard, b)
+	}()
 	go func() {
 		_, err := b.Write(wire)
+		<-opened
 		b.Close()
 		done <- err
 	}()
