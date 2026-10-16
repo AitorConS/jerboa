@@ -8,7 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
-	"strconv"
+	"strings"
+	"unicode"
 )
 
 // With --port-publish nat-lan, connections from other hosts are translated in
@@ -102,7 +103,7 @@ func ensureForward() error {
 		}
 		var script bytes.Buffer
 		for _, r := range nftForwardRules() {
-			fmt.Fprintf(&script, "insert rule %s %s %s %s\n", c.Family, nftQuote(c.Table), nftQuote(c.Name), r)
+			fmt.Fprintf(&script, "insert rule %s %s %s %s\n", c.Family, c.Table, c.Name, r)
 		}
 		if err := runNft(script.String()); err != nil {
 			return err
@@ -133,7 +134,10 @@ func closeForward() {
 	}
 	var script bytes.Buffer
 	for _, r := range ownedNftRules(ruleset) {
-		fmt.Fprintf(&script, "delete rule %s %s %s handle %d\n", r.chain.Family, nftQuote(r.chain.Table), nftQuote(r.chain.Name), r.handle)
+		if !nftIdentifier(r.chain.Table) || !nftIdentifier(r.chain.Name) {
+			continue
+		}
+		fmt.Fprintf(&script, "delete rule %s %s %s handle %d\n", r.chain.Family, r.chain.Table, r.chain.Name, r.handle)
 	}
 	if script.Len() > 0 {
 		_ = runNft(script.String())
@@ -205,6 +209,10 @@ func foreignForwardChains(objs []nftObject) []nftChain {
 		if c.Table == natTable || (c.Family == "ip" && c.Table == "filter" && c.Name == "FORWARD") {
 			continue
 		}
+		// nft scripts take these names unquoted; skip any it could misparse.
+		if !nftIdentifier(c.Table) || !nftIdentifier(c.Name) {
+			continue
+		}
 		out = append(out, nftChain{c.Family, c.Table, c.Name})
 	}
 	return out
@@ -221,5 +229,17 @@ func ownedNftRules(objs []nftObject) []nftOwnedRule {
 	return out
 }
 
-// nftQuote quotes a table or chain name for an nft script.
-func nftQuote(s string) string { return strconv.Quote(s) }
+// nftIdentifier reports whether name can appear unquoted in an nft script
+// (nft rejects quoted table and chain names in rule commands).
+func nftIdentifier(name string) bool {
+	if name == "" || !unicode.IsLetter(rune(name[0])) {
+		return false
+	}
+	for _, r := range name {
+		allowed := unicode.IsLetter(r) || unicode.IsDigit(r) || strings.ContainsRune("_.-/", r)
+		if r > unicode.MaxASCII || !allowed {
+			return false
+		}
+	}
+	return true
+}

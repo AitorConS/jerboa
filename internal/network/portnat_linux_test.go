@@ -63,7 +63,8 @@ const sampleNftRuleset = `{"nftables": [
  {"chain": {"family": "ip", "table": "jerboa", "name": "prerouting", "handle": 4, "type": "nat", "hook": "prerouting", "prio": -100, "policy": "accept"}},
  {"rule": {"family": "inet", "table": "firewalld", "chain": "filter_FORWARD", "handle": 301, "comment": "jerboa published ports", "expr": []}},
  {"rule": {"family": "inet", "table": "firewalld", "chain": "filter_FORWARD", "handle": 302, "comment": "jerboa published ports", "expr": []}},
- {"rule": {"family": "inet", "table": "filter", "chain": "forward", "handle": 7, "comment": "user rule", "expr": []}}
+ {"rule": {"family": "inet", "table": "filter", "chain": "forward", "handle": 7, "comment": "user rule", "expr": []}},
+ {"chain": {"family": "inet", "table": "odd name", "name": "forward", "handle": 3, "type": "filter", "hook": "forward", "prio": 0, "policy": "drop"}}
 ]}`
 
 func TestForeignForwardChains(t *testing.T) {
@@ -93,5 +94,9 @@ func TestNftForwardRulesMatchIptablesOnes(t *testing.T) {
 	for i, dir := range []string{"oifname", "iifname"} {
 		require.Equal(t, dir+` "jerboa-br*" ct status dnat accept comment "jerboa published ports"`, rules[i])
 	}
-	require.Equal(t, `"filter_FORWARD"`, nftQuote("filter_FORWARD"))
+	require.True(t, nftIdentifier("filter_FORWARD"))
+	require.True(t, nftIdentifier("docker-bridges"))
+	for _, bad := range []string{"", "1table", `a"b`, "a b", "a;b", "tábla"} {
+		require.False(t, nftIdentifier(bad), bad)
+	}
 }
