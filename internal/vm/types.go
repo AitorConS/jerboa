@@ -127,6 +127,9 @@ type Config struct {
 	EmulateX86   bool   `json:"emulate_x86,omitempty"`
 	nativeSocket string //nolint:unused // Used by the macOS backend.
 	nativeMAC    string //nolint:unused // Used by the macOS backend.
+	// nativeControl is the peer control socket for direct VM-to-VM links;
+	// empty when the network does not offer them.
+	nativeControl string //nolint:unused // Used by the macOS backend.
 	// privateBootDisk marks ImagePath as a per-VM private disk (set only on the
 	// launch copy of the config), so the hypervisor may open it read-write.
 	privateBootDisk bool
@@ -206,6 +209,15 @@ type Config struct {
 // bridge (a TAP can be enslaved to only one VM), so callers assign a per-VM
 // unique TapName. It falls back to NetworkName for configs/tests that predate
 // the TapName/NetworkName split, where the two were the same value.
+// bridge is the Linux bridge the VM's TAP joins (BridgeName, or the shared
+// default bridge).
+func (c Config) bridge() string {
+	if c.BridgeName != "" {
+		return c.BridgeName
+	}
+	return "jerboa-br0"
+}
+
 func (c Config) tapDevice() string {
 	if c.TapName != "" {
 		return c.TapName

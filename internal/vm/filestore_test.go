@@ -76,6 +76,27 @@ func TestFileStore_Restore_RunningVMStopped(t *testing.T) {
 	require.True(t, got.DaemonRecovered)
 }
 
+func TestFileStore_Restore_StoppingVMStopped(t *testing.T) {
+	dir := t.TempDir()
+	s1 := NewFileStore(dir)
+	require.NoError(t, s1.Restore())
+
+	v, err := s1.Create(Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	require.NoError(t, v.transition(StateStarting))
+	require.NoError(t, v.transition(StateRunning))
+	require.NoError(t, v.transition(StateStopping))
+	require.NoError(t, s1.Save(v))
+
+	s2 := NewFileStore(dir)
+	require.NoError(t, s2.Restore())
+
+	got, err := s2.Get(v.ID)
+	require.NoError(t, err)
+	require.Equal(t, StateStopped, got.GetState())
+	require.True(t, got.DaemonRecovered)
+}
+
 func TestFileStore_Restore_CreatedVM(t *testing.T) {
 	dir := t.TempDir()
 	s1 := NewFileStore(dir)

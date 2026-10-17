@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/netconst"
 )
 
 const (
@@ -17,7 +19,27 @@ const (
 	ethernetQueueFrames = 256
 	ethernetQueueBytes  = 4 * 1024 * 1024
 	ethernetWriteWait   = 100 * time.Millisecond
+	// macOS gives Unix stream sockets 8 KiB buffers, less than one 9000-byte
+	// frame: every frame took several partial reads and writes, each a
+	// scheduler wakeup on both sides. Room for a burst of large frames keeps a
+	// frame to one system call. The kernel caps it at kern.ipc.maxsockbuf.
+	ethernetSocketBuffer = 1 << 20
+
+	// Switch capabilities: a frame of this local experimental EtherType that
+	// jerboad sends a VMM when its link connects, and the VMM answers. Each
+	// side states what it accepts. The VMM learns the gateway's MAC and MTU
+	// from it. VMMs that do not know it hand it to the guest, which drops it.
+	switchCapsType  = 0x88b5
+	switchCapsMagic = "JRBC"
+	switchCapsSize  = 60
+	// switchCapsLarge: the sender takes whole TCPv4 TSO frames (IPv4 packets
+	// above the MTU with a partial TCP checksum) addressed to the gateway, or
+	// from it when the VMM says so.
+	switchCapsLarge = 1
 )
+
+// gatewayMAC is the macOS gateway's address on every native network.
+var gatewayMAC = net.HardwareAddr{0x02, 0x4a, 0x65, 0x72, 0x62, 0x01}
 
 // ethernetConn validates before gvproxy allocates a frame or learns its source.
 // The bounded writer prevents a slow guest from blocking the entire switch.
@@ -33,20 +55,118 @@ type ethernetConn struct {
 	queuedBytes atomic.Int64
 	done        chan struct{}
 	once        sync.Once
+	// observe, when set, is told about destinations this port keeps sending
+	// unicast frames to (direct-link promotion). Only the reader touches flows.
+	observe  func(dst [6]byte)
+	flows    [4]flowCount
+	nextFlow int
+	// capabilities, when set, receives what the VMM's answer says it takes.
+	capabilities func(flags byte)
+	// closed, when set, runs once when the link closes.
+	closed func()
+}
+
+type flowCount struct {
+	mac    [6]byte
+	frames int
 }
 
 func newEthernetConn(c net.Conn, ip, mac string) *ethernetConn {
 	hw, _ := net.ParseMAC(mac)
 	e := &ethernetConn{Conn: c, ip: net.ParseIP(ip).To4(), mac: hw, writes: make(chan []byte, ethernetQueueFrames), space: make(chan struct{}, 1), done: make(chan struct{})}
+	if u, ok := c.(*net.UnixConn); ok {
+		_ = u.SetReadBuffer(ethernetSocketBuffer)
+		_ = u.SetWriteBuffer(ethernetSocketBuffer)
+	}
 	// Read ahead within a fixed budget so framing does not require three socket
 	// reads for every packet. Source validation still precedes switch delivery.
 	e.reader = bufio.NewReaderSize(c, maxEthernetFrame+4)
+	e.pending = e.announcement()
+	if caps := e.switchCapabilities(); caps != nil {
+		e.queuedBytes.Add(int64(len(caps)))
+		e.writes <- caps
+	}
 	go e.writer()
 	return e
 }
+
+// announcement is a gratuitous ARP from the VM, delivered to the switch as
+// the port's first frame (QEMU announce-self does the same after migration).
+// gvisor-tap-vsock drops unicast to MACs it has not learned instead of
+// flooding it, and a fresh switch (daemon restart, VMM reconnect) has learned
+// nothing: a VM that only receives, such as a TCP server waiting for
+// retransmissions, would stay unreachable until its peers' ARP entries
+// expired. The announcement teaches the switch the MAC at once and refreshes
+// the other guests' ARP caches.
+func (e *ethernetConn) announcement() []byte {
+	if len(e.mac) != 6 || len(e.ip) != 4 {
+		return nil
+	}
+	const size = 60 // minimum Ethernet frame
+	f := make([]byte, 4+size)
+	binary.BigEndian.PutUint32(f[:4], size)
+	eth := f[4:]
+	copy(eth[0:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+	copy(eth[6:12], e.mac)
+	binary.BigEndian.PutUint16(eth[12:14], 0x0806)
+	binary.BigEndian.PutUint16(eth[14:16], 1)      // Ethernet
+	binary.BigEndian.PutUint16(eth[16:18], 0x0800) // IPv4
+	eth[18], eth[19] = 6, 4
+	binary.BigEndian.PutUint16(eth[20:22], 1) // request
+	copy(eth[22:28], e.mac)
+	copy(eth[28:32], e.ip)
+	copy(eth[38:42], e.ip) // target protocol address: its own
+	return f
+}
+
+// switchCapabilities is the frame that opens the link toward the VMM.
+func (e *ethernetConn) switchCapabilities() []byte {
+	if len(e.mac) != 6 {
+		return nil
+	}
+	f := make([]byte, 4+switchCapsSize)
+	binary.BigEndian.PutUint32(f[:4], switchCapsSize)
+	eth := f[4:]
+	copy(eth[0:6], e.mac)
+	copy(eth[6:12], gatewayMAC)
+	binary.BigEndian.PutUint16(eth[12:14], switchCapsType)
+	copy(eth[14:18], switchCapsMagic)
+	eth[18], eth[19] = 1, switchCapsLarge
+	binary.BigEndian.PutUint16(eth[20:22], netconst.NativeMTU)
+	return f
+}
+
+// capabilitiesFrame reports whether f is a switch-capabilities frame and,
+// if it is a well-formed version 1 answer from this port's VMM, its flags.
+func (e *ethernetConn) capabilitiesFrame(f []byte) (flags byte, ours, ok bool) {
+	if len(f) < 14 || binary.BigEndian.Uint16(f[12:14]) != switchCapsType {
+		return 0, false, false
+	}
+	if len(f) < 20 || string(f[14:18]) != switchCapsMagic || f[18] != 1 || !bytes.Equal(f[6:12], e.mac) {
+		return 0, false, true
+	}
+	return f[19], true, true
+}
+
+// validLarge accepts a frame above the MTU only as the whole TCPv4 TSO frame
+// that switch capabilities allow: to the gateway, with a consistent length.
+func validLarge(f []byte) bool {
+	if len(f) <= 14+netconst.NativeMTU {
+		return true
+	}
+	return bytes.Equal(f[0:6], gatewayMAC) && binary.BigEndian.Uint16(f[12:14]) == 0x0800 && len(f) >= 54 &&
+		f[23] == 6 && int(binary.BigEndian.Uint16(f[16:18])) == len(f)-14
+}
+
 func (e *ethernetConn) Close() error {
 	var err error
-	e.once.Do(func() { close(e.done); err = e.Conn.Close() })
+	e.once.Do(func() {
+		close(e.done)
+		err = e.Conn.Close()
+		if e.closed != nil {
+			e.closed()
+		}
+	})
 	return err
 }
 func (e *ethernetConn) Read(b []byte) (int, error) {
@@ -70,14 +190,46 @@ func (e *ethernetConn) Read(b []byte) (int, error) {
 		if _, err := io.ReadFull(e.reader, e.frame[4:4+size]); err != nil {
 			return 0, err
 		}
-		if !e.validSource(e.frame[4 : 4+size]) {
+		if flags, ours, ok := e.capabilitiesFrame(e.frame[4 : 4+size]); ok {
+			if ours && e.capabilities != nil {
+				e.capabilities(flags)
+			}
 			continue
+		}
+		if !e.validSource(e.frame[4:4+size]) || !validLarge(e.frame[4:4+size]) {
+			continue
+		}
+		if e.observe != nil {
+			e.count(e.frame[4 : 4+size])
 		}
 		e.pending = e.frame[:4+size]
 	}
 	n := copy(b, e.pending)
 	e.pending = e.pending[n:]
 	return n, nil
+}
+func (e *ethernetConn) count(f []byte) {
+	if f[0]&1 != 0 {
+		return // broadcast and multicast always use the switch
+	}
+	var dst [6]byte
+	copy(dst[:], f[:6])
+	slot := -1
+	for i := range e.flows {
+		if e.flows[i].mac == dst {
+			slot = i
+			break
+		}
+	}
+	if slot < 0 {
+		slot = e.nextFlow
+		e.nextFlow = (e.nextFlow + 1) % len(e.flows)
+		e.flows[slot] = flowCount{mac: dst}
+	}
+	if e.flows[slot].frames++; e.flows[slot].frames >= peerPromoteFrames {
+		e.flows[slot].frames = 0
+		e.observe(dst)
+	}
 }
 func (e *ethernetConn) validSource(f []byte) bool {
 	if len(e.mac) == 0 {

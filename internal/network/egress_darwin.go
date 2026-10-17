@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -139,7 +140,7 @@ func (p *nativeEgressPool) closeSource(source string) {
 func (f *nativeFlow) pump(dst, src net.Conn, datagram bool) {
 	defer f.close()
 	if !datagram {
-		_, _ = io.Copy(dst, src)
+		_, _ = copyStream(dst, src)
 		return
 	}
 	b := make([]byte, 65536)
@@ -256,7 +257,7 @@ func (f *nativeFlow) duplex(a, b net.Conn) {
 	defer f.close()
 	done := make(chan struct{}, 2)
 	copyHalf := func(dst, src net.Conn) {
-		_, err := io.Copy(dst, src)
+		_, err := copyStream(dst, src)
 		if err == nil {
 			if c, ok := dst.(interface{ CloseWrite() error }); ok {
 				err = c.CloseWrite()
@@ -273,4 +274,28 @@ func (f *nativeFlow) duplex(a, b net.Conn) {
 	go copyHalf(b, a)
 	<-done
 	<-done
+}
+
+// streamCopySize is the chunk the forwarder moves between a guest connection
+// and a host socket. gVisor hands over whole TSO segments (up to 64 KB) since
+// the gateway takes them, and io.Copy's 32 KiB buffer split each of them into
+// two reads and two host writes.
+const streamCopySize = 256 << 10
+
+var streamCopyBuffers = sync.Pool{New: func() any {
+	b := make([]byte, streamCopySize)
+	return &b
+}}
+
+// copyStream copies src to dst through a pooled streamCopySize buffer. The
+// plain Reader and Writer views keep io.CopyBuffer from taking the
+// ReaderFrom/WriterTo shortcuts, which bring back a 32 KiB buffer here.
+func copyStream(dst, src net.Conn) (int64, error) {
+	b := streamCopyBuffers.Get().(*[]byte)
+	defer streamCopyBuffers.Put(b)
+	n, err := io.CopyBuffer(struct{ io.Writer }{dst}, struct{ io.Reader }{src}, *b)
+	if err != nil {
+		return n, fmt.Errorf("copy stream: %w", err)
+	}
+	return n, nil
 }
