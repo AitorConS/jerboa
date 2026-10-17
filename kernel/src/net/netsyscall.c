@@ -115,7 +115,7 @@ typedef struct netsock {
 #define netsock_lock(s)     spin_lock(&(s)->sock.f.lock)
 #define netsock_unlock(s)   spin_unlock(&(s)->sock.f.lock)
 
-#define DEFAULT_SO_RCVBUF   0x34000 /* same as Linux */
+#define DEFAULT_SO_RCVBUF   0x100000 /* Linux: 208 KiB; see the commit adding this value */
 
 #define TCP_CONG_CTRL_ALGO  "reno"  /* TCP congestion control algorithm name */
 
