@@ -70,6 +70,7 @@ func newRootCmd() *cobra.Command {
 		vmDiskDir      string
 		fcMetricsDir   string
 		portPublish    string
+		nativePeering  string
 		vmLogMaxBytes  int64
 		allowInsecure  bool
 		snapshotDir    string
@@ -129,6 +130,13 @@ func newRootCmd() *cobra.Command {
 			}
 			if runtime.GOOS == "darwin" {
 				fcOpts = append(fcOpts, snapshotStoreOption(snapshotDir, snapshot.Limits{MaxCount: snapshotCount, MaxBytes: snapshotBytes}))
+			}
+			switch nativePeering {
+			case "auto", "":
+			case "off":
+				network.SetNativePeering(false)
+			default:
+				return fmt.Errorf("jerboad: --native-peering %q is invalid (want auto or off)", nativePeering)
 			}
 			if runtime.GOOS == "linux" {
 				mode, err := network.InitPortPublishing(portPublish)
@@ -193,7 +201,10 @@ func newRootCmd() *cobra.Command {
 		"read-only bearer token required to scrape --metrics-addr and the --ui-addr dashboard (env: JERBOA_OBSERVABILITY_TOKEN); "+
 			"kept separate from --auth-token so scraping never grants daemon access; empty leaves these endpoints unauthenticated")
 	root.Flags().StringVar(&portPublish, "port-publish", network.PublishAuto,
-		"how published ports reach guests on Linux: auto (kernel NAT when available, else userspace proxy), nat or proxy")
+		"how published ports reach guests on Linux: auto (kernel NAT for clients on this host when available, else userspace proxy), "+
+			"nat, nat-lan (kernel NAT for clients on other hosts too, as Docker does; those connections skip the host's INPUT firewall rules) or proxy")
+	root.Flags().StringVar(&nativePeering, "native-peering", "auto",
+		"direct VM-to-VM links on macOS networks: auto (when the VMM supports them) or off (every frame crosses the switch)")
 	root.Flags().StringVar(&joinAddrs, "join", "",
 		"Comma-separated list of seed node addresses to join (e.g. 10.0.0.2:7946,10.0.0.3:7946)")
 	return root

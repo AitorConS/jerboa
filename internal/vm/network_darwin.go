@@ -110,6 +110,10 @@ func (m *nativeNetworkHost) prepareHostVM(v *VM) (func(), error) {
 	if err != nil {
 		return failed(err)
 	}
+	v.Cfg.nativeControl = ""
+	if link.Peering() {
+		v.Cfg.nativeControl = network.PeerControlPath(v.Cfg.nativeSocket)
+	}
 	v.mu.Lock()
 	v.hostCleanup = cleanup
 	v.healthAddress = ip

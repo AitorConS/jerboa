@@ -4,7 +4,7 @@
 # imports with `wsl --import`, the way Docker Desktop ships its own distro.
 FROM ubuntu:24.04
 
-ARG FIRECRACKER_VERSION=v1.10.1
+ARG FIRECRACKER_VERSION=v1.17.0
 ARG FC_ARCH=x86_64
 
 # Runtime deps: qemu, networking for the firecracker tap device, e2fsprogs for

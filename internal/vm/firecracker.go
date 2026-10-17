@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -83,8 +84,11 @@ type FirecrackerManager struct {
 	fcBin       string
 	kernelImage string
 	fcSecurity  json.RawMessage
-	mkCmd       CommandFunc
-	hchecker    *HealthChecker
+	// noPeerControl records that the VMM rejected security.unix_control
+	// (an older build); direct VM-to-VM links are then never offered to it.
+	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
+	mkCmd         CommandFunc
+	hchecker      *HealthChecker
 	// Platform hooks for the VMM control and runtime paths.
 	vmSockPath         func(id string) string            // socket path as seen by the firecracker process
 	cfgPathForProcess  func(path string) string          // translates config file path for the FC process

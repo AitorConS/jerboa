@@ -16,6 +16,11 @@ const (
 	PublishNAT = "nat"
 	// PublishProxy only uses the userspace proxy (Forwarder), as before.
 	PublishProxy = "proxy"
+	// PublishNATLAN also translates connections from other hosts, as Docker
+	// does. They are forwarded to the guest, so jerboad accepts them in the
+	// filter FORWARD chain, and they bypass the host's INPUT rules (ufw).
+	// Opt-in; the daemon fails to start without kernel NAT.
+	PublishNATLAN = "nat-lan"
 )
 
 // natEntry is one published port translated by the kernel: connections made
@@ -41,17 +46,22 @@ type portNAT interface {
 var (
 	natMu     sync.Mutex
 	activeNAT portNAT // nil: userspace proxy only
+	// clearStaleNAT removes kernel state a previous daemon left when this
+	// one runs proxy-only; tests replace it so they never touch the host.
+	clearStaleNAT = clearKernelNAT
 )
 
 // InitPortPublishing selects how published ports reach guests and returns the
-// effective mode (PublishNAT or PublishProxy). With PublishAuto it falls back
-// to the proxy when kernel NAT is unavailable. It clears translations left by
-// a previous daemon: their listeners died with it, as did their proxies.
+// effective mode (PublishNAT, PublishNATLAN or PublishProxy). With PublishAuto
+// it falls back to the proxy when kernel NAT is unavailable. It clears
+// translations left by a previous daemon: their listeners died with it, as did
+// their proxies.
 func InitPortPublishing(mode string) (string, error) {
 	switch mode {
-	case "", PublishAuto, PublishNAT, PublishProxy:
+	case "", PublishAuto, PublishNAT, PublishNATLAN, PublishProxy:
 	default:
-		return "", fmt.Errorf("port publishing mode %q is invalid (want %s, %s or %s)", mode, PublishAuto, PublishNAT, PublishProxy)
+		return "", fmt.Errorf("port publishing mode %q is invalid (want %s, %s, %s or %s)",
+			mode, PublishAuto, PublishNAT, PublishNATLAN, PublishProxy)
 	}
 	natMu.Lock()
 	defer natMu.Unlock()
@@ -60,17 +70,22 @@ func InitPortPublishing(mode string) (string, error) {
 		activeNAT = nil
 	}
 	if mode == PublishProxy {
+		clearStaleNAT()
 		return PublishProxy, nil
 	}
-	n, err := newKernelNAT()
+	lan := mode == PublishNATLAN
+	n, err := newKernelNAT(lan)
 	if err != nil {
-		if mode == PublishNAT {
+		if mode == PublishNAT || lan {
 			return "", fmt.Errorf("port publishing: kernel NAT unavailable: %w", err)
 		}
 		slog.Info("port publishing: using the userspace proxy", "reason", err)
 		return PublishProxy, nil
 	}
 	activeNAT = n
+	if lan {
+		return PublishNATLAN, nil
+	}
 	return PublishNAT, nil
 }
 
