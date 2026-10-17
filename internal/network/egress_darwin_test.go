@@ -159,3 +159,34 @@ func TestOwnedTCPPreservesHalfClose(t *testing.T) {
 		t.Fatal("proxy did not release completed halves")
 	}
 }
+
+func TestCopyStreamMovesEveryByte(t *testing.T) {
+	src, srcPeer := net.Pipe()
+	dst, dstPeer := net.Pipe()
+	payload := make([]byte, 3<<20+17) // several pooled buffers and a tail
+	for i := range payload {
+		payload[i] = byte(i*31 + 7)
+	}
+	go func() {
+		_, _ = srcPeer.Write(payload)
+		srcPeer.Close()
+	}()
+	got := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(dstPeer)
+		got <- b
+	}()
+	n, err := copyStream(dst, src)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(payload)), n)
+	dst.Close()
+	require.Equal(t, payload, <-got)
+
+	// A failed write reports a wrapped error.
+	src, srcPeer = net.Pipe()
+	dst, dstPeer = net.Pipe()
+	dstPeer.Close()
+	go func() { _, _ = srcPeer.Write([]byte("x")); srcPeer.Close() }()
+	_, err = copyStream(dst, src)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+}

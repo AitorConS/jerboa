@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -93,62 +94,6 @@ func newKernelNAT(lan bool) (portNAT, error) {
 	return nftNAT{lan: lan}, nil
 }
 
-// forwardComment marks the FORWARD rules jerboad owns.
-const forwardComment = "jerboa published ports"
-
-// forwardRules accept connections translated to a guest, in both directions.
-// The DNAT conntrack state limits them to published ports.
-func forwardRules() [][]string {
-	var rules [][]string
-	for _, dir := range []string{"-o", "-i"} {
-		rules = append(rules, []string{dir, "jerboa-br+", "-m", "conntrack", "--ctstate", "DNAT",
-			"-m", "comment", "--comment", forwardComment, "-j", "ACCEPT"})
-	}
-	return rules
-}
-
-// forwardChain is DOCKER-USER when Docker is set up (it is evaluated first
-// and Docker keeps it across restarts), FORWARD otherwise. If Docker starts
-// later, a rule in FORWARD still runs: Docker's chains do not drop traffic to
-// other bridges, only its policy does, and that comes after.
-func forwardChain() string {
-	if runIptables("-S", "DOCKER-USER") == nil {
-		return "DOCKER-USER"
-	}
-	return "FORWARD"
-}
-
-func openForward() error {
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return errors.New("iptables not found")
-	}
-	chain := forwardChain()
-	for _, r := range forwardRules() {
-		if err := runIptables(append([]string{"-I", chain, "1"}, r...)...); err != nil {
-			closeForward()
-			return err
-		}
-	}
-	return nil
-}
-
-// closeForward removes every jerboad rule from both chains it may use,
-// including duplicates left by daemons that did not exit cleanly.
-func closeForward() {
-	if _, err := exec.LookPath("iptables"); err != nil {
-		return
-	}
-	for _, chain := range []string{"DOCKER-USER", "FORWARD"} {
-		for _, r := range forwardRules() {
-			for range 16 {
-				if runIptables(append([]string{"-D", chain}, r...)...) != nil {
-					break
-				}
-			}
-		}
-	}
-}
-
 func runIptables(args ...string) error {
 	cmd := exec.Command("iptables", append([]string{"-w"}, args...)...) //nolint:noctx,gosec // short-lived local tool; args are fixed rule specs
 	var out bytes.Buffer
@@ -192,7 +137,20 @@ func (nftNAT) prepareBridge(bridge string) error {
 	return nil
 }
 
-func (nftNAT) add(entries []natEntry) error    { return runNft(natScript("add", entries)) }
+func (n nftNAT) add(entries []natEntry) error {
+	if err := runNft(natScript("add", entries)); err != nil {
+		return err
+	}
+	// A firewall reload (firewalld recreates its table) drops the accept
+	// rules; publishing restores them. Local clients work without them.
+	if n.lan {
+		if err := ensureForward(); err != nil {
+			slog.Warn("port forward: accept LAN connections in the firewall", "err", err)
+		}
+	}
+	return nil
+}
+
 func (nftNAT) remove(entries []natEntry) error { return runNft(natScript("delete", entries)) }
 func (n nftNAT) shutdown() {
 	_ = runNft("table ip " + natTable + "\ndelete table ip " + natTable + "\n")
