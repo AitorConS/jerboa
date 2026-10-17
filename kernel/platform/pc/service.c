@@ -38,6 +38,7 @@
 #endif
 
 #define HVM_START_MAGIC_VALUE   0x336ec578
+#define PVH_CMDLINE_MAX         4096
 
 #define HVM_MEMMAP_TYPE_RAM     1
 
@@ -389,6 +390,14 @@ void init_service(u64 rdi, u64 rsi, hvm_start_info start_info)
 
         do_setup_initmap = true;
     } else if (start_info) {
+        /* PVH passes the command line as a NUL-terminated string. Hypervisors
+         * that boot through PVH when the kernel offers it (Firecracker since
+         * v1.12) carry the network config, environment and mounts there. */
+        if (start_info->cmdline_paddr) {
+            cmdline = pointer_from_u64(start_info->cmdline_paddr);
+            while (cmdline_size < PVH_CMDLINE_MAX && cmdline[cmdline_size])
+                cmdline_size++;
+        }
         do_setup_initmap = true;
     }
 
