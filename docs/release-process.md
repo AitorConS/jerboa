@@ -50,9 +50,12 @@ preview, as selected for this rollout.
    product version, Desktop SHA, Firecracker SHA, kernel source and kernel version.
 4. Approve the KVM validation environment after reviewing the source revisions.
 5. Wait for validation, the selected toolset's QEMU/KVM and Firecracker boot
-   checks, Linux builds, Mac packaging, Windows packaging and the full Windows
-   installer smoke. Windows consumes the current run's CLI artifact plus an
-   explicit version/hash manifest; it never fetches stable to decide what to package.
+   checks, Linux builds, Mac packaging and Windows packaging. Windows consumes the
+   current run's CLI artifact plus an explicit version/hash manifest; it never
+   fetches stable to decide what to package. The candidate workflow no longer runs
+   the Windows installer smoke (the self-hosted Windows runner lacked the capacity
+   for it); run `scripts/windows-install-smoke.sh` by hand on a Windows machine with
+   WSL2 when a release changes the Windows or WSL path.
 6. Download `release-candidate` and `macos-app` from the run. The candidate includes a
    signed manifest, a signed inventory with source revisions, exact payload hashes,
    and a generated Windows update feed. Stable remains unchanged.
