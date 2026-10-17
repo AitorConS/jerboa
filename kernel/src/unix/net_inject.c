@@ -4,7 +4,7 @@
  * Reads the "opt/uni/network" fw_cfg file and injects static IP configuration
  * into the root tuple for init_network_iface() to consume.
  *
- * Format: "IP/CIDR,GATEWAY" (e.g. "10.0.0.2/24,10.0.0.1")
+ * Format: "IP/CIDR,GATEWAY[,MTU]" (e.g. "10.0.0.2/24,10.0.0.1,9000")
  *
  * The configuration is stored under the first network interface tuple (by
  * convention looked up by name or root-level). We create a "network" sub-tuple
@@ -154,13 +154,36 @@ void net_inject_from_fw_cfg(tuple root)
         cidr = cidr * 10 + (data[i] - '0');
     }
 
-    /* Parse Gateway: data[comma_pos+1..total) */
+    /* Trim trailing newline/whitespace */
+    while (total > comma_pos + 1 && (data[total - 1] == '\n' || data[total - 1] == '\r' || data[total - 1] == ' '))
+        total--;
+
+    /* Optional MTU after a second ',' */
+    u64 mtu = 0;
+    bytes gw_end = total;
+    for (bytes i = comma_pos + 1; i < total; i++) {
+        if (data[i] == ',') {
+            gw_end = i;
+            if (i + 1 == total) {
+                msg_err("net_inject: empty MTU in opt/uni/network");
+                deallocate_buffer(raw);
+                return;
+            }
+            for (bytes j = i + 1; j < total; j++) {
+                if (data[j] < '0' || data[j] > '9' || mtu > U16_MAX) {
+                    msg_err("net_inject: invalid MTU in opt/uni/network");
+                    deallocate_buffer(raw);
+                    return;
+                }
+                mtu = mtu * 10 + (data[j] - '0');
+            }
+            break;
+        }
+    }
+
+    /* Parse Gateway: data[comma_pos+1..gw_end) */
     bytes gw_start = comma_pos + 1;
     bytes gw_len = 0;
-    /* Trim trailing newline/whitespace */
-    bytes gw_end = total;
-    while (gw_end > gw_start && (data[gw_end - 1] == '\n' || data[gw_end - 1] == '\r' || data[gw_end - 1] == ' '))
-        gw_end--;
     gw_len = gw_end - gw_start;
 
     buffer gw_buf = parse_ip4_string(h, data + gw_start, gw_len);
@@ -192,6 +215,10 @@ void net_inject_from_fw_cfg(tuple root)
     set(root, sym(ipaddr), ip_buf);
     set(root, sym(netmask), mask_buf);
     set(root, sym(gateway), gw_buf);
+    if (mtu >= 576 && mtu <= U16_MAX)
+        set(root, sym(mtu), value_from_u64(mtu));
+    else if (mtu)
+        msg_err("net_inject: MTU %ld out of range; ignored", mtu);
 
     msg_info("net_inject: static IP config from fw_cfg: ipaddr=%b netmask=%b gateway=%b",
              ip_buf, mask_buf, gw_buf);

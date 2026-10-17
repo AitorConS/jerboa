@@ -59,15 +59,18 @@
 #define LWIP_CHKSUM_ALGORITHM   3
 
 #define LWIP_WND_SCALE 1
-#define TCP_MSS 1460            /* Assuming ethernet; may want to derive this */
-#define TCP_WND 0x34000         /* For maximum throughput should be the same as TCP_SND_BUF */
-#define TCP_SND_BUF 0x34000     /* Same as /proc/sys/net/core/wmem_default on Linux */
+#define TCP_MSS 8960            /* Upper bound: segments use min(TCP_MSS, interface MTU - 40) */
+/* Not derived from TCP_MSS (lwIP default: MIN(TCP_WND / 4, TCP_MSS * 4)): a larger
+ * upper bound must not delay window updates on 1500-byte networks. */
+#define TCP_WND_UPDATE_THRESHOLD (4 * 1460)
+#define TCP_WND 0x100000        /* For maximum throughput should be the same as TCP_SND_BUF */
+#define TCP_SND_BUF 0x100000    /* Linux autotunes up to 4-6 MiB; lwIP has no autotuning */
 #define TCP_SNDLOWAT (0xFFFE - (4 * TCP_MSS))   /* Unused, but needed to pass lwIP sanity checks */
 #define TCP_SND_QUEUELEN TCP_SNDQUEUELEN_OVERFLOW
 #define TCP_OVERSIZE TCP_MSS
 #define TCP_QUEUE_OOSEQ 1
 
-#define TCP_RCV_SCALE 2         /* (0xFFFFU << TCP_RCV_SCALE) must be greater than TCP_WND */
+#define TCP_RCV_SCALE 5         /* (0xFFFFU << TCP_RCV_SCALE) must be greater than TCP_WND */
 #define TCP_LISTEN_BACKLOG 1
 #define LWIP_DHCP 1
 // would prefer to set this dynamically...also,

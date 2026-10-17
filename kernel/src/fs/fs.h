@@ -24,6 +24,7 @@ void filesystem_read_linear(fsfile f, void *dest, range q, io_status_handler com
 void filesystem_write_linear(fsfile f, void *src, range q, io_status_handler completion);
 
 void filesystem_flush(filesystem fs, status_handler completion);
+void filesystem_flush_reclaim(filesystem fs, status_handler completion);
 
 void filesystem_reserve(filesystem fs);
 void filesystem_release(filesystem fs);
@@ -85,6 +86,8 @@ struct filesystem {
     inode (*get_inode)(filesystem fs, tuple md);
     tuple (*get_meta)(filesystem fs, inode n);
     u64 (*get_freeblocks)(filesystem fs);
+    /* With no file, datasync requests a memory-reclaim sync (see
+     * filesystem_flush_reclaim()). */
     status_handler (*get_sync_handler)(filesystem fs, fsfile fsf, boolean datasync,
                                        status_handler completion);
     int (*get_seals)(filesystem fs, fsfile fsf, u64 *seals);

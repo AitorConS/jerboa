@@ -106,6 +106,7 @@ void storage_probe_begin(void);
 void storage_probe_end(void);
 void storage_when_ready(status_handler complete);
 void storage_sync(status_handler sh);
+void storage_sync_reclaim(status_handler sh);
 
 struct filesystem *storage_get_fs(tuple root);
 u64 storage_get_mountpoint(tuple root, struct filesystem **fs);
