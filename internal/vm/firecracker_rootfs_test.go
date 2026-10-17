@@ -83,8 +83,10 @@ func TestWriteFCConfigDriveDurability(t *testing.T) {
 	require.Len(t, parsed.Drives, 2)
 	require.Equal(t, "Unsafe", parsed.Drives[0].CacheType)
 	require.Equal(t, "Writeback", parsed.Drives[1].CacheType)
+	// Without an explicit engine every drive takes the host default (Async
+	// where io_uring works on Linux, Sync otherwise).
 	for _, d := range parsed.Drives {
-		require.Equal(t, "Sync", d.IoEngine)
+		require.Equal(t, defaultFCIOEngine(), d.IoEngine)
 	}
 	require.Nil(t, parsed.Drives[0].RateLimiter)
 
