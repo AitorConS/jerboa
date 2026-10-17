@@ -43,7 +43,8 @@ typedef struct tfs {
     buffer releasing_frees;     /* captured by the release cycle in flight */
     vector release_waiters;     /* allocations retrying after a cycle */
     u64 release_generation;     /* completed cycles that freed storage */
-    boolean release_active, release_scheduled;
+    boolean release_active, release_scheduled, release_timer_armed;
+    struct timer release_timer; /* batches releases into one cycle */
     /* Data publication (see tfs_pub_register()): the log entries that expose
      * written blocks are staged only after a device flush that follows the
      * completion of those writes. Data writes are counted per generation. */
