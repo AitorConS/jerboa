@@ -18,9 +18,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/snapshot"
 )
@@ -82,8 +84,11 @@ type FirecrackerManager struct {
 	fcBin       string
 	kernelImage string
 	fcSecurity  json.RawMessage
-	mkCmd       CommandFunc
-	hchecker    *HealthChecker
+	// noPeerControl records that the VMM rejected security.unix_control
+	// (an older build); direct VM-to-VM links are then never offered to it.
+	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
+	mkCmd         CommandFunc
+	hchecker      *HealthChecker
 	// Platform hooks for the VMM control and runtime paths.
 	vmSockPath         func(id string) string            // socket path as seen by the firecracker process
 	cfgPathForProcess  func(path string) string          // translates config file path for the FC process
@@ -325,7 +330,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// failure FAILS the run instead of leaving a "running" VM whose published port
 	// silently does not work.
 	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS == "linux" {
-		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		fwd, fwdErr := network.PublishPorts(v.Cfg.IPAddress, v.Cfg.bridge(), toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
 			return fmt.Errorf("firecracker start %s: publish ports: %w", id, fwdErr)
@@ -489,10 +494,7 @@ func setupTAPNetwork(cfg Config) error {
 	if cfg.GatewayIP == "" {
 		return nil
 	}
-	bridgeName := cfg.BridgeName
-	if bridgeName == "" {
-		bridgeName = "jerboa-br0"
-	}
+	bridgeName := cfg.bridge()
 	mask := cfg.SubnetMask
 	if mask == "" {
 		mask = "24"
@@ -788,6 +790,8 @@ func buildFCBootArgs(cfg Config) string {
 		if cfg.GatewayIP != "" {
 			args += fmt.Sprintf(" en1.gateway=%s", cfg.GatewayIP)
 		}
+		// The bridge's MTU; Nanos sizes its RX buffers and TCP segments from it.
+		args += fmt.Sprintf(" en1.mtu=%d", netconst.BridgeMTU)
 	}
 
 	// Volume mount points: Nanos reads "mounts.LABEL=/path" from boot args and,

@@ -14,3 +14,18 @@ const DNSAnycastIP = "10.53.0.53"
 
 // DNSPort is the UDP port the guest DNS server listens on.
 const DNSPort = 53
+
+// NativeMTU is the MTU of the macOS userspace networks (gvproxy switch and the
+// gVisor gateway stack) and of their guests. Every frame between two VMs
+// crosses the guest, the VMM, its broker and the Go switch, each at a cost
+// per frame: at 1500 bytes, VM-to-VM TCP saturated the sending vCPU and two
+// host cores in the switch. Nothing leaves these networks as raw frames (the
+// gateway terminates TCP and UDP and proxies them through host sockets), so
+// a jumbo MTU stays internal.
+const NativeMTU = 9000
+
+// BridgeMTU is the MTU of Linux network bridges, their TAPs and guests.
+// Frames between VMs stay on the bridge, and host traffic to a VM goes
+// through userspace proxies (published ports) or local services (DNS), so
+// the host's own interfaces keep their MTU.
+const BridgeMTU = 9000

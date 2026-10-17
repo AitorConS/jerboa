@@ -247,7 +247,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	// run instead of leaving a "running" VM whose published port silently does
 	// not work.
 	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS != "darwin" {
-		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		fwd, fwdErr := network.PublishPorts(v.Cfg.IPAddress, v.Cfg.bridge(), toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
 			return fmt.Errorf("qemu start %s: publish ports: %w", id, fwdErr)

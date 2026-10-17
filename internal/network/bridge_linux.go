@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strconv"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/netconst"
 )
 
 // BridgeConfig holds the parameters for a Linux bridge interface.
@@ -42,9 +45,21 @@ func CreateBridge(cfg BridgeConfig) error {
 // safe to call for a bridge shared by multiple VMs.
 func EnsureBridge(cfg BridgeConfig) error {
 	if bridgeExists(cfg.Name) {
-		return nil
+		// Bridges created before jumbo frames keep working: raise their MTU.
+		return setMTU(cfg.Name)
 	}
-	return CreateBridge(cfg)
+	if err := CreateBridge(cfg); err != nil {
+		return err
+	}
+	return setMTU(cfg.Name)
+}
+
+// setMTU sets netconst.BridgeMTU on a bridge or TAP.
+func setMTU(name string) error {
+	if err := ipLink("set", name, "mtu", strconv.Itoa(netconst.BridgeMTU)); err != nil {
+		return fmt.Errorf("set mtu of %s: %w", name, err)
+	}
+	return nil
 }
 
 func bridgeExists(name string) bool {
@@ -111,6 +126,10 @@ func DestroyBridge(name string) error {
 
 // AttachTAP adds a TAP interface to a bridge using ip link set master.
 func AttachTAP(tapName, bridgeName string) error {
+	// A bridge runs at the lowest MTU of its ports: match the bridge first.
+	if err := setMTU(tapName); err != nil {
+		return err
+	}
 	if err := ipLink("set", tapName, "master", bridgeName); err != nil {
 		return fmt.Errorf("attach %s to bridge %s: %w", tapName, bridgeName, err)
 	}
