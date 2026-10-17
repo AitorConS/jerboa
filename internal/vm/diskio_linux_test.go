@@ -22,6 +22,17 @@ func TestKernelAtLeast(t *testing.T) {
 	}
 }
 
+// The default follows the probe, and a host that passes the probe also
+// passes the explicit async validation.
+func TestDefaultFCIOEngineFollowsProbe(t *testing.T) {
+	if probeAsyncIO() {
+		require.Equal(t, fcEngineAsync, defaultFCIOEngine())
+		require.NoError(t, validateDiskIOHost(Config{DiskIOEngine: DiskIOEngineAsync}))
+	} else {
+		require.Equal(t, fcEngineSync, defaultFCIOEngine())
+	}
+}
+
 func TestValidateDiskIOHostSyncAlwaysAllowed(t *testing.T) {
 	require.NoError(t, validateDiskIOHost(Config{}))
 	require.NoError(t, validateDiskIOHost(Config{DiskIOEngine: DiskIOEngineSync}))

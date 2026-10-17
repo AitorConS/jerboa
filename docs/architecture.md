@@ -104,7 +104,7 @@ Current model:
 - one TAP per VM
 - host-side IPAM
 - internal DNS records
-- TCP port publishing through a userspace forwarder
+- port publishing through kernel NAT (nftables) where available, with a userspace proxy for other hosts by default (`jerboad --port-publish`)
 
 Important constraints:
 

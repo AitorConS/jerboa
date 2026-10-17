@@ -103,7 +103,8 @@ type RunParams struct {
 	MemoryMax   int64            `json:"memory_max,omitempty"`
 	DiskIOPS    uint64           `json:"disk_iops,omitempty"`
 	DiskBPS     int64            `json:"disk_bps,omitempty"`
-	// DiskIOEngine is "sync" (default) or "async" (Linux io_uring).
+	// DiskIOEngine is "sync" or "async" (Linux io_uring); empty selects the
+	// host default (async on Linux hosts that support it).
 	DiskIOEngine string `json:"disk_io_engine,omitempty"`
 	// VolumeCache is "writeback" (default; guest flushes are durable) or "unsafe".
 	VolumeCache string `json:"volume_cache,omitempty"`

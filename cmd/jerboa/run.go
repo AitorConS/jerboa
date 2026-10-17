@@ -250,7 +250,7 @@ func newRunCmd(socketPath *string) *cobra.Command {
 	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "memory limit (e.g. 512M; Linux hard limit, macOS RSS watchdog)")
 	cmd.Flags().Uint64Var(&diskIOPS, "disk-iops", 0, "disk I/O throttle: max IOPS for boot disk (0=no limit)")
 	cmd.Flags().StringVar(&diskBPS, "disk-bps", "", "disk I/O throttle: max bytes/sec for boot disk (e.g. 10M, 0=no limit)")
-	cmd.Flags().StringVar(&diskIOEngine, "disk-io-engine", "", "host block I/O engine: sync (default) or async (Linux io_uring, 5.10+)")
+	cmd.Flags().StringVar(&diskIOEngine, "disk-io-engine", "", "host block I/O engine: sync or async (Linux io_uring, 5.10+); default: async on Linux hosts that support it, else sync")
 	cmd.Flags().StringVar(&volumeCache, "volume-cache", "", "volume flush handling: writeback (default, guest fsync is durable) or unsafe (faster, may lose data on host crash)")
 	return cmd
 }

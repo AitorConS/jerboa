@@ -127,6 +127,9 @@ type Config struct {
 	EmulateX86   bool   `json:"emulate_x86,omitempty"`
 	nativeSocket string //nolint:unused // Used by the macOS backend.
 	nativeMAC    string //nolint:unused // Used by the macOS backend.
+	// nativeControl is the peer control socket for direct VM-to-VM links;
+	// empty when the network does not offer them.
+	nativeControl string //nolint:unused // Used by the macOS backend.
 	// privateBootDisk marks ImagePath as a per-VM private disk (set only on the
 	// launch copy of the config), so the hypervisor may open it read-write.
 	privateBootDisk bool
@@ -193,7 +196,8 @@ type Config struct {
 	// DiskBPS is the maximum bytes per second for the boot disk. 0 means no limit.
 	DiskBPS int64
 	// DiskIOEngine selects the host block I/O engine for every drive:
-	// DiskIOEngineSync (default when empty) or DiskIOEngineAsync (io_uring).
+	// DiskIOEngineSync or DiskIOEngineAsync (io_uring). Empty selects the host
+	// default: async for Firecracker on Linux hosts where io_uring works.
 	DiskIOEngine string `json:"disk_io_engine,omitempty"`
 	// VolumeCache selects how volume drives treat guest flushes:
 	// VolumeCacheWriteback (default when empty) or VolumeCacheUnsafe.
@@ -205,6 +209,15 @@ type Config struct {
 // bridge (a TAP can be enslaved to only one VM), so callers assign a per-VM
 // unique TapName. It falls back to NetworkName for configs/tests that predate
 // the TapName/NetworkName split, where the two were the same value.
+// bridge is the Linux bridge the VM's TAP joins (BridgeName, or the shared
+// default bridge).
+func (c Config) bridge() string {
+	if c.BridgeName != "" {
+		return c.BridgeName
+	}
+	return "jerboa-br0"
+}
+
 func (c Config) tapDevice() string {
 	if c.TapName != "" {
 		return c.TapName

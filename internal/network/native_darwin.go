@@ -32,8 +32,10 @@ type NativeNetwork struct {
 	publishMu sync.Mutex
 	published map[string]*nativePublication
 	sw        *tap.Switch
+	gso       *gsoEndpoint
 	ports     *forwarder.PortsForwarder
 	dns       []net.PacketConn
+	peers     *peering // nil: direct VM-to-VM links disabled
 	once      sync.Once
 }
 
@@ -45,7 +47,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 	if err != nil || subnet.IP.To4() == nil || !subnet.Contains(net.ParseIP(gateway)) {
 		return nil, fmt.Errorf("invalid native subnet/gateway %s/%s", cidr, gateway)
 	}
-	ep, err := tap.NewLinkEndpoint(false, 1500, "02:4a:65:72:62:01", gateway, []string{netconst.DNSAnycastIP, "10.0.2.3"})
+	ep, err := tap.NewLinkEndpoint(false, netconst.NativeMTU, gatewayMAC.String(), gateway, []string{netconst.DNSAnycastIP, "10.0.2.3"})
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +56,8 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 	sw.Connect(ep)
 	s := stack.New(stack.Options{NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol, arp.NewProtocol}, TransportProtocols: []stack.TransportProtocolFactory{tcp.NewProtocol, udp.NewProtocol, icmp.NewProtocol4}})
 	fail := func(err error) (*NativeNetwork, error) { s.Close(); return nil, err }
-	if e := s.CreateNIC(1, ep); e != nil {
+	gso := newGSOEndpoint(ep)
+	if e := s.CreateNIC(1, gso); e != nil {
 		return fail(fmt.Errorf("native NIC: %s", e))
 	}
 	for _, ip := range []string{gateway, netconst.DNSAnycastIP, "10.0.2.3"} {
@@ -85,7 +88,10 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 		}
 		return allow(id.RemoteAddress.String(), address, id.LocalPort, udp)
 	}
-	n := &NativeNetwork{stack: s, sw: sw, ports: forwarder.NewPortsForwarder(s)}
+	n := &NativeNetwork{stack: s, sw: sw, gso: gso, ports: forwarder.NewPortsForwarder(s)}
+	if NativePeeringEnabled() {
+		n.peers = newPeering()
+	}
 	if allow != nil {
 		n.egress = newEgressPool()
 		n.egress.install(s, gateway, permitted)
@@ -182,6 +188,7 @@ type NativeLink struct {
 	closed   bool
 	cleanup  func()
 	rx, tx   atomic.Int64
+	member   *peerMember
 }
 type frameCounter struct {
 	header    [4]byte
@@ -241,6 +248,13 @@ func (n *NativeNetwork) ListenVM(path, ip, mac string) (*NativeLink, error) {
 		n.egress.activateSource(ip)
 		l.cleanup = func() { n.egress.closeSource(ip) }
 	}
+	if err := n.listenPeers(l, path, ip, mac); err != nil {
+		ln.Close()
+		if l.cleanup != nil {
+			l.cleanup()
+		}
+		return nil, err
+	}
 	go func() {
 		for {
 			c, err := ln.Accept()
@@ -256,6 +270,14 @@ func (n *NativeNetwork) ListenVM(path, ip, mac string) (*NativeLink, error) {
 			l.conn = c
 			l.mu.Unlock()
 			guard := newEthernetConn(c, ip, mac)
+			if hw, err := net.ParseMAC(mac); err == nil && len(hw) == 6 {
+				port := tcpip.LinkAddress(hw)
+				guard.capabilities = func(flags byte) { n.gso.setLarge(port, guard, flags&switchCapsLarge != 0) }
+				guard.closed = func() { n.gso.setLarge(port, guard, false) }
+			}
+			if m := l.member; m != nil {
+				guard.observe = func(dst [6]byte) { n.peers.observe(m, dst) }
+			}
 			_ = n.sw.Accept(context.Background(), &countedConn{Conn: guard, link: l}, types.QemuProtocol)
 		}
 	}()
@@ -276,4 +298,48 @@ func (l *NativeLink) Close() {
 		_ = l.conn.Close()
 	}
 }
-func (l *NativeLink) Stats() (int64, int64) { return l.rx.Load(), l.tx.Load() }
+
+// Peering reports whether this link offers direct VM-to-VM links.
+func (l *NativeLink) Peering() bool { return l.member != nil }
+
+// Stats returns bytes received and sent by the VM, including direct links.
+func (l *NativeLink) Stats() (int64, int64) {
+	rx, tx := l.rx.Load(), l.tx.Load()
+	if m := l.member; m != nil {
+		rx += int64(m.rx.Load())
+		tx += int64(m.tx.Load())
+	}
+	return rx, tx
+}
+
+// listenPeers opens the VM's peer control socket next to its stream socket.
+func (n *NativeNetwork) listenPeers(l *NativeLink, path, ip, mac string) error {
+	hw, err := net.ParseMAC(mac)
+	addr := net.ParseIP(ip).To4()
+	if n.peers == nil || err != nil || len(hw) != 6 || addr == nil {
+		return nil
+	}
+	control := PeerControlPath(path)
+	_ = os.Remove(control)
+	ln, err := net.Listen("unix", control)
+	if err != nil {
+		return err
+	}
+	if err := os.Chmod(control, 0o600); err != nil {
+		ln.Close()
+		return err
+	}
+	m := n.peers.register(hw, addr)
+	l.member = m
+	go n.peers.serve(m, ln)
+	previous := l.cleanup
+	l.cleanup = func() {
+		ln.Close()
+		n.peers.unregister(m)
+		_ = os.Remove(control)
+		if previous != nil {
+			previous()
+		}
+	}
+	return nil
+}

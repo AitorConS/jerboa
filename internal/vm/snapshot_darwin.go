@@ -290,6 +290,9 @@ func (m *FirecrackerManager) SnapshotRestore(ctx context.Context, id, name strin
 	}
 	netCfg := []nativeFCNetwork{{IfaceID: "eth0", Backend: "unix-stream", GuestMAC: v.Cfg.nativeMAC, SocketPath: v.Cfg.nativeSocket}}
 	security := map[string]any{"version": 1, "unix_stream": v.Cfg.nativeSocket}
+	if v.Cfg.nativeControl != "" && !m.noPeerControl.Load() {
+		security["unix_control"] = v.Cfg.nativeControl
+	}
 	if workDir, err = os.MkdirTemp("", "jerboa-fc-"+v.ID+"-"); err != nil {
 		return fail("%w", err)
 	}

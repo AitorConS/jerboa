@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/stretchr/testify/require"
 )
 
@@ -310,7 +312,7 @@ func TestNativeFCSharedConfig(t *testing.T) {
 	require.JSONEq(t, `{"version":1,"unix_stream":"/private/net.sock"}`, string(mustJSON(t, c.Security)))
 	b, err := os.ReadFile(c.Firmware["opt/uni/network"])
 	require.NoError(t, err)
-	require.Equal(t, "172.25.0.2/24,172.25.0.1", string(b))
+	require.Equal(t, fmt.Sprintf("172.25.0.2/24,172.25.0.1,%d", netconst.NativeMTU), string(b))
 }
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()

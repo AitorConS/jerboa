@@ -36,6 +36,12 @@ type Forwarder struct {
 	wg          sync.WaitGroup
 	closed      bool
 	connections map[net.Conn]struct{}
+	// Kernel translations (see portnat.go): connections made on this host go
+	// straight to the guest; the listeners above still serve other hosts.
+	// Empty with the userspace proxy only.
+	nat        portNAT
+	natEntries []natEntry
+	udpHolds   []net.PacketConn // reserve UDP ports translated by the kernel
 }
 
 // dialTimeout bounds how long a proxied connection waits to reach the guest.
@@ -45,13 +51,38 @@ const dialTimeout = 10 * time.Second
 // connections to guestIP. UDP maps are not yet supported and are skipped with a
 // warning. The returned Forwarder must be closed when the VM stops.
 func StartForwarder(guestIP string, ports []PortForward) (*Forwarder, error) {
+	return PublishPorts(guestIP, "", ports)
+}
+
+// PublishPorts publishes ports of a guest on bridge. It always opens the
+// userspace listeners: they reserve the ports and serve clients on other
+// hosts (and every client when kernel NAT is off). With kernel NAT active
+// (InitPortPublishing), connections made on this host go straight to the
+// guest, and UDP ports are published for them too. A bridge of "" means
+// proxy only.
+func PublishPorts(guestIP, bridge string, ports []PortForward) (*Forwarder, error) {
 	if guestIP == "" {
 		return nil, fmt.Errorf("guest IP is required for port forwarding")
 	}
 	f := &Forwarder{}
+	nat := currentNAT()
+	if bridge == "" {
+		nat = nil
+	}
 	for _, pm := range ports {
 		if strings.EqualFold(pm.Protocol, "udp") {
-			slog.Warn("port forward: UDP is not supported yet, skipping", "host_port", pm.HostPort)
+			if nat == nil {
+				slog.Warn("port forward: UDP needs kernel NAT (jerboad --port-publish), skipping", "host_port", pm.HostPort)
+				continue
+			}
+			pc, err := net.ListenPacket("udp", net.JoinHostPort(pm.BindAddr, strconv.Itoa(int(pm.HostPort))))
+			if err != nil {
+				f.Close()
+				return nil, fmt.Errorf("listen on udp %s:%d: %w", pm.BindAddr, pm.HostPort, err)
+			}
+			f.mu.Lock()
+			f.udpHolds = append(f.udpHolds, pc)
+			f.mu.Unlock()
 			continue
 		}
 		listenAddr := net.JoinHostPort(pm.BindAddr, strconv.Itoa(int(pm.HostPort)))
@@ -68,7 +99,30 @@ func StartForwarder(guestIP string, ports []PortForward) (*Forwarder, error) {
 		go f.serve(ln, target)
 		slog.Info("port forward started", "listen", listenAddr, "target", target)
 	}
+	if nat != nil {
+		f.startNAT(nat, guestIP, bridge, ports)
+	}
 	return f, nil
+}
+
+// startNAT installs kernel translations for ports already reserved by f. On
+// failure the ports stay on the userspace proxy (UDP ports then do not work,
+// as without kernel NAT).
+func (f *Forwarder) startNAT(nat portNAT, guestIP, bridge string, ports []PortForward) {
+	entries, err := natEntries(guestIP, ports)
+	if err == nil && len(entries) > 0 {
+		if err = nat.prepareBridge(bridge); err == nil {
+			err = nat.add(entries)
+		}
+	}
+	if err != nil {
+		slog.Warn("port forward: kernel NAT failed, using the userspace proxy", "guest", guestIP, "err", err)
+		return
+	}
+	f.mu.Lock()
+	f.nat, f.natEntries = nat, entries
+	f.mu.Unlock()
+	slog.Info("port forward: kernel NAT", "guest", guestIP, "ports", len(entries))
 }
 
 // serve accepts connections on ln until it is closed and proxies each to target.
@@ -147,12 +201,23 @@ func (f *Forwarder) Close() {
 	f.closed = true
 	listeners := f.listeners
 	f.listeners = nil
+	nat, entries, holds := f.nat, f.natEntries, f.udpHolds
+	f.nat, f.natEntries, f.udpHolds = nil, nil, nil
 	clients := make([]net.Conn, 0, len(f.connections))
 	for client := range f.connections {
 		clients = append(clients, client)
 	}
 	f.mu.Unlock()
 
+	// Translations first: no new connection may reach a guest being stopped.
+	if nat != nil {
+		if err := nat.remove(entries); err != nil {
+			slog.Warn("port forward: remove kernel NAT", "err", err)
+		}
+	}
+	for _, pc := range holds {
+		_ = pc.Close()
+	}
 	for _, ln := range listeners {
 		_ = ln.Close()
 	}

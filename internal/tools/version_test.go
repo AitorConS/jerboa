@@ -117,7 +117,7 @@ func TestSaveLocalVersion(t *testing.T) {
 func TestClearCachedTools(t *testing.T) {
 	dir := t.TempDir()
 	allFiles := append([]string{versionFileName}, artifactNames...)
-	allFiles = append(allFiles, "mkfs", "dump")
+	allFiles = append(allFiles, "mkfs", "dump", fcKernelLocalName)
 	for _, name := range allFiles {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644))
 	}

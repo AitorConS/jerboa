@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -125,10 +127,46 @@ func (m *FirecrackerManager) checkFCConfig(ctx context.Context, path string) err
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := m.mkCmd(ctx, m.fcBin, "--no-api", "--config-file", path, "--check-config").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("HVF configuration rejected: %w: %s", err, out)
+	if err == nil {
+		return nil
 	}
-	return nil
+	// A VMM without direct VM-to-VM links rejects unix_control as an unknown
+	// field. Drop it, and stop offering it, if that makes the config valid.
+	if stripped, serr := stripPeerControl(path); serr == nil && stripped {
+		out, err = m.mkCmd(ctx, m.fcBin, "--no-api", "--config-file", path, "--check-config").CombinedOutput()
+		if err == nil {
+			if !m.noPeerControl.Swap(true) {
+				slog.Info("firecracker: VMM has no direct VM-to-VM links; frames between VMs use the switch")
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("HVF configuration rejected: %w: %s", err, out)
+}
+
+// stripPeerControl removes security.unix_control from a config file and
+// reports whether it was present.
+func stripPeerControl(path string) (bool, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // our own config file
+	if err != nil {
+		return false, err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return false, err
+	}
+	var security map[string]json.RawMessage
+	if err := json.Unmarshal(doc["security"], &security); err != nil || security["unix_control"] == nil {
+		return false, err
+	}
+	delete(security, "unix_control")
+	if doc["security"], err = json.Marshal(security); err != nil {
+		return false, err
+	}
+	if data, err = json.MarshalIndent(doc, "", "  "); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, data, 0o600)
 }
 
 func nativeFCStateClient(socket string) (*http.Client, *http.Transport) {
@@ -434,7 +472,9 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		if mask == "" {
 			mask = "24"
 		}
-		netcfg = cfg.IPAddress + "/" + mask + "," + cfg.GatewayIP
+		// The network's MTU follows the gateway, which the guest needs to
+		// size its RX buffers (format IP/CIDR,GATEWAY,MTU).
+		netcfg = cfg.IPAddress + "/" + mask + "," + cfg.GatewayIP + "," + strconv.Itoa(netconst.NativeMTU)
 	}
 	for name, data := range map[string]string{"env": strings.Join(cfg.Env, "\n"), "mounts": strings.Join(mounts, "\n"), "network": netcfg} {
 		if len(data) > 65536 {
@@ -490,6 +530,9 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		n = nativeFCNetwork{IfaceID: "eth0", Backend: "unix-stream", GuestMAC: cfg.nativeMAC, SocketPath: cfg.nativeSocket}
 		socket, _ := json.Marshal(cfg.nativeSocket)
 		c.Security = map[string]json.RawMessage{"version": json.RawMessage("1"), "unix_stream": socket}
+		if cfg.nativeControl != "" && !m.noPeerControl.Load() {
+			c.Security["unix_control"], _ = json.Marshal(cfg.nativeControl)
+		}
 	}
 	c.Networks = []nativeFCNetwork{n}
 	c.Limits.Version = 1

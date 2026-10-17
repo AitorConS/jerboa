@@ -22,6 +22,12 @@ func TestValidateDiskIO(t *testing.T) {
 	require.ErrorContains(t, validateDiskIO(Config{VolumeCache: "none"}), "VolumeCache")
 }
 
+func TestFCIOEngine(t *testing.T) {
+	require.Equal(t, fcEngineSync, fcIOEngine(Config{DiskIOEngine: DiskIOEngineSync}))
+	require.Equal(t, fcEngineAsync, fcIOEngine(Config{DiskIOEngine: DiskIOEngineAsync}))
+	require.Equal(t, defaultFCIOEngine(), fcIOEngine(Config{}))
+}
+
 // The macOS VMM rejects unknown drive fields, so a drive built without the
 // Linux-only options must serialize exactly as before.
 func TestFCDriveOmitsOptionalFields(t *testing.T) {
