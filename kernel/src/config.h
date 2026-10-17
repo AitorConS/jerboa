@@ -53,6 +53,10 @@
 /* Unsynced writes become crash-visible within this delay (one device flush
  * per publication cycle; fsync and sync publish at once). */
 #define TFS_PUBLISH_DELAY_SECONDS 5
+/* Storage released by truncate or unlink waits this long for more releases, so
+ * one log flush and device flush cover them all. An allocation that needs the
+ * space starts the cycle at once. */
+#define TFS_RELEASE_DELAY_SECONDS 30
 /* Memory for v6 extent page maps (two bits per page); over it, writes into
  * uninited extents convert them whole. 8 MiB covers ~32 GiB of extents. */
 #define TFS_MAP_MEMORY_LIMIT (8 * MB)

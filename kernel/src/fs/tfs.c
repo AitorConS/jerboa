@@ -291,6 +291,7 @@ boolean filesystem_free_storage(tfs fs, range blocks)
  * until a release cycle has flushed the log and then the device. The caller
  * must hold the filesystem lock and have logged the release already. */
 static void tfs_release_schedule(tfs fs);
+static void tfs_release_defer(tfs fs);
 static void tfs_device_flush(tfs fs, status_handler sh);
 
 static void tfs_release_wake(tfs fs)
@@ -320,8 +321,13 @@ closure_function(1, 1, void, tfs_release_flushed,
     fs->release_active = false;
     if (is_ok(s)) {
         fs->release_generation++;
-        if (buffer_length(fs->deferred_frees))
-            tfs_release_schedule(fs);
+        /* Waiters still short of space retry at once; other releases batch. */
+        if (buffer_length(fs->deferred_frees)) {
+            if (vector_length(fs->release_waiters))
+                tfs_release_schedule(fs);
+            else
+                tfs_release_defer(fs);
+        }
     } else {
         msg_err("TFS: storage release not durable, retained: %v", s);
         timm_dealloc(s);
@@ -387,6 +393,38 @@ static void tfs_release_schedule(tfs fs)
     async_apply(t);
 }
 
+closure_function(1, 2, void, tfs_release_timer_expired,
+                 tfs, fs,
+                 u64 expiry, u64 overruns)
+{
+    tfs fs = bound(fs);
+    if (overruns != timer_disabled) {
+        filesystem_lock(&fs->fs);
+        fs->release_timer_armed = false;
+        if (buffer_length(fs->deferred_frees))
+            tfs_release_schedule(fs);
+        filesystem_unlock(&fs->fs);
+    }
+    closure_finish();
+}
+
+/* A release cycle costs a log flush and a device flush. Releases only need to
+ * be durable before their storage is reused, so they wait for later ones and
+ * share a cycle; allocations short of space start it at once (tfs_release_wait). */
+static void tfs_release_defer(tfs fs)
+{
+    if (fs->release_timer_armed || fs->release_scheduled || fs->release_active)
+        return;
+    timer_handler th = closure(fs->fs.h, tfs_release_timer_expired, fs);
+    if (th == INVALID_ADDRESS) {
+        tfs_release_schedule(fs);
+        return;
+    }
+    fs->release_timer_armed = true;
+    register_timer(kernel_timers, &fs->release_timer, CLOCK_ID_MONOTONIC_RAW,
+                   seconds(TFS_RELEASE_DELAY_SECONDS), false, 0, th);
+}
+
 void filesystem_release_storage(tfs fs, range blocks)
 {
     if (!fs->storage || range_empty(blocks))
@@ -395,7 +433,7 @@ void filesystem_release_storage(tfs fs, range blocks)
         msg_err("TFS: cannot defer release of %R; leaving it allocated", blocks);
         return;
     }
-    tfs_release_schedule(fs);
+    tfs_release_defer(fs);
 }
 
 closure_function(1, 1, void, tfs_release_wait,
@@ -2705,7 +2743,8 @@ void create_filesystem(heap h,
     assert(fs->deferred_frees != INVALID_ADDRESS && fs->releasing_frees != INVALID_ADDRESS &&
            fs->release_waiters != INVALID_ADDRESS);
     fs->release_generation = 0;
-    fs->release_active = fs->release_scheduled = false;
+    fs->release_active = fs->release_scheduled = fs->release_timer_armed = false;
+    init_timer(&fs->release_timer);
     spin_lock_init(&fs->pub_lock);
     fs->inflight[0] = fs->inflight[1] = 0;
     fs->wgen = fs->cycle_gen = 0;
@@ -2778,6 +2817,8 @@ void destroy_filesystem(filesystem fs)
     /* Before the extents are freed. Unpublished data is lost, as on a crash. */
     if (tfs->pub_timer_armed)
         remove_timer(kernel_timers, &tfs->pub_timer, 0);
+    if (tfs->release_timer_armed)
+        remove_timer(kernel_timers, &tfs->release_timer, 0);
     tfs_pub_drop(tfs);
 #endif
     log_destroy(tfs->tl);
