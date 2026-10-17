@@ -87,12 +87,21 @@ func TestNATEntries(t *testing.T) {
 
 func TestInitPortPublishingModes(t *testing.T) {
 	t.Cleanup(ShutdownPortPublishing)
+	cleared := 0
+	prev := clearStaleNAT
+	clearStaleNAT = func() { cleared++ }
+	t.Cleanup(func() { clearStaleNAT = prev })
+
 	_, err := InitPortPublishing("iptables")
 	require.ErrorContains(t, err, "invalid")
+	require.ErrorContains(t, err, PublishNATLAN)
+	require.Zero(t, cleared)
 	mode, err := InitPortPublishing(PublishProxy)
 	require.NoError(t, err)
 	require.Equal(t, PublishProxy, mode)
 	require.Nil(t, currentNAT())
+	// Proxy-only daemons still remove what a killed predecessor left.
+	require.Equal(t, 1, cleared)
 }
 
 func TestPublishPortsInstallsAndRemovesNAT(t *testing.T) {

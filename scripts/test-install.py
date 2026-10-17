@@ -26,8 +26,8 @@ elif name=='curl':
     elif os.environ.get('FAIL_DOWNLOAD'): sys.exit(22)
     else: out.write_bytes(b'corrupt' if os.environ.get('CORRUPT') else b'binary')
 elif name=='tar':
-    out=pathlib.Path(args[-1])/'release-v1.10.1-x86_64'; out.mkdir()
-    (out/'firecracker-v1.10.1-x86_64').write_bytes(b'firecracker')
+    out=pathlib.Path(args[-1])/'release-v1.17.0-x86_64'; out.mkdir()
+    (out/'firecracker-v1.17.0-x86_64').write_bytes(b'firecracker')
 elif name=='minisign': sys.exit(1 if os.environ.get('BAD_SIGNATURE') else 0)
 elif name=='sw_vers': print(os.environ.get('MACOS_VERSION','26.0'))
 elif name in ['pkgutil','spctl']:

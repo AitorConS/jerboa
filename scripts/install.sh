@@ -21,14 +21,14 @@
 # Piped: curl -fsSL https://jerboa.dev/install.sh | sudo bash -s -- --version 0.51.2
 #
 # Environment overrides:
-#   FIRECRACKER_VERSION   firecracker release tag       (default v1.10.1)
+#   FIRECRACKER_VERSION   firecracker release tag       (default v1.17.0)
 #   FC_ARCH               firecracker arch              (default x86_64)
 #   JERBOA_PORT           daemon loopback TCP port      (default 7890)
 #   HYPERVISOR            qemu or firecracker           (default firecracker)
 #   RELEASE_BASE          release origin (default https://releases.jerboa.dev)
 set -euo pipefail
 
-FIRECRACKER_VERSION="${FIRECRACKER_VERSION:-v1.10.1}"
+FIRECRACKER_VERSION="${FIRECRACKER_VERSION:-v1.17.0}"
 FC_ARCH="${FC_ARCH:-x86_64}"
 JERBOA_PORT="${JERBOA_PORT:-7890}"
 HYPERVISOR="${HYPERVISOR:-firecracker}"

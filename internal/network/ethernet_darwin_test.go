@@ -27,12 +27,25 @@ func TestEthernetCoalescedFramesPreserveSourceValidation(t *testing.T) {
 		return f
 	}
 	valid := frame(34, 2)
+	// The largest frame a port takes: a whole TSO frame for the gateway.
 	large := frame(maxEthernetFrame, 2)
+	copy(large[4:10], gatewayMAC)
+	binary.BigEndian.PutUint16(large[20:22], maxEthernetFrame-14)
+	large[27] = 6
 	spoofed := frame(34, 3)
 	wire := bytes.Join([][]byte{spoofed, valid, large, spoofed, valid}, nil)
 	done := make(chan error, 1)
+	// The VMM side reads the frame that opens the link before it hangs up, as
+	// a real VMM does; hanging up first fails that write and closes the port.
+	opened := make(chan struct{})
+	go func() {
+		_, _ = io.ReadFull(b, make([]byte, len(c.switchCapabilities())))
+		close(opened)
+		_, _ = io.Copy(io.Discard, b)
+	}()
 	go func() {
 		_, err := b.Write(wire)
+		<-opened
 		b.Close()
 		done <- err
 	}()
