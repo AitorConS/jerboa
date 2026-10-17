@@ -1,5 +1,6 @@
 typedef struct pagelist {
     struct list l;
+    struct list eligible; /* same relative order as l, only pages with !evicted */
     u64 pages;
 } *pagelist;
 
@@ -136,6 +137,7 @@ struct pagecache_page {
 
     pagecache_node node;
     struct list l;
+    struct list eligible_l; /* state_lock: membership in pagelist.eligible */
     u64 phys;                   /* physical address */
     struct list bh_completions; /* default for non-kernel use */
 

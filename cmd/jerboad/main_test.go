@@ -16,6 +16,7 @@ import (
 )
 
 func TestServe_StartsAndShutsDown(t *testing.T) {
+	t.Setenv("JERBOA_AUTH_TOKEN", "") // This fixture serves without authentication.
 	dir := t.TempDir()
 	socketPath := filepath.Join(dir, "jerboad-test.sock")
 
@@ -83,6 +84,7 @@ func TestNewRootCmd_Flags(t *testing.T) {
 }
 
 func TestServe_VersionQuery(t *testing.T) {
+	t.Setenv("JERBOA_AUTH_TOKEN", "") // This fixture serves without authentication.
 	dir := t.TempDir()
 	socketPath := filepath.Join(dir, "jerboad-ver.sock")
 

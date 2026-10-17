@@ -360,7 +360,8 @@ void init_interrupts(kernel_heaps kh)
                                            n_interrupt_vectors - INTERRUPT_VECTOR_START, 1, true);
     assert(interrupt_vector_heap != INVALID_ADDRESS);
 
-    int_general = general;
+    /* Shared IRQ handlers are registered after secondary CPUs start. */
+    int_general = heap_locked(kh);
 
     /* IDT setup */
     heap backed = (heap)heap_page_backed(kh);

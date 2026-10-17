@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -18,12 +19,25 @@ import (
 // Owned host flows for policy-enforced networks. Reservations include pending
 // dials. Removing a VM closes its flows even when other VMs keep the stack alive.
 type nativeEgressPool struct {
-	mu      sync.Mutex
-	flows   map[*nativeFlow]bool
-	counts  map[string]int
-	sources map[string]bool
-	closed  bool
+	mu     sync.Mutex
+	flows  map[*nativeFlow]bool
+	counts map[string]int
+	// Published host connections have a separate budget from guest egress.
+	// A busy published port must not consume the guest's egress allowance.
+	publishedCounts map[string]int
+	egressTotal     int
+	publishedTotal  int
+	sources         map[string]bool
+	closed          bool
 }
+
+const (
+	maxEgressFlowsPerVM    = 64
+	maxEgressFlows         = 256
+	maxPublishedFlowsPerVM = 512
+	maxPublishedFlows      = 1024
+)
+
 type nativeFlow struct {
 	pool   *nativeEgressPool
 	source string
@@ -37,7 +51,7 @@ type nativeFlow struct {
 }
 
 func newEgressPool() *nativeEgressPool {
-	return &nativeEgressPool{flows: map[*nativeFlow]bool{}, counts: map[string]int{}, sources: map[string]bool{}}
+	return &nativeEgressPool{flows: map[*nativeFlow]bool{}, counts: map[string]int{}, publishedCounts: map[string]int{}, sources: map[string]bool{}}
 }
 func (p *nativeEgressPool) activateSource(source string) {
 	p.mu.Lock()
@@ -48,13 +62,25 @@ func (p *nativeEgressPool) reserve(source string) *nativeFlow { return p.reserve
 func (p *nativeEgressPool) reserveTagged(source, tag string) *nativeFlow {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.closed || !p.sources[source] || len(p.flows) >= 256 || p.counts[source] >= 64 {
+	if p.closed || !p.sources[source] {
+		return nil
+	}
+	if tag == "" && (p.egressTotal >= maxEgressFlows || p.counts[source] >= maxEgressFlowsPerVM) {
+		return nil
+	}
+	if tag != "" && (p.publishedTotal >= maxPublishedFlows || p.publishedCounts[source] >= maxPublishedFlowsPerVM) {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &nativeFlow{pool: p, source: source, tag: tag, ctx: ctx, cancel: cancel}
 	p.flows[f] = true
-	p.counts[source]++
+	if tag == "" {
+		p.counts[source]++
+		p.egressTotal++
+	} else {
+		p.publishedCounts[source]++
+		p.publishedTotal++
+	}
 	return f
 }
 func (f *nativeFlow) add(c net.Conn) bool {
@@ -78,9 +104,18 @@ func (f *nativeFlow) close() {
 		f.mu.Unlock()
 		f.pool.mu.Lock()
 		delete(f.pool.flows, f)
-		f.pool.counts[f.source]--
-		if f.pool.counts[f.source] == 0 {
-			delete(f.pool.counts, f.source)
+		if f.tag == "" {
+			f.pool.counts[f.source]--
+			f.pool.egressTotal--
+			if f.pool.counts[f.source] == 0 {
+				delete(f.pool.counts, f.source)
+			}
+		} else {
+			f.pool.publishedCounts[f.source]--
+			f.pool.publishedTotal--
+			if f.pool.publishedCounts[f.source] == 0 {
+				delete(f.pool.publishedCounts, f.source)
+			}
 		}
 		f.pool.mu.Unlock()
 	})
@@ -105,7 +140,7 @@ func (p *nativeEgressPool) closeSource(source string) {
 func (f *nativeFlow) pump(dst, src net.Conn, datagram bool) {
 	defer f.close()
 	if !datagram {
-		_, _ = io.Copy(dst, src)
+		_, _ = copyStream(dst, src)
 		return
 	}
 	b := make([]byte, 65536)
@@ -222,7 +257,7 @@ func (f *nativeFlow) duplex(a, b net.Conn) {
 	defer f.close()
 	done := make(chan struct{}, 2)
 	copyHalf := func(dst, src net.Conn) {
-		_, err := io.Copy(dst, src)
+		_, err := copyStream(dst, src)
 		if err == nil {
 			if c, ok := dst.(interface{ CloseWrite() error }); ok {
 				err = c.CloseWrite()
@@ -239,4 +274,28 @@ func (f *nativeFlow) duplex(a, b net.Conn) {
 	go copyHalf(b, a)
 	<-done
 	<-done
+}
+
+// streamCopySize is the chunk the forwarder moves between a guest connection
+// and a host socket. gVisor hands over whole TSO segments (up to 64 KB) since
+// the gateway takes them, and io.Copy's 32 KiB buffer split each of them into
+// two reads and two host writes.
+const streamCopySize = 256 << 10
+
+var streamCopyBuffers = sync.Pool{New: func() any {
+	b := make([]byte, streamCopySize)
+	return &b
+}}
+
+// copyStream copies src to dst through a pooled streamCopySize buffer. The
+// plain Reader and Writer views keep io.CopyBuffer from taking the
+// ReaderFrom/WriterTo shortcuts, which bring back a 32 KiB buffer here.
+func copyStream(dst, src net.Conn) (int64, error) {
+	b := streamCopyBuffers.Get().(*[]byte)
+	defer streamCopyBuffers.Put(b)
+	n, err := io.CopyBuffer(struct{ io.Writer }{dst}, struct{ io.Reader }{src}, *b)
+	if err != nil {
+		return n, fmt.Errorf("copy stream: %w", err)
+	}
+	return n, nil
 }

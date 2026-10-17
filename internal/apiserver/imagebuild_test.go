@@ -75,7 +75,7 @@ func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond, "server did not start")
 
@@ -121,7 +121,7 @@ func startSeedServer(t *testing.T, volStore *volume.Store) *api.Client {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond, "server did not start")
 
@@ -281,7 +281,7 @@ func TestImageBuild_Disabled(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()

@@ -18,9 +18,11 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/snapshot"
 )
@@ -82,8 +84,11 @@ type FirecrackerManager struct {
 	fcBin       string
 	kernelImage string
 	fcSecurity  json.RawMessage
-	mkCmd       CommandFunc
-	hchecker    *HealthChecker
+	// noPeerControl records that the VMM rejected security.unix_control
+	// (an older build); direct VM-to-VM links are then never offered to it.
+	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
+	mkCmd         CommandFunc
+	hchecker      *HealthChecker
 	// Platform hooks for the VMM control and runtime paths.
 	vmSockPath         func(id string) string            // socket path as seen by the firecracker process
 	cfgPathForProcess  func(path string) string          // translates config file path for the FC process
@@ -223,18 +228,20 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		}
 	}()
 
-	// --log-path separates Firecracker's VMM log lines from stdout so only the
-	// VM serial console reaches logBuf. If the VM crashes with empty logs,
-	// monitor appends the VMM log so `jerboa logs` surfaces the error.
+	// --log-path separates Linux Firecracker's VMM log lines from stdout so
+	// only the VM serial console reaches logBuf. The macOS adapter writes its
+	// diagnostics to stderr, which is captured below, and has no --log-path.
 	vmmLog := m.vmmLogPath(id)
 	// Firecracker opens --log-path without O_CREAT and aborts if the file is
 	// missing ("Could not initialize logger: ... No such file or directory"),
-	// so create it (and its directory) before launching.
-	if err := ensureFile(vmmLog); err != nil {
-		_ = v.transition(StateStopped)
-		_ = os.Remove(cfgPath)
-		_ = os.Remove(rootfs)
-		return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
+	// so create it before launching on Linux. The macOS adapter does not use it.
+	if runtime.GOOS != "darwin" {
+		if err := ensureFile(vmmLog); err != nil {
+			_ = v.transition(StateStopped)
+			_ = os.Remove(cfgPath)
+			_ = os.Remove(rootfs)
+			return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
+		}
 	}
 	if err := m.checkFCConfig(ctx, cfgPath); err != nil {
 		_ = v.transition(StateStopped)
@@ -323,7 +330,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// failure FAILS the run instead of leaving a "running" VM whose published port
 	// silently does not work.
 	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS == "linux" {
-		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		fwd, fwdErr := network.PublishPorts(v.Cfg.IPAddress, v.Cfg.bridge(), toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
 			return fmt.Errorf("firecracker start %s: publish ports: %w", id, fwdErr)
@@ -487,10 +494,7 @@ func setupTAPNetwork(cfg Config) error {
 	if cfg.GatewayIP == "" {
 		return nil
 	}
-	bridgeName := cfg.BridgeName
-	if bridgeName == "" {
-		bridgeName = "jerboa-br0"
-	}
+	bridgeName := cfg.bridge()
 	mask := cfg.SubnetMask
 	if mask == "" {
 		mask = "24"
@@ -501,16 +505,42 @@ func setupTAPNetwork(cfg Config) error {
 	return network.AttachTAP(cfg.tapDevice(), bridgeName)
 }
 
+// Preserve supervisor failures even after the guest has emitted normal output.
+// The attached stream must receive the diagnostic before its writer closes.
+func recordFCExit(log io.Writer, attached io.Writer, err error) {
+	if err == nil {
+		return
+	}
+	message := fmt.Sprintf("[firecracker error] %v\n", err)
+	_, _ = io.WriteString(log, message)
+	if attached != nil {
+		_, _ = io.WriteString(attached, message)
+	}
+}
+
 func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog, rootfs string) {
 	defer recoverGoroutine("firecracker monitor", v.ID)
 	exitErr := waitFCProcess(cmd, sockPath)
 	now := time.Now()
 	v.mu.Lock()
+	explicitStop := v.explicitStop
+	var logWriter io.Writer
+	if v.logPipeWriter != nil {
+		logWriter = v.logPipeWriter
+	}
+	v.mu.Unlock()
+	if !explicitStop {
+		recordFCExit(&v.logBuf, logWriter, exitErr)
+	}
+	v.mu.Lock()
 	v.StoppedAt = &now
 	if v.logPipeWriter != nil {
-		_ = v.logPipeWriter.Close()
+		if explicitStop {
+			_ = v.logPipeWriter.Close()
+		} else {
+			_ = v.logPipeWriter.CloseWithError(exitErr)
+		}
 	}
-	explicitStop := v.explicitStop
 	fwd := v.portFwd
 	v.portFwd = nil
 	v.mu.Unlock()
@@ -679,6 +709,7 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 		MachineConfig: fcMachineConfig{
 			VcpuCount:  cpus,
 			MemSizeMib: memMiB,
+			HugePages:  fcHugePages(memMiB),
 		},
 	}
 
@@ -759,6 +790,8 @@ func buildFCBootArgs(cfg Config) string {
 		if cfg.GatewayIP != "" {
 			args += fmt.Sprintf(" en1.gateway=%s", cfg.GatewayIP)
 		}
+		// The bridge's MTU; Nanos sizes its RX buffers and TCP segments from it.
+		args += fmt.Sprintf(" en1.mtu=%d", netconst.BridgeMTU)
 	}
 
 	// Volume mount points: Nanos reads "mounts.LABEL=/path" from boot args and,
@@ -953,9 +986,10 @@ type fcTokenBucket struct {
 }
 
 type fcMachineConfig struct {
-	VcpuCount  int  `json:"vcpu_count"`
-	MemSizeMib int  `json:"mem_size_mib"`
-	SMT        bool `json:"smt"`
+	VcpuCount  int    `json:"vcpu_count"`
+	MemSizeMib int    `json:"mem_size_mib"`
+	SMT        bool   `json:"smt"`
+	HugePages  string `json:"huge_pages,omitempty"`
 }
 
 type fcNetworkInterface struct {

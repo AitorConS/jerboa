@@ -71,6 +71,32 @@ func TestSQLiteStore_Restore(t *testing.T) {
 	require.Equal(t, "restore-vm", got.Cfg.Name)
 }
 
+func TestSQLiteStore_Restore_StoppingVMStopped(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	s1, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s1.Restore())
+	v, err := s1.Create(Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	require.NoError(t, v.transition(StateStarting))
+	require.NoError(t, v.transition(StateRunning))
+	require.NoError(t, v.transition(StateStopping))
+	require.NoError(t, s1.Save(v))
+	require.NoError(t, s1.Close())
+
+	s2, err := NewSQLiteStore(dbPath)
+	require.NoError(t, err)
+	require.NoError(t, s2.Restore())
+	t.Cleanup(func() { _ = s2.Close() })
+
+	got, err := s2.Get(v.ID)
+	require.NoError(t, err)
+	require.Equal(t, StateStopped, got.GetState())
+	require.True(t, got.DaemonRecovered)
+}
+
 func TestSQLiteStore_Restore_RunningVMStopped(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")

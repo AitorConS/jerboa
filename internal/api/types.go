@@ -103,7 +103,8 @@ type RunParams struct {
 	MemoryMax   int64            `json:"memory_max,omitempty"`
 	DiskIOPS    uint64           `json:"disk_iops,omitempty"`
 	DiskBPS     int64            `json:"disk_bps,omitempty"`
-	// DiskIOEngine is "sync" (default) or "async" (Linux io_uring).
+	// DiskIOEngine is "sync" or "async" (Linux io_uring); empty selects the
+	// host default (async on Linux hosts that support it).
 	DiskIOEngine string `json:"disk_io_engine,omitempty"`
 	// VolumeCache is "writeback" (default; guest flushes are durable) or "unsafe".
 	VolumeCache string `json:"volume_cache,omitempty"`
@@ -148,6 +149,18 @@ type VMInfo struct {
 	Image  string `json:"image"`
 	Name   string `json:"name,omitempty"`
 	Health string `json:"health,omitempty"`
+}
+
+// AttachParams requests terminal status after the console stream. Framed is
+// optional so older clients can continue to consume the raw stream.
+type AttachParams struct {
+	ID     string `json:"id"`
+	Framed bool   `json:"framed,omitempty"`
+}
+
+type AttachResult struct {
+	Done  bool   `json:"done"`
+	Error string `json:"error,omitempty"`
 }
 
 // VMDetail is the full serialisable representation of a VM.

@@ -55,9 +55,15 @@ THIRD_PARTY= $(ACPICA_DIR)/.vendored $(LWIPDIR)/.vendored $(MBEDTLS_DIR)/.vendor
 
 $(ACPICA_DIR)/.vendored: GITFLAGS= --depth 1  https://github.com/acpica/acpica.git -b R09_30_21
 $(LWIPDIR)/.vendored: GITFLAGS= --depth 1  https://github.com/nanovms/lwip.git -b STABLE-2_1_x
+LWIP_BASE_REV= e27f9b7af7e5b025a5b8803899f12b1d35f7d968
+$(LWIPDIR)/.vendored: GITREV= $(LWIP_BASE_REV)
 $(MBEDTLS_DIR)/.vendored: GITFLAGS= --depth 1 https://github.com/nanovms/mbedtls.git
 
-kernel: $(THIRD_PARTY) contgen
+.PHONY: lwip_patch_check
+lwip_patch_check: $(LWIPDIR)/.vendored $(PATCHDIR)/lwip.patch
+	$(Q) sh $(ROOTDIR)/scripts/check-lwip-patch.sh $(LWIPDIR) $(PATCHDIR)/lwip.patch $(LWIP_BASE_REV)
+
+kernel: $(THIRD_PARTY) contgen lwip_patch_check
 	$(Q) $(MAKE) -C $(PLATFORMDIR) boot
 	$(Q) $(MAKE) -C $(PLATFORMDIR) kernel
 

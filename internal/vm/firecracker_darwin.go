@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/netconst"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -124,23 +127,62 @@ func (m *FirecrackerManager) checkFCConfig(ctx context.Context, path string) err
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := m.mkCmd(ctx, m.fcBin, "--no-api", "--config-file", path, "--check-config").CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("HVF configuration rejected: %w: %s", err, out)
+	if err == nil {
+		return nil
 	}
-	return nil
+	// A VMM without direct VM-to-VM links rejects unix_control as an unknown
+	// field. Drop it, and stop offering it, if that makes the config valid.
+	if stripped, serr := stripPeerControl(path); serr == nil && stripped {
+		out, err = m.mkCmd(ctx, m.fcBin, "--no-api", "--config-file", path, "--check-config").CombinedOutput()
+		if err == nil {
+			if !m.noPeerControl.Swap(true) {
+				slog.Info("firecracker: VMM has no direct VM-to-VM links; frames between VMs use the switch")
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("HVF configuration rejected: %w: %s", err, out)
 }
 
-func readNativeFCState(ctx context.Context, socket string) (nativeFCState, error) {
-	var state nativeFCState
-	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+// stripPeerControl removes security.unix_control from a config file and
+// reports whether it was present.
+func stripPeerControl(path string) (bool, error) {
+	data, err := os.ReadFile(path) //nolint:gosec // our own config file
+	if err != nil {
+		return false, err
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return false, err
+	}
+	var security map[string]json.RawMessage
+	if err := json.Unmarshal(doc["security"], &security); err != nil || security["unix_control"] == nil {
+		return false, err
+	}
+	delete(security, "unix_control")
+	if doc["security"], err = json.Marshal(security); err != nil {
+		return false, err
+	}
+	if data, err = json.MarshalIndent(doc, "", "  "); err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(path, data, 0o600)
+}
+
+func nativeFCStateClient(socket string) (*http.Client, *http.Transport) {
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
-	defer transport.CloseIdleConnections()
+	return &http.Client{Transport: transport, Timeout: time.Second}, transport
+}
+
+func readNativeFCStateWithClient(ctx context.Context, client *http.Client) (nativeFCState, error) {
+	var state nativeFCState
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://localhost/", nil)
 	if err != nil {
 		return state, err
 	}
-	resp, err := (&http.Client{Transport: transport, Timeout: time.Second}).Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return state, err
 	}
@@ -149,7 +191,16 @@ func readNativeFCState(ctx context.Context, socket string) (nativeFCState, error
 		return state, fmt.Errorf("HVF status: HTTP %d", resp.StatusCode)
 	}
 	err = json.NewDecoder(resp.Body).Decode(&state)
+	if err == nil {
+		_, err = io.Copy(io.Discard, resp.Body)
+	}
 	return state, err
+}
+
+func readNativeFCState(ctx context.Context, socket string) (nativeFCState, error) {
+	client, transport := nativeFCStateClient(socket)
+	defer transport.CloseIdleConnections()
+	return readNativeFCStateWithClient(ctx, client)
 }
 
 // Adoption only requires a reachable supervisor: a user may have paused the
@@ -176,10 +227,14 @@ func awaitFCReachable(ctx context.Context, socket string) error {
 func awaitFCReady(ctx context.Context, socket string) error {
 	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
-	ticker := time.NewTicker(20 * time.Millisecond)
+	client, transport := nativeFCStateClient(socket)
+	defer transport.CloseIdleConnections()
+	// The supervisor can finish a warm boot between 20 ms polls. Reuse the
+	// connection so checking more often does not reconnect on every attempt.
+	ticker := time.NewTicker(5 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		s, err := readNativeFCState(ctx, socket)
+		s, err := readNativeFCStateWithClient(ctx, client)
 		if err == nil {
 			switch s.State {
 			case "Running", "Exited":
@@ -201,7 +256,13 @@ func awaitFCReady(ctx context.Context, socket string) error {
 func waitFCProcess(cmd *exec.Cmd, socket string) error {
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	ticker := time.NewTicker(50 * time.Millisecond)
+	// Short-lived guests often exit just after readiness. Observe their result
+	// promptly, then return to the normal cadence for long-running services.
+	started := time.Now()
+	fastPolling := true
+	ticker := time.NewTicker(5 * time.Millisecond)
+	client, transport := nativeFCStateClient(socket)
+	defer transport.CloseIdleConnections()
 	defer ticker.Stop()
 	var guestErr error
 	terminal := false
@@ -213,10 +274,14 @@ func waitFCProcess(cmd *exec.Cmd, socket string) error {
 			}
 			return err
 		case <-ticker.C:
+			if fastPolling && time.Since(started) >= 250*time.Millisecond {
+				ticker.Reset(50 * time.Millisecond)
+				fastPolling = false
+			}
 			if terminal {
 				continue
 			}
-			s, err := readNativeFCState(context.Background(), socket)
+			s, err := readNativeFCStateWithClient(context.Background(), client)
 			if err != nil || (s.State != "Exited" && s.State != "Failed") {
 				continue
 			}
@@ -407,7 +472,9 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		if mask == "" {
 			mask = "24"
 		}
-		netcfg = cfg.IPAddress + "/" + mask + "," + cfg.GatewayIP
+		// The network's MTU follows the gateway, which the guest needs to
+		// size its RX buffers (format IP/CIDR,GATEWAY,MTU).
+		netcfg = cfg.IPAddress + "/" + mask + "," + cfg.GatewayIP + "," + strconv.Itoa(netconst.NativeMTU)
 	}
 	for name, data := range map[string]string{"env": strings.Join(cfg.Env, "\n"), "mounts": strings.Join(mounts, "\n"), "network": netcfg} {
 		if len(data) > 65536 {
@@ -463,6 +530,9 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		n = nativeFCNetwork{IfaceID: "eth0", Backend: "unix-stream", GuestMAC: cfg.nativeMAC, SocketPath: cfg.nativeSocket}
 		socket, _ := json.Marshal(cfg.nativeSocket)
 		c.Security = map[string]json.RawMessage{"version": json.RawMessage("1"), "unix_stream": socket}
+		if cfg.nativeControl != "" && !m.noPeerControl.Load() {
+			c.Security["unix_control"], _ = json.Marshal(cfg.nativeControl)
+		}
 	}
 	c.Networks = []nativeFCNetwork{n}
 	c.Limits.Version = 1

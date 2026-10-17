@@ -247,7 +247,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	// run instead of leaving a "running" VM whose published port silently does
 	// not work.
 	if len(v.Cfg.PortMaps) > 0 && runtime.GOOS != "darwin" {
-		fwd, fwdErr := network.StartForwarder(v.Cfg.IPAddress, toNetworkPortForwards(v.Cfg.PortMaps))
+		fwd, fwdErr := network.PublishPorts(v.Cfg.IPAddress, v.Cfg.bridge(), toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
 			return fmt.Errorf("qemu start %s: publish ports: %w", id, fwdErr)
@@ -631,10 +631,18 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	now := time.Now()
 	v.mu.Lock()
 	v.StoppedAt = &now
-	if v.logPipeWriter != nil {
-		_ = v.logPipeWriter.Close()
-	}
 	explicitStop := v.explicitStop
+	var terminalErr error
+	if !explicitStop && isFailureExit(exitErr, string(v.qemuErrBuf.Bytes())) {
+		if code, ok := guestExitCode(exitErr); ok && code != 0 {
+			terminalErr = fmt.Errorf("guest exited with code %d", code)
+		} else {
+			terminalErr = fmt.Errorf("QEMU exited: %w", exitErr)
+		}
+	}
+	if v.logPipeWriter != nil {
+		_ = v.logPipeWriter.CloseWithError(terminalErr)
+	}
 	qmpAddr := v.qmpAddr
 	cleanup := v.hostCleanup
 	v.hostCleanup = nil

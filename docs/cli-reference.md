@@ -103,10 +103,18 @@ Key flags:
 
 Notes:
 
+- `--attach` requests an opt-in framed `VM.Attach` stream: console bytes remain
+  separate from a terminal result, so a failed VM makes the CLI exit nonzero.
+  Older daemons still send raw console bytes and cannot report terminal status
+  through attach. On ARM Firecracker, a nonzero guest exit is signaled through
+  pvpanic and currently surfaces as a generic error (CLI status 1), not the
+  guest's exact exit code.
 - Port publishing requires `--network` on Linux and Windows. On macOS, `-p` works without it.
 - Every VM on a managed network gets a guest IP: `--ip` pins it, otherwise the daemon's IPAM allocates the next free address from the network's subnet.
-- TCP forwarding works today.
-- UDP mappings are currently skipped by the Linux userspace forwarder with a warning; macOS forwards UDP.
+- On Linux, how published ports reach the guest depends on `jerboad --port-publish`;
+  see [Published ports on Linux](#published-ports-on-linux). TCP always works;
+  UDP needs kernel NAT (the default where nftables is available). macOS forwards
+  both.
 - On Windows the published port lives inside the `jerboa` WSL2 distro. With
   WSL2's default NAT networking it is reachable at the distro IP (the host from
   `jerboa daemon status`), not at `localhost` on the Windows host — set
@@ -393,6 +401,41 @@ Flags:
 ### `jerboa dns list`
 
 Each DNS command accepts `--network` where relevant.
+
+### Published ports on Linux
+
+`jerboad --port-publish` selects how a published port (`-p`) reaches the guest.
+Every mode keeps a real listening socket on the host, so the port is reserved
+and WSL2 can mirror it.
+
+| Mode | Clients on this host | Clients on other hosts | UDP |
+|---|---|---|---|
+| `auto` (default) | kernel NAT (nftables), or the userspace proxy without it | userspace proxy | with kernel NAT |
+| `nat` | kernel NAT; the daemon fails to start without it | userspace proxy | yes |
+| `nat-lan` | kernel NAT | kernel NAT | yes |
+| `proxy` | userspace proxy | userspace proxy | no |
+
+Kernel NAT removes a userspace hop on every message. With a Redis guest on an
+x86 host, kernel NAT served about 45 % more requests than the proxy.
+
+`nat-lan` is opt-in because it changes how the host firewall applies to
+published ports, exactly as Docker does for its own ports:
+
+- Connections from other hosts are forwarded to the guest bridge, so they
+  skip the host's INPUT rules. A `ufw deny 8080` does not block a port
+  published with `-p 8080:80`; restrict it with a bind address
+  (`-p 127.0.0.1:8080:80`) or leave the daemon in `auto`.
+- jerboad accepts those forwarded connections, and only those (conntrack DNAT
+  state, to and from `jerboa-br*`), with rules commented
+  `jerboa published ports`: in iptables `DOCKER-USER` when Docker is set up or
+  `FORWARD` otherwise, and in the forward chains of other nftables tables
+  (nftables.service, firewalld). They are removed when the daemon stops and on
+  its next start after a crash, and restored when ports are published after a
+  firewall reload.
+- Guests see the client's real address instead of the host's.
+
+Connections from guests to a port published on the host keep using the proxy
+in every mode. On WSL2, kernel NAT is disabled and every mode uses the proxy.
 
 ---
 

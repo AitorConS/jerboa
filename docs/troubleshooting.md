@@ -284,8 +284,9 @@ the program requires; make sure the program runs in **foreground** mode
 
 ### `--port requires --network`
 
-On Linux and Windows, port publishing is implemented by the managed network's
-userspace forwarder; there is no SLIRP fallback. (On macOS, `-p` works without
+On Linux and Windows, port publishing goes through the managed network's
+bridge (kernel NAT or the userspace proxy, see `jerboad --port-publish` in the
+CLI reference); there is no SLIRP fallback. (On macOS, `-p` works without
 `--network`.)
 
 **Fix**:
@@ -297,9 +298,61 @@ jerboa run web:latest --network app -p 8080:80
 
 ### UDP port mapping does not forward
 
-On Linux and Windows, UDP mappings are accepted syntactically but the current
-forwarder skips them with a warning. Only TCP forwarding works there today.
-macOS forwards both TCP and UDP.
+On Linux, UDP ports are published by kernel NAT, the default where nftables is
+available (`jerboad --port-publish auto`, `nat` or `nat-lan`). With
+`--port-publish proxy`, on WSL2, or when kernel NAT is unavailable, the
+userspace proxy skips UDP mappings with a warning in the daemon log. macOS
+forwards both TCP and UDP.
+
+### Published port unreachable from other hosts with `--port-publish nat-lan`
+
+jerboad accepts the forwarded connections in iptables and in the forward
+chains of nftables tables it finds when ports are published. A firewall
+reload (for example `firewall-cmd --reload`) removes those rules until the
+next port is published or the daemon restarts. Check that they are present:
+
+```sh
+sudo iptables -S | grep 'jerboa published ports'
+sudo nft list ruleset | grep 'jerboa published ports'
+```
+
+Restart the daemon to restore them, or switch back to
+`--port-publish auto`, where other hosts use the proxy and the host's INPUT
+rules apply.
+
+### Guest DNS fails on Linux while connections by IP work
+
+The guest resolver sends UDP queries to `10.53.0.53:53`, an address assigned
+to the host's loopback interface. Check the daemon journal first:
+
+```sh
+sudo journalctl -u jerboad --since '10 minutes ago'
+systemctl show jerboad -p AmbientCapabilities -p CapabilityBoundingSet
+```
+
+If the bind fails with `permission denied`, the service needs
+`CAP_NET_BIND_SERVICE` in both capability lists, alongside `CAP_NET_ADMIN`
+and `CAP_NET_RAW`. Older published installers omitted that capability. Update
+the service definition from the current installer and restart the daemon when
+its guests can be stopped.
+
+A successful bind does not prove the host firewall permits guest queries.
+Check `sudo journalctl -k` for blocked UDP traffic to `10.53.0.53`, and use
+`jerboa network inspect <name>` to find the network's `bridge` field. For
+example, if UFW blocks queries arriving on `jerboa-br-app`, permit only DNS
+from that bridge:
+
+```sh
+sudo ufw allow in on jerboa-br-app to 10.53.0.53 port 53 proto udp
+```
+
+Use the actual bridge name from inspection and repeat a guest lookup. This is
+host-input traffic, so a forwarding rule alone does not allow it. Remove the
+corresponding rule when the network is removed:
+
+```sh
+sudo ufw delete allow in on jerboa-br-app to 10.53.0.53 port 53 proto udp
+```
 
 ### `pre-existing shared memory block ... is still in use` (PostgreSQL)
 

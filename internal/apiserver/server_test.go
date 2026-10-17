@@ -62,7 +62,7 @@ func startTestServer(t *testing.T) (*api.Client, context.CancelFunc) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond, "server did not start")
 
@@ -96,7 +96,7 @@ func startTestServerWithCollectors(t *testing.T) (*api.Client, *metrics.Collecto
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond, "server did not start")
 
@@ -247,7 +247,7 @@ func TestServer_Start_ConcurrentSingleReplacement(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()
@@ -267,7 +267,7 @@ func TestServer_Start_ConcurrentSingleReplacement(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			c, dialErr := api.Dial(socketPath)
+			c, dialErr := api.DialWithToken(socketPath, "")
 			if dialErr != nil {
 				return
 			}
@@ -375,7 +375,7 @@ func TestServer_Run_AutoRemove(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()
@@ -415,7 +415,7 @@ func TestServer_UnknownMethod(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()
@@ -651,7 +651,7 @@ func TestServer_DaemonVersion(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()
@@ -680,7 +680,7 @@ func TestServer_DaemonShutdown(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()
@@ -888,7 +888,7 @@ func TestServer_NodeList_WithCluster(t *testing.T) {
 	var client *api.Client
 	require.Eventually(t, func() bool {
 		var dialErr error
-		client, dialErr = api.Dial(socketPath)
+		client, dialErr = api.DialWithToken(socketPath, "")
 		return dialErr == nil
 	}, 2*time.Second, 10*time.Millisecond)
 	defer func() { _ = client.Close() }()

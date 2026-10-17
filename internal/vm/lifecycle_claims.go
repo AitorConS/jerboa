@@ -118,6 +118,7 @@ func (v *VM) beginRestore() error {
 	}
 	v.State = StateRestoring
 	v.done = make(chan struct{})
+	v.attachSession = nil
 	v.explicitStop = false
 	v.DaemonRecovered = false
 	v.proc = nil

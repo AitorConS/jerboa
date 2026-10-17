@@ -24,6 +24,8 @@ class KernelCandidateTests(unittest.TestCase):
                      'kernel_version': 'v0.2.1', 'kernel_source': 'build',
                      'run_id': '123', 'repository': 'AitorConS/jerboa'}
         c.write_json('release-lock.json', self.spec)
+        Path('scripts').mkdir()
+        Path('scripts/install.sh').write_text('#!/bin/sh\n# tested bootstrap\n')
         Path('kernel').mkdir()
         Path('kernel/VERSION').write_text('0.2.1\n')
         for name in ['tools/bin/mkfs', 'tools/bin/dump', 'platform/pc/boot/boot.img',

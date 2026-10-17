@@ -24,7 +24,7 @@ func TestVolumeAPIWithSeparateClientStorage(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	go func() { _ = s.Serve(ctx) }()
-	c, err := api.Dial("tcp://" + s.listener.Addr().String())
+	c, err := api.DialWithToken("tcp://"+s.listener.Addr().String(), "")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = c.Close() })
 	_, err = c.VolumeGet(ctx, "missing")

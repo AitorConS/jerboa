@@ -42,6 +42,7 @@ func writeComposeFile(t *testing.T, diskPath string) string {
 
 func startComposeDaemon(t *testing.T) (*api.Client, string) {
 	t.Helper()
+	isolateDaemonTestConfig(t)
 	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
 	mgr := vm.NewQEMUManager("fake-qemu", vm.WithCommandFunc(fakeQEMUCmd()))
 	netStore, err := network.NewStore(t.TempDir())

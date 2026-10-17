@@ -400,6 +400,23 @@ void filesystem_flush(filesystem fs, status_handler completion)
 #endif
 }
 
+/* Volume sync for memory reclaim: data and metadata are written and the
+ * device flushed as by filesystem_flush(), but nothing is promised about
+ * durability, so a filesystem may defer work that would only add flushes. */
+void filesystem_flush_reclaim(filesystem fs, status_handler completion)
+{
+    status_handler sh = fs->get_sync_handler(fs, 0, true, completion);
+    if (sh == INVALID_ADDRESS) {
+        apply(completion, timm("result", "failed to allocate closure"));
+        return;
+    }
+#ifdef KERNEL
+    pagecache_sync_volume(fs->pv, sh);
+#else
+    apply(sh, STATUS_OK);
+#endif
+}
+
 void fsfile_flush(fsfile fsf, boolean datasync, status_handler completion)
 {
     filesystem fs = fsf->fs;

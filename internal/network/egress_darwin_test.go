@@ -64,6 +64,36 @@ func TestEgressConcurrentReservationAndClose(t *testing.T) {
 	require.Empty(t, p.counts)
 }
 
+func TestPublishedFlowsHaveIndependentCapacity(t *testing.T) {
+	p := newEgressPool()
+	p.activateSource("vm")
+	var published []*nativeFlow
+	for range maxPublishedFlowsPerVM {
+		f := p.reserveTagged("vm", "tcp/127.0.0.1:6379")
+		require.NotNil(t, f)
+		published = append(published, f)
+	}
+	require.Nil(t, p.reserveTagged("vm", "tcp/127.0.0.1:6379"))
+
+	// wrk uses 100 concurrent connections; Redis can briefly overlap old and
+	// new sets of 50 connections while moving to the next command.
+	for range maxEgressFlowsPerVM {
+		require.NotNil(t, p.reserve("vm"))
+	}
+	require.Nil(t, p.reserve("vm"))
+
+	for _, f := range published {
+		f.close()
+	}
+	require.Empty(t, p.publishedCounts)
+	require.Zero(t, p.publishedTotal)
+	require.NotNil(t, p.reserveTagged("vm", "tcp/127.0.0.1:6379"))
+	p.closeSource("vm")
+	require.Empty(t, p.flows)
+	require.Empty(t, p.counts)
+	require.Empty(t, p.publishedCounts)
+}
+
 func TestPublishedConnectionClosedWhenVMRemoved(t *testing.T) {
 	n, err := NewNativeNetworkWithPolicy("172.29.0.0/24", "172.29.0.1", nil, func(string, string, uint16, bool) bool { return false })
 	require.NoError(t, err)
@@ -128,4 +158,35 @@ func TestOwnedTCPPreservesHalfClose(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("proxy did not release completed halves")
 	}
+}
+
+func TestCopyStreamMovesEveryByte(t *testing.T) {
+	src, srcPeer := net.Pipe()
+	dst, dstPeer := net.Pipe()
+	payload := make([]byte, 3<<20+17) // several pooled buffers and a tail
+	for i := range payload {
+		payload[i] = byte(i*31 + 7)
+	}
+	go func() {
+		_, _ = srcPeer.Write(payload)
+		srcPeer.Close()
+	}()
+	got := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(dstPeer)
+		got <- b
+	}()
+	n, err := copyStream(dst, src)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(payload)), n)
+	dst.Close()
+	require.Equal(t, payload, <-got)
+
+	// A failed write reports a wrapped error.
+	src, srcPeer = net.Pipe()
+	dst, dstPeer = net.Pipe()
+	dstPeer.Close()
+	go func() { _, _ = srcPeer.Write([]byte("x")); srcPeer.Close() }()
+	_, err = copyStream(dst, src)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
 }

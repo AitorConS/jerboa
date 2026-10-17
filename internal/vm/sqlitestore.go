@@ -187,7 +187,9 @@ func (s *SQLiteStore) Restore() error {
 		}
 
 		switch v.State {
-		case StateRunning, StateStarting:
+		case StateRunning, StateStarting, StateStopping:
+			// A stop in progress when the daemon exited is resolved like a
+			// running VM: re-adopted if its process survived, else stopped.
 			// Re-adopt the process if it survived the daemon; otherwise mark
 			// the VM stopped and flag it as daemon-recovered.
 			if recoverVM(s, v, pid) {

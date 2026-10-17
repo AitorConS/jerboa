@@ -589,13 +589,36 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		s.collectors.VMStartsTotal.Inc()
 	}
 	if p.AutoRemove {
-		go s.autoRemove(ctx, v)
+		var session *vm.AttachSession
+		if p.Attach {
+			session = v.AttachSession()
+		}
+		go s.autoRemoveSession(ctx, v, session)
 	}
 	return toInfo(v), nil
 }
 
 func (s *Server) autoRemove(ctx context.Context, v *vm.VM) {
-	<-v.Done()
+	var session *vm.AttachSession
+	if v.Cfg.Attach {
+		session = v.AttachSession()
+	}
+	s.autoRemoveSession(ctx, v, session)
+}
+
+func (s *Server) autoRemoveSession(ctx context.Context, v *vm.VM, session *vm.AttachSession) {
+	if session == nil {
+		<-v.Done()
+	} else {
+		<-session.Done
+		// The Run response and Attach request are separate RPCs. Keep a
+		// short-lived guest registered until Attach has delivered its final
+		// result, with a bound for clients that never attach.
+		select {
+		case <-session.Finished():
+		case <-time.After(30 * time.Second):
+		}
+	}
 	if err := s.removeVM(ctx, v.ID); err != nil {
 		slog.Debug("auto-remove vm", "vm_id", v.ID, "err", err)
 	}
@@ -1077,7 +1100,7 @@ func parseSig(s string) (syscall.Signal, error) {
 }
 
 func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn net.Conn, reqID int64) {
-	var p api.IDParams
+	var p api.AttachParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()})
 		return
@@ -1088,27 +1111,49 @@ func (s *Server) handleAttach(ctx context.Context, params json.RawMessage, conn 
 		return
 	}
 
-	reader := v.AttachReader()
+	session := v.AttachSession()
+	reader := session.Reader
 	if reader == nil {
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: "vm not started in attach mode"})
 		return
 	}
+	defer session.Finish()
 
 	// Send success response before streaming raw console data.
 	resp := api.Response{JSONRPC: "2.0", ID: reqID}
+	if p.Framed {
+		resp.Result = json.RawMessage(`{"framed":true}`)
+	}
 	if err := json.NewEncoder(conn).Encode(resp); err != nil {
 		return
 	}
 
+	var output io.Writer = conn
+	var frames io.WriteCloser
+	if p.Framed {
+		frames = api.NewFrameWriter(conn)
+		output = frames
+	}
 	buf := make([]byte, 4096)
 	for {
 		n, readErr := reader.Read(buf)
 		if n > 0 {
-			if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+			if _, writeErr := output.Write(buf[:n]); writeErr != nil {
 				return
 			}
 		}
 		if readErr != nil {
+			if !p.Framed {
+				return
+			}
+			if err := frames.Close(); err != nil {
+				return
+			}
+			terminal := api.AttachResult{Done: true}
+			if readErr != io.EOF {
+				terminal.Error = readErr.Error()
+			}
+			_ = json.NewEncoder(conn).Encode(terminal)
 			return
 		}
 		select {

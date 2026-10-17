@@ -105,7 +105,7 @@ def lock():
              'runtime_sha': sha(os.environ['RUNTIME_SHA']),
              'kernel_version': version(os.environ['KERNEL_VERSION']),
              'run_id': os.environ['GITHUB_RUN_ID'], 'repository': os.environ['GITHUB_REPOSITORY'],
-             'toolchains': {'go': '1.27.1', 'node': '22', 'rust': '1.97.0'}}
+             'toolchains': {'go': '1.27.2', 'node': '22', 'rust': '1.97.0'}}
     write_json('release-lock.json', value)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
         for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source']:
@@ -276,6 +276,9 @@ def assemble():
                 source = Path('dist') / name; key = f'{component}/{v}/{name}'
             components[component]['platforms'][platform] = stage(source, key)
     components['distro'] = {'version': v, 'kernel': spec['kernel_version'], **stage('distro/jerboa-rootfs-amd64.tar.gz', f'distro/{v}/jerboa-rootfs-amd64.tar.gz')}
+    # Keep bootstrap bytes in the signed candidate inventory; promotion must
+    # never read an installer from a newer checkout.
+    stage('scripts/install.sh', f'releases/{v}/install.sh')
     installer = f'jerboa-desktop-setup-{n}.exe'
     stage(Path('desktop-windows') / (installer + '.blockmap'), 'desktop/' + installer + '.blockmap')
     # Generate the updater feed ourselves from the staged final installer bytes.
@@ -432,7 +435,27 @@ def promote():
         write_json('published.json',published);sign('published.json',f'published:{v}')
         put('published.json',published_key,content_type='application/json')
         put('published.json.minisig',published_key+'.minisig',content_type='text/plain')
+    publish_installer(root, inv)
     print('PROMOTED',v)
+
+
+def publish_installer(root, inventory):
+    """Refresh the bootstrap alias from authenticated candidate bytes only."""
+    key = f'releases/{inventory["version"]}/install.sh'
+    expected = inventory['assets'].get(key)
+    if expected is None:
+        # Older candidates predate installer tracking and remain retryable.
+        print('Candidate has no tracked installer; bootstrap alias unchanged')
+        return
+    source = Path(root) / 'payload' / key
+    if digest(source) != expected:
+        raise ValueError('Candidate installer bytes changed')
+    put(source, 'install.sh', False, 'text/plain')
+    with tempfile.TemporaryDirectory() as tmp:
+        downloaded = Path(tmp) / 'install.sh'
+        download(BASE + '/install.sh', downloaded)
+        if digest(downloaded) != expected:
+            raise ValueError('Public installer mismatch')
 
 
 def website():

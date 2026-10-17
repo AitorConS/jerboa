@@ -183,3 +183,15 @@ side effect.
 - Build a candidate on main, validate native Mac evidence and review the inventory.
 - Promote only a new release when it is intended for users. Implementing this migration
   does not itself require shipping a new application version.
+
+### Bootstrap installer provenance
+
+Candidate assembly includes `scripts/install.sh` as
+`releases/<version>/install.sh` in the signed inventory. After promotion verifies
+the release, it updates `https://releases.jerboa.dev/install.sh` from those exact
+candidate bytes with `Cache-Control: no-cache`, then verifies the public download.
+The `jerboa.dev/install.sh` redirect therefore receives installer fixes alongside
+the release, including the daemon service capabilities needed for guest DNS.
+Promotion never substitutes the installer from its own checkout. Retrying a
+legacy candidate without a tracked installer leaves the bootstrap alias alone;
+publish a new candidate to update it.

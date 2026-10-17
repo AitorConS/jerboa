@@ -507,7 +507,7 @@ static u64 mm_clean_and_wait(u64 clean_bytes, u32 flags)
          * minimize chances of skipping cleaners. */
         goto begin;
     if ((remain > 0) && root_fs) {
-        status s = wait_for(storage_sync);
+        status s = wait_for(storage_sync_reclaim);
         if (!is_ok(s)) {
             mm_debug("%s: storage sync failed: %v\n", func_ss, s);
             timm_dealloc(s);
@@ -569,9 +569,7 @@ boolean mem_service(void)
     heap phys = (heap)heap_physical(init_heaps);
     u64 total = heap_total(phys);
     u64 free = total - heap_allocated(phys);
-    u64 threshold = total >> MEM_CLEAN_THRESHOLD_SHIFT;
-    if (threshold < MEM_CLEAN_THRESHOLD)
-        threshold = MEM_CLEAN_THRESHOLD;
+    u64 threshold = mem_clean_threshold(total);
     mm_debug("%s: total %ld, alloc %ld, free %ld\n", func_ss,
              heap_total(phys), heap_allocated(phys), free);
     u64 cleaned;
@@ -684,6 +682,7 @@ closure_function(6, 1, void, mbr_read,
                     bound(start), bound(complete));
     }
   out:
+    storage_probe_end();
     closure_finish();
 }
 
@@ -693,10 +692,12 @@ closure_function(2, 3, void, attach_storage,
 {
     heap h = heap_locked(init_heaps);
     heap bh = (heap)heap_linear_backed(init_heaps);
+    storage_probe_begin();
     /* Read partition table from disk, use backed heap for guaranteed alignment */
     u8 *mbr = allocate(bh, PAGESIZE);
     if (mbr == INVALID_ADDRESS) {
         msg_err("storage: cannot allocate memory for MBR sector");
+        storage_probe_end();
         return;
     }
     status_handler sh = closure(h, mbr_read, mbr, req_handler, length, attach_id,
@@ -704,6 +705,7 @@ closure_function(2, 3, void, attach_storage,
     if (sh == INVALID_ADDRESS) {
         msg_err("storage: cannot allocate MBR read closure");
         deallocate(bh, mbr, PAGESIZE);
+        storage_probe_end();
         return;
     }
     struct storage_req req = {
@@ -810,7 +812,7 @@ void kernel_runtime_init(kernel_heaps kh)
     status_handler start = closure(locked, kern_start, 0);
     assert(start != INVALID_ADDRESS);
     merge m = allocate_merge(locked, start);
-    storage_attach sa = closure(misc, attach_storage, start, apply_merge(m));
+    storage_attach sa = closure(locked, attach_storage, start, apply_merge(m));
     status_handler complete = apply_merge(m);
 
     init_debug("detect_devices");
