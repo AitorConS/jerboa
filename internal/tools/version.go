@@ -61,9 +61,12 @@ func SaveLocalVersion(toolsDir, version string) error {
 }
 
 // ClearCachedTools deletes the kernel artifacts and version file from toolsDir.
+// The Firecracker kernel goes too: EnsureFCKernel only downloads it when it is
+// missing, so a kept copy would outlive every kernel update (and an older one
+// cannot read its command line on Firecracker >= 1.12, which boots it via PVH).
 func ClearCachedTools(toolsDir string) error {
 	names := append([]string{versionFileName}, artifactNames...)
-	names = append(names, "mkfs", "dump") // local names differ from remote artifact names
+	names = append(names, "mkfs", "dump", fcKernelLocalName) // local names differ from remote artifact names
 	for _, name := range names {
 		if err := os.Remove(filepath.Join(toolsDir, name)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("tools: clear %s: %w", name, err)
