@@ -207,9 +207,13 @@ func TestStore_Multiple_tags_same_image(t *testing.T) {
 	require.NoError(t, s.Put("hello", "latest", m, disk))
 	require.NoError(t, s.Put("hello", "v1.0", m, disk))
 
+	// Each tag is listed with its own manifest, sharing one disk.
 	list, err := s.List()
 	require.NoError(t, err)
-	require.Len(t, list, 1)
+	require.Len(t, list, 2)
+	require.Equal(t, "latest", list[0].Tag)
+	require.Equal(t, "v1.0", list[1].Tag)
+	require.Equal(t, list[0].DiskDigest, list[1].DiskDigest)
 
 	require.NoError(t, s.Remove("hello:v1.0"))
 	_, _, err = s.Get("hello:latest")
@@ -398,4 +402,65 @@ func TestStore_PruneUnreferenced(t *testing.T) {
 	require.ElementsMatch(t, []string{stripPrefix(second.DiskDigest), "not-an-image"}, imageDirs(t, root))
 	_, _, err = s.Get("web:latest")
 	require.NoError(t, err)
+}
+
+// Tags that share a disk keep their own metadata: a later build with other
+// defaults must not change what an earlier tag reports.
+func TestStore_TagsSharingDiskKeepOwnManifest(t *testing.T) {
+	s := makeStore(t)
+	write := func() string {
+		p := filepath.Join(t.TempDir(), "disk.img")
+		require.NoError(t, os.WriteFile(p, []byte("same reproducible disk"), 0o600))
+		return p
+	}
+	small := validManifest()
+	small.Config.Memory = "128M"
+	big := validManifest()
+	big.Config.Memory = "1G"
+	a, err := s.PutMove("api", "v1", small, write())
+	require.NoError(t, err)
+	b, err := s.PutMove("worker", "v1", big, write())
+	require.NoError(t, err)
+	require.Equal(t, a.DiskDigest, b.DiskDigest)
+
+	m, _, err := s.Resolve("api:v1")
+	require.NoError(t, err)
+	require.Equal(t, "api", m.Name)
+	require.Equal(t, "128M", m.Config.Memory)
+	m, _, err = s.Resolve("worker:v1")
+	require.NoError(t, err)
+	require.Equal(t, "worker", m.Name)
+	require.Equal(t, "1G", m.Config.Memory)
+
+	// Removing one tag keeps the shared disk for the other.
+	require.NoError(t, s.Remove("api:v1"))
+	_, _, err = s.Get("worker:v1")
+	require.NoError(t, err)
+}
+
+// Images stored before per-tag manifests existed still resolve.
+func TestStore_ResolvesLegacyImageWithoutTagManifest(t *testing.T) {
+	s := makeStore(t)
+	m, err := s.PutMove("old", "latest", validManifest(), makeDiskFile(t))
+	require.NoError(t, err)
+	dir := filepath.Join(s.root, stripPrefix(m.DiskDigest))
+	require.NoError(t, os.RemoveAll(filepath.Join(dir, "tags")))
+	got, _, err := s.Get("old:latest")
+	require.NoError(t, err)
+	require.Equal(t, m.DiskDigest, got.DiskDigest)
+	list, err := s.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+
+	// A legacy tag reports its own name even when the shared manifest was
+	// last written for another tag.
+	other := validManifest()
+	other.Name, other.Tag, other.DiskDigest = "newer", "v2", m.DiskDigest
+	data, err := Marshal(other)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "manifest.json"), data, 0o644))
+	got, _, err = s.Get("old:latest")
+	require.NoError(t, err)
+	require.Equal(t, "old", got.Name)
+	require.Equal(t, "latest", got.Tag)
 }

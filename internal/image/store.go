@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -18,9 +20,14 @@ import (
 //
 //	<root>/
 //	  <sha256>/
-//	    manifest.json
 //	    disk.img
-//	  refs.json          (name:tag → sha256)
+//	    manifest.json      (latest manifest stored for this disk)
+//	    tags/<ref>.json    (manifest per name:tag)
+//	  refs.json            (name:tag → sha256)
+//
+// Reproducible builds give different tags the same disk, so per-tag metadata
+// (name, tag, creation time, default memory, CPUs, ports) lives next to the
+// shared disk instead of in a single manifest that the last build overwrote.
 type Store struct {
 	root string
 	mu   sync.RWMutex
@@ -58,13 +65,20 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 		return Manifest{}, fmt.Errorf("image store put: %w", err)
 	}
 	m.DiskDigest = digest
+	m.Name, m.Tag = name, tag
 
 	imgDir := filepath.Join(s.root, stripPrefix(digest))
 	if err := os.MkdirAll(imgDir, 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("image store put mkdir: %w", err)
 	}
 	dst := filepath.Join(imgDir, "disk.img")
-	if !move || os.Rename(diskPath, dst) != nil {
+	if _, err := os.Stat(dst); err == nil {
+		// The same disk is already stored (a reproducible rebuild or another
+		// tag): keep the existing file, which VMs may be cloning from.
+		if move {
+			_ = os.Remove(diskPath)
+		}
+	} else if !move || os.Rename(diskPath, dst) != nil {
 		if err := copyFile(diskPath, dst); err != nil {
 			return Manifest{}, fmt.Errorf("image store put disk: %w", err)
 		}
@@ -73,10 +87,17 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 	if err != nil {
 		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(imgDir, "manifest.json"), data, 0o644); err != nil {
+	if err := writeFileAtomic(filepath.Join(imgDir, "manifest.json"), data); err != nil {
 		return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
 	}
-	if err := s.addRef(name+":"+tag, stripPrefix(digest)); err != nil {
+	ref := name + ":" + tag
+	if err := os.MkdirAll(filepath.Join(imgDir, "tags"), 0o755); err != nil {
+		return Manifest{}, fmt.Errorf("image store put mkdir: %w", err)
+	}
+	if err := writeFileAtomic(tagManifestPath(imgDir, ref), data); err != nil {
+		return Manifest{}, fmt.Errorf("image store put write tag manifest: %w", err)
+	}
+	if err := s.addRef(ref, stripPrefix(digest)); err != nil {
 		return Manifest{}, fmt.Errorf("image store put ref: %w", err)
 	}
 	return m, nil
@@ -105,11 +126,11 @@ func (s *Store) Get(ref string) (Manifest, string, error) {
 func (s *Store) Resolve(ref string) (Manifest, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	sha, err := s.resolveRef(ref)
+	sha, name, err := s.resolveRefName(ref)
 	if err != nil {
 		return Manifest{}, "", fmt.Errorf("image store resolve %s: %w", ref, err)
 	}
-	m, err := s.readManifest(sha)
+	m, err := s.readRefManifest(sha, name)
 	if err != nil {
 		return Manifest{}, "", fmt.Errorf("image store resolve %s: %w", ref, err)
 	}
@@ -119,7 +140,8 @@ func (s *Store) Resolve(ref string) (Manifest, string, error) {
 	return m, filepath.Join(s.root, sha, "disk.img"), nil
 }
 
-// List returns all unique manifests in the store.
+// List returns the manifest of every name:tag in the store, sorted by ref.
+// Tags that share a disk are listed separately, each with its own metadata.
 func (s *Store) List() ([]Manifest, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -128,14 +150,14 @@ func (s *Store) List() ([]Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("image store list: %w", err)
 	}
-	seen := make(map[string]bool)
-	var out []Manifest
-	for _, sha := range refs {
-		if seen[sha] {
-			continue
-		}
-		seen[sha] = true
-		m, err := s.readManifest(sha)
+	names := make([]string, 0, len(refs))
+	for ref := range refs {
+		names = append(names, ref)
+	}
+	sort.Strings(names)
+	out := make([]Manifest, 0, len(names))
+	for _, ref := range names {
+		m, err := s.readRefManifest(refs[ref], ref)
 		if err != nil {
 			return nil, fmt.Errorf("image store list: %w", err)
 		}
@@ -170,10 +192,12 @@ func (s *Store) Remove(ref string) error {
 	}
 	if _, named := refs[ref]; named {
 		delete(refs, ref)
+		_ = os.Remove(tagManifestPath(filepath.Join(s.root, sha), ref))
 	} else {
 		for name, digest := range refs {
 			if digest == sha {
 				delete(refs, name)
+				_ = os.Remove(tagManifestPath(filepath.Join(s.root, sha), name))
 			}
 		}
 	}
@@ -201,25 +225,82 @@ func (s *Store) DiskPath(ref string) (string, error) {
 	return path, nil
 }
 
-func (s *Store) resolveRef(ref string) (string, error) {
+// resolveRefName resolves ref to a disk digest and, when ref names a tag, the
+// full name:tag it matched (empty for a digest reference).
+func (s *Store) resolveRefName(ref string) (string, string, error) {
 	refs, err := s.readRefs()
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if sha, ok := refs[ref]; ok {
-		return sha, nil
+		return sha, ref, nil
 	}
 	// Bare name without tag → try :latest.
 	if !strings.Contains(ref, ":") {
 		if sha, ok := refs[ref+":latest"]; ok {
-			return sha, nil
+			return sha, ref + ":latest", nil
 		}
 	}
 	// Try direct sha256 match or prefix.
 	if sha, ok := s.findBySHA(refs, ref); ok {
-		return sha, nil
+		return sha, "", nil
 	}
-	return "", fmt.Errorf("%s not found", ref)
+	return "", "", fmt.Errorf("%s not found", ref)
+}
+
+// tagManifestPath is where the manifest of ref is kept inside an image dir.
+func tagManifestPath(imgDir, ref string) string {
+	return filepath.Join(imgDir, "tags", url.PathEscape(ref)+".json")
+}
+
+// readRefManifest reads the manifest stored for ref on disk sha, falling back
+// to the disk's manifest.json for images stored before per-tag manifests and
+// for digest references (ref == "").
+func (s *Store) readRefManifest(sha, ref string) (Manifest, error) {
+	if ref != "" {
+		data, err := os.ReadFile(tagManifestPath(filepath.Join(s.root, sha), ref))
+		if err == nil {
+			m, err := Parse(data)
+			if err != nil {
+				return Manifest{}, fmt.Errorf("parse manifest %s for %s: %w", sha, ref, err)
+			}
+			return m, nil
+		}
+		if !os.IsNotExist(err) {
+			return Manifest{}, fmt.Errorf("read manifest %s for %s: %w", sha, ref, err)
+		}
+	}
+	m, err := s.readManifest(sha)
+	if err != nil || ref == "" {
+		return m, err
+	}
+	// The shared manifest may belong to another tag of the same disk; the ref
+	// itself is authoritative for the name and tag.
+	if i := strings.LastIndex(ref, ":"); i > 0 {
+		m.Name, m.Tag = ref[:i], ref[i+1:]
+	}
+	return m, nil
+}
+
+// writeFileAtomic writes data to path through a temporary file and a rename,
+// so readers never see a partial manifest.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	if err != nil {
+		return err //nolint:wrapcheck // callers add context
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err //nolint:wrapcheck // callers add context
+	}
+	if err := tmp.Close(); err != nil {
+		return err //nolint:wrapcheck // callers add context
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return err //nolint:wrapcheck // callers add context
+	}
+	return os.Rename(tmp.Name(), path) //nolint:wrapcheck // callers add context
 }
 
 func (s *Store) findBySHA(refs map[string]string, ref string) (string, bool) {

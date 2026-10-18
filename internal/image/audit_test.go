@@ -43,7 +43,7 @@ func TestResolveRejectsManifestDigestMismatch(t *testing.T) {
 	m.DiskDigest = "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000"
 	data, err := json.Marshal(m)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(disk), "manifest.json"), data, 0o644))
+	require.NoError(t, os.WriteFile(tagManifestPath(filepath.Dir(disk), "test:latest"), data, 0o644))
 	_, _, err = s.Resolve("test")
 	require.ErrorContains(t, err, "integrity mismatch")
 }
