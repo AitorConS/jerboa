@@ -251,12 +251,41 @@ func TestBuildManifest_ArgsWithSpaceQuoted(t *testing.T) {
 	require.Contains(t, got, `arguments:(0:/program 1:-jar 2:"/My App.jar")`)
 }
 
-func TestBuildManifest_DiskSize(t *testing.T) {
+func TestBuildManifest_DiskSizeIsNotPadding(t *testing.T) {
+	// disk_size is applied when a VM starts; the stored image is not padded.
 	got := BuildManifest(BuildConfig{
 		BinaryPath: filepath.FromSlash("/usr/bin/mysqld"),
 		DiskSize:   "512M",
 	})
-	require.Contains(t, got, "imagesize:512M")
+	require.NotContains(t, got, "imagesize")
+}
+
+func TestBuildRecordsMinDiskSize(t *testing.T) {
+	m, err := NewBuilder(makeStore(t)).Build(context.Background(), BuildConfig{
+		Name: "db", BinaryPath: writeELF(t, t.TempDir()), MkfsRun: fakeMkfsRun(t), DiskSize: "1G",
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1<<30), m.Config.MinDiskSize)
+
+	_, err = NewBuilder(makeStore(t)).Build(context.Background(), BuildConfig{
+		Name: "db", BinaryPath: writeELF(t, t.TempDir()), MkfsRun: fakeMkfsRun(t), DiskSize: "lots",
+	})
+	require.ErrorContains(t, err, "invalid disk size")
+}
+
+func TestParseDiskSize(t *testing.T) {
+	for in, want := range map[string]int64{
+		"": 0, "4096": 4096, "512K": 512 << 10, "512k": 512 << 10, "64M": 64 << 20,
+		"64MB": 64 << 20, "64MiB": 64 << 20, "1G": 1 << 30, "2g": 2 << 30, "0x100000": 1 << 20,
+	} {
+		got, err := ParseDiskSize(in)
+		require.NoError(t, err, in)
+		require.Equal(t, want, got, in)
+	}
+	for _, bad := range []string{"0", "-1G", "1T", "G", "1.5G", "12Q"} {
+		_, err := ParseDiskSize(bad)
+		require.Error(t, err, bad)
+	}
 }
 
 func TestBuildManifest_NoDiskSize(t *testing.T) {

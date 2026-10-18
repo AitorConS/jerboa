@@ -434,7 +434,11 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		}
 	}
 
+	imageLayout := ""
+	var minDiskSize int64
 	if m := resolvedManifest; m != nil {
+		imageLayout = m.Layout
+		minDiskSize = m.Config.MinDiskSize
 		if validator, ok := s.mgr.(interface{ ValidateImageLayout(string, bool) error }); ok {
 			if err := validator.ValidateImageLayout(m.Layout, p.EmulateX86); err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
@@ -524,6 +528,8 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		Architecture:   architecture,
 		ImagePath:      imagePath,
 		ImageDigest:    imageDigest,
+		ImageLayout:    imageLayout,
+		MinDiskSize:    minDiskSize,
 		ImageRef:       p.Image,
 		Memory:         memory,
 		CPUs:           cpus,

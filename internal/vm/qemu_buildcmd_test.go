@@ -333,3 +333,14 @@ func TestBuildCmd_VolumesInArgs(t *testing.T) {
 	}
 	require.Equal(t, 2, count)
 }
+
+func TestBuildCmd_CompactImageLoadsKernel(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu", WithKernel("/tools/kernel.img"))
+	args := captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M", ImageLayout: "compact"})
+	k := indexOf(args, "-kernel")
+	require.GreaterOrEqual(t, k, 0, "a compact image has no boot code: QEMU loads the PVH kernel")
+	require.Equal(t, "/tools/kernel.img", args[k+1])
+
+	args = captureArgs(mgr, Config{ImagePath: "disk.img", Memory: "256M"})
+	require.Equal(t, -1, indexOf(args, "-kernel"), "a standard image boots through its own boot code")
+}

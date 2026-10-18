@@ -19,9 +19,10 @@ import (
 //
 // When digest is set, the private disk itself is hashed after it is created.
 // A clone is a point-in-time copy, so this verifies exactly the bytes the VM
-// boots from, even if the source changed during a fallback copy. On any error
-// dst is removed.
-func prepareBootDisk(dst, src, digest string) error {
+// boots from, even if the source changed during a fallback copy. The verified
+// disk is then extended to minSize when it is smaller (the image's disk_size),
+// which only changes the length of a sparse file. On any error dst is removed.
+func prepareBootDisk(dst, src, digest string, minSize int64) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return fmt.Errorf("create boot disk dir: %w", err)
 	}
@@ -40,7 +41,35 @@ func prepareBootDisk(dst, src, digest string) error {
 			return fmt.Errorf("boot image integrity mismatch")
 		}
 	}
+	if err := extendDisk(dst, minSize); err != nil {
+		_ = os.Remove(dst)
+		return err
+	}
 	slog.Debug("vm: prepared private boot disk", "path", dst, "method", method)
+	return nil
+}
+
+// diskSizeAlign is the granularity a boot disk is extended to: the TFS log
+// extension size, which is also what mkfs padded images to.
+const diskSizeAlign = 512 << 10
+
+// extendDisk grows a disk smaller than minSize bytes to minSize rounded up to
+// diskSizeAlign. A disk of at least minSize bytes is left alone.
+func extendDisk(path string, minSize int64) error {
+	if minSize <= 0 {
+		return nil
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("extend boot disk: %w", err)
+	}
+	if info.Size() >= minSize {
+		return nil
+	}
+	want := (minSize + diskSizeAlign - 1) / diskSizeAlign * diskSizeAlign
+	if err := os.Truncate(path, want); err != nil {
+		return fmt.Errorf("extend boot disk: %w", err)
+	}
 	return nil
 }
 

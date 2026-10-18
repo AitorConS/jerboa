@@ -6,11 +6,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,9 +77,9 @@ type BuildConfig struct {
 	// Stored in the image manifest and applied at run time when the VM joins a
 	// network and no -p flag is given.
 	Ports []string
-	// DiskSize is the minimum image file size passed to mkfs (e.g. "512M", "1G").
-	// When non-empty, emitted as imagesize in the Nanos manifest so mkfs pads
-	// the image to at least that size, leaving free space for runtime writes.
+	// DiskSize is the minimum boot disk size (e.g. "512M", "1G"), leaving free
+	// space for runtime writes. It is recorded as Config.MinDiskSize and
+	// applied when a VM starts; the stored image is not padded with zeros.
 	DiskSize string
 	// Layout is LayoutStandard (BIOS-bootable) or LayoutCompact (root
 	// filesystem only, for hypervisors that load the kernel directly).
@@ -118,6 +120,10 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		cfg.CPUs = 1
 	}
 	if err := checkELF(cfg.BinaryPath); err != nil {
+		return Manifest{}, fmt.Errorf("build: %w", err)
+	}
+	minDisk, err := ParseDiskSize(cfg.DiskSize)
+	if err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}
 
@@ -188,9 +194,10 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		Tag:           cfg.Tag,
 		Created:       created(cfg.Created),
 		Config: Config{
-			Memory: cfg.Memory,
-			CPUs:   cfg.CPUs,
-			Ports:  cfg.Ports,
+			Memory:      cfg.Memory,
+			CPUs:        cfg.CPUs,
+			Ports:       cfg.Ports,
+			MinDiskSize: minDisk,
 		},
 		DiskSize: stat.Size(),
 		Layout:   cfg.Layout,
@@ -419,9 +426,6 @@ func buildManifest(cfg BuildConfig, hostRef func(string) string) string {
 		}
 	}
 	b.WriteString(")\n")
-	if cfg.DiskSize != "" {
-		fmt.Fprintf(&b, "    imagesize:%s\n", cfg.DiskSize)
-	}
 	// Consumed by mkfs (like imagesize): omit the boot code and boot filesystem.
 	if cfg.Layout == LayoutCompact {
 		b.WriteString("    compact:true\n")
@@ -592,4 +596,36 @@ func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string
 			b.WriteString(")\n")
 		}
 	}
+}
+
+// ParseDiskSize parses a disk size the way mkfs does: an integer (decimal, or
+// 0x hexadecimal) optionally followed by k, m or g (any case, binary units)
+// and an optional "B" or "iB". An empty string is zero.
+func ParseDiskSize(s string) (int64, error) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return 0, nil
+	}
+	i := 0
+	if strings.HasPrefix(t, "0x") || strings.HasPrefix(t, "0X") {
+		i = 2
+		for i < len(t) && strings.ContainsRune("0123456789abcdefABCDEF", rune(t[i])) {
+			i++
+		}
+	} else {
+		for i < len(t) && t[i] >= '0' && t[i] <= '9' {
+			i++
+		}
+	}
+	n, err := strconv.ParseInt(t[:i], 0, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid disk size %q", s)
+	}
+	unit := strings.ToLower(t[i:])
+	unit = strings.TrimSuffix(strings.TrimSuffix(unit, "ib"), "b")
+	mul := map[string]int64{"": 1, "k": 1 << 10, "m": 1 << 20, "g": 1 << 30}[unit]
+	if mul == 0 || n > math.MaxInt64/mul {
+		return 0, fmt.Errorf("invalid disk size %q", s)
+	}
+	return n * mul, nil
 }

@@ -22,7 +22,7 @@ func TestPrepareBootDiskIndependentCopy(t *testing.T) {
 	want := []byte("unikernel base image contents")
 	require.NoError(t, os.WriteFile(src, want, 0o600))
 
-	require.NoError(t, prepareBootDisk(dst, src, ""))
+	require.NoError(t, prepareBootDisk(dst, src, "", 0))
 
 	got, err := os.ReadFile(dst)
 	require.NoError(t, err)

@@ -48,6 +48,11 @@ type Config struct {
 	// unikernel.toml). They are applied at run time when the VM joins a network
 	// and no -p flag is given, so an image can declare the ports it serves.
 	Ports []string `json:"ports,omitempty"`
+	// MinDiskSize is the boot disk size in bytes a VM gets at least (from
+	// disk_size), so the program has free space to write. The stored image
+	// holds only its contents; the private disk of each VM is extended to this
+	// size when it starts, which costs nothing on a sparse file.
+	MinDiskSize int64 `json:"min_disk_size,omitempty"`
 }
 
 // Ref returns the canonical name:tag reference string.

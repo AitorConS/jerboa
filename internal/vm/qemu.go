@@ -154,7 +154,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	bootCfg := v.Cfg
 	if bootCfg.ImageDigest != "" {
 		bootPath := m.bootDiskPath(v.ID)
-		if err := prepareBootDisk(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest); err != nil {
+		if err := prepareBootDisk(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest, bootCfg.MinDiskSize); err != nil {
 			_ = v.transition(StateStopped)
 			return fmt.Errorf("qemu boot image: %w", err)
 		}
@@ -464,6 +464,11 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 		// exit(N) just powers the VM off and QEMU exits 0, hiding the crash and
 		// making --restart on-failure never fire. See guestExitCode.
 		"-device", "isa-debug-exit,iobase=0x501,iosize=1",
+	}
+	// A compact image has no boot code: load the kernel directly. The x86
+	// Nanos kernel is a PVH ELF, which QEMU boots without the BIOS.
+	if cfg.ImageLayout == imageLayoutCompact && m.kernelPath != "" {
+		args = append(args, "-kernel", m.kernelPath)
 	}
 	args = append(args, kvmAccelArgs()...)
 	if cfg.CPUs > 0 {

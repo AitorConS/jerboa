@@ -4,6 +4,8 @@ package vm
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 
@@ -47,12 +49,27 @@ func TestFCRootRateLimiter(t *testing.T) {
 func TestValidateImageLayout(t *testing.T) {
 	fc := NewFirecrackerManager("firecracker", "vmlinux")
 	require.NoError(t, fc.ValidateImageLayout("compact", false))
+
 	q := NewQEMUManager("qemu")
 	require.NoError(t, q.ValidateImageLayout("", false))
-	require.Error(t, q.ValidateImageLayout("compact", true), "x86 emulation boots through BIOS")
+	require.NoError(t, q.ValidateImageLayout("", true))
 	if runtime.GOOS == "darwin" {
 		require.NoError(t, q.ValidateImageLayout("compact", false), "native ARM64 loads the kernel directly")
-	} else {
-		require.ErrorContains(t, q.ValidateImageLayout("compact", false), "BIOS")
+		require.ErrorContains(t, q.ValidateImageLayout("compact", true), "BIOS", "x86 emulation cannot boot PVH under TCG")
+		return
 	}
+
+	// Linux: a compact image needs KVM and the x86 PVH kernel.
+	tools := t.TempDir()
+	kernel := filepath.Join(tools, "kernel.img")
+	require.NoError(t, os.WriteFile(kernel, []byte("kernel"), 0o644))
+	withKernel := NewQEMUManager("qemu", WithKernel(kernel))
+	missing := NewQEMUManager("qemu", WithKernel(filepath.Join(tools, "missing.img")))
+	if len(kvmAccelArgs()) == 0 {
+		require.ErrorContains(t, withKernel.ValidateImageLayout("compact", false), "KVM")
+		return
+	}
+	require.NoError(t, withKernel.ValidateImageLayout("compact", false))
+	require.ErrorContains(t, missing.ValidateImageLayout("compact", false), "x86 kernel")
+	require.ErrorContains(t, q.ValidateImageLayout("compact", false), "tools directory")
 }

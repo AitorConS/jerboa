@@ -4,6 +4,7 @@ package vm
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 )
 
@@ -51,18 +52,32 @@ func (m *QEMUManager) ValidateImagePlatform(architecture string, emulate bool) e
 // imageLayoutCompact mirrors image.LayoutCompact (vm does not import image).
 const imageLayoutCompact = "compact"
 
-// ValidateImageLayout rejects image layouts QEMU cannot boot. QEMU boots x86
-// guests through the BIOS boot code, which compact images omit; native ARM64
-// on macOS loads the kernel directly and boots either layout.
+// ValidateImageLayout rejects image layouts QEMU cannot boot. A standard image
+// boots through its own boot code. A compact image has none, so QEMU loads the
+// kernel itself: the ARM64 kernel natively on macOS, and on Linux the x86 PVH
+// kernel from the tools directory. The x86 PVH entry only boots with KVM, not
+// under TCG emulation, so x86 emulation on macOS and Linux hosts without KVM
+// need standard images.
 func (m *QEMUManager) ValidateImageLayout(layout string, emulate bool) error {
 	if layout != imageLayoutCompact {
 		return nil
 	}
-	if runtime.GOOS == "darwin" && !emulate {
+	if runtime.GOOS == "darwin" {
+		if emulate {
+			return fmt.Errorf("x86 emulation boots through the BIOS and cannot boot compact images; rebuild with --layout standard")
+		}
 		return nil
 	}
-	return fmt.Errorf("compact images have no boot code and cannot boot with QEMU BIOS boot; " +
-		"rebuild with --layout standard or run on Firecracker")
+	if len(kvmAccelArgs()) == 0 {
+		return fmt.Errorf("compact images boot through KVM on QEMU, which is unavailable; rebuild with --layout standard or enable KVM")
+	}
+	if m.kernelPath == "" {
+		return fmt.Errorf("compact image needs a kernel to load directly; start the daemon with a tools directory")
+	}
+	if info, err := os.Stat(m.kernelPath); err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("compact image needs the x86 kernel at %s; run jerboa kernel update or rebuild with --layout standard", m.kernelPath)
+	}
+	return nil
 }
 
 // ValidateImageLayout accepts every layout: Firecracker always loads the

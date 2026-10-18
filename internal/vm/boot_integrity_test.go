@@ -18,13 +18,13 @@ func TestPrepareBootDiskIntegrity(t *testing.T) {
 	original := []byte("verified image")
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(original))
 	require.NoError(t, os.WriteFile(src, original, 0o600))
-	require.NoError(t, prepareBootDisk(dst, src, digest))
+	require.NoError(t, prepareBootDisk(dst, src, digest, 0))
 	data, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, original, data)
 	// A source changed after reference resolution must never become bootable.
 	require.NoError(t, os.WriteFile(src, []byte("tampered image"), 0o600))
-	require.ErrorContains(t, prepareBootDisk(dst, src, digest), "integrity mismatch")
+	require.ErrorContains(t, prepareBootDisk(dst, src, digest, 0), "integrity mismatch")
 	_, err = os.Stat(dst)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -33,7 +33,7 @@ func TestPrepareBootDiskWithoutDigest(t *testing.T) {
 	dir := t.TempDir()
 	src, dst := filepath.Join(dir, "source"), filepath.Join(dir, "boot")
 	require.NoError(t, os.WriteFile(src, []byte("unverified"), 0o600))
-	require.NoError(t, prepareBootDisk(dst, src, ""))
+	require.NoError(t, prepareBootDisk(dst, src, "", 0))
 	data, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, []byte("unverified"), data)
@@ -92,4 +92,30 @@ func TestRootfsPathUsesDiskDir(t *testing.T) {
 	q := NewQEMUManager("qemu", WithDiskDir(dir))
 	require.Equal(t, filepath.Join(dir, "qemu-vm1-boot.img"), q.bootDiskPath("vm1"))
 	require.Equal(t, filepath.Clean(os.TempDir()), filepath.Dir(NewFirecrackerManager("firecracker", "vmlinux").rootfsPath("vm1")))
+}
+
+func TestPrepareBootDiskExtendsToMinSize(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "source"), filepath.Join(dir, "boot")
+	original := []byte("image contents")
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(original))
+	require.NoError(t, os.WriteFile(src, original, 0o600))
+
+	// disk_size is applied after verification and rounded up to 512 KiB.
+	require.NoError(t, prepareBootDisk(dst, src, digest, 1<<20+1))
+	info, err := os.Stat(dst)
+	require.NoError(t, err)
+	require.Equal(t, int64(1<<20+512<<10), info.Size())
+	data, err := os.ReadFile(dst)
+	require.NoError(t, err)
+	require.Equal(t, original, data[:len(original)])
+	src2, err := os.Stat(src)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(original)), src2.Size(), "the stored image is never extended")
+
+	// A disk already larger than the minimum keeps its size.
+	require.NoError(t, prepareBootDisk(dst, src, "", 4))
+	info, err = os.Stat(dst)
+	require.NoError(t, err)
+	require.Equal(t, int64(len(original)), info.Size())
 }

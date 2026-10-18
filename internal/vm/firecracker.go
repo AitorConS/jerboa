@@ -197,7 +197,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// scratch space and leaves the base pristine. Attached volumes stay shared
 	// and persistent — only the rootfs is cloned.
 	rootfs := m.rootfsPath(id)
-	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest); err != nil {
+	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest, v.Cfg.MinDiskSize); err != nil {
 		_ = v.transition(StateStopped)
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}

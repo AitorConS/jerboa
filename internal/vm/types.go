@@ -135,6 +135,12 @@ type Config struct {
 	privateBootDisk bool
 	Architecture    string `json:"architecture,omitempty"`
 	ImageDigest     string `json:"image_digest,omitempty"`
+	// MinDiskSize is the size in bytes the private boot disk is extended to
+	// when the image's disk is smaller (the image's disk_size).
+	MinDiskSize int64 `json:"min_disk_size,omitempty"`
+	// ImageLayout is the layout of the image's disk ("" standard, "compact").
+	// QEMU boots a compact image by loading the kernel itself (PVH on x86).
+	ImageLayout string `json:"image_layout,omitempty"`
 	// ImagePath is the raw disk image containing the kernel and application.
 	ImagePath string
 	// ImageRef is the image reference the VM was created from (e.g.
