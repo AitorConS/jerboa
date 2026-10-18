@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -59,7 +60,11 @@ func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guest
 // program binary at buildProgramPath plus each package/source file at its guest
 // path. Files are streamed via a pipe, so the archive is never fully buffered.
 // The caller must Close the returned reader to release the writer goroutine.
-func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
+//
+// programPath is the in-image path the daemon places the program at (empty
+// means /program). A package file that is the program itself at that same path
+// is not streamed a second time: the daemon writes the program there anyway.
+func buildContextReader(binaryPath, programPath string, pkgFiles []pkg.File) *io.PipeReader {
 	pr, pw := io.Pipe()
 	go func() {
 		tw := tar.NewWriter(pw)
@@ -67,7 +72,14 @@ func buildContextReader(binaryPath string, pkgFiles []pkg.File) *io.PipeReader {
 			if err := addFileToTar(tw, binaryPath, buildProgramPath); err != nil {
 				return err
 			}
-			if err := writePkgFiles(tw, pkgFiles); err != nil {
+			files := make([]pkg.File, 0, len(pkgFiles))
+			for _, f := range pkgFiles {
+				if isProgramFile(f, binaryPath, programPath) {
+					continue
+				}
+				files = append(files, f)
+			}
+			if err := writePkgFiles(tw, files); err != nil {
 				return err
 			}
 			return tw.Close()
@@ -164,19 +176,51 @@ var runtimeBinaryCandidates = map[builder.Lang][]string{
 	builder.LangPython: {"python3", "python2", "python"},
 }
 
+// programGuestPath returns the normalized in-image path of the program:
+// programPath, or "program" when none is set.
+func programGuestPath(programPath string) string {
+	if programPath == "" {
+		programPath = "program"
+	}
+	return cleanGuestPath(programPath)
+}
+
+// cleanGuestPath normalizes a guest path to a slash-separated path relative to
+// the image root.
+func cleanGuestPath(p string) string {
+	return strings.TrimPrefix(path.Clean("/"+filepath.ToSlash(p)), "/")
+}
+
+// fileGuestPath returns where f is placed inside the image.
+func fileGuestPath(f pkg.File) string {
+	if f.GuestPath != "" {
+		return cleanGuestPath(f.GuestPath)
+	}
+	return cleanGuestPath(filepath.Base(f.HostPath))
+}
+
+// isProgramFile reports whether f is the program binary itself at the path the
+// program occupies in the image, so the two would be one file on disk.
+func isProgramFile(f pkg.File, binaryPath, programPath string) bool {
+	return !f.IsDir && f.HostPath == binaryPath && fileGuestPath(f) == programGuestPath(programPath)
+}
+
 // findRuntimeBinary searches the resolved package files for the runtime binary
-// of the given language.
-func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
+// of the given language. It returns the binary's host path and its in-image
+// guest path, so the build runs the runtime from where its package placed it
+// instead of storing a second copy at /program. guestPath is empty when the
+// binary was found on disk next to a package file but is not itself one.
+func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (hostPath, guestPath string, err error) {
 	candidates, ok := runtimeBinaryCandidates[lang]
 	if !ok {
-		return "", fmt.Errorf("language %s does not have a runtime binary", lang)
+		return "", "", fmt.Errorf("language %s does not have a runtime binary", lang)
 	}
 
 	// Exact base-name match: try each candidate in priority order.
 	for _, name := range candidates {
 		for _, f := range pkgFiles {
-			if filepath.Base(f.HostPath) == name {
-				return f.HostPath, nil
+			if !f.IsDir && filepath.Base(f.HostPath) == name {
+				return f.HostPath, fileGuestPath(f), nil
 			}
 		}
 	}
@@ -188,18 +232,28 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
 	// matches[0] would otherwise pick python3-config over python3.12).
 	for _, name := range candidates {
 		for _, f := range pkgFiles {
+			// Directory placeholders have no host path; globbing filepath.Dir("")
+			// would search the caller's working directory.
+			if f.IsDir || f.HostPath == "" {
+				continue
+			}
 			dir := filepath.Dir(f.HostPath)
 			matches, _ := filepath.Glob(filepath.Join(dir, name+"*"))
 			for _, match := range matches {
 				suffix := strings.TrimPrefix(filepath.Base(match), name)
 				if suffix == "" || strings.HasPrefix(suffix, ".") || (suffix[0] >= '0' && suffix[0] <= '9') {
-					return match, nil
+					for _, g := range pkgFiles {
+						if !g.IsDir && g.HostPath == match {
+							return match, fileGuestPath(g), nil
+						}
+					}
+					return match, "", nil
 				}
 			}
 		}
 	}
 
-	return "", fmt.Errorf("runtime binary %q (or variant) not found in package files", candidates[0])
+	return "", "", fmt.Errorf("runtime binary %q (or variant) not found in package files", candidates[0])
 }
 
 // sourceFiles collects application source files from dir for inclusion in the image.
@@ -207,8 +261,8 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (string, error) {
 // include is active, only files it matches are kept.
 // Every file is marked FromContext, so it shadows a package file that would
 // otherwise land at the same guest path (see pkg.ApplyContextPrecedence).
-func sourceFiles(dir string, include *builder.IncludeMatcher) ([]pkg.File, error) {
-	ignore, err := builder.LoadIgnoreFile(dir)
+func sourceFiles(dir string, lang builder.Lang, include *builder.IncludeMatcher) ([]pkg.File, error) {
+	ignore, err := builder.LoadIgnoreFileFor(dir, lang)
 	if err != nil {
 		return nil, fmt.Errorf("load ignore file: %w", err)
 	}

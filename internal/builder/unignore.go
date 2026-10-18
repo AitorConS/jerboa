@@ -37,20 +37,43 @@ func NewIgnoreMatcher(patterns []string) *IgnoreMatcher {
 	return &IgnoreMatcher{patterns: patterns}
 }
 
+// DefaultIgnorePatternsFor returns the default patterns for a build of lang.
+// A Node build keeps node_modules: the driver has just installed the
+// production dependencies there with npm, and the program cannot start without
+// them. Every other build ignores it like the rest of the defaults.
+func DefaultIgnorePatternsFor(lang Lang) []string {
+	out := make([]string, 0, len(DefaultIgnorePatterns))
+	for _, p := range DefaultIgnorePatterns {
+		if lang == LangNode && p == "node_modules" {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 // LoadIgnoreFile reads a .unignore file and returns a matcher.
 // If the file does not exist, returns a matcher with default patterns only.
 func LoadIgnoreFile(dir string) (*IgnoreMatcher, error) {
+	return LoadIgnoreFileFor(dir, LangUnknown)
+}
+
+// LoadIgnoreFileFor is LoadIgnoreFile with the defaults for a build of lang
+// (see DefaultIgnorePatternsFor). Patterns in .unignore still apply on top, so
+// a project can exclude node_modules again explicitly.
+func LoadIgnoreFileFor(dir string, lang Lang) (*IgnoreMatcher, error) {
+	defaults := DefaultIgnorePatternsFor(lang)
 	path := filepath.Join(dir, UnignoreFile)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewIgnoreMatcher(DefaultIgnorePatterns), nil
+			return NewIgnoreMatcher(defaults), nil
 		}
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	var patterns []string
-	patterns = append(patterns, DefaultIgnorePatterns...)
+	patterns = append(patterns, defaults...)
 
 	scanner := bufio.NewScanner(strings.NewReader(string(data)))
 	for scanner.Scan() {

@@ -75,7 +75,11 @@ func sizeGroupKey(f pkg.File) string {
 }
 
 // buildSizeReport stats every file (the program included) and groups sizes.
-func buildSizeReport(binaryPath string, files []pkg.File) (sizeReport, error) {
+// A package file is skipped only when it is the program itself at the
+// program's in-image path (programPath, empty meaning /program): that is one
+// file on disk. The same binary at any other path is a second copy in the image
+// and is counted.
+func buildSizeReport(binaryPath, programPath string, files []pkg.File) (sizeReport, error) {
 	byGroup := map[string]*sizeGroup{}
 	var r sizeReport
 	add := func(key, hostPath string) error {
@@ -100,7 +104,7 @@ func buildSizeReport(binaryPath string, files []pkg.File) (sizeReport, error) {
 		}
 	}
 	for _, f := range files {
-		if f.IsDir || f.HostPath == "" || f.HostPath == binaryPath {
+		if f.IsDir || f.HostPath == "" || isProgramFile(f, binaryPath, programPath) {
 			continue
 		}
 		if err := add(sizeGroupKey(f), f.HostPath); err != nil {

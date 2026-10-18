@@ -172,7 +172,7 @@ project markers (go.mod, package.json, etc.).`,
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
 					var cleanupBinary bool
-					binaryPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
+					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -278,7 +278,7 @@ project markers (go.mod, package.json, etc.).`,
 				if sizeReportF != "text" && sizeReportF != "json" {
 					return fmt.Errorf("build: --size-report must be text or json")
 				}
-				report, err := buildSizeReport(binaryPath, pkgFiles)
+				report, err := buildSizeReport(binaryPath, programPath, pkgFiles)
 				if err != nil {
 					return fmt.Errorf("build: %w", err)
 				}
@@ -300,7 +300,7 @@ project markers (go.mod, package.json, etc.).`,
 			}
 			defer func() { _ = client.Close() }()
 
-			pr := buildContextReader(binaryPath, pkgFiles)
+			pr := buildContextReader(binaryPath, programPath, pkgFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
 				Name:     name,
@@ -384,8 +384,9 @@ func runBuildCommand(ctx context.Context, dir, command string, w io.Writer) erro
 
 // buildSingle handles a single-language build (no stages).
 // Returns (binaryPath, programPath, entrypoint, args, env, cleanupBinary, error).
-// programPath is the in-image guest path to run the binary from (lang="raw"
-// only; empty runs flat at /program). entrypoint is non-empty for interpreted
+// programPath is the in-image guest path to run the binary from: the resolved
+// program for lang="raw" and the runtime's package path for interpreted
+// languages; empty runs flat at /program. entrypoint is non-empty for interpreted
 // languages (e.g. "hi.js" for Node). args holds additional argv elements for
 // lang="raw" builds (from [program].args). env holds runtime environment
 // variables the driver requires (e.g. PYTHONPATH when pip installed packages).
@@ -502,7 +503,9 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 			}
 			*pkgFiles = append(*pkgFiles, resolvedPkgs...)
 
-			runtimeBinary, err = findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
+			// Run the runtime from its package location so the image holds one
+			// copy of it, not a second one at /program.
+			runtimeBinary, programPath, err = findRuntimeBinary(append(resolvedPkgs, *pkgFiles...), detected)
 			if err != nil {
 				return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 			}
@@ -515,7 +518,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 			}
 		}
 
-		srcFiles, err := sourceFiles(result.SourceDir, include)
+		srcFiles, err := sourceFiles(result.SourceDir, detected, include)
 		if err != nil {
 			return "", "", "", nil, nil, false, fmt.Errorf("build: collect source files: %w", err)
 		}
@@ -537,9 +540,10 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 
 // stageResult holds the output of a completed build stage.
 type stageResult struct {
-	binaryPath string
-	sourceDir  string
-	pkgFiles   []pkg.File
+	binaryPath  string
+	programPath string
+	sourceDir   string
+	pkgFiles    []pkg.File
 }
 
 // copyFromGuestPath returns the in-image destination for a copy_from artifact.
@@ -561,7 +565,10 @@ func copyFromGuestPath(cf builder.CopyFromConfig, prevBinary string) string {
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, []pkg.File, bool, error) {
+// It returns (binaryPath, programPath, pkgFiles, cleanupBinary, error), where
+// programPath is the runtime's package path for an interpreted final stage and
+// empty for a compiled one.
+func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, string, []pkg.File, bool, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -569,7 +576,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 	if platformFlag != "" {
 		buildPlatform, err = builder.ParsePlatform(platformFlag)
 		if err != nil {
-			return "", nil, false, fmt.Errorf("build: %w", err)
+			return "", "", nil, false, fmt.Errorf("build: %w", err)
 		}
 	}
 
@@ -578,16 +585,16 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 
 		stageLang, err := builder.ParseLang(stage.Lang)
 		if err != nil {
-			return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			return "", "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 
 		detected, err := builder.DetectLanguage(srcPath, stageLang)
 		if err != nil {
-			return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			return "", "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 		driver, err := builder.GetDriver(detected)
 		if err != nil {
-			return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
+			return "", "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 		}
 
 		var stagePkgs []pkg.File
@@ -596,10 +603,10 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 		for _, cf := range stage.CopyFrom {
 			prev, ok := stageOutputs[cf.Stage]
 			if !ok {
-				return "", nil, false, fmt.Errorf("build stage %q: copy_from references unknown stage %q", stage.Name, cf.Stage)
+				return "", "", nil, false, fmt.Errorf("build stage %q: copy_from references unknown stage %q", stage.Name, cf.Stage)
 			}
 			if prev.binaryPath == "" {
-				return "", nil, false, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
+				return "", "", nil, false, fmt.Errorf("build stage %q: copy_from stage %q has no binary output", stage.Name, cf.Stage)
 			}
 			var reference *pkg.Reference
 			for _, f := range prev.pkgFiles {
@@ -628,7 +635,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			Output:     subW,
 		})
 		if err != nil {
-			return "", nil, false, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)
+			return "", "", nil, false, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)
 		}
 
 		switch {
@@ -640,35 +647,36 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 		case result.SourceDir != "":
 			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
 			if err != nil {
-				return "", nil, false, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
+				return "", "", nil, false, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
 			}
 			stagePkgs = append(stagePkgs, resolvedPkgs...)
 
-			runtimeBinary, err := findRuntimeBinary(resolvedPkgs, detected)
+			runtimeBinary, runtimeGuest, err := findRuntimeBinary(resolvedPkgs, detected)
 			if err != nil {
-				return "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
+				return "", "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 			}
 
 			stageOutputs[stage.Name] = &stageResult{
-				binaryPath: runtimeBinary,
-				sourceDir:  result.SourceDir,
-				pkgFiles:   stagePkgs,
+				binaryPath:  runtimeBinary,
+				programPath: runtimeGuest,
+				sourceDir:   result.SourceDir,
+				pkgFiles:    stagePkgs,
 			}
 		default:
-			return "", nil, false, fmt.Errorf("build stage %q: driver returned empty result", stage.Name)
+			return "", "", nil, false, fmt.Errorf("build stage %q: driver returned empty result", stage.Name)
 		}
 	}
 
 	finalStage := cfg.Stages[len(cfg.Stages)-1]
 	finalResult := stageOutputs[finalStage.Name]
 	if finalResult == nil {
-		return "", nil, false, fmt.Errorf("build: final stage %q has no output", finalStage.Name)
+		return "", "", nil, false, fmt.Errorf("build: final stage %q has no output", finalStage.Name)
 	}
 
 	// A stage binary is a temporary build artifact to clean up only when it came
 	// from a compiled language (sourceDir empty). Interpreted final stages return
 	// a package-store runtime path, which must not be deleted.
-	return finalResult.binaryPath, finalResult.pkgFiles, finalResult.sourceDir == "", nil
+	return finalResult.binaryPath, finalResult.programPath, finalResult.pkgFiles, finalResult.sourceDir == "", nil
 }
 
 func defaultToolsPath() string {

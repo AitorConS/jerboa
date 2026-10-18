@@ -48,7 +48,7 @@ func TestBuildSizeReport(t *testing.T) {
 		{HostPath: write("server.js", 500), GuestPath: "server.js", FromContext: true},
 		{GuestPath: "data", IsDir: true},
 	}
-	r, err := buildSizeReport(bin, files)
+	r, err := buildSizeReport(bin, "", files)
 	require.NoError(t, err)
 	require.Equal(t, int64(9500), r.TotalBytes)
 	require.Equal(t, 4, r.TotalFiles)
@@ -79,11 +79,38 @@ func TestSourceFilesInclude(t *testing.T) {
 	}
 	include, err := builder.NewIncludeMatcher([]string{"server.js", "lib"})
 	require.NoError(t, err)
-	files, err := sourceFiles(dir, include)
+	files, err := sourceFiles(dir, builder.LangNode, include)
 	require.NoError(t, err)
 	var got []string
 	for _, f := range files {
 		got = append(got, f.GuestPath)
 	}
 	require.ElementsMatch(t, []string{"server.js", "lib/db.js"}, got, strings.Join(got, ","))
+}
+
+func TestSourceFilesNodeKeepsInstalledDependencies(t *testing.T) {
+	dir := t.TempDir()
+	for _, rel := range []string{"server.js", "node_modules/express/index.js", ".git/HEAD"} {
+		p := filepath.Join(dir, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o644))
+	}
+	guests := func(lang builder.Lang) []string {
+		files, err := sourceFiles(dir, lang, nil)
+		require.NoError(t, err)
+		var got []string
+		for _, f := range files {
+			got = append(got, f.GuestPath)
+		}
+		return got
+	}
+	// The Node driver installs production dependencies into node_modules; the
+	// image needs them.
+	require.ElementsMatch(t, []string{"server.js", "node_modules/express/index.js"}, guests(builder.LangNode))
+	// Other languages keep ignoring a stray node_modules.
+	require.ElementsMatch(t, []string{"server.js"}, guests(builder.LangPython))
+
+	// A project can still exclude it explicitly.
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".unignore"), []byte("node_modules\n"), 0o644))
+	require.ElementsMatch(t, []string{"server.js", ".unignore"}, guests(builder.LangNode))
 }

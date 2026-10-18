@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/AitorConS/jerboa/internal/builder"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/stretchr/testify/require"
 )
@@ -157,7 +158,7 @@ func TestSourceFilesShadowPackageFilesAtSamePath(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "README.md"), []byte("project docs"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "main.py"), []byte("print('hi')\n"), 0o644))
 
-	srcFiles, err := sourceFiles(dir, nil)
+	srcFiles, err := sourceFiles(dir, builder.LangUnknown, nil)
 	require.NoError(t, err)
 	require.Len(t, srcFiles, 2)
 	for _, f := range srcFiles {
