@@ -256,6 +256,25 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (hostPath, guestP
 	return "", "", fmt.Errorf("runtime binary %q (or variant) not found in package files", candidates[0])
 }
 
+// symlinkToProjectFile reports whether the symlink at path resolves to a
+// regular file inside the project directory dir.
+func symlinkToProjectFile(dir, path string) (bool, error) {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false, nil //nolint:nilerr // a dangling link is reported as unsupported
+	}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false, fmt.Errorf("resolve project dir: %w", err)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, nil //nolint:nilerr // outside the project
+	}
+	info, err := os.Stat(target)
+	return err == nil && info.Mode().IsRegular(), nil
+}
+
 // sourceFiles collects application source files from dir for inclusion in the image.
 // It reads .unignore patterns and excludes matching files and directories; when
 // include is active, only files it matches are kept.
@@ -284,18 +303,28 @@ func sourceFiles(dir string, lang builder.Lang, include *builder.IncludeMatcher)
 			}
 			return nil
 		}
-		// Only regular files can be streamed into the tar. filepath.Walk follows
-		// the dir tree without following symlinks to non-regular targets, but a
-		// FIFO/socket/device entry would otherwise be tarred as TypeReg and then
-		// block or fail during os.Open/io.Copy.
-		if info.Mode().IsRegular() {
-			if !include.Match(rel) {
-				return nil
+		if info.IsDir() {
+			return nil
+		}
+		if !include.Match(rel) {
+			return nil
+		}
+		// Only regular files can be streamed into the tar: a FIFO/socket/device
+		// entry would be tarred as TypeReg and then block or fail during
+		// os.Open/io.Copy. A symlink to a regular file inside the project is
+		// packaged with its target's content; filepath.Walk does not follow it.
+		if info.Mode()&os.ModeSymlink != 0 {
+			ok, lerr := symlinkToProjectFile(dir, path)
+			if lerr != nil {
+				return lerr
 			}
-			files = append(files, pkg.File{HostPath: path, GuestPath: rel, FromContext: true})
-		} else if !info.IsDir() {
+			if !ok {
+				return fmt.Errorf("unsupported source symlink %q: it must point to a regular file inside the project", rel)
+			}
+		} else if !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported non-regular source file %q", rel)
 		}
+		files = append(files, pkg.File{HostPath: path, GuestPath: rel, FromContext: true})
 		return nil
 	})
 	if err != nil {

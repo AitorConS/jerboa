@@ -114,3 +114,56 @@ func TestSourceFilesNodeKeepsInstalledDependencies(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".unignore"), []byte("node_modules\n"), 0o644))
 	require.ElementsMatch(t, []string{"server.js", ".unignore"}, guests(builder.LangNode))
 }
+
+// npm links command-line launchers into node_modules/.bin. Node builds leave
+// that directory out, package other symlinks to project files with their
+// target's content, and reject links that leave the project or dangle.
+func TestSourceFilesSymlinks(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel string) {
+		p := filepath.Join(dir, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte("content of "+rel), 0o644))
+	}
+	link := func(target, rel string) {
+		p := filepath.Join(dir, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.Symlink(target, p))
+	}
+	write("server.js")
+	write("node_modules/next/dist/bin/next")
+	link("../next/dist/bin/next", "node_modules/.bin/next")
+	write("node_modules/a/node_modules/b/cli.js")
+	link("../b/cli.js", "node_modules/a/node_modules/.bin/b")
+	link("server.js", "alias.js")
+
+	files, err := sourceFiles(dir, builder.LangNode, nil)
+	require.NoError(t, err)
+	got := map[string]string{}
+	for _, f := range files {
+		data, err := os.ReadFile(f.HostPath)
+		require.NoError(t, err)
+		got[f.GuestPath] = string(data)
+	}
+	require.NotContains(t, got, "node_modules/.bin/next")
+	require.Equal(t, "content of node_modules/a/node_modules/b/cli.js", got["node_modules/a/node_modules/.bin/b"])
+	require.Equal(t, "content of server.js", got["alias.js"])
+
+	outside := filepath.Join(t.TempDir(), "secret")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
+	link(outside, "leak.js")
+	_, err = sourceFiles(dir, builder.LangNode, nil)
+	require.ErrorContains(t, err, "leak.js")
+
+	// Paths outside include are skipped whatever they are.
+	include, err := builder.NewIncludeMatcher([]string{"server.js"})
+	require.NoError(t, err)
+	files, err = sourceFiles(dir, builder.LangNode, include)
+	require.NoError(t, err)
+	require.Len(t, files, 1)
+
+	require.NoError(t, os.Remove(filepath.Join(dir, "leak.js")))
+	link("missing.js", "dangling.js")
+	_, err = sourceFiles(dir, builder.LangNode, nil)
+	require.ErrorContains(t, err, "dangling.js")
+}

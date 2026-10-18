@@ -38,13 +38,17 @@ func NewIgnoreMatcher(patterns []string) *IgnoreMatcher {
 }
 
 // DefaultIgnorePatternsFor returns the default patterns for a build of lang.
-// A Node build keeps node_modules: the driver has just installed the
-// production dependencies there with npm, and the program cannot start without
-// them. Every other build ignores it like the rest of the defaults.
+// A Node build keeps node_modules, except its .bin directory: the driver has
+// just installed the production dependencies there with npm, and the program
+// cannot start without them. Every other build ignores it like the rest of the
+// defaults.
 func DefaultIgnorePatternsFor(lang Lang) []string {
-	out := make([]string, 0, len(DefaultIgnorePatterns))
+	out := make([]string, 0, len(DefaultIgnorePatterns)+1)
 	for _, p := range DefaultIgnorePatterns {
 		if lang == LangNode && p == "node_modules" {
+			// node_modules/.bin only holds symlinked command-line launchers,
+			// which nothing runs inside a unikernel.
+			out = append(out, "node_modules/.bin")
 			continue
 		}
 		out = append(out, p)
