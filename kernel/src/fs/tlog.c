@@ -965,6 +965,8 @@ status filesystem_probe(u8 *first_sector, u8 *uuid, char *label)
                          &version);
 }
 
+u8 *tfs_fixed_uuid;
+
 log log_create(heap h, tfs fs, boolean initialize, status_handler sh)
 {
     tlog_debug("log_create: heap %p, fs %p, sh %p\n", h, fs, sh);
@@ -985,8 +987,12 @@ log log_create(heap h, tfs fs, boolean initialize, status_handler sh)
         halt("no tlog write support\n");
 #else
         fs->fs.root = allocate_tuple();
-        buffer uuid = alloca_wrap_buffer(fs->uuid, UUID_LEN);
-        random_buffer(uuid);
+        if (tfs_fixed_uuid) {
+            runtime_memcpy(fs->uuid, tfs_fixed_uuid, UUID_LEN);
+        } else {
+            buffer uuid = alloca_wrap_buffer(fs->uuid, UUID_LEN);
+            random_buffer(uuid);
+        }
         log_ext init_ext = tl->current;
         log_extension_init(init_ext);
         if (!filesystem_reserve_log_space(fs, &fs->next_new_log_offset, 0, 0))

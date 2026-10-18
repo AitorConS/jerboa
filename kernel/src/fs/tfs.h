@@ -10,6 +10,11 @@ extern io_status_handler ignore_io_status;
 #define MIN_EXTENT_ALLOC_SIZE   (1 * MB)
 
 status filesystem_probe(u8 *first_sector, u8 *uuid, char *label);
+
+/* When non-null, a newly initialized filesystem takes this UUID_LEN-byte UUID
+ * instead of a random one. Only mkfs sets it, so identical inputs produce a
+ * byte-identical image; the kernel always leaves it null. */
+extern u8 *tfs_fixed_uuid;
 sstring filesystem_get_label(filesystem fs);
 void filesystem_get_uuid(filesystem fs, u8 *uuid);
 u64 filesystem_storage_end(filesystem fs);

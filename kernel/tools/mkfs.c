@@ -15,6 +15,9 @@
 #include <limits.h>
 
 #include <kernel/region.h>
+#ifdef __linux__
+#include <sys/personality.h>
+#endif
 
 #define string_ends_with(str, substr) ({                \
     int slen = strlen(str);                             \
@@ -407,6 +410,42 @@ closure_function(4, 2, void, fsc,
     closure_finish();
 }
 
+/* Filesystem UUIDs selected by the manifest's uuid key (32 hex digits, dashes
+ * allowed). The root filesystem takes it as given; the boot filesystem gets a
+ * derived value so the two stay distinct. */
+static u8 fixed_root_uuid[UUID_LEN], fixed_boot_uuid[UUID_LEN];
+static boolean fixed_uuid;
+
+static int hex_digit(u8 c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    return -1;
+}
+
+static boolean parse_uuid_hex(buffer b, u8 *out)
+{
+    int n = 0;
+    for (bytes i = 0; i < buffer_length(b); i++) {
+        u8 c = byte(b, i);
+        if (c == '-')
+            continue;
+        int d = hex_digit(c);
+        if (d < 0 || n >= 2 * UUID_LEN)
+            return false;
+        if (n % 2 == 0)
+            out[n / 2] = d << 4;
+        else
+            out[n / 2] |= d;
+        n++;
+    }
+    return n == 2 * UUID_LEN;
+}
+
 static void write_blob_padded(descriptor out, u8 *blob, size_t len, boolean with_trailer)
 {
     assert(write(out, blob, len) == len);
@@ -632,6 +671,21 @@ closure_func_basic(binding_handler, boolean, cmdline_tuple_each,
 
 int main(int argc, char **argv)
 {
+#ifdef __linux__
+    /* Some runtime tables iterate in an order that follows heap addresses, so
+     * with address-space randomization two runs over the same input wrote
+     * metadata and file data in different orders. Re-run once with a fixed
+     * layout to make identical inputs give a byte-identical image. Where
+     * personality() is refused (for example by a container's seccomp policy)
+     * the image is still built, only not reproducibly. */
+    int persona = personality(0xffffffff);
+    if (persona != -1 && !(persona & ADDR_NO_RANDOMIZE) &&
+        personality(persona | ADDR_NO_RANDOMIZE) != -1) {
+        execv("/proc/self/exe", argv);
+        personality(persona); /* exec failed: carry on as before */
+    }
+#endif
+
     int c;
     const char *bootimg_path = NULL;
     const char *kernelimg_path = NULL;
@@ -735,6 +789,18 @@ int main(int argc, char **argv)
             set(root, sym(compact), 0); /* consume it, kernel doesn't need it */
             compact = !buffer_strcmp((buffer)v, "true");
             deallocate_buffer((buffer)v);
+        }
+
+        /* A fixed UUID makes the image a pure function of its inputs. */
+        v = get(root, sym(uuid));
+        if (v) {
+            set(root, sym(uuid), 0); /* consume it, kernel doesn't need it */
+            if (!parse_uuid_hex((buffer)v, fixed_root_uuid))
+                halt("invalid uuid \"%b\": want 32 hexadecimal digits\n", (buffer)v);
+            deallocate_buffer((buffer)v);
+            runtime_memcpy(fixed_boot_uuid, fixed_root_uuid, UUID_LEN);
+            fixed_boot_uuid[UUID_LEN - 1] ^= 0xff;
+            fixed_uuid = true;
         }
     }
     if (compact) {
@@ -848,6 +914,8 @@ int main(int argc, char **argv)
         }
         if (boot) {
             fs_storage_end = 0;
+            if (fixed_uuid)
+                tfs_fixed_uuid = fixed_boot_uuid;
             create_filesystem(h, SECTOR_SIZE, BOOTFS_SIZE, closure(h, bwrite, out, offset), false,
                               sstring_empty(), closure(h, fsc, h, out, boot, target_root));
             bootfs_size = pad(fs_storage_end, BOOTFS_ALIGN);
@@ -862,6 +930,8 @@ int main(int argc, char **argv)
         }
     }
 
+    if (fixed_uuid)
+        tfs_fixed_uuid = fixed_root_uuid;
     create_filesystem(h,
                       SECTOR_SIZE,
                       infinity,
