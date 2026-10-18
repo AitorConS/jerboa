@@ -308,3 +308,39 @@ func TestContextPrecedenceUsesEffectiveGuestPath(t *testing.T) {
 	require.Len(t, resolved, 1)
 	require.Equal(t, srcReadme, resolved[0].HostPath)
 }
+
+func TestResolvePicksHighestVersionAndPrefix(t *testing.T) {
+	root := t.TempDir()
+	bin := putFixture(t, root, "app", syntheticELF(elf.EM_AARCH64, "", nil, ""))
+	s, err := NewStore(filepath.Join(root, "store"))
+	require.NoError(t, err)
+	selected, err := s.ForPlatform("linux/arm64")
+	require.NoError(t, err)
+	// 1.9.0 is created last: "latest" must still pick 1.10.0, and never the
+	// pre-release while a release exists.
+	for _, v := range []string{"1.10.0", "2.0.0-rc1", "1.9.0"} {
+		require.NoError(t, selected.CreateFromFiles("app", v, []File{{HostPath: bin, GuestPath: "app"}}, "", ""))
+	}
+	offline := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer offline.Close()
+	prev := IndexURL
+	IndexURL = offline.URL
+	t.Cleanup(func() { IndexURL = prev })
+
+	for want, got := range map[string]string{
+		"":       "1.10.0",
+		"latest": "1.10.0",
+		"2":      "2.0.0-rc1",
+		"1":      "1.10.0",
+		"1.9":    "1.9.0",
+		"1.9.0":  "1.9.0",
+	} {
+		_, ref, err := s.Resolve("app", want, "linux/arm64")
+		require.NoError(t, err, want)
+		require.Equal(t, got, ref.Version, "request %q", want)
+	}
+	_, _, err = s.Resolve("app", "3", "linux/arm64")
+	require.Error(t, err)
+}

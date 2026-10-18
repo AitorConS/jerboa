@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 )
 
@@ -104,22 +103,20 @@ func (s *Store) Resolve(name, version, platform string) ([]File, Reference, erro
 	if err != nil {
 		return nil, Reference{}, err
 	}
-	sort.SliceStable(local, func(i, j int) bool { return local[i].Created.After(local[j].Created) })
-	matches := func(p Package) bool {
-		return p.Name == name && (version == "" || version == "latest" || p.Version == version) && (p.Platform == "" || p.Platform == platform)
-	}
+	// Candidates are tried best first: an exact version, then the highest
+	// version that the request names a prefix of ("20" → 20.x), so "latest"
+	// means the newest version rather than the most recently created one.
+	compatible := func(p Package) bool { return p.Platform == "" || p.Platform == platform }
 	var legacyErr error
-	for _, p := range local {
-		if matches(p) {
-			files, ref, err := s.Verify(p, platform)
-			if err == nil {
-				return files, ref, nil
-			}
-			if !errors.Is(err, ErrPlatformMismatch) {
-				return nil, Reference{}, err
-			}
-			legacyErr = err
+	for _, p := range rankByVersion(local, version, func(p Package) bool { return p.Name == name && compatible(p) }) {
+		files, ref, err := s.Verify(p, platform)
+		if err == nil {
+			return files, ref, nil
 		}
+		if !errors.Is(err, ErrPlatformMismatch) {
+			return nil, Reference{}, err
+		}
+		legacyErr = err
 	}
 	idx, err := s.FetchIndexCached()
 	if err != nil {
@@ -128,30 +125,28 @@ func (s *Store) Resolve(name, version, platform string) ([]File, Reference, erro
 		}
 		return nil, Reference{}, err
 	}
-	for _, p := range idx.Packages[name] {
-		if matches(p) {
-			selected := s
-			if p.Platform != "" {
-				selected, err = s.ForPlatform(p.Platform)
-				if err != nil {
-					return nil, Reference{}, err
-				}
+	for _, p := range rankByVersion(idx.Packages[name], version, compatible) {
+		selected := s
+		if p.Platform != "" {
+			selected, err = s.ForPlatform(p.Platform)
+			if err != nil {
+				return nil, Reference{}, err
 			}
-			if !selected.IsDownloaded(p.Name, p.Version) {
-				if err := selected.Download(p); err != nil {
-					return nil, Reference{}, err
-				}
-				if err := selected.SaveMeta(p); err != nil {
-					return nil, Reference{}, err
-				}
-			}
-			files, ref, err := s.Verify(p, platform)
-			if errors.Is(err, ErrPlatformMismatch) {
-				legacyErr = err
-				continue
-			}
-			return files, ref, err
 		}
+		if !selected.IsDownloaded(p.Name, p.Version) {
+			if err := selected.Download(p); err != nil {
+				return nil, Reference{}, err
+			}
+			if err := selected.SaveMeta(p); err != nil {
+				return nil, Reference{}, err
+			}
+		}
+		files, ref, err := s.Verify(p, platform)
+		if errors.Is(err, ErrPlatformMismatch) {
+			legacyErr = err
+			continue
+		}
+		return files, ref, err
 	}
 	if legacyErr != nil {
 		return nil, Reference{}, legacyErr

@@ -599,13 +599,15 @@ func (idx *Index) Search(query string) []Package {
 	return result
 }
 
-// Latest returns the latest version of a package by name, or nil if not found.
+// Latest returns the highest version of a package by name, or nil if not
+// found. The index lists versions in publication order, so the first entry is
+// not necessarily the newest.
 func (idx *Index) Latest(name string) *Package {
-	versions, ok := idx.Packages[name]
-	if !ok || len(versions) == 0 {
+	ranked := rankByVersion(idx.Packages[name], "", nil)
+	if len(ranked) == 0 {
 		return nil
 	}
-	return &versions[0]
+	return &ranked[0]
 }
 
 // Create builds a local package archive from the given binary and optional
