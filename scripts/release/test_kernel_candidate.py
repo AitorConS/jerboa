@@ -139,6 +139,20 @@ class KernelCandidateTests(unittest.TestCase):
         self.assertEqual(manifest['components']['distro']['kernel'], 'v0.2.1')
         for name, filename in c.KERNEL_FILES.items():
             self.assertEqual(manifest['components']['kernel']['files'][name]['sha256'], self.record['files'][filename]['sha256'])
+        # CLI and daemon binaries ship a zstd variant beside them, covered by
+        # the signed inventory and checked against the binary it replaces.
+        for name in ['cli', 'daemon']:
+            for asset in manifest['components'][name]['platforms'].values():
+                self.assertIn(asset['url'][len(c.BASE)+1:] + c.ZSTD_SUFFIX, inv['assets'])
+        c.verify_zstd_variants(manifest, Path('candidate/payload'))
+        key = manifest['components']['cli']['platforms']['linux-amd64']['url'][len(c.BASE)+1:]
+        packed = Path('candidate/payload') / (key + c.ZSTD_SUFFIX)
+        c.zstd_variant(Path('dist/jerboad-linux-amd64'), packed)
+        with self.assertRaisesRegex(ValueError, 'zstd variant differs'):
+            c.verify_zstd_variants(manifest, Path('candidate/payload'))
+        with patch.object(c, 'verify_signature'), self.assertRaisesRegex(ValueError, 'Candidate bytes changed'):
+            c.verify_candidate('candidate')
+        c.zstd_variant(Path('dist/jerboa-linux-amd64'), packed)
         inv['kernel_boot']['checks']['qemu'] = 'fail'
         c.write_json('candidate/inventory.json', inv)
         with patch.object(c, 'verify_signature'), self.assertRaisesRegex(ValueError, 'boot evidence'):

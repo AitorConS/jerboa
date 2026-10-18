@@ -201,13 +201,23 @@ for component in cli daemon; do
 	[ "${component}" != daemon ] || binary=jerboad
 	url="${RELEASE_BASE}/${component}/${VERSION}/${binary}-linux-amd64"
 	log "downloading ${binary} ${VERSION}"
-	fetch "${url}" "${tmp}/${binary}"
 	if [ "${VERSION}" = "$(jq -er --arg c "${component}" '.components[$c].version' "${tmp}/stable.json")" ]; then
 		digest="$(jq -er --arg c "${component}" '.components[$c].platforms["linux-amd64"].sha256' "${tmp}/stable.json")"
+		size="$(jq -r --arg c "${component}" '.components[$c].platforms["linux-amd64"].size // empty' "${tmp}/stable.json")"
 		[[ "${digest}" =~ ^[0-9a-fA-F]{64}$ ]] || die "invalid ${component} checksum in manifest"
+		# The zstd variant is a third of the size. Its output is capped at the
+		# signed size and checked against the signed checksum like the plain
+		# binary; any failure falls back to the plain download.
+		if ! [[ "${size}" =~ ^[0-9]+$ ]] || ! command -v zstd >/dev/null 2>&1 \
+			|| ! fetch "${url}.zst" "${tmp}/${binary}.zst" \
+			|| ! zstd -dcq "${tmp}/${binary}.zst" | head -c "$((size + 1))" > "${tmp}/${binary}" \
+			|| ! printf '%s  %s\n' "${digest}" "${tmp}/${binary}" | sha256sum -c --status -; then
+			fetch "${url}" "${tmp}/${binary}"
+		fi
 		printf '%s  %s\n' "${digest}" "${tmp}/${binary}" | sha256sum -c - \
 			|| die "${binary} checksum verification failed"
 	else
+		fetch "${url}" "${tmp}/${binary}"
 		log "${VERSION} is not in the signed stable manifest; historical download uses HTTPS without a signed checksum"
 	fi
 done

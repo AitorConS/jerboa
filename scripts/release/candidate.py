@@ -141,6 +141,32 @@ def assets(manifest):
         yield from (component.get('platforms') or component.get('files') or {'file': component}).values()
 
 
+# CLI and daemon binaries are also published zstd-compressed at <url>.zst
+# (about a third of the size). The manifest is unchanged, because released
+# clients reject unknown manifest fields: a client derives the URL, and checks
+# the decompressed binary against the manifest's SHA-256 and size. The .zst
+# files are in the signed inventory and uploaded with every other asset.
+ZSTD_SUFFIX = '.zst'
+
+
+def zstd_variant(source, target):
+    target = Path(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(['zstd', '-19', '-q', '-f', str(source), '-o', str(target)], check=True)
+    return target
+
+
+def verify_zstd_variants(manifest, payload):
+    for name in ['cli', 'daemon']:
+        for asset in manifest['components'][name]['platforms'].values():
+            packed = payload / (asset['url'][len(BASE)+1:] + ZSTD_SUFFIX)
+            if not packed.is_file():
+                raise ValueError('Missing zstd variant: ' + packed.name)
+            data = subprocess.run(['zstd', '-dc', str(packed)], check=True, capture_output=True).stdout
+            if {'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)} != {'sha256': asset['sha256'], 'size': asset['size']}:
+                raise ValueError('zstd variant differs from its binary: ' + packed.name)
+
+
 def verify_linux_versions(manifest, payload, expected):
     # This job runs on Linux amd64. Check actual release binary contents, not
     # just filenames/metadata, including the daemon embedded in the WSL rootfs.
@@ -274,6 +300,7 @@ def assemble():
             else:
                 name = ('jerboa' if component == 'cli' else 'jerboad') + '-' + platform + ('.exe' if platform.startswith('windows') else '')
                 source = Path('dist') / name; key = f'{component}/{v}/{name}'
+                stage(zstd_variant(source, root / 'zst' / (name + '.zst')), key + ZSTD_SUFFIX)
             components[component]['platforms'][platform] = stage(source, key)
     components['distro'] = {'version': v, 'kernel': spec['kernel_version'], **stage('distro/jerboa-rootfs-amd64.tar.gz', f'distro/{v}/jerboa-rootfs-amd64.tar.gz')}
     # Keep bootstrap bytes in the signed candidate inventory; promotion must
@@ -289,6 +316,7 @@ def assemble():
     (root / 'latest.yml').write_text(feed)
     assert_manifest(manifest, v)
     verify_linux_versions(manifest, payload, v)
+    verify_zstd_variants(manifest, payload)
     write_json(root / 'manifest.json', manifest)
     record = {**spec, 'kernel_toolset': kernel_record, 'kernel_boot': kernel_boot, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
