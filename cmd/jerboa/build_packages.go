@@ -164,16 +164,9 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, erro
 			}
 		}
 
-		pkgFiles, err := opsStore.ExtractedFiles(target.Namespace, target.Name, target.Version)
+		pkgFiles, archiveHash, err := opsStore.VerifiedFiles(target.Namespace, target.Name, target.Version, "linux/"+packageArchFor(ctx), target.SHA256)
 		if err != nil {
-			return nil, fmt.Errorf("list ops package files %s: %w", target.Name, err)
-		}
-		if err := pkg.ValidateFiles(pkgFiles, "linux/"+packageArchFor(ctx)); err != nil {
-			return nil, err
-		}
-		archiveHash, err := opsStore.ArchiveSHA256(target.Namespace, target.Name, target.Version, target.SHA256)
-		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("ops package %s: %w", target.Name, err)
 		}
 		for i := range pkgFiles {
 			pkgFiles[i].Reference = &pkg.Reference{Source: "ops", Name: target.Namespace + "/" + target.Name, Version: target.Version, Platform: "linux/" + packageArchFor(ctx), SHA256: archiveHash}
@@ -325,16 +318,9 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 			}
 		}
 
-		pkgFiles, err := opsStore.ExtractedFiles(target.Namespace, target.Name, target.Version)
+		pkgFiles, archiveHash, err := opsStore.VerifiedFiles(target.Namespace, target.Name, target.Version, "linux/"+packageArchFor(ctx), target.SHA256)
 		if err != nil {
-			return nil, fmt.Errorf("list ops package files %s: %w", target.Name, err)
-		}
-		if err := pkg.ValidateFiles(pkgFiles, "linux/"+packageArchFor(ctx)); err != nil {
-			return nil, err
-		}
-		archiveHash, err := opsStore.ArchiveSHA256(target.Namespace, target.Name, target.Version, target.SHA256)
-		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("ops package %s: %w", target.Name, err)
 		}
 		for i := range pkgFiles {
 			pkgFiles[i].Reference = &pkg.Reference{Source: "ops", Name: target.Namespace + "/" + target.Name, Version: target.Version, Platform: "linux/" + packageArchFor(ctx), SHA256: archiveHash}

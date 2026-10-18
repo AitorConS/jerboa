@@ -451,7 +451,13 @@ type elfInfo struct {
 // readELFInfo parses ELF dynamic metadata from an in-memory image. It returns an
 // error for non-ELF data so callers can treat that as "no dependencies".
 func readELFInfo(data []byte) (*elfInfo, error) {
-	f, err := elf.NewFile(bytes.NewReader(data))
+	return readELFInfoAt(bytes.NewReader(data))
+}
+
+// readELFInfoAt parses an ELF through r, reading only the headers and the
+// segments and sections it needs, not the whole file.
+func readELFInfoAt(r io.ReaderAt) (*elfInfo, error) {
+	f, err := elf.NewFile(r)
 	if err != nil {
 		return nil, fmt.Errorf("parse elf: %w", err)
 	}

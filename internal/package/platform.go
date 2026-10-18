@@ -43,16 +43,19 @@ func ValidatePlatform(p string) error {
 }
 
 func ELFPlatform(filename string) (string, error) {
-	data, err := os.ReadFile(filename)
+	f, err := os.Open(filename) //nolint:gosec // caller-chosen program path
 	if err != nil {
 		return "", fmt.Errorf("platform operation: %w", err)
 	}
-	if format := hostExecutableFormat(data); format != "" {
+	defer func() { _ = f.Close() }()
+	head := make([]byte, 8)
+	n, _ := io.ReadFull(f, head)
+	if format := hostExecutableFormat(head[:n]); format != "" {
 		return "", fmt.Errorf("%s is a %s executable, not a Linux ELF binary: unikernel programs must be built for Linux "+
 			"(for Go: CGO_ENABLED=0 GOOS=linux go build, or pass the source directory to jerboa build to cross-compile it)",
 			filepath.Base(filename), format)
 	}
-	info, err := readELFInfo(data)
+	info, err := readELFInfoAt(f)
 	if err != nil {
 		return "", err
 	}
@@ -79,7 +82,9 @@ func ValidateFiles(files []File, platform string) error {
 	if err := ValidatePlatform(platform); err != nil {
 		return err
 	}
-	seen := map[string][]byte{}
+	// Contents are compared by digest, so no file is held in memory; digests
+	// are cached per file identity and reused across checks (see fileDigest).
+	seen := map[string][32]byte{}
 	dirs := map[string]bool{}
 	for _, f := range files {
 		gp := guestPathOf(f)
@@ -96,22 +101,16 @@ func ValidateFiles(files []File, platform string) error {
 			dirs[gp] = true
 			continue
 		}
-		data, err := os.ReadFile(f.HostPath)
+		sum, err := fileDigest(f.HostPath)
 		if err != nil {
 			return fmt.Errorf("platform operation: %w", err)
 		}
-		if old, ok := seen[gp]; ok && !bytes.Equal(old, data) {
+		if old, ok := seen[gp]; ok && old != sum {
 			return fmt.Errorf("different content collides at /%s", gp)
 		}
-		seen[gp] = data
-		if bytes.HasPrefix(data, []byte{0x7f, 'E', 'L', 'F'}) {
-			info, err := readELFInfo(data)
-			if err != nil {
-				return fmt.Errorf("/%s: %w", gp, err)
-			}
-			if info.platform != platform {
-				return fmt.Errorf("%w: /%s: platform %s conflicts with %s", ErrPlatformMismatch, gp, info.platform, platform)
-			}
+		seen[gp] = sum
+		if err := checkELFPlatform(f.HostPath, gp, platform); err != nil {
+			return err
 		}
 	}
 	for gp := range seen {
@@ -123,6 +122,28 @@ func ValidateFiles(files []File, platform string) error {
 				return fmt.Errorf("file/directory collision at /%s", parent)
 			}
 		}
+	}
+	return nil
+}
+
+// checkELFPlatform rejects an ELF at hostPath built for another platform.
+// Files that are not ELF are accepted.
+func checkELFPlatform(hostPath, guestPath, platform string) error {
+	f, err := os.Open(hostPath) //nolint:gosec // package store and build context paths
+	if err != nil {
+		return fmt.Errorf("platform operation: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	magic := make([]byte, 4)
+	if n, _ := io.ReadFull(f, magic); n < 4 || !bytes.Equal(magic, []byte{0x7f, 'E', 'L', 'F'}) {
+		return nil
+	}
+	info, err := readELFInfoAt(f)
+	if err != nil {
+		return fmt.Errorf("/%s: %w", guestPath, err)
+	}
+	if info.platform != platform {
+		return fmt.Errorf("%w: /%s: platform %s conflicts with %s", ErrPlatformMismatch, guestPath, info.platform, platform)
 	}
 	return nil
 }
@@ -220,11 +241,15 @@ func (s *Store) Verify(p Package, platform string) ([]File, Reference, error) {
 	if p.Platform != "" && p.Platform != platform {
 		return nil, Reference{}, fmt.Errorf("package platform %s conflicts with %s", p.Platform, platform)
 	}
-	archive, err := os.ReadFile(filepath.Join(selected.PackageDir(p.Name, p.Version), "files.tar.gz"))
+	// Digests saved by an earlier build are reused for files that have not
+	// changed since, so an unchanged package is checked without being read.
+	pkgDir := selected.PackageDir(p.Name, p.Version)
+	SeedDigests(pkgDir)
+	archivePath := filepath.Join(pkgDir, "files.tar.gz")
+	sum, err := fileDigest(archivePath)
 	if err != nil {
 		return nil, Reference{}, fmt.Errorf("platform operation: %w", err)
 	}
-	sum := sha256.Sum256(archive)
 	hash := hex.EncodeToString(sum[:])
 	if p.SHA256 != "" && !strings.EqualFold(hash, p.SHA256) {
 		return nil, Reference{}, ErrChecksumMismatch
@@ -236,8 +261,10 @@ func (s *Store) Verify(p Package, platform string) ([]File, Reference, error) {
 	if err != nil {
 		return nil, Reference{}, err
 	}
-	if err := verifyExtractedArchive(archive, files); err != nil {
-		return nil, Reference{}, err
+	if !archiveVerified(pkgDir, hash, files) {
+		if err := verifyExtractedArchive(archivePath, files); err != nil {
+			return nil, Reference{}, err
+		}
 	}
 	if p.ProgramPath != "" {
 		for i, f := range files {
@@ -250,6 +277,7 @@ func (s *Store) Verify(p Package, platform string) ([]File, Reference, error) {
 	if err := ValidateFiles(files, platform); err != nil {
 		return nil, Reference{}, err
 	}
+	_ = SaveDigests(pkgDir, append(append([]File{}, files...), File{HostPath: archivePath}), hash)
 	found := false
 	for _, f := range files {
 		if !f.IsDir {
@@ -312,8 +340,13 @@ func ValidateReferences(refs []Reference, platform string) error {
 }
 
 // Verify the cached extraction still matches the archive whose hash is recorded.
-func verifyExtractedArchive(archive []byte, files []File) error {
-	gz, err := gzip.NewReader(bytes.NewReader(archive))
+func verifyExtractedArchive(archivePath string, files []File) error {
+	af, err := os.Open(archivePath) //nolint:gosec // package store path
+	if err != nil {
+		return fmt.Errorf("platform operation: %w", err)
+	}
+	defer func() { _ = af.Close() }()
+	gz, err := gzip.NewReader(af)
 	if err != nil {
 		return fmt.Errorf("platform operation: %w", err)
 	}
@@ -347,13 +380,13 @@ func verifyExtractedArchive(archive []byte, files []File) error {
 		if f.IsDir {
 			continue
 		}
-		data, err := os.ReadFile(f.HostPath)
+		got, err := fileDigest(f.HostPath)
 		if err != nil {
 			return fmt.Errorf("platform operation: %w", err)
 		}
 		name := tarEntryName(f.GuestPath)
 		want, ok := expected[name]
-		if !ok || sha256.Sum256(data) != want {
+		if !ok || got != want {
 			return fmt.Errorf("cached package content differs from archive at %s", name)
 		}
 		delete(expected, name)

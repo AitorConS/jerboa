@@ -697,6 +697,11 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		if strings.HasPrefix(filepath.Base(rel), "._") {
 			return nil
 		}
+		// The store's own digest index (and its temporary files) is not
+		// package content.
+		if rel == digestsFile || strings.HasPrefix(rel, ".digests-") {
+			return nil
+		}
 
 		var guestPath string
 		if strings.HasPrefix(rel, "sysroot/") {
@@ -980,18 +985,40 @@ func (s *OpsStore) ArchiveSHA256(namespace, name, version, expected string) (str
 	if err := validateOpsRef(namespace, name, version); err != nil {
 		return "", err
 	}
-	f, err := os.Open(filepath.Join(s.PackageDir(namespace, name, version), s.arch+".tar.gz"))
+	sum, err := fileDigest(filepath.Join(s.PackageDir(namespace, name, version), s.arch+".tar.gz"))
 	if err != nil {
 		return "", fmt.Errorf("ops_store operation: %w", err)
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", fmt.Errorf("ops_store operation: %w", err)
-	}
-	got := hex.EncodeToString(h.Sum(nil))
+	got := hex.EncodeToString(sum[:])
 	if expected != "" && !strings.EqualFold(got, expected) {
 		return "", ErrChecksumMismatch
 	}
 	return got, nil
+}
+
+// VerifiedFiles lists the files of an extracted ops package, checks them for
+// platform and guest-path collisions, and returns them with the archive's
+// SHA-256 (checked against expected when set). Digests saved by an earlier
+// build are reused for files that have not changed, so an unchanged package
+// is not read again; the digests are saved for the next build.
+func (s *OpsStore) VerifiedFiles(namespace, name, version, platform, expected string) ([]File, string, error) {
+	if err := validateOpsRef(namespace, name, version); err != nil {
+		return nil, "", err
+	}
+	dir := s.PackageDir(namespace, name, version)
+	SeedDigests(dir)
+	files, err := s.ExtractedFiles(namespace, name, version)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := ValidateFiles(files, platform); err != nil {
+		return nil, "", err
+	}
+	hash, err := s.ArchiveSHA256(namespace, name, version, expected)
+	if err != nil {
+		return nil, "", err
+	}
+	archive := File{HostPath: filepath.Join(dir, s.arch+".tar.gz")}
+	_ = SaveDigests(dir, append(append([]File{}, files...), archive), "")
+	return files, hash, nil
 }

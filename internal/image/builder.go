@@ -331,7 +331,9 @@ func ContentUUID(cfg BuildConfig) (string, error) {
 		if d, ok := digests[host]; ok {
 			return d
 		}
-		d, err := fileSHA256(host)
+		// Shares the digest cache that package and collision checks fill, so
+		// a build hashes each file once.
+		d, err := pkg.FileDigest(host)
 		if err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("content uuid: %w", err)
 		}
