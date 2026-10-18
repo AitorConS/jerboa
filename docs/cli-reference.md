@@ -370,6 +370,14 @@ jerboa build . --name redis
 - `--missing-files` — report static dependency analysis; missing dependencies fail creation.
 - `--sysroot <dir>` — resolve the loader and libraries within this rootfs, preserving guest paths.
 
+`pkg create` resolves the libraries of the program and of every ELF passed
+with `--map` or `--libs`. The archive is reproducible (sorted entries, root
+ownership, modes 0755/0644, timestamps from `SOURCE_DATE_EPOCH`), and the
+package records a `content_digest` of its files that images keep in their
+package references. Build-time Python files (`test`, `idlelib`, `tkinter`,
+`ensurepip`, `config-*` and similar, and optimized `.pyc`) are left out. See
+[Package recipes]({% link package-recipes.md %}).
+
 `pkg from-docker` and selection operations also accept `--platform`. Docker
 imports record the requested reference, immutable image ID and available repository
 digest. Local variants coexist and take precedence over the remote index.
