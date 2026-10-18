@@ -330,6 +330,9 @@ type BuildParams struct {
 	// Layout is "" (standard, BIOS-bootable) or "compact" (root filesystem
 	// only; for Firecracker and QEMU direct kernel boot).
 	Layout string `json:"layout,omitempty"`
+	// Created is the image creation time (RFC 3339). Empty means the time of
+	// the build; the CLI sets it from SOURCE_DATE_EPOCH for reproducible builds.
+	Created string `json:"created,omitempty"`
 }
 
 // VolumeSeedParams seeds an existing volume's disk with an initialized

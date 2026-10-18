@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -317,6 +318,7 @@ project markers (go.mod, package.json, etc.).`,
 				Ports:       runPorts,
 				DiskSize:    diskSize,
 				Layout:      imageLayout,
+				Created:     sourceDateEpoch(),
 			}, pr)
 			if err != nil {
 				sp.Fail("Image assembly failed")
@@ -685,4 +687,19 @@ func defaultToolsPath() string {
 		return filepath.Join(".jerboa", "tools")
 	}
 	return filepath.Join(home, ".jerboa", "tools")
+}
+
+// sourceDateEpoch returns SOURCE_DATE_EPOCH (seconds since the Unix epoch) as
+// an RFC 3339 time, or "" when it is unset or invalid. Reproducible-build
+// tooling sets it so the image manifest carries a fixed creation time.
+func sourceDateEpoch() string {
+	v := strings.TrimSpace(os.Getenv("SOURCE_DATE_EPOCH"))
+	if v == "" {
+		return ""
+	}
+	secs, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || secs < 0 {
+		return ""
+	}
+	return time.Unix(secs, 0).UTC().Format(time.RFC3339)
 }

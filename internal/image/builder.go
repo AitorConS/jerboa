@@ -2,13 +2,14 @@ package image
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -83,6 +84,13 @@ type BuildConfig struct {
 	Layout string
 	// Output is where mkfs subprocess output is written. Nil defaults to os.Stderr.
 	Output io.Writer
+	// UUID is the root filesystem UUID (32 hex digits) written to the manifest
+	// for mkfs. Build fills it from the image contents (see ContentUUID), so
+	// identical inputs produce a byte-identical disk.
+	UUID string
+	// Created is the image creation time; zero means now. Builds pass the
+	// time from SOURCE_DATE_EPOCH to make the manifest reproducible too.
+	Created time.Time
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
@@ -153,6 +161,11 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		return Manifest{}, err
 	}
 
+	uuid, err := ContentUUID(cfg)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("build: %w", err)
+	}
+	cfg.UUID = uuid
 	manifest := BuildManifest(cfg)
 	if err := runMkfs(ctx, cfg.MkfsRun, tmpPath, cfg.BinaryPath, manifest, cfg.Output); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
@@ -173,7 +186,7 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 		Packages:      cfg.Packages,
 		Name:          cfg.Name,
 		Tag:           cfg.Tag,
-		Created:       time.Now().UTC(),
+		Created:       created(cfg.Created),
 		Config: Config{
 			Memory: cfg.Memory,
 			CPUs:   cfg.CPUs,
@@ -192,6 +205,13 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	return m, nil
 }
 
+// resolvConf is the /etc/resolv.conf baked into every image. It is the same on
+// every build host so images are reproducible and portable: Linux and macOS
+// networks serve DNS at netconst.DNSAnycastIP, and macOS user-mode (slirp)
+// networking answers there too from VMM releases that alias it. 10.0.2.3 is
+// the fallback for older VMMs, whose slirp DNS only answers at that address.
+var resolvConf = "nameserver " + netconst.DNSAnycastIP + "\nnameserver 10.0.2.3\noptions timeout:1\n"
+
 // injectResolvConf writes a temporary /etc/resolv.conf pointing at the daemon's
 // guest DNS server and appends it to cfg.PkgFiles so mkfs bakes it into the
 // image. It returns a cleanup func (always non-nil) to remove the temp file.
@@ -209,11 +229,7 @@ func injectResolvConf(cfg *BuildConfig) (cleanup func(), err error) {
 	}
 	tmpPath := tmp.Name()
 	cleanup = func() { _ = os.Remove(tmpPath) }
-	content := "nameserver " + netconst.DNSAnycastIP + "\n"
-	if runtime.GOOS == "darwin" {
-		content = "nameserver 10.0.2.3\n"
-	}
-	if _, err := tmp.WriteString(content); err != nil {
+	if _, err := tmp.WriteString(resolvConf); err != nil {
 		_ = tmp.Close()
 		return cleanup, fmt.Errorf("write resolv.conf: %w", err)
 	}
@@ -292,6 +308,47 @@ func runMkfs(ctx context.Context, mkfsRun MkfsFunc, imgPath, binaryPath string, 
 // Static network config is not baked into the manifest: the daemon injects the
 // assigned TAP IP at run time (QEMU fw_cfg or Firecracker boot args).
 func BuildManifest(cfg BuildConfig) string {
+	return buildManifest(cfg, func(host string) string { return host })
+}
+
+// ContentUUID derives the image's filesystem UUID from what the image holds:
+// the manifest with every host path replaced by the SHA-256 of that file's
+// contents. Host paths are temporary build-context locations and never enter
+// it, so the same program, files, arguments, environment and layout give the
+// same UUID on any machine, and mkfs then writes a byte-identical disk.
+func ContentUUID(cfg BuildConfig) (string, error) {
+	cfg.UUID = ""
+	digests := make(map[string]string)
+	var firstErr error
+	text := buildManifest(cfg, func(host string) string {
+		if d, ok := digests[host]; ok {
+			return d
+		}
+		d, err := fileSHA256(host)
+		if err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("content uuid: %w", err)
+		}
+		digests[host] = d
+		return d
+	})
+	if firstErr != nil {
+		return "", firstErr
+	}
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:16]), nil
+}
+
+// created returns t in UTC, or the current time when t is zero.
+func created(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Now().UTC()
+	}
+	return t.UTC()
+}
+
+// buildManifest renders the Nanos manifest; hostRef maps each absolute host
+// path to the value written for it.
+func buildManifest(cfg BuildConfig, hostRef func(string) string) string {
 	absBin, _ := filepath.Abs(cfg.BinaryPath)
 
 	// progGuest is the slash-separated, root-relative path at which the program
@@ -333,7 +390,7 @@ func BuildManifest(cfg BuildConfig) string {
 
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n")
-	writeManifestChildren(&b, root, "        ")
+	writeManifestChildren(&b, root, "        ", hostRef)
 	fmt.Fprintf(&b, "    )\n    program:%s\n", manifestValue(progRef))
 	var argv []string
 	if cfg.Entrypoint != "" {
@@ -369,6 +426,11 @@ func BuildManifest(cfg BuildConfig) string {
 	if cfg.Layout == LayoutCompact {
 		b.WriteString("    compact:true\n")
 	}
+	// Consumed by mkfs: a fixed root filesystem UUID. An older mkfs keeps it as
+	// unused metadata and picks a random UUID, which still boots.
+	if cfg.UUID != "" {
+		fmt.Fprintf(&b, "    uuid:%s\n", cfg.UUID)
+	}
 	// Static network config is injected at run time from the daemon-assigned
 	// TAP IP — via QEMU fw_cfg (opt/uni/network → net_inject) or Firecracker
 	// boot args (en1.ipaddr=…). The old build-time "network:(ip:10.0.2.15…)"
@@ -401,7 +463,7 @@ func BuildVolumeManifest(files []pkg.File) string {
 
 	var b strings.Builder
 	b.WriteString("(\n    children:(\n")
-	writeManifestChildren(&b, root, "        ")
+	writeManifestChildren(&b, root, "        ", func(host string) string { return host })
 	b.WriteString("    )\n)")
 	return b.String()
 }
@@ -499,7 +561,7 @@ func manifestValue(v string) string {
 // writeManifestChildren serializes the children of node into b at the given indent level.
 // Directory nodes wrap their entries in a nested children:(...) scope — the Nanos manifest
 // parser only descends into a directory when it finds a children: key inside the node.
-func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string) {
+func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string, hostRef func(string) string) {
 	keys := make([]string, 0, len(node.children))
 	for k := range node.children {
 		keys = append(keys, k)
@@ -516,14 +578,14 @@ func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string
 			// package files like "Lorem ipsum.txt" or "script (dev).tmpl"),
 			// which the tuple parser would otherwise treat as value terminators.
 			b.WriteString(`(contents:(host:"`)
-			b.WriteString(filepath.ToSlash(child.hostPath))
+			b.WriteString(filepath.ToSlash(hostRef(child.hostPath)))
 			b.WriteString(`"))` + "\n")
 		} else {
 			inner := indent + "    "
 			b.WriteString("(\n")
 			b.WriteString(inner)
 			b.WriteString("children:(\n")
-			writeManifestChildren(b, child, inner+"    ")
+			writeManifestChildren(b, child, inner+"    ", hostRef)
 			b.WriteString(inner)
 			b.WriteString(")\n")
 			b.WriteString(indent)

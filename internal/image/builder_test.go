@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/stretchr/testify/require"
@@ -600,4 +601,91 @@ func TestRunMkfs(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "mkfs")
 	})
+}
+
+func TestContentUUIDDependsOnContentNotHostPaths(t *testing.T) {
+	layout := func(lib string) BuildConfig {
+		dir := t.TempDir()
+		bin := writeELF(t, dir)
+		libPath := filepath.Join(dir, "libx.so")
+		require.NoError(t, os.WriteFile(libPath, []byte(lib), 0o644))
+		return BuildConfig{
+			BinaryPath: bin,
+			PkgFiles:   []pkg.File{{HostPath: libPath, GuestPath: "lib/libx.so"}, {GuestPath: "data", IsDir: true}},
+			Args:       []string{"--port", "8080"},
+			Env:        map[string]string{"MODE": "prod"},
+		}
+	}
+	a, err := ContentUUID(layout("v1"))
+	require.NoError(t, err)
+	require.Len(t, a, 32)
+	b, err := ContentUUID(layout("v1"))
+	require.NoError(t, err)
+	require.Equal(t, a, b, "same contents in different host directories")
+
+	c, err := ContentUUID(layout("v2"))
+	require.NoError(t, err)
+	require.NotEqual(t, a, c, "different file contents")
+
+	cfg := layout("v1")
+	cfg.Env["MODE"] = "dev"
+	d, err := ContentUUID(cfg)
+	require.NoError(t, err)
+	require.NotEqual(t, a, d, "different environment")
+
+	cfg = layout("v1")
+	cfg.Layout = LayoutCompact
+	e, err := ContentUUID(cfg)
+	require.NoError(t, err)
+	require.NotEqual(t, a, e, "different layout")
+}
+
+func TestBuildPassesContentUUIDAndCreated(t *testing.T) {
+	s := makeStore(t)
+	var manifests []string
+	mkfs := func(ctx context.Context, imgPath, _ string, manifest string) *exec.Cmd {
+		manifests = append(manifests, manifest)
+		require.NoError(t, os.WriteFile(imgPath, []byte("fake disk"), 0o600))
+		return successCmd()
+	}
+	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for range 2 {
+		dir := t.TempDir()
+		m, err := NewBuilder(s).Build(context.Background(), BuildConfig{
+			Name: "hello", BinaryPath: writeELF(t, dir), MkfsRun: mkfs, Created: fixed,
+		})
+		require.NoError(t, err)
+		require.Equal(t, fixed, m.Created)
+	}
+	require.Len(t, manifests, 2)
+	uuidLine := func(manifest string) string {
+		for _, line := range strings.Split(manifest, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "uuid:") {
+				return line
+			}
+		}
+		return ""
+	}
+	require.NotEmpty(t, uuidLine(manifests[0]))
+	require.Equal(t, uuidLine(manifests[0]), uuidLine(manifests[1]), "two builds of the same input get the same UUID")
+}
+
+func TestResolvConfIsTheSameOnEveryHost(t *testing.T) {
+	// Baked into every image: it must not depend on the build host, or the
+	// same app would produce different (and non-portable) images.
+	cfg := BuildConfig{}
+	cleanup, err := injectResolvConf(&cfg)
+	require.NoError(t, err)
+	defer cleanup()
+	require.Len(t, cfg.PkgFiles, 1)
+	data, err := os.ReadFile(cfg.PkgFiles[0].HostPath)
+	require.NoError(t, err)
+	require.Equal(t, "nameserver 10.53.0.53\nnameserver 10.0.2.3\noptions timeout:1\n", string(data))
+
+	// A package that ships its own resolv.conf keeps it.
+	own := BuildConfig{PkgFiles: []pkg.File{{HostPath: "/x/resolv.conf", GuestPath: "/etc/resolv.conf"}}}
+	cleanup2, err := injectResolvConf(&own)
+	require.NoError(t, err)
+	defer cleanup2()
+	require.Len(t, own.PkgFiles, 1)
 }

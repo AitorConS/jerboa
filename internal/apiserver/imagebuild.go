@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
@@ -379,6 +380,15 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: err.Error()})
 		return
 	}
+	var created time.Time
+	if p.Created != "" {
+		created, err = time.Parse(time.RFC3339, p.Created)
+		if err != nil {
+			drain(stream)
+			s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "invalid created time: " + err.Error()})
+			return
+		}
+	}
 	// Resolve mkfs lazily — the first build may download the kernel toolchain.
 	mkfs, err := s.resolveMkfs(ctx)
 	if err != nil {
@@ -404,6 +414,7 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		Ports:       p.Ports,
 		DiskSize:    p.DiskSize,
 		Layout:      p.Layout,
+		Created:     created,
 		Output:      io.Discard,
 	})
 	if err != nil {
