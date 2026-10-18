@@ -1,5 +1,5 @@
 """Contract tests for release ownership without third-party YAML dependencies."""
-import importlib.util,unittest
+import hashlib,importlib.util,json,os,subprocess,sys,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 class WorkflowContracts(unittest.TestCase):
@@ -38,4 +38,39 @@ class WorkflowContracts(unittest.TestCase):
   self.assertEqual(scope.classify(['tests/integration/lifecycle_test.go']),(True,True))
   self.assertEqual(scope.classify(['tests/e2e/build_test.go']),(True,True))
   self.assertEqual(scope.classify(['.github/workflows/release.yml']),(True,True))
+ def test_package_matrix_builds_each_arch(self):
+  with tempfile.TemporaryDirectory() as d:
+   out=Path(d)/'out'
+   subprocess.run([sys.executable,'scripts/release/select-packages.py'],cwd=ROOT,check=True,env={**os.environ,'PACKAGE':'node','GITHUB_OUTPUT':str(out)})
+   matrix=json.loads(out.read_text().splitlines()[0].split('=',1)[1])['include']
+  by_arch={(m['version'],m['arch']):m for m in matrix}
+  self.assertEqual(by_arch[('20.11.0','arm64')]['runner'],'ubuntu-24.04-arm')
+  self.assertIn('linux-arm64',by_arch[('20.11.0','arm64')]['source_url'])
+  self.assertIn('linux-x64',by_arch[('20.11.0','amd64')]['source_url'])
+  self.assertTrue(all('arm64' not in m for m in matrix))
+  text=(ROOT/'.github/workflows/packages.yml').read_text()
+  self.assertIn('image: ubuntu@sha256:',text)
+  self.assertIn('runs-on: ${{ matrix.runner }}',text)
+  self.assertNotIn("-name '*.tar.gz' -exec gh release upload",text)
+ def test_package_index_is_immutable(self):
+  script=ROOT/'scripts/package-index.py'
+  def stage(root,data,content):
+   d=Path(root)/'pkg'/'linux-amd64';d.mkdir(parents=True)
+   (d/'files.tar.gz').write_bytes(data)
+   (d/'meta.json').write_text(json.dumps({'name':'pkg','version':'1.0.0','platform':'linux/amd64','sha256':hashlib.sha256(data).hexdigest(),'size':len(data),'content_digest':content}))
+  def publish(src,dst):
+   return subprocess.run([sys.executable,str(script),src,dst,'o/r'],capture_output=True,text=True)
+  with tempfile.TemporaryDirectory() as a,tempfile.TemporaryDirectory() as b,tempfile.TemporaryDirectory() as c,tempfile.TemporaryDirectory() as dst:
+   stage(a,b'first','sha256:'+'1'*64)
+   r=publish(a,dst);self.assertEqual(r.returncode,0,r.stderr)
+   self.assertEqual(r.stdout.split(),['pkg-1.0.0-linux-amd64.tar.gz'])
+   before=(Path(dst)/'packages.json').read_text()
+   # Same content in a different archive: kept, nothing new to upload.
+   stage(b,b'repacked','sha256:'+'1'*64)
+   r=publish(b,dst);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(r.stdout,'')
+   self.assertEqual((Path(dst)/'packages.json').read_text(),before)
+   # Different content under the same version: refused, index untouched.
+   stage(c,b'changed','sha256:'+'2'*64)
+   r=publish(c,dst);self.assertNotEqual(r.returncode,0);self.assertIn('Refusing to republish',r.stderr)
+   self.assertEqual((Path(dst)/'packages.json').read_text(),before)
 if __name__=='__main__':unittest.main()

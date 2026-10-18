@@ -6,6 +6,7 @@ name: Package Build
     paths:
     - scripts/build-*.sh
     - scripts/release/packages.json
+    - scripts/release/archive-package.py
     - .github/workflows/packages.yml
   workflow_dispatch:
     inputs:
@@ -25,20 +26,31 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build-package:
-    name: Build ${{ matrix.package }}:${{ matrix.version }}
-    runs-on: ubuntu-latest
+    name: Build ${{ matrix.package }}:${{ matrix.version }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    # Packages are compiled and their shared libraries collected inside a base
+    # image pinned by digest (ubuntu:24.04, multi-arch index), not on the
+    # runner, whose libraries change under it. Runner images update weekly.
+    container:
+      image: ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
+    env:
+      # A fixed timestamp for archive entries, __DATE__/__TIME__ and .pyc
+      # files, so rebuilding a recipe yields the same package content.
+      SOURCE_DATE_EPOCH: '1704067200'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     steps:
+    - name: Install package build dependencies
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |-
+        apt-get update -q
+        apt-get install -y --no-install-recommends ca-certificates curl git file xz-utils python3 make build-essential autoconf automake libtool pkg-config bison flex libssl-dev zlib1g-dev libffi-dev libreadline-dev libyaml-dev libgdbm-dev libsqlite3-dev libbz2-dev liblzma-dev libncurses-dev libxml2-dev libonig-dev unzip
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - name: Install package build dependencies
-      run: |-
-        sudo apt-get update -q
-        sudo apt-get install -y build-essential autoconf automake libtool pkg-config bison flex libssl-dev zlib1g-dev libffi-dev libreadline-dev libyaml-dev libgdbm-dev libsqlite3-dev libbz2-dev liblzma-dev libncurses-dev libxml2-dev libonig-dev unzip
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
         go-version: 1.27.2
@@ -72,7 +84,7 @@ jobs:
     - name: Upload package artifact
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: package-${{ matrix.package }}-${{ matrix.version }}
+        name: package-${{ matrix.package }}-${{ matrix.version }}-${{ matrix.arch }}
         path: |
           ~/.jerboa/packages/${{ matrix.package }}/${{ matrix.version }}/
     needs:
@@ -109,8 +121,14 @@ jobs:
         else
           gh release create pkg-index --title "Package index" --notes "Runtime package archives and index."
         fi
-        python3 scripts/package-index.py dist/packages dist/publish "$GH_REPO"
-        find dist/publish -name '*.tar.gz' -exec gh release upload pkg-index {} --clobber \;
+        # Published archives are immutable: package-index.py refuses to replace
+        # a (version, platform) with different content and lists only new
+        # archives, which are uploaded without --clobber. The index is the
+        # only asset that is ever replaced.
+        python3 scripts/package-index.py dist/packages dist/publish "$GH_REPO" > dist/new-archives.txt
+        while IFS= read -r archive; do
+          gh release upload pkg-index "dist/publish/$archive"
+        done < dist/new-archives.txt
         gh release upload pkg-index dist/publish/packages.json --clobber
         curl --fail --location --retry 5 --retry-all-errors \
           "https://github.com/$GH_REPO/releases/download/pkg-index/packages.json" -o dist/public-index.json

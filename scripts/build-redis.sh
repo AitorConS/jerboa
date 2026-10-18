@@ -8,7 +8,10 @@ VERSION="${PACKAGE_VERSION:-7.2.4}"
 SOURCE_URL="${SOURCE_URL:-https://github.com/redis/redis/archive/refs/tags/v${VERSION}.tar.gz}"
 
 PACKAGE_ROOT="$(pwd)"
-TMPDIR=$(mktemp -d)
+# A fixed build directory: compilers and build systems embed it in their
+# output, so a random one makes every build different.
+TMPDIR="/tmp/jerboa-pkg-${NAME}-${VERSION}"
+rm -rf "$TMPDIR" && mkdir -p "$TMPDIR"
 trap 'rm -rf "$TMPDIR"' EXIT
 
 echo "Building ${NAME}:${VERSION}..."

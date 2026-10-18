@@ -4,14 +4,22 @@
     "version": "20.11.0",
     "source_url": "https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-x64.tar.xz",
     "sha256": "822780369d0ea309e7d218e41debbd1a03f8cdf354ebf8a4420e89f39cc2e612",
-    "build_script": "scripts/build-node.sh"
+    "build_script": "scripts/build-node.sh",
+    "arm64": {
+      "source_url": "https://nodejs.org/dist/v20.11.0/node-v20.11.0-linux-arm64.tar.xz",
+      "sha256": "f6df68c6793244071f69023a9b43a0cf0b13d65cbe86d55925c28e4134d9aafb"
+    }
   },
   {
     "package": "node",
     "version": "22.0.0",
     "source_url": "https://nodejs.org/dist/v22.0.0/node-v22.0.0-linux-x64.tar.xz",
     "sha256": "9122e50f2642afd5f6078cafd1f52ede60fc464284384f05c18a04d13d07ae5a",
-    "build_script": "scripts/build-node.sh"
+    "build_script": "scripts/build-node.sh",
+    "arm64": {
+      "source_url": "https://nodejs.org/dist/v22.0.0/node-v22.0.0-linux-arm64.tar.xz",
+      "sha256": "83711d29cbe46375bdffab5419f3d831892e24294169272f6c39edc364556241"
+    }
   },
   {
     "package": "python",
@@ -74,7 +82,10 @@
     "version": "3.45.0",
     "source_url": "https://www.sqlite.org/2024/sqlite-tools-linux-x64-3450000.zip",
     "sha256": "ec4b0c18bf6c23dd1b84d3a0f507b4f4017b0f1ac358af84bbc7e30b7bd517ed",
-    "build_script": "scripts/build-sqlite.sh"
+    "build_script": "scripts/build-sqlite.sh",
+    "arches": [
+      "amd64"
+    ]
   },
   {
     "package": "curl",
