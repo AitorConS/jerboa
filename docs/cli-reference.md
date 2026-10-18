@@ -203,7 +203,7 @@ Key flags:
 | `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
 | `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
 | `--size-report[=text\|json]` | Before assembling, print what the image will contain grouped by program, runtime package, npm module, Python distribution and top-level project path. `json` prints every group to stdout (the build summary then goes to stderr) |
-| `--layout` | Disk image layout: `standard` (default; boots on every hypervisor) or `compact` (no boot code and no boot filesystem copy of the kernel; about 3–4 MiB smaller, boots only on Firecracker and native ARM64 QEMU on macOS). An explicit flag overrides `[build] layout` |
+| `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
@@ -216,8 +216,8 @@ Key flags:
 | `run` | Shell commands to run before packaging (like a Dockerfile `RUN`) |
 | `pkgs` | Packages to include (e.g. `["eyberg/postgresql:11.3.0"]`); `--pkg` flags append to this list |
 | `pkg_source` | Package source: `ops` (default) or `jerboa`; an explicit `--pkg-source` flag wins |
-| `disk_size` | Minimum image size (e.g. `512M`, `1G`) for runtime scratch space |
-| `layout` | `standard` (default) or `compact`; see `--layout` |
+| `disk_size` | Boot disk size each VM gets (e.g. `512M`, `1G`) for runtime scratch space. It is stored in the image manifest and applied when the VM starts; the image itself holds only its contents |
+| `layout` | `compact` (default) or `standard`; see `--layout` |
 | `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through. Node builds package `node_modules` (the production dependencies the driver installs); other languages ignore it by default, and `.unignore` can exclude it explicitly. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 

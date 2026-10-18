@@ -213,8 +213,11 @@ the program writes at runtime (logs, temp files, a database), reserve room:
 
 ```toml
 [build]
-disk_size = "1G"    # minimum image size; the rest is free space
+disk_size = "1G"    # boot disk size; the rest is free space
 ```
+
+The image itself stays the size of its contents: `disk_size` is recorded in the
+image and each VM's private boot disk is extended to it when the VM starts.
 
 And every directory the program writes to must **exist in the image**:
 
@@ -331,9 +334,10 @@ run = ["npm run build"]  # shell commands before packaging (Dockerfile RUN analo
                          # these run on the BUILD machine, which has a shell — the guest does not)
 pkgs = []                # packages to include (e.g. ["eyberg/postgresql:11.3.0"])
 pkg_source = "ops"       # "ops" (default) or "jerboa"
-disk_size = "1G"         # minimum image size (free space for runtime writes)
-layout = "standard"      # "standard" (every hypervisor) or "compact" (Firecracker and
-                         # native ARM64 QEMU only: no boot code or boot filesystem)
+disk_size = "1G"         # boot disk size each VM gets (free space for runtime writes);
+                         # the stored image holds only its contents
+layout = "compact"       # "compact" (default: the hypervisor loads the kernel) or
+                         # "standard" (BIOS boot code: x86 emulation, QEMU without KVM)
 include = ["server.js", "lib", "node_modules"]  # optional allowlist of project paths
                          # (node/python/raw); `jerboa build --size-report` shows what is left
 dirs = ["/data"]         # empty directories to create (mount points, scratch paths)

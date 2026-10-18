@@ -271,7 +271,7 @@ project markers (go.mod, package.json, etc.).`,
 				}
 			}
 
-			imageLayout, err := image.ParseLayout(layout)
+			imageLayout, err := image.ParseLayout(resolveLayout(layout, packageArchFor(cmd.Context())))
 			if err != nil {
 				return fmt.Errorf("build: %w", err)
 			}
@@ -358,7 +358,7 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().StringVar(&sizeReportF, "size-report", "", "print what the image contains, grouped by program, package, npm module, Python distribution and top-level path: text or json")
 	cmd.Flags().Lookup("size-report").NoOptDefVal = "text"
-	cmd.Flags().StringVar(&layout, "layout", "standard", "disk image layout: standard (boots on every hypervisor) or compact (no boot code or boot filesystem; smaller, Firecracker and native ARM64 QEMU only)")
+	cmd.Flags().StringVar(&layout, "layout", "", "disk image layout: compact (no boot code; the hypervisor loads the kernel) or standard (BIOS boot code, for x86 emulation and QEMU without KVM); default compact, standard for x86 images built on macOS")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
 	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip optional CLI preflight diagnostics (ELF/platform and final guest validation remain mandatory)")
@@ -702,4 +702,19 @@ func sourceDateEpoch() string {
 		return ""
 	}
 	return time.Unix(secs, 0).UTC().Format(time.RFC3339)
+}
+
+// resolveLayout returns the image layout to build when neither --layout nor
+// [build] layout chose one: compact, which Firecracker, native ARM64 QEMU and
+// QEMU with KVM boot by loading the kernel directly. x86 images built on macOS
+// can only run under x86 emulation, which boots through the BIOS boot code of
+// a standard image.
+func resolveLayout(layout, arch string) string {
+	if layout != "" {
+		return layout
+	}
+	if runtime.GOOS == "darwin" && arch == "amd64" {
+		return "standard"
+	}
+	return image.LayoutCompact
 }
