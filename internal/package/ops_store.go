@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/naming"
@@ -762,10 +763,26 @@ func (s *OpsStore) Remove(namespace, name, version string) error {
 	return nil
 }
 
-// SaveManifest caches the ops manifest locally.
+// SaveManifest caches the ops manifest locally. It writes a temporary file and
+// renames it, so a concurrent build never reads a half-written manifest.
 func (s *OpsStore) SaveManifest(data []byte) error {
 	path := filepath.Join(s.root, "manifest.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	tmp, err := os.CreateTemp(s.root, ".manifest-*.json")
+	if err != nil {
+		return fmt.Errorf("ops save manifest %s: %w", path, err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("ops save manifest %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("ops save manifest %s: %w", path, err)
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return fmt.Errorf("ops save manifest %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("ops save manifest %s: %w", path, err)
 	}
 	return nil
@@ -785,36 +802,22 @@ func (s *OpsStore) LoadCachedManifest() (*OpsPackageList, error) {
 	return &list, nil
 }
 
-// ManifestNeedsUpdate checks if the remote manifest has changed by comparing
-// Content-Length via HTTP HEAD. Returns true if update is needed or if check
-// fails (safe default: refresh on error).
-func ManifestNeedsUpdate(localPath string) bool {
-	stat, err := os.Stat(localPath)
-	if err != nil {
-		return true
-	}
+// OpsManifestTTL is how long a cached ops manifest is used without asking
+// repo.ops.city again. The server sends no Content-Length, ETag or
+// Last-Modified, so there is nothing to revalidate against; without a TTL every
+// build re-downloaded the whole manifest (about 780 KB, ~3 s). A var so tests
+// can change it.
+var OpsManifestTTL = 24 * time.Hour
 
-	resp, err := http.Head(OpsPackageManifestURL) //nolint:noctx // manifest check has no caller context
-	if err != nil {
-		return true
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return true
-	}
-
-	return stat.Size() != resp.ContentLength
-}
-
-// FetchManifestCached downloads the ops manifest only if it has changed since
-// the last fetch, using Content-Length comparison.
+// FetchManifestCached returns the ops manifest, downloading it only when the
+// cached copy is missing, unreadable or older than OpsManifestTTL. When the
+// download fails, a cached copy of any age is used instead.
 func (s *OpsStore) FetchManifestCached() (*OpsPackageList, error) {
 	cachedPath := filepath.Join(s.root, "manifest.json")
 
-	if _, err := os.Stat(cachedPath); err == nil {
-		if !ManifestNeedsUpdate(cachedPath) {
-			return s.LoadCachedManifest()
+	if st, err := os.Stat(cachedPath); err == nil && time.Since(st.ModTime()) < OpsManifestTTL {
+		if list, err := s.LoadCachedManifest(); err == nil {
+			return list, nil
 		}
 	}
 
@@ -845,13 +848,17 @@ func (s *OpsStore) FetchManifestCached() (*OpsPackageList, error) {
 		return nil, fmt.Errorf("ops manifest read: %w", err)
 	}
 
-	if err := s.SaveManifest(data); err != nil {
-		slog.Warn("ops manifest cache write failed", "error", err)
-	}
-
+	// Parse before caching: a broken response must not replace a good copy.
 	var list OpsPackageList
 	if err := json.Unmarshal(data, &list); err != nil {
+		if _, statErr := os.Stat(cachedPath); statErr == nil {
+			slog.Warn("ops manifest unparsable, using cached copy", "error", err)
+			return s.LoadCachedManifest()
+		}
 		return nil, fmt.Errorf("ops manifest parse: %w", err)
+	}
+	if err := s.SaveManifest(data); err != nil {
+		slog.Warn("ops manifest cache write failed", "error", err)
 	}
 	return &list, nil
 }

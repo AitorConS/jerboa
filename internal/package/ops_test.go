@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -427,15 +428,23 @@ func TestOpsStore_FetchManifestCached(t *testing.T) {
 	data, err := json.Marshal(list)
 	require.NoError(t, err)
 
+	var requests atomic.Int32
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	body := atomic.Value{}
+	body.Store(data)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
+		requests.Add(1)
+		w.WriteHeader(int(status.Load()))
+		_, _ = w.Write(body.Load().([]byte))
 	}))
 	t.Cleanup(ts.Close)
 
 	origURL := OpsPackageManifestURL
 	OpsPackageManifestURL = ts.URL + "/manifest.json"
 	t.Cleanup(func() { OpsPackageManifestURL = origURL })
+	origTTL := OpsManifestTTL
+	t.Cleanup(func() { OpsManifestTTL = origTTL })
 
 	dir := t.TempDir()
 	store, err := NewOpsStore(dir)
@@ -444,10 +453,35 @@ func TestOpsStore_FetchManifestCached(t *testing.T) {
 	got, err := store.FetchManifestCached()
 	require.NoError(t, err)
 	require.Len(t, got.Packages, 1)
+	require.Equal(t, int32(1), requests.Load())
 
+	// Within the TTL the cached copy is used without any request.
 	got2, err := store.FetchManifestCached()
 	require.NoError(t, err)
 	require.Len(t, got2.Packages, 1)
+	require.Equal(t, int32(1), requests.Load(), "a fresh cache must not hit the network")
+
+	// Expired: the manifest is downloaded again.
+	OpsManifestTTL = 0
+	_, err = store.FetchManifestCached()
+	require.NoError(t, err)
+	require.Equal(t, int32(2), requests.Load())
+
+	// A server error falls back to the cached copy.
+	status.Store(http.StatusInternalServerError)
+	got3, err := store.FetchManifestCached()
+	require.NoError(t, err)
+	require.Len(t, got3.Packages, 1)
+
+	// An unparsable response neither fails the build nor replaces the cache.
+	status.Store(http.StatusOK)
+	body.Store([]byte("not json"))
+	got4, err := store.FetchManifestCached()
+	require.NoError(t, err)
+	require.Len(t, got4.Packages, 1)
+	cached, err := store.LoadCachedManifest()
+	require.NoError(t, err)
+	require.Len(t, cached.Packages, 1)
 }
 
 func TestOpsStore_IsExtracted_MissingBinary(t *testing.T) {
