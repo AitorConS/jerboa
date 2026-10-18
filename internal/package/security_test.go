@@ -323,3 +323,33 @@ func TestExtract_ReadOnlyDirEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 }
+
+// TestStore_Extract_RejectsLinks checks that a first-party package archive with
+// a symlink or hard link fails loudly instead of extracting without it.
+func TestStore_Extract_RejectsLinks(t *testing.T) {
+	for _, typ := range []byte{tar.TypeSymlink, tar.TypeLink} {
+		t.Run(string(typ), func(t *testing.T) {
+			dir := t.TempDir()
+			store, err := NewStore(dir)
+			require.NoError(t, err)
+			pkgDir := store.PackageDir("linkpkg", "1.0.0")
+			require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+
+			f, err := os.Create(filepath.Join(pkgDir, "files.tar.gz"))
+			require.NoError(t, err)
+			gw := gzip.NewWriter(f)
+			tw := tar.NewWriter(gw)
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: "lib/libz.so.1.3", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644}))
+			_, err = tw.Write([]byte("zz"))
+			require.NoError(t, err)
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: "lib/libz.so.1", Typeflag: typ, Linkname: "lib/libz.so.1.3", Mode: 0o777}))
+			require.NoError(t, tw.Close())
+			require.NoError(t, gw.Close())
+			require.NoError(t, f.Close())
+
+			err = store.Extract(Package{Name: "linkpkg", Version: "1.0.0"})
+			require.ErrorContains(t, err, "unsupported entry")
+			require.False(t, store.IsExtracted("linkpkg", "1.0.0"), "a failed extraction must not look complete")
+		})
+	}
+}

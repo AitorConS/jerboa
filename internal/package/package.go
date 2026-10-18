@@ -328,7 +328,17 @@ func (s *Store) Extract(pkg Package) (err error) {
 			return fmt.Errorf("package extract: path %q resolves through a symlink", hdr.Name)
 		}
 
-		switch hdr.Typeflag {
+		typeflag := hdr.Typeflag
+		if typeflag == 0 { // pre-POSIX archives mark regular files with NUL
+			typeflag = tar.TypeReg
+		}
+		switch typeflag {
+		default:
+			// Links, devices and FIFOs used to be skipped silently, which left
+			// the package without files its programs need. Jerboa never writes
+			// them (createArchive stores resolved regular files), so an archive
+			// that has them was produced elsewhere and must be fixed there.
+			return fmt.Errorf("package extract %s: unsupported entry %q (tar type %q); package files must be regular files or directories", pkg.Name, hdr.Name, string(hdr.Typeflag))
 		case tar.TypeDir:
 			// Force owner rwx: a 0o555 (or 0o000) directory entry would
 			// otherwise make every later write beneath it fail with EACCES.
