@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
+	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/AitorConS/jerboa/internal/volume"
 )
 
@@ -425,6 +427,33 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 	}
 	resp.Result = raw
 	_ = json.NewEncoder(conn).Encode(resp)
+
+	// A rebuild moved the tag to a new image; drop the one it replaced unless
+	// a VM still boots from it. Done after replying so the client never waits.
+	s.pruneImages()
+}
+
+// pruneImages removes store images that no tag points to any more, keeping
+// every image a VM was created from. It holds resourceMu so a VM being
+// created from an image cannot race its removal.
+func (s *Server) pruneImages() {
+	if s.imgStore == nil {
+		return
+	}
+	s.resourceMu.Lock()
+	defer s.resourceMu.Unlock()
+	var vms []*vm.VM
+	if s.mgr != nil {
+		vms = s.mgr.List()
+	}
+	inUse := vm.ImageDigestsInUse(vms)
+	removed, err := s.imgStore.PruneUnreferenced(func(d string) bool { return inUse[d] })
+	if err != nil {
+		slog.Warn("image store: prune unreferenced images", "err", err)
+	}
+	if len(removed) > 0 {
+		slog.Info("image store: removed unreferenced images", "count", len(removed))
+	}
 }
 
 // extractBuildContext untars stream into dir and returns the extracted files as

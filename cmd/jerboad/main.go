@@ -353,6 +353,16 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	}
 	// Runs after restore and adoption so disks of re-adopted running VMs stay.
 	vm.SweepBootDisks(vmDiskDir, store)
+	// Earlier daemons left the image a rebuild replaced behind; reclaim those,
+	// keeping every image a known VM boots from.
+	if imgStore != nil {
+		inUse := vm.ImageDigestsInUse(store.List())
+		if removed, err := imgStore.PruneUnreferenced(func(d string) bool { return inUse[d] }); err != nil {
+			slog.Warn("image store: prune unreferenced images", "err", err)
+		} else if len(removed) > 0 {
+			slog.Info("image store: removed unreferenced images", "count", len(removed))
+		}
+	}
 	var clusterLister apiserver.ClusterMemberLister
 	var swimCluster *cluster.SwimCluster
 	if clusterAddr != "" {

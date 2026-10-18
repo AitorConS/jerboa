@@ -330,3 +330,57 @@ func copyFile(src, dst string) error {
 func stripPrefix(digest string) string {
 	return strings.TrimPrefix(digest, "sha256:")
 }
+
+// PruneUnreferenced deletes stored images that no ref points to and that
+// inUse does not claim, and returns the digests it removed ("sha256:<hex>").
+//
+// Rebuilding a tag moves its ref to the new image but used to leave the old
+// image directory behind, unreachable by name, so the store grew with every
+// build. inUse receives a digest in "sha256:<hex>" form and must report the
+// images a VM still boots from: a stopped VM clones its disk from the store on
+// every start.
+func (s *Store) PruneUnreferenced(inUse func(digest string) bool) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	refs, err := s.readRefs()
+	if err != nil {
+		return nil, fmt.Errorf("image store prune: %w", err)
+	}
+	referenced := make(map[string]bool, len(refs))
+	for _, sha := range refs {
+		referenced[sha] = true
+	}
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("image store prune: %w", err)
+	}
+	var removed []string
+	for _, e := range entries {
+		sha := e.Name()
+		if !e.IsDir() || !isSHA256Hex(sha) || referenced[sha] {
+			continue
+		}
+		digest := "sha256:" + sha
+		if inUse != nil && inUse(digest) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(s.root, sha)); err != nil {
+			return removed, fmt.Errorf("image store prune %s: %w", digest, err)
+		}
+		removed = append(removed, digest)
+	}
+	return removed, nil
+}
+
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}

@@ -419,3 +419,44 @@ func TestImageBuildPackageMetadataRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, res, got)
 }
+
+// Rebuilding a tag must not leave the image it replaced in the store, unless a
+// VM still boots from it.
+func TestImageBuild_RebuildPrunesReplacedImage(t *testing.T) {
+	root := t.TempDir()
+	store, err := image.NewStore(root)
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+
+	build := func(marker string) {
+		ctxTar := buildContextTar(t, map[string][]byte{"app": validBuildELF()})
+		_, err := client.ImageBuild(context.Background(), api.BuildParams{
+			Name: "web", Tag: "latest", Program: "app", Env: map[string]string{"BUILD": marker},
+		}, ctxTar)
+		require.NoError(t, err)
+	}
+	dirs := func() int {
+		entries, err := os.ReadDir(root)
+		require.NoError(t, err)
+		n := 0
+		for _, e := range entries {
+			if e.IsDir() {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Pruning runs after the build replies, so wait for it to settle.
+	settles := func(want int, msg string) {
+		require.Eventually(t, func() bool { return dirs() == want }, 5*time.Second, 10*time.Millisecond, msg)
+		require.Never(t, func() bool { return dirs() < want }, 100*time.Millisecond, 10*time.Millisecond, msg)
+	}
+	build("one")
+	_, err = client.Run(context.Background(), api.RunParams{Image: "web:latest", Memory: "256M", CPUs: 1})
+	require.NoError(t, err)
+	build("two")
+	settles(2, "the VM's image is kept after the rebuild")
+	build("three")
+	settles(2, "the unused image from build two is removed")
+}

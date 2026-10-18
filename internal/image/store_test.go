@@ -355,3 +355,47 @@ func TestStripPrefix(t *testing.T) {
 	require.Equal(t, "abc123", stripPrefix("sha256:abc123"))
 	require.Equal(t, "noprefix", stripPrefix("noprefix"))
 }
+
+func imageDirs(t *testing.T, root string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	var dirs []string
+	for _, e := range entries {
+		if e.IsDir() {
+			dirs = append(dirs, e.Name())
+		}
+	}
+	return dirs
+}
+
+func TestStore_PruneUnreferenced(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "images")
+	s, err := NewStore(root)
+	require.NoError(t, err)
+	write := func(content string) string {
+		p := filepath.Join(t.TempDir(), "disk.img")
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o600))
+		return p
+	}
+	first, err := s.PutMove("web", "latest", validManifest(), write("build one"))
+	require.NoError(t, err)
+	second, err := s.PutMove("web", "latest", validManifest(), write("build two"))
+	require.NoError(t, err)
+	require.NotEqual(t, first.DiskDigest, second.DiskDigest)
+	// A directory that is not an image is never touched.
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "not-an-image"), 0o755))
+	require.Len(t, imageDirs(t, root), 3, "the rebuild left the first image behind")
+
+	// An image a VM still uses survives.
+	removed, err := s.PruneUnreferenced(func(d string) bool { return d == first.DiskDigest })
+	require.NoError(t, err)
+	require.Empty(t, removed)
+
+	removed, err = s.PruneUnreferenced(nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{first.DiskDigest}, removed)
+	require.ElementsMatch(t, []string{stripPrefix(second.DiskDigest), "not-an-image"}, imageDirs(t, root))
+	_, _, err = s.Get("web:latest")
+	require.NoError(t, err)
+}
