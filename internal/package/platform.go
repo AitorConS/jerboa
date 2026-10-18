@@ -25,15 +25,22 @@ type Provenance struct {
 }
 
 type Reference struct {
-	Source     string      `json:"source"`
-	Name       string      `json:"name"`
-	Version    string      `json:"version"`
-	Platform   string      `json:"platform"`
-	SHA256     string      `json:"sha256"`
-	Provenance *Provenance `json:"provenance,omitempty"`
+	Source   string `json:"source"`
+	Name     string `json:"name"`
+	Version  string `json:"version"`
+	Platform string `json:"platform"`
+	SHA256   string `json:"sha256"`
+	// ContentDigest identifies the package's files independent of its
+	// archive (see ContentDigest). Absent in images built before it existed.
+	ContentDigest string      `json:"content_digest,omitempty"`
+	Provenance    *Provenance `json:"provenance,omitempty"`
 }
 
 var ErrPlatformMismatch = errors.New("platform mismatch")
+
+// ErrContentMismatch reports that a package's files do not match the content
+// digest its metadata records.
+var ErrContentMismatch = errors.New("package content digest mismatch")
 
 func ValidatePlatform(p string) error {
 	if p != "linux/arm64" && p != "linux/amd64" {
@@ -289,7 +296,14 @@ func (s *Store) Verify(p Package, platform string) ([]File, Reference, error) {
 	if p.Platform == "" && !found {
 		return nil, Reference{}, fmt.Errorf("legacy package %s has no ELF to verify its platform", p.Name)
 	}
-	return files, Reference{Source: "jerboa", Name: p.Name, Version: p.Version, Platform: platform, SHA256: hash, Provenance: p.Provenance}, nil
+	content, err := ContentDigest(files)
+	if err != nil {
+		return nil, Reference{}, err
+	}
+	if p.ContentDigest != "" && content != p.ContentDigest {
+		return nil, Reference{}, fmt.Errorf("package %s:%s: %w (content %s, want %s)", p.Name, p.Version, ErrContentMismatch, content, p.ContentDigest)
+	}
+	return files, Reference{Source: "jerboa", Name: p.Name, Version: p.Version, Platform: platform, SHA256: hash, ContentDigest: content, Provenance: p.Provenance}, nil
 }
 
 // ValidateReferences bounds metadata to concrete, portable package identities.
@@ -320,6 +334,9 @@ func ValidateReferences(refs []Reference, platform string) error {
 		hash, err := hex.DecodeString(r.SHA256)
 		if err != nil || len(hash) != 32 {
 			return fmt.Errorf("package %s requires SHA-256", r.Name)
+		}
+		if r.ContentDigest != "" && !ValidContentDigest(r.ContentDigest) {
+			return fmt.Errorf("package %s has an invalid content digest", r.Name)
 		}
 		if p := r.Provenance; p != nil {
 			switch p.Kind {

@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,10 @@ type Package struct {
 	Runtime string `json:"runtime"`
 	// SHA256 is the expected hex-encoded SHA-256 digest of the archive.
 	SHA256 string `json:"sha256"`
+	// ContentDigest identifies the files the package places in an image
+	// (see ContentDigest), independent of how the archive was compressed.
+	// Empty for packages created before it existed.
+	ContentDigest string `json:"content_digest,omitempty"`
 	// Size is the archive size in bytes.
 	Size int64 `json:"size"`
 	// URL is the download URL for the package archive.
@@ -623,6 +628,7 @@ func (s *Store) CreateFromFiles(name, version string, files []File, description,
 	if len(files) == 0 {
 		return fmt.Errorf("pkg create: no files to package")
 	}
+	files = PruneRuntimeBloat(files)
 
 	if s.platform != "" {
 		if err := ValidateFiles(files, s.platform); err != nil {
@@ -646,29 +652,31 @@ func (s *Store) CreateFromFiles(name, version string, files []File, description,
 		return fmt.Errorf("pkg create: package %s:%s already exists (remove it first)", name, version)
 	}
 
-	sha, size, err := createArchive(archivePath, files)
+	sha, size, content, err := createArchive(archivePath, files)
 	if err != nil {
 		return fmt.Errorf("pkg create archive: %w", err)
 	}
+	_, created := archiveTime()
 
 	meta := Package{
-		Name:        name,
-		Version:     version,
-		Description: description,
-		Runtime:     runtimeName,
-		SHA256:      sha,
-		Size:        size,
-		Created:     time.Now().UTC(),
-		Platform:    s.platform,
-		ProgramPath: tarEntryName(files[0].GuestPath),
-		Provenance:  &Provenance{Kind: "local"},
+		Name:          name,
+		Version:       version,
+		Description:   description,
+		Runtime:       runtimeName,
+		SHA256:        sha,
+		ContentDigest: content,
+		Size:          size,
+		Created:       created,
+		Platform:      s.platform,
+		ProgramPath:   tarEntryName(files[0].GuestPath),
+		Provenance:    &Provenance{Kind: "local"},
 	}
 
 	if err := s.writeMeta(dir, meta); err != nil {
 		return fmt.Errorf("pkg create meta: %w", err)
 	}
 
-	slog.Info("package created", "name", name, "version", version, "sha256", sha, "size", size)
+	slog.Info("package created", "name", name, "version", version, "sha256", sha, "content_digest", content, "size", size)
 	return nil
 }
 
@@ -685,10 +693,37 @@ func tarEntryName(guest string) string {
 	return g
 }
 
-func createArchive(outPath string, files []File) (string, int64, error) {
+// archiveEntry is one file or directory to write into a package archive.
+type archiveEntry struct {
+	name string
+	host string
+	dir  bool
+}
+
+// createArchive writes files into a gzip-compressed tar at outPath and returns
+// the archive's SHA-256, its size and the package content digest. The archive
+// is reproducible: entries are sorted by path, owners are root with no names,
+// modes are 0755 or 0644, and every timestamp is archiveTime, so the same files
+// always produce the same bytes.
+func createArchive(outPath string, files []File) (sha string, size int64, content string, err error) {
+	entries := make([]archiveEntry, 0, len(files))
+	for _, file := range files {
+		entryName := tarEntryName(file.GuestPath)
+		if entryName == "" {
+			return "", 0, "", fmt.Errorf("pkg create: file has an empty guest path (host %q)", file.HostPath)
+		}
+		entries = append(entries, archiveEntry{name: entryName, host: file.HostPath, dir: file.IsDir})
+	}
+	sort.SliceStable(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	for i := 1; i < len(entries); i++ {
+		if entries[i].name == entries[i-1].name {
+			return "", 0, "", fmt.Errorf("pkg create: guest path %s is listed twice", entries[i].name)
+		}
+	}
+
 	f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		return "", 0, fmt.Errorf("create archive file: %w", err)
+		return "", 0, "", fmt.Errorf("create archive file: %w", err)
 	}
 	cleanup := true
 	defer func() {
@@ -698,73 +733,78 @@ func createArchive(outPath string, files []File) (string, int64, error) {
 		}
 	}()
 
+	mtime, _ := archiveTime()
 	hash := sha256.New()
 	mw := io.MultiWriter(f, hash)
 	gw := gzip.NewWriter(mw)
 	tw := tar.NewWriter(gw)
+	var digests []contentEntry
 
-	for _, file := range files {
-		entryName := tarEntryName(file.GuestPath)
-		if entryName == "" {
-			return "", 0, fmt.Errorf("pkg create: file has an empty guest path (host %q)", file.HostPath)
-		}
-
-		if file.IsDir {
-			if writeErr := tw.WriteHeader(&tar.Header{
-				Name:     entryName + "/",
-				Typeflag: tar.TypeDir,
-				Mode:     0o755,
-			}); writeErr != nil {
-				return "", 0, fmt.Errorf("tar write dir header %s: %w", entryName, writeErr)
+	for _, e := range entries {
+		hdr := &tar.Header{Name: e.name, ModTime: mtime}
+		var info os.FileInfo
+		if !e.dir {
+			info, err = os.Stat(e.host)
+			if err != nil {
+				return "", 0, "", fmt.Errorf("stat %s: %w", e.host, err)
 			}
+		}
+		switch {
+		case e.dir || info.IsDir():
+			hdr.Name += "/"
+			hdr.Typeflag = tar.TypeDir
+			hdr.Mode = 0o755
+		case info.Mode().IsRegular():
+			hdr.Typeflag = tar.TypeReg
+			hdr.Mode = 0o644
+			if info.Mode().Perm()&0o111 != 0 {
+				hdr.Mode = 0o755
+			}
+			hdr.Size = info.Size()
+		default:
+			return "", 0, "", fmt.Errorf("pkg create: %s is not a regular file", e.host)
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return "", 0, "", fmt.Errorf("tar write header %s: %w", e.name, err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-
-		info, statErr := os.Stat(file.HostPath)
-		if statErr != nil {
-			return "", 0, fmt.Errorf("stat %s: %w", file.HostPath, statErr)
+		src, err := os.Open(e.host)
+		if err != nil {
+			return "", 0, "", fmt.Errorf("open %s: %w", e.host, err)
 		}
-
-		hdr, hdrErr := tar.FileInfoHeader(info, "")
-		if hdrErr != nil {
-			return "", 0, fmt.Errorf("tar header %s: %w", file.HostPath, hdrErr)
+		fh := sha256.New()
+		n, err := io.Copy(io.MultiWriter(tw, fh), src)
+		_ = src.Close()
+		if err != nil {
+			return "", 0, "", fmt.Errorf("tar copy %s: %w", e.host, err)
 		}
-		hdr.Name = entryName
-
-		if writeErr := tw.WriteHeader(hdr); writeErr != nil {
-			return "", 0, fmt.Errorf("tar write header %s: %w", entryName, writeErr)
+		if n != hdr.Size {
+			return "", 0, "", fmt.Errorf("pkg create: %s changed size while archiving", e.host)
 		}
-
-		if !info.IsDir() {
-			src, openErr := os.Open(file.HostPath)
-			if openErr != nil {
-				return "", 0, fmt.Errorf("open %s: %w", file.HostPath, openErr)
-			}
-			if _, copyErr := io.Copy(tw, src); copyErr != nil {
-				_ = src.Close()
-				return "", 0, fmt.Errorf("tar copy %s: %w", file.HostPath, copyErr)
-			}
-			_ = src.Close()
-		}
+		ce := contentEntry{name: e.name, exec: hdr.Mode == 0o755}
+		copy(ce.sum[:], fh.Sum(nil))
+		digests = append(digests, ce)
 	}
 
 	if closeErr := tw.Close(); closeErr != nil {
-		return "", 0, fmt.Errorf("tar close: %w", closeErr)
+		return "", 0, "", fmt.Errorf("tar close: %w", closeErr)
 	}
 	if gwErr := gw.Close(); gwErr != nil {
-		return "", 0, fmt.Errorf("gzip close: %w", gwErr)
+		return "", 0, "", fmt.Errorf("gzip close: %w", gwErr)
 	}
 
-	size, seekErr := f.Seek(0, io.SeekEnd)
-	if seekErr != nil {
-		return "", 0, fmt.Errorf("archive seek: %w", seekErr)
+	size, err = f.Seek(0, io.SeekEnd)
+	if err != nil {
+		return "", 0, "", fmt.Errorf("archive seek: %w", err)
 	}
 	if closeErr := f.Close(); closeErr != nil {
-		return "", 0, fmt.Errorf("archive close: %w", closeErr)
+		return "", 0, "", fmt.Errorf("archive close: %w", closeErr)
 	}
 	cleanup = false
 
-	return hex.EncodeToString(hash.Sum(nil)), size, nil
+	return hex.EncodeToString(hash.Sum(nil)), size, digestEntries(digests), nil
 }
 
 // Push uploads a local package archive and metadata to a remote package index.

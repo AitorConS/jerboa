@@ -596,40 +596,11 @@ type File struct {
 	FromContext bool
 }
 
-// opsRuntimeBloatDir reports whether a slash-separated package-relative path
-// is a directory that is only needed at compile time, not at runtime inside
-// a unikernel. Returning true causes the walker to skip the whole subtree.
-//
-// Excluded subtrees (with typical sizes for eyberg/python3:3.12.3):
-//   - lib/python*/config-*/   — 27 MB: static libpython + build headers
-//   - lib/python*/test/       —  1.3 MB: CPython's own test suite
-//   - lib/python*/lib2to3/    —  1 MB: Python 2→3 migration tool
-//   - lib/python*/pydoc_data/ —  1.3 MB: HTML documentation data for pydoc
-func opsRuntimeBloatDir(rel string) bool {
-	parts := strings.Split(rel, "/")
-	for i, part := range parts {
-		if !strings.HasPrefix(part, "python") {
-			continue
-		}
-		if i+1 >= len(parts) {
-			break
-		}
-		next := parts[i+1]
-		if strings.HasPrefix(next, "config-") ||
-			next == "test" ||
-			next == "lib2to3" ||
-			next == "pydoc_data" {
-			return true
-		}
-	}
-	return false
-}
-
 // ExtractedFiles returns the files inside an extracted ops package as File
 // entries with proper guest paths. Files inside sysroot/ get their sysroot-
 // relative path as the guest path; top-level files use their basename.
 // Build-only subtrees (static libs, test suites, etc.) are excluded to keep
-// the image lean — see opsRuntimeBloatDir for the full list.
+// the image lean — see runtimeBloatDir for the full list.
 func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, error) {
 	if err := validateOpsRef(namespace, name, version); err != nil {
 		return nil, err
@@ -649,7 +620,7 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		rel = filepath.ToSlash(rel)
 
 		if d.IsDir() {
-			if opsRuntimeBloatDir(rel) {
+			if runtimeBloatDir(rel) {
 				return fs.SkipDir
 			}
 			// Emit empty sysroot directories so mkfs creates them in the image.
@@ -672,7 +643,7 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 			strings.HasSuffix(rel, ".tar.gz"+httpclient.PartialSuffix+httpclient.ValidatorSuffix) {
 			return nil
 		}
-		if strings.HasPrefix(filepath.Base(rel), "._") {
+		if strings.HasPrefix(filepath.Base(rel), "._") || runtimeBloatFile(rel) {
 			return nil
 		}
 		// The store's own digest index (and its temporary files) is not
@@ -979,24 +950,29 @@ func (s *OpsStore) ArchiveSHA256(namespace, name, version, expected string) (str
 // SHA-256 (checked against expected when set). Digests saved by an earlier
 // build are reused for files that have not changed, so an unchanged package
 // is not read again; the digests are saved for the next build.
-func (s *OpsStore) VerifiedFiles(namespace, name, version, platform, expected string) ([]File, string, error) {
+func (s *OpsStore) VerifiedFiles(namespace, name, version, platform, expected string) ([]File, Reference, error) {
 	if err := validateOpsRef(namespace, name, version); err != nil {
-		return nil, "", err
+		return nil, Reference{}, err
 	}
 	dir := s.PackageDir(namespace, name, version)
 	SeedDigests(dir)
 	files, err := s.ExtractedFiles(namespace, name, version)
 	if err != nil {
-		return nil, "", err
+		return nil, Reference{}, err
 	}
 	if err := ValidateFiles(files, platform); err != nil {
-		return nil, "", err
+		return nil, Reference{}, err
 	}
 	hash, err := s.ArchiveSHA256(namespace, name, version, expected)
 	if err != nil {
-		return nil, "", err
+		return nil, Reference{}, err
+	}
+	content, err := ContentDigest(files)
+	if err != nil {
+		return nil, Reference{}, err
 	}
 	archive := File{HostPath: filepath.Join(dir, s.arch+".tar.gz")}
 	_ = SaveDigests(dir, append(append([]File{}, files...), archive), "")
-	return files, hash, nil
+	ref := Reference{Source: "ops", Name: namespace + "/" + name, Version: version, Platform: platform, SHA256: hash, ContentDigest: content}
+	return files, ref, nil
 }

@@ -164,12 +164,12 @@ func resolveOpsPackages(ctx context.Context, pkgRefs []string) ([]pkg.File, erro
 			}
 		}
 
-		pkgFiles, archiveHash, err := opsStore.VerifiedFiles(target.Namespace, target.Name, target.Version, "linux/"+packageArchFor(ctx), target.SHA256)
+		pkgFiles, ref, err := opsStore.VerifiedFiles(target.Namespace, target.Name, target.Version, "linux/"+packageArchFor(ctx), target.SHA256)
 		if err != nil {
 			return nil, fmt.Errorf("ops package %s: %w", target.Name, err)
 		}
 		for i := range pkgFiles {
-			pkgFiles[i].Reference = &pkg.Reference{Source: "ops", Name: target.Namespace + "/" + target.Name, Version: target.Version, Platform: "linux/" + packageArchFor(ctx), SHA256: archiveHash}
+			pkgFiles[i].Reference = &ref
 		}
 		files = append(files, pkgFiles...)
 	}
@@ -318,12 +318,12 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 			}
 		}
 
-		pkgFiles, archiveHash, err := opsStore.VerifiedFiles(target.Namespace, target.Name, target.Version, "linux/"+packageArchFor(ctx), target.SHA256)
+		pkgFiles, ref, err := opsStore.VerifiedFiles(target.Namespace, target.Name, target.Version, "linux/"+packageArchFor(ctx), target.SHA256)
 		if err != nil {
 			return nil, fmt.Errorf("ops package %s: %w", target.Name, err)
 		}
 		for i := range pkgFiles {
-			pkgFiles[i].Reference = &pkg.Reference{Source: "ops", Name: target.Namespace + "/" + target.Name, Version: target.Version, Platform: "linux/" + packageArchFor(ctx), SHA256: archiveHash}
+			pkgFiles[i].Reference = &ref
 		}
 		files = append(files, pkgFiles...)
 	}

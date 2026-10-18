@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpsRuntimeBloatDir pins the compile-time-only subtrees that must be
+// TestRuntimeBloatDir pins the compile-time-only subtrees that must be
 // pruned from the runtime image. The function keys off a "python*" path
 // component followed by a known build directory, so the cases cover each
 // excluded name, a non-python neighbor, and paths where "python" is the
 // trailing component (nothing to exclude).
-func TestOpsRuntimeBloatDir(t *testing.T) {
+func TestRuntimeBloatDir(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -43,7 +43,7 @@ func TestOpsRuntimeBloatDir(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			require.Equal(t, tt.want, opsRuntimeBloatDir(tt.rel))
+			require.Equal(t, tt.want, runtimeBloatDir(tt.rel))
 		})
 	}
 }
