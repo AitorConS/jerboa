@@ -211,6 +211,38 @@ func TestRpathInheritance(t *testing.T) {
 	require.ErrorContains(t, err, "libtwo.so")
 }
 
+// A mapped shared object (an interpreter's extension module) brings in the
+// libraries it links, even when the program itself does not link them.
+func TestLocalFilesResolvesMappedSharedObjects(t *testing.T) {
+	root := t.TempDir()
+	bin := putFixture(t, root, "bin/python3", syntheticELF(elf.EM_AARCH64, "", nil, ""))
+	ext := putFixture(t, root, "stage/_ssl.so", syntheticELF(elf.EM_AARCH64, "", []string{"libssl.so.3"}, ""))
+	putFixture(t, root, "usr/lib/libssl.so.3", syntheticELF(elf.EM_AARCH64, "", []string{"libcrypto.so.3"}, ""))
+	putFixture(t, root, "usr/lib/libcrypto.so.3", syntheticELF(elf.EM_AARCH64, "", nil, ""))
+	data := putFixture(t, root, "stage/os.py", []byte("import sys"))
+	extras := []File{
+		{HostPath: ext, GuestPath: "usr/local/lib/python3.12/lib-dynload/_ssl.so"},
+		{HostPath: data, GuestPath: "usr/local/lib/python3.12/os.py"},
+	}
+	files, _, err := LocalFiles(bin, root, "usr/local/bin/python3", extras)
+	require.NoError(t, err)
+	var guests []string
+	for _, f := range files {
+		guests = append(guests, f.GuestPath)
+	}
+	require.ElementsMatch(t, []string{
+		"usr/local/bin/python3",
+		"usr/lib/libssl.so.3",
+		"usr/lib/libcrypto.so.3",
+		"usr/local/lib/python3.12/lib-dynload/_ssl.so",
+		"usr/local/lib/python3.12/os.py",
+	}, guests)
+
+	require.NoError(t, os.Remove(filepath.Join(root, "usr/lib/libcrypto.so.3")))
+	_, _, err = LocalFiles(bin, root, "usr/local/bin/python3", extras)
+	require.ErrorContains(t, err, "libcrypto.so.3")
+}
+
 func TestCachedPackageTamperingRejected(t *testing.T) {
 	root := t.TempDir()
 	bin := putFixture(t, root, "app", syntheticELF(elf.EM_AARCH64, "", nil, ""))

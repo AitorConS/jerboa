@@ -75,6 +75,31 @@ func LocalFiles(binary, sysroot, program string, extras []File) ([]File, string,
 	if err != nil {
 		return nil, "", err
 	}
+	// Mapped ELF files (an interpreter's extension modules, plugins) load
+	// libraries of their own that the program does not link, such as the
+	// libssl behind Python's _ssl module, so their closures are added too.
+	inClosure := map[string]bool{gp: true}
+	for _, p := range closure {
+		inClosure[p] = true
+	}
+	for _, f := range extras {
+		inClosure[absClean(f.GuestPath)] = true
+	}
+	for _, f := range extras {
+		if f.IsDir || !isELFFile(f.HostPath) {
+			continue
+		}
+		more, err := c.elfClosure(absClean(f.GuestPath))
+		if err != nil {
+			return nil, "", fmt.Errorf("%s: %w", f.GuestPath, err)
+		}
+		for _, p := range more {
+			if !inClosure[p] {
+				inClosure[p] = true
+				closure = append(closure, p)
+			}
+		}
+	}
 	files := []File{}
 	for _, p := range closure {
 		real, err := c.resolve(p)
