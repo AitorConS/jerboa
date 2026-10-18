@@ -575,3 +575,30 @@ func TestLookupArchSeparatesChecksums(t *testing.T) {
 	require.Equal(t, "x86", list.LookupArch("test", "runtime", "1", "amd64").SHA256)
 	require.Nil(t, list.LookupArch("test", "runtime", "1", "riscv64"))
 }
+
+// The manifest lists packages in publication order; prefix and latest requests
+// must still pick the highest matching version, not the first listed.
+func TestOpsLookupPicksHighestVersion(t *testing.T) {
+	list := &OpsPackageList{Packages: []OpsPackage{
+		{Namespace: "eyberg", Name: "node", Version: "v20.0.0", Arch: "x86_64"},
+		{Namespace: "eyberg", Name: "node", Version: "20.5.0", Arch: "x86_64"},
+		{Namespace: "eyberg", Name: "node", Version: "20.5.0", Arch: "arm64"},
+		{Namespace: "eyberg", Name: "node", Version: "22.9.0", Arch: "x86_64"},
+		{Namespace: "eyberg", Name: "node", Version: "24.0.0-rc1", Arch: "x86_64"},
+	}}
+	for want, got := range map[string]string{
+		"20":      "20.5.0",
+		"v20":     "20.5.0",
+		"v20.0.0": "v20.0.0",
+		"":        "22.9.0",
+		"latest":  "22.9.0",
+		"24":      "24.0.0-rc1",
+	} {
+		p := list.LookupArch("eyberg", "node", want, "amd64")
+		require.NotNil(t, p, want)
+		require.Equal(t, got, p.Version, "request %q", want)
+		require.Equal(t, "x86_64", p.Arch)
+	}
+	require.Equal(t, "20.5.0", list.Lookup("eyberg", "node", "20").Version)
+	require.Nil(t, list.LookupArch("eyberg", "node", "18", "amd64"))
+}

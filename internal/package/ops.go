@@ -152,21 +152,45 @@ func SearchOpsPackages(query string) (*OpsPackageList, error) {
 // Version matching normalizes "v" prefixes and supports major/minor prefix matching
 // (e.g., "11" matches "v11.5.0", "3.10" matches "3.10.6").
 func (l *OpsPackageList) Lookup(namespace, name, version string) *OpsPackage {
+	var cands []*OpsPackage
 	for i := range l.Packages {
 		p := &l.Packages[i]
-		if p.Namespace == namespace && p.Name == name {
-			if version == "" || version == "latest" || opsVersionMatch(p.Version, version) {
-				return p
-			}
+		if p.Namespace == namespace && p.Name == name && opsVersionMatch(p.Version, version) {
+			cands = append(cands, p)
 		}
 	}
-	return nil
+	return bestOpsPackage(cands, version)
+}
+
+// bestOpsPackage picks the package a request means among matching ones: an
+// exact version first, otherwise the highest version (releases before
+// pre-releases for "latest"). The manifest lists packages in publication
+// order, so taking the first match picked an arbitrary, often old, version:
+// node:20 resolved to v20.0.0 while 20.5.0 was published.
+func bestOpsPackage(cands []*OpsPackage, version string) *OpsPackage {
+	if len(cands) == 0 {
+		return nil
+	}
+	pkgs := make([]Package, len(cands))
+	byVersion := make(map[string]*OpsPackage, len(cands))
+	for i, c := range cands {
+		pkgs[i] = Package{Name: c.Name, Version: c.Version}
+		if _, dup := byVersion[c.Version]; !dup {
+			byVersion[c.Version] = c
+		}
+	}
+	ranked := rankByVersion(pkgs, version, nil)
+	if len(ranked) == 0 {
+		return cands[0]
+	}
+	return byVersion[ranked[0].Version]
 }
 
 // opsVersionMatch reports whether pkgVersion satisfies queryVersion.
-// Handles "v" prefix normalization and major/minor prefix matching.
+// Handles "v" prefix normalization and major/minor prefix matching. An empty
+// or "latest" query matches every version.
 func opsVersionMatch(pkgVersion, queryVersion string) bool {
-	if pkgVersion == queryVersion {
+	if queryVersion == "" || queryVersion == "latest" || pkgVersion == queryVersion {
 		return true
 	}
 	normPkg := strings.TrimPrefix(pkgVersion, "v")
@@ -190,15 +214,16 @@ func ArchSlug() string {
 
 // LookupArch never reuses an x86 checksum or binary for an ARM package.
 func (l *OpsPackageList) LookupArch(namespace, name, version, arch string) *OpsPackage {
+	var cands []*OpsPackage
 	for i := range l.Packages {
 		p := &l.Packages[i]
 		pa := p.Arch
 		if pa == "" || pa == "x86_64" {
 			pa = "amd64"
 		}
-		if pa == arch && p.Namespace == namespace && p.Name == name && (version == "" || version == "latest" || opsVersionMatch(p.Version, version)) {
-			return p
+		if pa == arch && p.Namespace == namespace && p.Name == name && opsVersionMatch(p.Version, version) {
+			cands = append(cands, p)
 		}
 	}
-	return nil
+	return bestOpsPackage(cands, version)
 }

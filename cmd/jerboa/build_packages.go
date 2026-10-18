@@ -277,23 +277,8 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string, archs 
 			}
 		}
 	}
-	if version == "" || version == "latest" {
-		return nil
-	}
-	for _, alias := range names {
-		for _, ns := range namespaces {
-			for i := range manifest.Packages {
-				p := &manifest.Packages[i]
-				if p.Namespace != ns || p.Name != alias || (p.Arch != "" && p.Arch != optionalPackageArch(archs) && (p.Arch != "x86_64" || optionalPackageArch(archs) != "amd64")) || (p.Arch == "" && optionalPackageArch(archs) != "amd64") {
-					continue
-				}
-				pv := strings.TrimPrefix(p.Version, "v")
-				if strings.HasPrefix(pv, version+".") || strings.HasPrefix(pv, version+"-") || pv == version {
-					return p
-				}
-			}
-		}
-	}
+	// LookupArch already matches version prefixes ("20" → 20.x) and returns
+	// the highest match, so nothing is left to search.
 	return nil
 }
 
