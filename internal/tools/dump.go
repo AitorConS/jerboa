@@ -32,10 +32,18 @@ func ResolveDump(ctx context.Context, toolsDir, override string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("tools: resolve dump: %w", err)
 	}
-	if _, ok := k.Files["dump"]; !ok {
+	a, ok := k.Files["dump"]
+	if !ok {
 		return "", fmt.Errorf("tools: manifest kernel component has no dump tool")
 	}
-	if err := DownloadKernelFromManifest(ctx, cl, toolsDir, k); err != nil {
+	// The toolset download leaves dump out; fetch just this file.
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		return "", fmt.Errorf("tools: create tools dir: %w", err)
+	}
+	if err := cl.DownloadArtifact(ctx, a, dumpPath); err != nil {
+		return "", fmt.Errorf("tools: download dump: %w", err)
+	}
+	if err := os.Chmod(dumpPath, 0o755); err != nil {
 		return "", fmt.Errorf("tools: download dump: %w", err)
 	}
 	if _, err := os.Stat(dumpPath); err != nil {

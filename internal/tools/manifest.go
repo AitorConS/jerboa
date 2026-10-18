@@ -2,10 +2,13 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 
 	"github.com/AitorConS/jerboa/internal/release"
 )
@@ -96,12 +99,11 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 
 	// Resolve the download plan up front so a manifest missing a required file
 	// fails before we touch disk.
-	type kernelFile struct {
-		local string
-		asset release.Asset
-	}
 	var plan []kernelFile
 	for key, local := range kernelFileLocalNames {
+		if key == "dump" {
+			continue // a debugging tool builds never use; see ResolveDump
+		}
 		a, ok := k.Files[key]
 		if !ok {
 			if optionalKernelFiles[key] {
@@ -121,10 +123,8 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
 
-	for _, f := range plan {
-		if err := cl.DownloadArtifact(ctx, f.asset, filepath.Join(staging, f.local)); err != nil {
-			return fmt.Errorf("tools: download kernel %s: %w", f.local, err)
-		}
+	if err := downloadPlan(ctx, cl, staging, plan); err != nil {
+		return err
 	}
 	if err := executableTools(staging); err != nil {
 		return err
@@ -150,4 +150,70 @@ func executableTools(dir string) error {
 		}
 	}
 	return nil
+}
+
+// kernelFile is one toolset file to download and its local name.
+type kernelFile struct {
+	local string
+	asset release.Asset
+}
+
+// downloadPlan fetches every planned file into dir. Files with the same
+// SHA-256 (the published kernel.img and kernel-fc.img are one ELF) are
+// downloaded once and linked; distinct files download in parallel.
+func downloadPlan(ctx context.Context, cl *release.Client, dir string, plan []kernelFile) error {
+	first := map[string]string{} // sha256 -> local name downloaded
+	var unique []kernelFile
+	var dupes []kernelFile
+	for _, f := range plan {
+		if _, seen := first[f.asset.SHA256]; seen {
+			dupes = append(dupes, f)
+			continue
+		}
+		first[f.asset.SHA256] = f.local
+		unique = append(unique, f)
+	}
+	errs := make([]error, len(unique))
+	var wg sync.WaitGroup
+	for i, f := range unique {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := cl.DownloadArtifact(ctx, f.asset, filepath.Join(dir, f.local)); err != nil {
+				errs[i] = fmt.Errorf("tools: download kernel %s: %w", f.local, err)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	for _, f := range dupes {
+		src := filepath.Join(dir, first[f.asset.SHA256])
+		dst := filepath.Join(dir, f.local)
+		if os.Link(src, dst) == nil {
+			continue
+		}
+		if err := copyRegular(src, dst); err != nil {
+			return fmt.Errorf("tools: install kernel %s: %w", f.local, err)
+		}
+	}
+	return nil
+}
+
+func copyRegular(src, dst string) error {
+	in, err := os.Open(src) //nolint:gosec // staging path
+	if err != nil {
+		return err //nolint:wrapcheck // caller wraps
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644) //nolint:gosec // staging path
+	if err != nil {
+		return err //nolint:wrapcheck // caller wraps
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err //nolint:wrapcheck // caller wraps
+	}
+	return out.Close() //nolint:wrapcheck // caller wraps
 }
