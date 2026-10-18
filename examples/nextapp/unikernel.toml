@@ -2,3 +2,8 @@
 lang = "node"
 run = ["npm install", "npm run build"]
 entrypoint = ".next/standalone/server.js"
+# The standalone output is self-contained: server.js, the traced subset of
+# node_modules it needs, and (copied by scripts/postbuild.js) .next/static and
+# public. The rest of the project — sources, the full node_modules and the
+# other build output — never runs in the image.
+include = [".next/standalone"]
