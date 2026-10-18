@@ -242,6 +242,18 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		hypervisor = "qemu"
 	}
 
+	// Opened before the VM managers, which consult it to skip re-hashing
+	// store disks it has already verified, and early enough for the metrics
+	// updater below to poll the real image count. Nil-safe: the updater and
+	// Server.SetImageStore both tolerate a nil store.
+	var imgStore *image.Store
+	if store, ierr := image.NewStore(storePath); ierr != nil {
+		slog.Warn("jerboad: image store unavailable", "err", ierr)
+	} else {
+		imgStore = store
+	}
+	trusted := func(path, digest string) bool { return imgStore != nil && imgStore.Trusted(path, digest) }
+
 	var mgr interface {
 		vm.Manager
 		Store() vm.Store
@@ -265,10 +277,10 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			}
 		}
 		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
-		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors), vm.WithFCDiskDir(vmDiskDir))
+		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors), vm.WithFCDiskDir(vmDiskDir), vm.WithFCTrustedImages(trusted))
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, fcOpts...)
 	case "qemu":
-		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir))
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir), vm.WithTrustedImages(trusted))
 	default:
 		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
@@ -276,15 +288,6 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	netStore, err := network.NewStore(networksDir())
 	if err != nil {
 		return fmt.Errorf("jerboad: network store: %w", err)
-	}
-
-	// Opened early so the metrics updater below can poll the real image count.
-	// Nil-safe: the updater and Server.SetImageStore both tolerate a nil store.
-	var imgStore *image.Store
-	if store, ierr := image.NewStore(storePath); ierr != nil {
-		slog.Warn("jerboad: image store unavailable", "err", ierr)
-	} else {
-		imgStore = store
 	}
 
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGTERM, syscall.SIGINT)

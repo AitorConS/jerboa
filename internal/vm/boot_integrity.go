@@ -17,12 +17,20 @@ import (
 // supports one and a hole-preserving copy otherwise, so starting a VM no longer
 // writes the whole image.
 //
+// TrustedImageFunc reports whether the store disk at path holds exactly digest
+// without reading it: the store hashed it once and it is the same, unmodified
+// file since (see image.Store.Trusted).
+type TrustedImageFunc func(path, digest string) bool
+
 // When digest is set, the private disk itself is hashed after it is created.
 // A clone is a point-in-time copy, so this verifies exactly the bytes the VM
-// boots from, even if the source changed during a fallback copy. The verified
-// disk is then extended to minSize when it is smaller (the image's disk_size),
-// which only changes the length of a sparse file. On any error dst is removed.
-func prepareBootDisk(dst, src, digest string, minSize int64) error {
+// boots from, even if the source changed during a fallback copy. The hash is
+// skipped when trusted confirms, after the copy, that the source is still the
+// verified, unmodified store file, so the copy holds the verified bytes. The
+// verified disk is then extended to minSize when it is smaller (the image's
+// disk_size), which only changes the length of a sparse file. On any error
+// dst is removed.
+func prepareBootDisk(dst, src, digest string, minSize int64, trusted TrustedImageFunc) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return fmt.Errorf("create boot disk dir: %w", err)
 	}
@@ -30,7 +38,7 @@ func prepareBootDisk(dst, src, digest string, minSize int64) error {
 	if err != nil {
 		return fmt.Errorf("create boot disk: %w", err)
 	}
-	if digest != "" {
+	if digest != "" && (trusted == nil || !trusted(src, digest)) {
 		got, err := diskclone.HashFile(dst)
 		if err != nil {
 			_ = os.Remove(dst)

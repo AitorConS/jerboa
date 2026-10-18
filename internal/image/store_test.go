@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -463,4 +464,33 @@ func TestStore_ResolvesLegacyImageWithoutTagManifest(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "old", got.Name)
 	require.Equal(t, "latest", got.Tag)
+}
+
+func TestStore_TrustedSkipsRehashUntilDiskChanges(t *testing.T) {
+	s := makeStore(t)
+	disk := filepath.Join(t.TempDir(), "disk.img")
+	require.NoError(t, os.WriteFile(disk, []byte("original contents"), 0o600))
+	m, err := s.PutMove("app", "v1", validManifest(), disk)
+	require.NoError(t, err)
+	stored := filepath.Join(s.root, stripPrefix(m.DiskDigest), "disk.img")
+
+	info, err := os.Stat(stored)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o444), info.Mode().Perm(), "stored disks are read-only")
+	require.FileExists(t, filepath.Join(filepath.Dir(stored), "verified.json"))
+	require.True(t, s.Trusted(stored, m.DiskDigest))
+
+	// Only the store's own disk for that digest is ever trusted.
+	require.False(t, s.Trusted(disk, m.DiskDigest))
+	require.False(t, s.Trusted(stored, "sha256:"+strings.Repeat("0", 64)))
+
+	// Same size, mtime restored: the status-change time still gives it away.
+	require.NoError(t, os.Chmod(stored, 0o644))
+	require.NoError(t, os.WriteFile(stored, []byte("tampered contents"), 0o644))
+	require.NoError(t, os.Chtimes(stored, info.ModTime(), info.ModTime()))
+	require.False(t, s.Trusted(stored, m.DiskDigest))
+
+	// Putting the original bytes back is accepted again after a re-hash.
+	require.NoError(t, os.WriteFile(stored, []byte("original contents"), 0o644))
+	require.True(t, s.Trusted(stored, m.DiskDigest))
 }

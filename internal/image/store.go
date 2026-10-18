@@ -78,9 +78,22 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 		if move {
 			_ = os.Remove(diskPath)
 		}
-	} else if !move || os.Rename(diskPath, dst) != nil {
-		if err := copyFile(diskPath, dst); err != nil {
+	} else {
+		renamed := move && os.Rename(diskPath, dst) == nil
+		if !renamed {
+			if err := copyFile(diskPath, dst); err != nil {
+				return Manifest{}, fmt.Errorf("image store put disk: %w", err)
+			}
+		}
+		// Stored disks are never written in place; VMs boot private clones.
+		if err := os.Chmod(dst, 0o444); err != nil {
 			return Manifest{}, fmt.Errorf("image store put disk: %w", err)
+		}
+		// A renamed file is the one just hashed; a copy is hashed again.
+		if renamed {
+			_ = markVerified(imgDir, digest)
+		} else {
+			_ = s.verifyDisk(imgDir, digest)
 		}
 	}
 	data, err := Marshal(m)
@@ -109,14 +122,86 @@ func (s *Store) Get(ref string) (Manifest, string, error) {
 	if err != nil {
 		return Manifest{}, "", err
 	}
-	digest, err := fileSHA256(diskPath)
-	if err != nil {
-		return Manifest{}, "", err
-	}
-	if digest != m.DiskDigest {
+	if !s.Trusted(diskPath, m.DiskDigest) {
 		return Manifest{}, "", fmt.Errorf("image integrity mismatch: %s", ref)
 	}
 	return m, diskPath, nil
+}
+
+// diskIdentity pins the exact disk file whose contents were hashed.
+type diskIdentity struct {
+	Dev      uint64 `json:"dev"`
+	Ino      uint64 `json:"ino"`
+	Size     int64  `json:"size"`
+	ModNs    int64  `json:"mod_ns"`
+	ChangeNs int64  `json:"change_ns"`
+}
+
+// verifiedRecord is <digest dir>/verified.json: the disk file that was last
+// found to hash to Digest.
+type verifiedRecord struct {
+	Digest string       `json:"digest"`
+	Disk   diskIdentity `json:"disk"`
+}
+
+// Trusted reports whether the store disk at path holds exactly digest. The
+// disk is hashed once; afterwards it is trusted while it is the same,
+// unmodified file (see fileIdentity), so starting a VM or resolving an image
+// no longer reads the whole disk every time. A path outside the store, or for
+// another digest, is never trusted.
+func (s *Store) Trusted(path, digest string) bool {
+	sha := stripPrefix(digest)
+	if !isSHA256Hex(sha) {
+		return false
+	}
+	dir := filepath.Join(s.root, sha)
+	if filepath.Clean(path) != filepath.Join(dir, "disk.img") {
+		return false
+	}
+	if rec, ok := readVerified(dir); ok && rec.Digest == digest {
+		if id, ok := fileIdentity(path); ok && id == rec.Disk {
+			return true
+		}
+	}
+	return s.verifyDisk(dir, digest) == nil
+}
+
+// verifyDisk hashes the disk in dir and, when it matches digest, records it
+// as verified.
+func (s *Store) verifyDisk(dir, digest string) error {
+	got, err := fileSHA256(filepath.Join(dir, "disk.img"))
+	if err != nil {
+		return err
+	}
+	if got != digest {
+		return fmt.Errorf("image integrity mismatch: %s", digest)
+	}
+	return markVerified(dir, digest)
+}
+
+// markVerified records the current disk file in dir as holding digest.
+func markVerified(dir, digest string) error {
+	id, ok := fileIdentity(filepath.Join(dir, "disk.img"))
+	if !ok {
+		return nil
+	}
+	data, err := json.Marshal(verifiedRecord{Digest: digest, Disk: id})
+	if err != nil {
+		return fmt.Errorf("mark verified: %w", err)
+	}
+	return writeFileAtomic(filepath.Join(dir, "verified.json"), data)
+}
+
+func readVerified(dir string) (verifiedRecord, bool) {
+	data, err := os.ReadFile(filepath.Join(dir, "verified.json"))
+	if err != nil {
+		return verifiedRecord{}, false
+	}
+	var rec verifiedRecord
+	if json.Unmarshal(data, &rec) != nil {
+		return verifiedRecord{}, false
+	}
+	return rec, true
 }
 
 // Resolve pins a reference to its manifest and content-addressed disk path.

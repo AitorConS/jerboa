@@ -15,6 +15,12 @@ func TestAuditTamperedDisk(t *testing.T) {
 	require.NoError(t, s.Put("test", "latest", validManifest(), makeDiskFile(t)))
 	_, disk, err := s.Get("test")
 	require.NoError(t, err)
+	// Stored disks are read-only; a writer has to change that first. Root
+	// ignores the mode, so the refusal is only observable for other users.
+	if os.Geteuid() != 0 {
+		require.Error(t, os.WriteFile(disk, []byte("tampered"), 0o644))
+	}
+	require.NoError(t, os.Chmod(disk, 0o644))
 	require.NoError(t, os.WriteFile(disk, []byte("tampered"), 0o644))
 	_, _, err = s.Get("test")
 	require.ErrorContains(t, err, "integrity mismatch")

@@ -59,6 +59,12 @@ func WithFCMetricsDir(dir string) FCOption {
 	return func(m *FirecrackerManager) { m.metricsDir = dir }
 }
 
+// WithFCTrustedImages lets VM starts skip re-hashing store disks that the
+// image store has already verified.
+func WithFCTrustedImages(fn TrustedImageFunc) FCOption {
+	return func(m *FirecrackerManager) { m.trustedImage = fn }
+}
+
 // WithFCDiskDir sets the directory for per-VM private root disks. It should be
 // on the same filesystem as the image store so disks can be cloned instead of
 // copied. Empty uses the system temp dir.
@@ -80,10 +86,11 @@ func WithFCDiskDir(dir string) FCOption {
 //     (different from the BIOS-bootable kernel.img used by QEMU).
 type FirecrackerManager struct {
 	nativeNetworkHost
-	store       Store
-	fcBin       string
-	kernelImage string
-	fcSecurity  json.RawMessage
+	trustedImage TrustedImageFunc
+	store        Store
+	fcBin        string
+	kernelImage  string
+	fcSecurity   json.RawMessage
 	// noPeerControl records that the VMM rejected security.unix_control
 	// (an older build); direct VM-to-VM links are then never offered to it.
 	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
@@ -197,7 +204,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// scratch space and leaves the base pristine. Attached volumes stay shared
 	// and persistent — only the rootfs is cloned.
 	rootfs := m.rootfsPath(id)
-	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest, v.Cfg.MinDiskSize); err != nil {
+	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest, v.Cfg.MinDiskSize, m.trustedImage); err != nil {
 		_ = v.transition(StateStopped)
 		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
 	}

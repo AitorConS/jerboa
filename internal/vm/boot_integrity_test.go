@@ -18,13 +18,13 @@ func TestPrepareBootDiskIntegrity(t *testing.T) {
 	original := []byte("verified image")
 	digest := fmt.Sprintf("sha256:%x", sha256.Sum256(original))
 	require.NoError(t, os.WriteFile(src, original, 0o600))
-	require.NoError(t, prepareBootDisk(dst, src, digest, 0))
+	require.NoError(t, prepareBootDisk(dst, src, digest, 0, nil))
 	data, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, original, data)
 	// A source changed after reference resolution must never become bootable.
 	require.NoError(t, os.WriteFile(src, []byte("tampered image"), 0o600))
-	require.ErrorContains(t, prepareBootDisk(dst, src, digest, 0), "integrity mismatch")
+	require.ErrorContains(t, prepareBootDisk(dst, src, digest, 0, nil), "integrity mismatch")
 	_, err = os.Stat(dst)
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
@@ -33,7 +33,7 @@ func TestPrepareBootDiskWithoutDigest(t *testing.T) {
 	dir := t.TempDir()
 	src, dst := filepath.Join(dir, "source"), filepath.Join(dir, "boot")
 	require.NoError(t, os.WriteFile(src, []byte("unverified"), 0o600))
-	require.NoError(t, prepareBootDisk(dst, src, "", 0))
+	require.NoError(t, prepareBootDisk(dst, src, "", 0, nil))
 	data, err := os.ReadFile(dst)
 	require.NoError(t, err)
 	require.Equal(t, []byte("unverified"), data)
@@ -102,7 +102,7 @@ func TestPrepareBootDiskExtendsToMinSize(t *testing.T) {
 	require.NoError(t, os.WriteFile(src, original, 0o600))
 
 	// disk_size is applied after verification and rounded up to 512 KiB.
-	require.NoError(t, prepareBootDisk(dst, src, digest, 1<<20+1))
+	require.NoError(t, prepareBootDisk(dst, src, digest, 1<<20+1, nil))
 	info, err := os.Stat(dst)
 	require.NoError(t, err)
 	require.Equal(t, int64(1<<20+512<<10), info.Size())
@@ -114,8 +114,23 @@ func TestPrepareBootDiskExtendsToMinSize(t *testing.T) {
 	require.Equal(t, int64(len(original)), src2.Size(), "the stored image is never extended")
 
 	// A disk already larger than the minimum keeps its size.
-	require.NoError(t, prepareBootDisk(dst, src, "", 4))
+	require.NoError(t, prepareBootDisk(dst, src, "", 4, nil))
 	info, err = os.Stat(dst)
 	require.NoError(t, err)
 	require.Equal(t, int64(len(original)), info.Size())
+}
+
+func TestPrepareBootDiskSkipsHashForTrustedSource(t *testing.T) {
+	dir := t.TempDir()
+	src, dst := filepath.Join(dir, "source"), filepath.Join(dir, "boot")
+	require.NoError(t, os.WriteFile(src, []byte("store disk"), 0o600))
+	wrong := "sha256:" + fmt.Sprintf("%064x", 0)
+
+	var asked []string
+	trusting := func(path, digest string) bool { asked = append(asked, path); return true }
+	require.NoError(t, prepareBootDisk(dst, src, wrong, 0, trusting), "a trusted source is not re-hashed")
+	require.Equal(t, []string{src}, asked, "trust is checked on the source")
+
+	refusing := func(string, string) bool { return false }
+	require.ErrorContains(t, prepareBootDisk(dst, src, wrong, 0, refusing), "integrity mismatch")
 }

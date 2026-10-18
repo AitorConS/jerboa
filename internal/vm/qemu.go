@@ -40,7 +40,14 @@ func WithStore(s Store) Option {
 	return func(m *QEMUManager) { m.store = s }
 }
 
-// WithKernel selects the ARM64 kernel used for direct boot.
+// WithTrustedImages lets VM starts skip re-hashing store disks that the image
+// store has already verified.
+func WithTrustedImages(fn TrustedImageFunc) Option {
+	return func(m *QEMUManager) { m.trustedImage = fn }
+}
+
+// WithKernel selects the kernel QEMU loads directly: the ARM64 kernel on
+// macOS, the x86 PVH kernel for compact images on Linux.
 func WithKernel(path string) Option {
 	return func(m *QEMUManager) { m.kernelPath = path }
 }
@@ -65,13 +72,14 @@ func WithDiskDir(dir string) Option {
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
 	nativeNetworkHost
-	store      Store
-	qemuBin    string
-	kernelPath string
-	mkCmd      CommandFunc
-	hchecker   *HealthChecker
-	metrics    MetricsSink
-	diskDir    string
+	trustedImage TrustedImageFunc
+	store        Store
+	qemuBin      string
+	kernelPath   string
+	mkCmd        CommandFunc
+	hchecker     *HealthChecker
+	metrics      MetricsSink
+	diskDir      string
 	// applyLimits places the hypervisor process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -154,7 +162,7 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	bootCfg := v.Cfg
 	if bootCfg.ImageDigest != "" {
 		bootPath := m.bootDiskPath(v.ID)
-		if err := prepareBootDisk(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest, bootCfg.MinDiskSize); err != nil {
+		if err := prepareBootDisk(bootPath, bootCfg.ImagePath, bootCfg.ImageDigest, bootCfg.MinDiskSize, m.trustedImage); err != nil {
 			_ = v.transition(StateStopped)
 			return fmt.Errorf("qemu boot image: %w", err)
 		}
