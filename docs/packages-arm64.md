@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Linux ARM64 packages on macOS
+description: "Create Linux ARM64 packages on a Mac from a local ELF and sysroot, without Docker, and use them in jerboa builds."
 nav_order: 11
 ---
 

@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Release operations
+description: "How jerboa releases are built, validated and published: candidates, native macOS evidence, promotion and the signed stable channel."
 nav_order: 14
 ---
 

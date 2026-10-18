@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Using Jerboa on macOS
+description: "Install and use jerboa on an Apple Silicon Mac: the CLI, the daemon and your VMs run natively through Apple's Hypervisor.framework."
 nav_order: 9
 ---
 

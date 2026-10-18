@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Getting Started
+description: "Install jerboa on Linux, Windows (WSL2) or macOS, start the daemon, build an image, run a VM and use networks, DNS, volumes and compose."
 nav_order: 2
 ---
 

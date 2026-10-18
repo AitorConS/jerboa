@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Troubleshooting
+description: "Real jerboa and Nanos error messages, grouped by when they happen, with the cause and the fix for each."
 nav_order: 8
 ---
 

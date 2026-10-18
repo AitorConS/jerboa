@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Build Concepts
+description: "What happens when you run jerboa build: unikernels, the one-process model, language drivers, packages, volumes and the unikernel.toml reference."
 nav_order: 3
 ---
 

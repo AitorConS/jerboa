@@ -1,6 +1,7 @@
 ---
 layout: default
 title: macOS VM statistics
+description: "How jerboa measures CPU, memory, network and disk for Firecracker VMs on macOS, from the host process tree of each VM."
 nav_order: 15
 ---
 

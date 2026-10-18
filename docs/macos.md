@@ -1,6 +1,7 @@
 ---
 layout: default
 title: macOS Apple Silicon
+description: "The native macOS port of jerboa, a development preview: the ARM64 CLI, daemon, Desktop and filesystem tools, and ARM64 unikernels."
 nav_order: 9
 ---
 

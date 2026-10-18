@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Architecture
+description: "How jerboa is built: the jerboa CLI, the jerboad daemon that owns state and runs VMs, and the JSON-RPC protocol between them."
 nav_order: 6
 ---
 

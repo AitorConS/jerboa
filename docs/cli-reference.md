@@ -1,6 +1,7 @@
 ---
 layout: default
 title: CLI Reference
+description: "Every jerboa command and flag: VMs, images, packages, networks and DNS, volumes, compose, kernel tools, configuration and jerboad's own flags."
 nav_order: 4
 ---
 

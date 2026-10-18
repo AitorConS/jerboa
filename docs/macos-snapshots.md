@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Firecracker snapshots on macOS
+description: "Capture a running Firecracker VM on macOS and restore it in place with jerboa snapshot: commands, limits and the JSON-RPC methods."
 nav_order: 13
 ---
 

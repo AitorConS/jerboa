@@ -1,6 +1,7 @@
 ---
 layout: default
 title: macOS Firecracker distribution
+description: "The macOS distribution of jerboa: one relocatable ARM64 bundle with the CLI, daemon, native tools and the Firecracker/HVF package for Apple Silicon."
 parent: macOS Apple Silicon
 nav_order: 11
 ---
