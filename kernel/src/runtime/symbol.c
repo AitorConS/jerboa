@@ -36,6 +36,7 @@ symbol intern_u64(u64 u)
     return intern(b);
 }
 
+#ifdef KERNEL
 static u64 s[2] = { 0xa5a5beefa5a5cafe, 0xbeef55aaface55aa };
 
 #ifndef ROL
@@ -53,6 +54,7 @@ static u64 intern_hash_u64()
     s[1] = ROL(s1, 36); // c
     return result;
 }
+#endif
 
 symbol intern(string name)
 {
@@ -67,7 +69,16 @@ symbol intern(string name)
         s = allocate(sheap, sizeof(struct symbol));
         if (s == INVALID_ADDRESS)
             goto alloc_fail;
+#ifdef KERNEL
         s->k = intern_hash_u64();
+#else
+        /* Host tools write filesystems. Tuple entries are encoded in table
+           order, which follows these keys; deriving them from the name rather
+           than from the order symbols were interned (which differs between
+           host platforms) makes the same manifest produce the same image on
+           every host. */
+        s->k = fnv64(b);
+#endif
         s->s = b;
         table_set(symbols, b, s);
     }

@@ -136,6 +136,9 @@ static log_ext open_log_extension(log tl, range sectors)
     void *staging = allocate(dma, size_bytes);
     if (staging == INVALID_ADDRESS)
         goto fail_dealloc;
+    /* Flushes write whole blocks: the bytes past the end of the log must not
+       be stale memory, which would leak to disk and make images differ. */
+    zero(staging, size_bytes);
     init_buffer(&ext->staging, size_bytes, true, 0, staging);
     ext->open = false;
     ext->old_encoding = false;
