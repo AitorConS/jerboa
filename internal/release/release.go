@@ -11,7 +11,6 @@ package release
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -114,8 +113,9 @@ func (c *Client) FetchManifest(ctx context.Context, channel string) (*Manifest, 
 
 // DownloadArtifact streams a.URL to dest, verifying length and SHA-256 against
 // the (already signature-verified) manifest asset. The write is atomic: it lands
-// in dest.tmp and is renamed into place only after verification, so a crash or
-// hash mismatch never leaves a partial artifact at dest.
+// in dest.partial and is renamed into place only after verification, so a crash
+// or hash mismatch never leaves a partial artifact at dest. An interrupted
+// download resumes from dest.partial on the next call.
 func (c *Client) DownloadArtifact(ctx context.Context, a Asset, dest string) error {
 	if a.SHA256 == "" {
 		return fmt.Errorf("release: refusing to download %s with no sha256", a.URL)
@@ -125,71 +125,30 @@ func (c *Client) DownloadArtifact(ctx context.Context, a Asset, dest string) err
 	}
 
 	// A large artifact is streamed with no total deadline: a healthy transfer of
-	// any size must complete. The per-request cancel wired below lets the stall
-	// watchdog abort a dead connection (a Read stuck on a silent socket only
-	// unblocks when the request context is canceled).
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+	// any size must complete. The stall watchdog aborts only a dead connection.
+	// MaxSize caps the stream so a misbehaving/compromised origin cannot write
+	// an unbounded amount to disk before the hash check fails.
+	partial := dest + httpclient.PartialSuffix
+	dl := httpclient.Resumable{Client: c.streamingClient(), StallTimeout: StallTimeout, MaxSize: a.Size}
+	written, sum, err := dl.Fetch(ctx, a.URL, partial)
 	if err != nil {
-		return fmt.Errorf("release: build request: %w", err)
-	}
-	resp, err := c.streamingClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("release: download %s: %w", a.URL, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("release: download %s: HTTP %d", a.URL, resp.StatusCode)
-	}
-
-	tmp := dest + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
-	if err != nil {
-		return fmt.Errorf("release: create temp file: %w", err)
-	}
-	// Ensure the temp file never lingers on any error path.
-	cleanup := true
-	defer func() {
-		if cleanup {
-			_ = f.Close()
-			_ = os.Remove(tmp)
-		}
-	}()
-
-	h := sha256.New()
-	reader := io.TeeReader(resp.Body, h)
-	if a.Size > 0 {
-		// Cap the stream so a misbehaving/compromised origin cannot write an
-		// unbounded amount to disk before the hash check fails. +1 so an
-		// oversized body trips the size mismatch below instead of being
-		// silently truncated to exactly a.Size bytes.
-		reader = io.LimitReader(reader, a.Size+1)
-	}
-	// CopyWithStall aborts only if the transfer goes idle for StallTimeout — a
-	// slow but progressing download of any size still completes.
-	written, err := httpclient.CopyWithStall(f, reader, StallTimeout, cancel)
-	if err != nil {
-		return fmt.Errorf("release: write %s: %w", tmp, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("release: close %s: %w", tmp, err)
+		return fmt.Errorf("release: %w", err)
 	}
 
 	if a.Size > 0 && written != a.Size {
+		httpclient.DiscardPartial(partial)
 		return fmt.Errorf("release: %s size mismatch: got %d, want %d", a.URL, written, a.Size)
 	}
-	got := hex.EncodeToString(h.Sum(nil))
+	got := hex.EncodeToString(sum)
 	want := strings.ToLower(strings.TrimSpace(a.SHA256))
 	if got != want {
+		httpclient.DiscardPartial(partial)
 		return fmt.Errorf("release: %s sha256 mismatch: got %s, want %s", a.URL, got, want)
 	}
 
-	if err := os.Rename(tmp, dest); err != nil {
-		return fmt.Errorf("release: install %s: %w", dest, err)
+	if err := httpclient.CommitPartial(partial, dest); err != nil {
+		return fmt.Errorf("release: %w", err)
 	}
-	cleanup = false
 	return nil
 }
 

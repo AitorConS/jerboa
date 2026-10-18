@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,8 +11,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -283,6 +287,52 @@ func TestStore_Download_VerifiesSHA256(t *testing.T) {
 	}
 	require.NoError(t, store.Download(pkg))
 	require.True(t, store.IsDownloaded("testpkg", "1.0.0"))
+}
+
+// An interrupted download is never reported as downloaded, and the next
+// Download resumes it with a Range request instead of starting over.
+func TestStore_Download_ResumesInterrupted(t *testing.T) {
+	content := []byte(strings.Repeat("package archive bytes ", 1000))
+	sha := sha256.Sum256(content)
+
+	var calls atomic.Int32
+	var ranges []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ranges = append(ranges, r.Header.Get("Range"))
+		switch calls.Add(1) {
+		case 1:
+			w.Header().Set("ETag", `"v1"`)
+			w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+			_, _ = w.Write(content[:5000])
+			panic(http.ErrAbortHandler)
+		case 2:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			w.Header().Set("ETag", `"v1"`)
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(content))
+		}
+	}))
+	t.Cleanup(ts.Close)
+
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+	pkg := Package{
+		Name:    "resumepkg",
+		Version: "1.0.0",
+		Size:    int64(len(content)),
+		SHA256:  hex.EncodeToString(sha[:]),
+		URL:     ts.URL + "/resumepkg-1.0.0.tar.gz",
+	}
+
+	require.Error(t, store.Download(pkg))
+	require.False(t, store.IsDownloaded("resumepkg", "1.0.0"))
+
+	require.NoError(t, store.Download(pkg))
+	require.True(t, store.IsDownloaded("resumepkg", "1.0.0"))
+	require.Equal(t, []string{"", "bytes=5000-", "bytes=5000-"}, ranges)
+	got, err := os.ReadFile(filepath.Join(store.PackageDir("resumepkg", "1.0.0"), "files.tar.gz"))
+	require.NoError(t, err)
+	require.Equal(t, content, got)
 }
 
 func TestStore_Download_SHA256Mismatch(t *testing.T) {

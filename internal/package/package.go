@@ -147,56 +147,31 @@ func (s *Store) Download(pkg Package) error {
 	slog.Info("downloading package", "name", pkg.Name, "version", pkg.Version)
 
 	// A package archive can be hundreds of MiB (e.g. a language runtime), so it
-	// is streamed with no total deadline; the stall watchdog below aborts only a
-	// dead connection. The cancel unblocks a Read stuck on a silent socket.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pkg.URL, nil)
-	if err != nil {
-		return fmt.Errorf("package download request: %w", err)
-	}
-
-	resp, err := httpclient.Streaming.Do(req)
+	// is streamed with no total deadline; the stall watchdog aborts only a dead
+	// connection. It lands in files.tar.gz.partial, so an interrupted download
+	// resumes there and never leaves a truncated archive at archivePath.
+	partial := archivePath + httpclient.PartialSuffix
+	dl := httpclient.Resumable{MaxSize: pkg.Size}
+	size, sum, err := dl.Fetch(context.Background(), pkg.URL, partial)
 	if err != nil {
 		return fmt.Errorf("package download %s: %w", pkg.Name, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("package download %s: HTTP %d", pkg.Name, resp.StatusCode)
-	}
-
-	f, err := os.Create(archivePath)
-	if err != nil {
-		return fmt.Errorf("package download create %s: %w", archivePath, err)
-	}
-
-	hash := sha256.New()
-	mw := io.MultiWriter(f, hash)
-
-	size, err := httpclient.CopyWithStall(mw, resp.Body, httpclient.DefaultStallTimeout, cancel)
-	if err != nil {
-		_ = f.Close()
-		_ = os.Remove(archivePath)
-		return fmt.Errorf("package download write: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		_ = os.Remove(archivePath)
-		return fmt.Errorf("package download close: %w", err)
-	}
 
 	if pkg.Size > 0 && size != pkg.Size {
-		_ = os.Remove(archivePath)
+		httpclient.DiscardPartial(partial)
 		return fmt.Errorf("package download: %w (got %d, want %d)", ErrSizeMismatch, size, pkg.Size)
 	}
 
 	if pkg.SHA256 != "" {
-		got := hex.EncodeToString(hash.Sum(nil))
+		got := hex.EncodeToString(sum)
 		if !strings.EqualFold(got, pkg.SHA256) {
-			_ = os.Remove(archivePath)
+			httpclient.DiscardPartial(partial)
 			return fmt.Errorf("package download: %w (got %s, want %s)", ErrChecksumMismatch, got, pkg.SHA256)
 		}
+	}
+
+	if err := httpclient.CommitPartial(partial, archivePath); err != nil {
+		return fmt.Errorf("package download: %w", err)
 	}
 
 	slog.Info("package downloaded", "name", pkg.Name, "version", pkg.Version, "size_mb", fmt.Sprintf("%.1f", float64(size)/(1<<20)))

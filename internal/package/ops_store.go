@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -145,50 +144,24 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 
 	// Ops runtime packages are large (a Node.js runtime is ~190 MiB), so the body
 	// is streamed with no total deadline; the stall watchdog aborts only a dead
-	// connection. cancel unblocks a Read stuck on a silent socket.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return fmt.Errorf("ops download request: %w", err)
-	}
-
-	resp, err := httpclient.Streaming.Do(req)
+	// connection. It lands in <arch>.tar.gz.partial, so an interrupted download
+	// resumes there and never leaves a truncated archive at archivePath.
+	partial := archivePath + httpclient.PartialSuffix
+	size, sum, err := httpclient.Resumable{}.Fetch(context.Background(), downloadURL, partial)
 	if err != nil {
 		return fmt.Errorf("ops download %s/%s: %w", namespace, name, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ops download %s/%s: HTTP %d", namespace, name, resp.StatusCode)
-	}
-
-	f, err := os.Create(archivePath)
-	if err != nil {
-		return fmt.Errorf("ops download create %s: %w", archivePath, err)
-	}
-
-	hash := sha256.New()
-	mw := io.MultiWriter(f, hash)
-
-	size, err := httpclient.CopyWithStall(mw, resp.Body, httpclient.DefaultStallTimeout, cancel)
-	if err != nil {
-		_ = f.Close()
-		_ = os.Remove(archivePath)
-		return fmt.Errorf("ops download write: %w", err)
-	}
-
-	if err := f.Close(); err != nil {
-		_ = os.Remove(archivePath)
-		return fmt.Errorf("ops download close: %w", err)
-	}
 
 	if expectedSHA256 != "" {
-		got := hex.EncodeToString(hash.Sum(nil))
+		got := hex.EncodeToString(sum)
 		if !strings.EqualFold(got, expectedSHA256) {
-			_ = os.Remove(archivePath)
+			httpclient.DiscardPartial(partial)
 			return fmt.Errorf("ops download: %w (got %s, want %s)", ErrChecksumMismatch, got, expectedSHA256)
 		}
+	}
+
+	if err := httpclient.CommitPartial(partial, archivePath); err != nil {
+		return fmt.Errorf("ops download: %w", err)
 	}
 
 	slog.Info("ops package downloaded", "namespace", namespace, "name", name, "version", version,
@@ -692,6 +665,11 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		}
 
 		if strings.HasSuffix(rel, ".tar.gz") || rel == "manifest.json" || rel == "package.manifest" {
+			return nil
+		}
+		// An interrupted download of another architecture's archive.
+		if strings.HasSuffix(rel, ".tar.gz"+httpclient.PartialSuffix) ||
+			strings.HasSuffix(rel, ".tar.gz"+httpclient.PartialSuffix+httpclient.ValidatorSuffix) {
 			return nil
 		}
 		if strings.HasPrefix(filepath.Base(rel), "._") {
