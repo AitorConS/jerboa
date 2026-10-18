@@ -429,3 +429,24 @@ func TestGoDriverBuildWithEntrypoint(t *testing.T) {
 		_ = os.Remove(result.BinaryPath)
 	})
 }
+
+func TestRustStripConfigured(t *testing.T) {
+	t.Setenv("CARGO_PROFILE_RELEASE_STRIP", "")
+	require.NoError(t, os.Unsetenv("CARGO_PROFILE_RELEASE_STRIP"))
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"app\"\n\n[profile.release]\nlto = true\n"), 0o644))
+	require.False(t, rustStripConfigured(dir))
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"app\"\n\n[profile.release]\nstrip = false\n"), 0o644))
+	require.True(t, rustStripConfigured(dir))
+
+	other := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(other, "Cargo.toml"), []byte("[package]\nname = \"app\"\n"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(other, ".cargo"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(other, ".cargo", "config.toml"), []byte("[profile.release]\nstrip = \"debuginfo\"\n"), 0o644))
+	require.True(t, rustStripConfigured(other))
+
+	t.Setenv("CARGO_PROFILE_RELEASE_STRIP", "none")
+	require.True(t, rustStripConfigured(t.TempDir()))
+}

@@ -521,6 +521,34 @@ func pythonVersionFromConfig(dir string) (string, error) {
 	}
 }
 
+// rustStripConfigured reports whether the project already chooses how release
+// builds are stripped: through CARGO_PROFILE_RELEASE_STRIP, or a strip key in
+// [profile.release] of Cargo.toml or .cargo/config.toml. The environment
+// variable would override either file, so the driver only sets it otherwise.
+func rustStripConfigured(dir string) bool {
+	if _, ok := os.LookupEnv("CARGO_PROFILE_RELEASE_STRIP"); ok {
+		return true
+	}
+	for _, name := range []string{"Cargo.toml", filepath.Join(".cargo", "config.toml"), filepath.Join(".cargo", "config")} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		var manifest struct {
+			Profile struct {
+				Release map[string]any `toml:"release"`
+			} `toml:"profile"`
+		}
+		if toml.Unmarshal(data, &manifest) != nil {
+			continue
+		}
+		if _, ok := manifest.Profile.Release["strip"]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // RustDriver builds Rust projects into static ELF binaries via cross-compilation.
 type RustDriver struct{}
 
@@ -554,6 +582,11 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	cmd.Stdout = w
 	cmd.Stderr = w
 	cmd.Env = append(os.Environ(), "CARGO_BUILD_TARGET="+target)
+	if !rustStripConfigured(dir) {
+		// Symbols and debug info are a large share of a release binary and a
+		// unikernel never reads them.
+		cmd.Env = append(cmd.Env, "CARGO_PROFILE_RELEASE_STRIP=symbols")
+	}
 
 	if err := cmd.Run(); err != nil {
 		return BuildResult{}, fmt.Errorf("rust driver: cargo build: %w", err)
