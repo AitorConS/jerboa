@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Benchmarks
+description: "jerboa-bench compares jerboa's hypervisor backends with each other and with Docker, with one binary, shuffled repeated runs and separate phases."
 nav_order: 16
 ---
 

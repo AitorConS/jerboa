@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Observability
+description: "jerboa's observability: the daemon's /metrics and /health endpoints, the metrics it exports and how to enable them."
 nav_order: 7
 ---
 

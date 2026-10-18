@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Compose
+description: "Run multi-service stacks with jerboa compose: the stack file format, what the parser enforces, how services run and the commands."
 nav_order: 5
 ---
 

@@ -1,6 +1,7 @@
 ---
 layout: default
 title: PostgreSQL ARM64 on Nanos
+description: "Run PostgreSQL on an ARM64 Nanos guest with jerboa, and why an unmodified upstream binary cannot run on a single-application kernel."
 nav_order: 12
 ---
 

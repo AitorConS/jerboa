@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Firecracker on macOS
+description: "Run jerboa on the native Hypervisor.framework Firecracker backend for macOS, built from the firecracker-macos checkout."
 parent: macOS Apple Silicon
 nav_order: 10
 ---

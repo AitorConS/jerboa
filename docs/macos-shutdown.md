@@ -1,6 +1,7 @@
 ---
 layout: default
 title: Firecracker shutdown on macOS
+description: "How jerboa stops Nanos guests on macOS: a VirtIO input KEYPOWER event under the Firecracker/HVF backend, and how the guest handles it."
 nav_order: 14
 ---
 
