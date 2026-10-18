@@ -1,0 +1,52 @@
+{
+  "checks": {
+    "firecracker": "pass",
+    "qemu": "pass"
+  },
+  "hypervisors": {
+    "firecracker": "Firecracker v1.16.0\n\n2026-10-18T01:33:15.060684987 [anonymous-instance:main] Firecracker exiting successfully. exit_code=0",
+    "qemu": "QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.17)\nCopyright (c) 2003-2023 Fabrice Bellard and the QEMU Project developers"
+  },
+  "logs": {
+    "firecracker": {
+      "sha256": "2c14e58bbbcb368dfcdc4a14419c4dec06c9c8749f4d60d72c4e18eefa0a3a8d",
+      "size": 3476
+    },
+    "qemu": {
+      "sha256": "b66f768123292706dad6ed2d938b1a6fe7291834fda1922023840a2264999d27",
+      "size": 266
+    }
+  },
+  "toolset": {
+    "engine_sha": "c345513040ab359ff6664a780ea090e09c9f6b23",
+    "files": {
+      "boot.img": {
+        "sha256": "6f49f57c6e7211d40a6f1de0599c9bb9ec81f9282f04e807a89fa1c976059b00",
+        "size": 51712
+      },
+      "dump-linux-amd64": {
+        "sha256": "8f877e61d291eb1c1734e3faf4b52f4fdb774970913eb16fffe3ab40f2e41b1f",
+        "size": 1858592
+      },
+      "kernel-fc.img": {
+        "sha256": "e88ad6389cc1228983ccb9f6ddea82fe99907026c9a4ee5a94f6fc3137328ec7",
+        "size": 1605496
+      },
+      "kernel.img": {
+        "sha256": "e88ad6389cc1228983ccb9f6ddea82fe99907026c9a4ee5a94f6fc3137328ec7",
+        "size": 1605496
+      },
+      "mkfs-linux-amd64": {
+        "sha256": "33bbfbfd663edda5ba9e4f0b23d12de7af0496f3bea59c6c281e30d1f5d3ac2f",
+        "size": 2744840
+      }
+    },
+    "kernel_source": "stable",
+    "kernel_version": "v0.2.2",
+    "run_id": "39086609415",
+    "stable_manifest": {
+      "sha256": "69afc5e4f56f69098aa652bc2cd13881bf100a153f86aa12252c552db5f1a4bf",
+      "size": 3630
+    }
+  }
+}
