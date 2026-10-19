@@ -259,6 +259,11 @@ func newRunCmd(socketPath *string) *cobra.Command {
 // imagePath (validated not to be a raw ELF binary); a name:tag reference is
 // returned as imageRef for the daemon to resolve against its store.
 func splitImageArg(imgArg string) (imageRef, imagePath string, err error) {
+	// A registry reference such as aitorcons/web:v1 names a stored image even
+	// though it contains a slash; anything with a path prefix is a file.
+	if _, statErr := os.Stat(imgArg); statErr != nil && !isFilePath(imgArg) {
+		return imgArg, "", nil
+	}
 	if isFilePath(imgArg) {
 		if err := rejectELF(imgArg); err != nil {
 			return "", "", err

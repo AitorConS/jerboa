@@ -376,6 +376,15 @@ func (s *Server) resolveImageRef(image string) (string, error) {
 	if image == "" {
 		return "", fmt.Errorf("image is required")
 	}
+	// Registry images keep their namespace in the name (aitorcons/web:v1),
+	// so a stored reference wins over the path heuristic.
+	if s.isStoredImage(image) {
+		_, diskPath, err := s.imgStore.Get(image)
+		if err != nil {
+			return "", fmt.Errorf("image %q: %w", image, err)
+		}
+		return diskPath, nil
+	}
 	if looksLikePath(image) {
 		return image, nil
 	}
@@ -389,6 +398,15 @@ func (s *Server) resolveImageRef(image string) (string, error) {
 		return "", fmt.Errorf("image %q not found", image)
 	}
 	return diskPath, nil
+}
+
+// isStoredImage reports whether image names an image in the daemon's store.
+func (s *Server) isStoredImage(image string) bool {
+	if s.imgStore == nil {
+		return false
+	}
+	_, _, err := s.imgStore.Resolve(image)
+	return err == nil
 }
 
 // looksLikePath reports whether s is a filesystem path rather than a name:tag
@@ -418,7 +436,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	imageDigest := ""
 	var resolvedManifest *image.Manifest
 	if p.Image != "" {
-		if s.imgStore != nil && !looksLikePath(p.Image) {
+		if s.imgStore != nil && (!looksLikePath(p.Image) || s.isStoredImage(p.Image)) {
 			m, disk, err := s.imgStore.Resolve(p.Image)
 			if err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
@@ -437,7 +455,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	}
 
 	architecture := ""
-	if runtime.GOOS == "darwin" && (p.ImagePath != "" || looksLikePath(p.Image)) {
+	if runtime.GOOS == "darwin" && (p.ImagePath != "" || (looksLikePath(p.Image) && !s.isStoredImage(p.Image))) {
 		architecture = "arm64"
 		if p.EmulateX86 {
 			architecture = "amd64"

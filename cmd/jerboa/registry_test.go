@@ -18,3 +18,16 @@ func TestLocalName(t *testing.T) {
 		require.Equal(t, want, [2]string{name, tag}, in)
 	}
 }
+
+func TestSplitImageArgKeepsRegistryReferences(t *testing.T) {
+	for _, ref := range []string{"aitorcons/web:v1", "localhost:8788/acme/api:dev", "web:latest"} {
+		img, path, err := splitImageArg(ref)
+		require.NoError(t, err)
+		require.Equal(t, ref, img)
+		require.Empty(t, path)
+	}
+	img, path, err := splitImageArg("./disk.img")
+	require.NoError(t, err)
+	require.Empty(t, img)
+	require.Equal(t, "./disk.img", path)
+}

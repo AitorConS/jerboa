@@ -103,3 +103,17 @@ func TestImagePushAndPullThroughTheDaemon(t *testing.T) {
 	_, err = c.ImagePush(ctx, api.ImagePushParams{Reference: reg.Host() + "/alice/missing:v1", Token: "t"})
 	require.ErrorContains(t, err, "jerboa tag")
 }
+
+// Registry names contain a slash; run must resolve them in the store rather
+// than treat them as a disk path.
+func TestRunResolvesRegistryNamedImage(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+	buildImage(t, client, "web", "latest")
+	_, err = client.ImageTag(context.Background(), api.ImageTagParams{Source: "web:latest", Name: "alice/web", Tag: "v1"})
+	require.NoError(t, err)
+	info, err := client.Run(context.Background(), api.RunParams{Image: "alice/web:v1", Memory: "256M", CPUs: 1})
+	require.NoError(t, err)
+	require.NotEmpty(t, info.ID)
+}
