@@ -23,6 +23,12 @@ KERNEL_FILES = {'mkfs': 'mkfs-linux-amd64', 'dump': 'dump-linux-amd64',
                 'boot.img': 'boot.img', 'kernel.img': 'kernel.img',
                 'kernel-fc.img': 'kernel-fc.img'}
 
+# Host tools published beside each newly built kernel, so a client can run the
+# mkfs of the exact toolset an image recipe names. linux-amd64 is the kernel
+# component's own mkfs; the others come from their native build jobs.
+TOOLSET_MKFS = {'linux-arm64': Path('mkfs-linux-arm64') / 'mkfs',
+                'darwin-arm64': Path('mkfs-darwin-arm64') / 'mkfs'}
+
 REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64'},
             'daemon': {'linux-amd64', 'darwin-arm64'},
             'desktop': {'windows-amd64', 'darwin-arm64'}}
@@ -201,6 +207,31 @@ def verify_linux_versions(manifest, payload, expected):
             raise ValueError('Distro binary version mismatch: ' + output)
 
 
+def host_binary_platform(path):
+    """Return '<os>-<arch>' from an ELF or Mach-O header, or None."""
+    head = Path(path).read_bytes()[:20]
+    if head[:4] == b'\x7fELF' and len(head) >= 20:
+        machine = int.from_bytes(head[18:20], 'little')
+        return {62: 'linux-amd64', 183: 'linux-arm64'}.get(machine)
+    if head[:4] == b'\xcf\xfa\xed\xfe' and len(head) >= 8:
+        cpu = int.from_bytes(head[4:8], 'little')
+        return {0x0100000c: 'darwin-arm64', 0x01000007: 'darwin-amd64'}.get(cpu)
+    return None
+
+
+def stage_toolset(stage, kernel_component, payload, kernel_version):
+    """Publish mkfs for every host and the signed toolset document listing them."""
+    mkfs = {'linux-amd64': kernel_component['files']['mkfs']}
+    for platform, source in TOOLSET_MKFS.items():
+        if host_binary_platform(source) != platform:
+            raise ValueError(f'mkfs for {platform} is not a {platform} binary')
+        mkfs[platform] = stage(source, f'kernel/{kernel_version}/mkfs-{platform}')
+    doc = payload / 'kernel' / kernel_version / 'toolset.json'
+    write_json(doc, {'version': kernel_version, 'mkfs': mkfs})
+    sign(doc, f'toolset:{kernel_version}')
+    return doc
+
+
 def verify_kernel_evidence(record, boot, spec):
     for key in ('engine_sha', 'run_id', 'kernel_version', 'kernel_source'):
         if record[key] != spec[key]:
@@ -290,6 +321,9 @@ def assemble():
     components['kernel'] = {'version': spec['kernel_version'], 'files': {
         name: stage(Path('kernel-candidate') / filename, f'kernel/{spec["kernel_version"]}/{filename}')
         for name, filename in KERNEL_FILES.items()}}
+    # A reused kernel already shipped its toolset document with its first release.
+    if spec['kernel_source'] == 'build':
+        stage_toolset(stage, components['kernel'], payload, spec['kernel_version'])
     for component, platforms in REQUIRED.items():
         components[component] = {'version': v, 'platforms': {}}
         for platform in sorted(platforms):
@@ -354,7 +388,29 @@ def verify_candidate(root):
                     for name, filename in KERNEL_FILES.items()}
         if manifest['components']['kernel'] != {'version': inv['kernel_version'], 'files': expected}:
             raise ValueError('Kernel manifest does not match tested toolset')
+        if inv['kernel_source'] == 'build':
+            verify_toolset(root / 'payload', manifest['components']['kernel'], inv)
     return inv, manifest
+
+
+def verify_toolset(payload, kernel_component, inv):
+    kv = inv['kernel_version']
+    doc = payload / 'kernel' / kv / 'toolset.json'
+    if not doc.is_file():
+        raise ValueError('Toolset document missing for built kernel')
+    verify_signature(doc)
+    toolset = json.loads(doc.read_text())
+    if toolset.get('version') != kv or set(toolset.get('mkfs', {})) != {'linux-amd64', *TOOLSET_MKFS}:
+        raise ValueError('Toolset document does not list every host mkfs')
+    if toolset['mkfs']['linux-amd64'] != kernel_component['files']['mkfs']:
+        raise ValueError('Toolset linux-amd64 mkfs differs from the kernel component')
+    for platform in TOOLSET_MKFS:
+        asset = toolset['mkfs'][platform]
+        key = f'kernel/{kv}/mkfs-{platform}'
+        if asset['url'] != f'{BASE}/{key}' or inv['assets'].get(key) != {'sha256': asset['sha256'], 'size': asset['size']}:
+            raise ValueError(f'Toolset mkfs {platform} does not match the candidate')
+        if host_binary_platform(payload / key) != platform:
+            raise ValueError(f'mkfs for {platform} is not a {platform} binary')
 
 
 def api(path):

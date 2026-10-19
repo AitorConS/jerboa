@@ -107,8 +107,18 @@ class KernelCandidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'checksum'):
                 c.kernel()
 
+    def host_binaries(self):
+        elf = bytearray(64); elf[:4] = b'\x7fELF'; elf[18:20] = (183).to_bytes(2, 'little')
+        macho = bytearray(64); macho[:4] = b'\xcf\xfa\xed\xfe'; macho[4:8] = (0x0100000c).to_bytes(4, 'little')
+        for platform, data in [('linux-arm64', elf), ('darwin-arm64', macho)]:
+            p = c.TOOLSET_MKFS[platform]; p.parent.mkdir(exist_ok=True); p.write_bytes(bytes(data))
+
     def assemble(self):
         self.stage()
+        self.host_binaries()
+        return self.assemble_only()
+
+    def assemble_only(self):
         for component, platforms in c.REQUIRED.items():
             for platform in platforms:
                 if component == 'desktop':
@@ -135,6 +145,12 @@ class KernelCandidateTests(unittest.TestCase):
 
     def test_assembly_and_inventory_preserve_tested_kernel_bytes(self):
         inv, manifest = self.assemble()
+        # A built kernel ships its host mkfs and the toolset document naming them.
+        doc = json.loads(Path(f'candidate/payload/kernel/v0.2.1/toolset.json').read_text())
+        self.assertEqual(set(doc['mkfs']), {'linux-amd64', 'linux-arm64', 'darwin-arm64'})
+        self.assertEqual(doc['mkfs']['linux-amd64'], manifest['components']['kernel']['files']['mkfs'])
+        self.assertIn('kernel/v0.2.1/toolset.json', inv['assets'])
+        self.assertIn('kernel/v0.2.1/mkfs-darwin-arm64', inv['assets'])
         self.assertEqual(inv['kernel_toolset'], self.record)
         self.assertEqual(manifest['components']['distro']['kernel'], 'v0.2.1')
         for name, filename in c.KERNEL_FILES.items():
@@ -200,6 +216,25 @@ class KernelCandidateTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     c.promote()
                 put.assert_not_called()
+
+    def test_toolset_rejects_wrong_host_binary(self):
+        self.stage()
+        self.host_binaries()
+        # Swapped artifacts: the Linux arm64 slot holds the macOS binary.
+        shutil.copyfile(c.TOOLSET_MKFS['darwin-arm64'], c.TOOLSET_MKFS['linux-arm64'])
+        with self.assertRaisesRegex(ValueError, 'not a linux-arm64 binary'):
+            self.assemble_only()
+
+    def test_tampered_toolset_document_is_rejected(self):
+        self.assemble()
+        doc = Path('candidate/payload/kernel/v0.2.1/toolset.json')
+        data = json.loads(doc.read_text()); data['mkfs']['linux-arm64']['sha256'] = '0' * 64
+        c.write_json(doc, data)
+        inv = json.loads(Path('candidate/inventory.json').read_text())
+        inv['assets']['kernel/v0.2.1/toolset.json'] = c.digest(doc)
+        c.write_json('candidate/inventory.json', inv)
+        with patch.object(c, 'verify_signature'), self.assertRaisesRegex(ValueError, 'does not match the candidate'):
+            c.verify_candidate('candidate')
 
 
 if __name__ == '__main__':
