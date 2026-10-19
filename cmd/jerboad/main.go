@@ -436,6 +436,9 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			vmSrv.EnableRecipes(blobs, func(platform string) (*image.Toolset, error) {
 				return tools.ToolsetFor(toolsDir, platform)
 			})
+			vmSrv.EnableRegistry(func(ctx context.Context, version string) (string, error) {
+				return tools.MkfsForVersion(ctx, toolsDir, version)
+			})
 		}
 	}
 	if volStore, err := volume.NewStore(volumeStorePath(storePath)); err != nil {

@@ -317,6 +317,34 @@ the VM only if the digest matches.
 
 ---
 
+## Registry Commands
+
+Images move between machines through an image registry, by default
+`registry.jerboa.dev`. A push uploads the image's **recipe** and only the files
+the registry does not already have; a pull fetches the files the daemon lacks
+and assembles the disk locally with the recipe's pinned `mkfs`, then verifies it
+byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
+
+| Command | Description |
+|---|---|
+| `login [registry]` | Log in with GitHub (device flow: approve the code shown in a browser). `--token <pat>`, or `JERBOA_REGISTRY_TOKEN`, uses a personal access token instead, as CI does |
+| `logout [registry]` | Forget the stored credential |
+| `tag <image> <target>` | Give a stored image another name, e.g. the reference to push it as |
+| `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to |
+| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store |
+
+```sh
+jerboa build . --name web
+jerboa tag web:latest aitorcons/web:v1
+jerboa login
+jerboa push aitorcons/web:v1
+jerboa pull aitorcons/web:v1   # on another machine
+jerboa run aitorcons/web:v1
+```
+
+Credentials live in `~/.jerboa/credentials.json` (mode 0600) and stay with the
+CLI: the daemon only receives a 15-minute push token per push.
+
 ## Package Commands
 
 `jerboa pkg` manages runtime packages used during builds.
@@ -691,11 +719,15 @@ Root commands currently exposed by the built CLI:
 - `init`
 - `inspect`
 - `kernel`
+- `login`
+- `logout`
 - `logs`
 - `network`
 - `node`
 - `pkg`
 - `ps`
+- `pull`
+- `push`
 - `rm`
 - `rmi`
 - `run`
@@ -703,6 +735,7 @@ Root commands currently exposed by the built CLI:
 - `stats`
 - `status`
 - `stop`
+- `tag`
 - `verify`
 - `version`
 - `volume`

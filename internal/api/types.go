@@ -412,3 +412,42 @@ type VolumeRemoveParams struct {
 	Name     string `json:"name"`
 	DiskPath string `json:"disk_path"`
 }
+
+// ImageTagParams gives a stored image another name:tag.
+type ImageTagParams struct {
+	Source string `json:"source"`
+	Name   string `json:"name"`
+	Tag    string `json:"tag"`
+}
+
+// ImagePushParams pushes the image named by Reference ([registry/]ns/repo:tag)
+// in the daemon's store, with a push token the CLI obtained.
+type ImagePushParams struct {
+	Reference string `json:"reference"`
+	Token     string `json:"token"`
+}
+
+// ImagePushResult reports a push.
+type ImagePushResult struct {
+	Reference     string `json:"reference"`
+	Recipe        string `json:"recipe"`
+	Blobs         int    `json:"blobs"`
+	BlobsUploaded int    `json:"blobs_uploaded"`
+	PacksUploaded int    `json:"packs_uploaded"`
+	BytesUploaded int64  `json:"bytes_uploaded"`
+}
+
+// ImagePullParams pulls [registry/]ns/repo[:tag|@digest].
+type ImagePullParams struct {
+	Reference string `json:"reference"`
+}
+
+// ImagePullResult reports a pull and the image it stored.
+type ImagePullResult struct {
+	Image        ImageManifestResult `json:"image"`
+	Recipe       string              `json:"recipe"`
+	Blobs        int                 `json:"blobs"`
+	BlobsFetched int                 `json:"blobs_fetched"`
+	Requests     int                 `json:"requests"`
+	BytesFetched int64               `json:"bytes_fetched"`
+}

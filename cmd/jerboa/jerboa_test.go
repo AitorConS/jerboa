@@ -401,14 +401,19 @@ func TestFormatSize(t *testing.T) {
 	require.Equal(t, "512B", formatSize(512))
 }
 
-func TestRootCmd_NoRegistryCommandsOrFlags(t *testing.T) {
+// Image registry commands speak the recipe protocol (docs/registry-protocol.md);
+// the old OCI registry command set and its global flags stay gone.
+func TestRootCmd_RegistryCommands(t *testing.T) {
 	root := newRootCmd()
 
-	for _, name := range []string{"push", "pull", "search"} {
+	for _, name := range []string{"push", "pull", "login", "logout", "tag"} {
 		cmd, _, err := root.Find([]string{name})
-		require.Error(t, err)
-		require.Equal(t, root, cmd)
+		require.NoError(t, err, name)
+		require.Equal(t, name, cmd.Name())
 	}
+	cmd, _, err := root.Find([]string{"search"})
+	require.Error(t, err)
+	require.Equal(t, root, cmd)
 
 	for _, flag := range []string{"registry-token", "registry-ca-cert", "registry-insecure"} {
 		require.Nil(t, root.PersistentFlags().Lookup(flag))

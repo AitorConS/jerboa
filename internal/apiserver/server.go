@@ -25,6 +25,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
+	"github.com/AitorConS/jerboa/internal/registry/transfer"
 	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/AitorConS/jerboa/internal/volume"
@@ -60,8 +61,11 @@ type Server struct {
 	mkfsResolver func(context.Context) (image.MkfsFunc, error)
 	mkfsCached   image.MkfsFunc
 	// recipes holds build inputs and image recipes; nil disables recording.
-	recipes      *cas.Store
-	toolsetFor   func(platform string) (*image.Toolset, error)
+	recipes    *cas.Store
+	toolsetFor func(platform string) (*image.Toolset, error)
+	// registryMkfs returns the mkfs of a toolset version, for registry
+	// pushes (dry run) and pulls (assembly).
+	registryMkfs transfer.MkfsFor
 	volFmtMu     sync.Mutex
 	volFmtResolv func(context.Context) (volume.Formatter, error)
 	volFmtCached volume.Formatter
@@ -291,6 +295,12 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleImageRemove(req.Params)
 	case "Image.Recipe":
 		return s.handleImageRecipe(req.Params)
+	case "Image.Tag":
+		return s.handleImageTag(req.Params)
+	case "Image.Push":
+		return s.handleImagePush(ctx, req.Params)
+	case "Image.Pull":
+		return s.handleImagePull(ctx, req.Params)
 	case "VM.Run":
 		return s.handleRun(ctx, req.Params)
 	case "VM.Start":

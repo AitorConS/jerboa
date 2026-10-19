@@ -513,6 +513,33 @@ func (c *Client) ImageGet(_ context.Context, ref string) (ImageManifestResult, e
 	return out, nil
 }
 
+// ImageTag gives a stored image another name:tag.
+func (c *Client) ImageTag(_ context.Context, p ImageTagParams) (ImageManifestResult, error) {
+	var out ImageManifestResult
+	if err := c.call("Image.Tag", p, &out); err != nil {
+		return out, fmt.Errorf("client image tag: %w", err)
+	}
+	return out, nil
+}
+
+// ImagePush pushes a stored image to its registry.
+func (c *Client) ImagePush(_ context.Context, p ImagePushParams) (ImagePushResult, error) {
+	var out ImagePushResult
+	if err := c.call("Image.Push", p, &out); err != nil {
+		return out, fmt.Errorf("client image push: %w", err)
+	}
+	return out, nil
+}
+
+// ImagePull pulls an image from a registry into the daemon's store.
+func (c *Client) ImagePull(_ context.Context, p ImagePullParams) (ImagePullResult, error) {
+	var out ImagePullResult
+	if err := c.call("Image.Pull", p, &out); err != nil {
+		return out, fmt.Errorf("client image pull: %w", err)
+	}
+	return out, nil
+}
+
 // ImageRecipe returns the recipe document an image tag was built from.
 func (c *Client) ImageRecipe(_ context.Context, ref string) (json.RawMessage, error) {
 	var out json.RawMessage
