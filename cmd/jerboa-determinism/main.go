@@ -27,6 +27,8 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
+	"github.com/AitorConS/jerboa/internal/registry/cas"
+	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/AitorConS/jerboa/internal/release"
 )
 
@@ -84,23 +86,37 @@ func run() error {
 		if *verbose {
 			cfg.Output = os.Stderr
 		}
+		cfg.Toolset = &image.Toolset{Version: "0.0.0", Boot: *boot, Kernel: *kernel}
+		blobs, err := cas.New(filepath.Join(dir, "blobs"))
+		if err != nil {
+			return fmt.Errorf("blob store: %w", err)
+		}
 		// Building twice catches nondeterminism within one host as well.
-		var got []string
+		var got []image.Manifest
 		for i := range 2 {
 			store, err := image.NewStore(filepath.Join(dir, fmt.Sprintf("store-%d", i)))
 			if err != nil {
-				return err
+				return fmt.Errorf("image store: %w", err)
 			}
-			m, err := image.NewBuilder(store).Build(ctx, cfg)
+			m, err := image.NewBuilder(store).WithRecorder(recipe.Recorder{Store: blobs}).Build(ctx, cfg)
 			if err != nil {
 				return fmt.Errorf("%s: %w", spec.name, err)
 			}
-			got = append(got, m.DiskDigest)
+			got = append(got, m)
 		}
-		if got[0] != got[1] {
-			return fmt.Errorf("%s: two builds on this host differ: %s vs %s", spec.name, got[0], got[1])
+		if got[0].DiskDigest != got[1].DiskDigest || got[0].Recipe != got[1].Recipe {
+			return fmt.Errorf("%s: two builds on this host differ", spec.name)
 		}
-		digests[spec.name] = got[0]
+		// The recorded recipe must rebuild the same disk from the blob store.
+		r, err := recipe.Load(blobs, got[0].Recipe)
+		if err != nil {
+			return fmt.Errorf("%s: %w", spec.name, err)
+		}
+		if err := recipe.Assemble(ctx, r, blobs, *mkfs, filepath.Join(dir, "assembled.img")); err != nil {
+			return fmt.Errorf("%s: assemble from recipe: %w", spec.name, err)
+		}
+		digests[spec.name] = got[0].DiskDigest
+		digests[spec.name+".recipe"] = got[0].Recipe
 	}
 
 	data, err := json.MarshalIndent(digests, "", "  ")
@@ -108,7 +124,7 @@ func run() error {
 		return fmt.Errorf("encode digests: %w", err)
 	}
 	data = append(data, '\n')
-	fmt.Fprintf(os.Stderr, "built %d images on %s/%s\n", len(digests), runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintf(os.Stderr, "built and reassembled %d images on %s/%s\n", len(catalog()), runtime.GOOS, runtime.GOARCH)
 	if *out != "" {
 		if err := os.WriteFile(*out, data, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", *out, err)
