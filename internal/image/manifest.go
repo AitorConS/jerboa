@@ -34,6 +34,9 @@ type Manifest struct {
 	DiskSize int64 `json:"diskSize"`
 	// Layout is LayoutStandard (empty) or LayoutCompact.
 	Layout string `json:"layout,omitempty"`
+	// Recipe is the digest of the image recipe this tag was built from, which
+	// a registry push uploads. Empty for images built without one.
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // Config holds default VM launch parameters for an image.

@@ -45,8 +45,7 @@ func directFunc(mkfsBin, bootImg, kernelImg string) image.MkfsFunc {
 		if runtime.GOOS == "darwin" {
 			if f, err := elf.Open(binaryPath); err == nil {
 				if f.Machine == elf.EM_X86_64 {
-					selectedBoot = filepath.Join(filepath.Dir(bootImg), "x86", "boot.img")
-					selectedKernel = filepath.Join(filepath.Dir(kernelImg), "x86", "kernel.img")
+					selectedBoot, selectedKernel = bootKernelFor(filepath.Dir(bootImg), "linux/amd64")
 				}
 				f.Close()
 			}
@@ -67,4 +66,25 @@ func buildNanosManifest(absBinaryPath string) string {
 		"(\n    children:(\n        program:(contents:(host:%s))\n    )\n    program:/program\n    environment:()\n)",
 		absBinaryPath,
 	)
+}
+
+// bootKernelFor returns the boot.img and kernel.img mkfs reads for an image of
+// platform. macOS hosts keep the x86 kernel files apart from their native
+// ARM64 toolset, for x86 images run under emulation.
+func bootKernelFor(toolsDir, platform string) (string, string) {
+	if runtime.GOOS == "darwin" && platform == "linux/amd64" {
+		return filepath.Join(toolsDir, "x86", "boot.img"), filepath.Join(toolsDir, "x86", "kernel.img")
+	}
+	return filepath.Join(toolsDir, "boot.img"), filepath.Join(toolsDir, "kernel.img")
+}
+
+// ToolsetFor describes the toolset the daemon's mkfs builds images of platform
+// with, so builds can be recorded as recipes. It fails when the installed
+// toolset carries no version marker, since a recipe must pin one.
+func ToolsetFor(toolsDir, platform string) (*image.Toolset, error) {
+	if !HasLocalVersion(toolsDir) {
+		return nil, fmt.Errorf("tools: toolset in %s has no version marker", toolsDir)
+	}
+	boot, kernel := bootKernelFor(toolsDir, platform)
+	return &image.Toolset{Version: LocalVersion(toolsDir), Boot: boot, Kernel: kernel}, nil
 }

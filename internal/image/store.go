@@ -333,6 +333,36 @@ func (s *Store) resolveRefName(ref string) (string, string, error) {
 	return "", "", fmt.Errorf("%s not found", ref)
 }
 
+// SetRecipe records the recipe digest of the image tagged ref.
+func (s *Store) SetRecipe(ref, digest string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sha, name, err := s.resolveRefName(ref)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("image store set recipe: %s is not a tag", ref)
+	}
+	m, err := s.readRefManifest(sha, name)
+	if err != nil {
+		return err
+	}
+	m.Recipe = digest
+	data, err := Marshal(m)
+	if err != nil {
+		return fmt.Errorf("image store set recipe: %w", err)
+	}
+	imgDir := filepath.Join(s.root, sha)
+	if err := os.MkdirAll(filepath.Join(imgDir, "tags"), 0o755); err != nil {
+		return fmt.Errorf("image store set recipe: %w", err)
+	}
+	if err := writeFileAtomic(tagManifestPath(imgDir, name), data); err != nil {
+		return fmt.Errorf("image store set recipe: %w", err)
+	}
+	return nil
+}
+
 // tagManifestPath is where the manifest of ref is kept inside an image dir.
 func tagManifestPath(imgDir, ref string) string {
 	return filepath.Join(imgDir, "tags", url.PathEscape(ref)+".json")

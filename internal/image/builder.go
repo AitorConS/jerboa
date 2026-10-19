@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"os"
 	"os/exec"
@@ -93,16 +94,56 @@ type BuildConfig struct {
 	// Created is the image creation time; zero means now. Builds pass the
 	// time from SOURCE_DATE_EPOCH to make the manifest reproducible too.
 	Created time.Time
+	// Toolset identifies the kernel toolset MkfsRun uses. When it is set and
+	// the builder has a Recorder, the build is recorded as an image recipe.
+	Toolset *Toolset
 }
 
 // Builder produces unikernel images from ELF binaries and stores them.
 type Builder struct {
-	store *Store
+	store    *Store
+	recorder Recorder
 }
 
 // NewBuilder returns a Builder that stores images in store.
 func NewBuilder(store *Store) *Builder {
 	return &Builder{store: store}
+}
+
+// WithRecorder returns the builder with r told about every build whose
+// config names its Toolset.
+func (b *Builder) WithRecorder(r Recorder) *Builder {
+	b.recorder = r
+	return b
+}
+
+// Toolset identifies the kernel toolset an image is built with: its version
+// and the boot and kernel images mkfs reads. An image recipe records them so
+// any host can assemble the same disk.
+type Toolset struct {
+	Version string
+	Boot    string
+	Kernel  string
+}
+
+// BuildRecord describes a finished build to a Recorder. It is only valid
+// during the Record call: the build's temporary inputs are removed after it.
+type BuildRecord struct {
+	// Manifest is the stored manifest, with its disk digest.
+	Manifest Manifest
+	// Config is the final build config, including injected files and the UUID.
+	Config BuildConfig
+	// Files lists every host file in the image, the program included.
+	Files []pkg.File
+	// RenderManifest renders the mkfs manifest with each host path replaced
+	// by hostRef(path).
+	RenderManifest func(hostRef func(string) string) string
+}
+
+// Recorder keeps a record of a build, such as its image recipe, and returns
+// the digest to remember with the image tag.
+type Recorder interface {
+	Record(ctx context.Context, rec BuildRecord) (string, error)
 }
 
 // Build packages binaryPath into a disk image and registers it in the store.
@@ -209,7 +250,38 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	if err != nil {
 		return Manifest{}, fmt.Errorf("build: store: %w", err)
 	}
+	if b.recorder != nil && cfg.Toolset != nil {
+		m = b.record(ctx, m, cfg)
+	}
 	return m, nil
+}
+
+// record stores the build's recipe. The image itself is already built and
+// stored, so a failure only means it cannot be pushed until it is rebuilt.
+func (b *Builder) record(ctx context.Context, m Manifest, cfg BuildConfig) Manifest {
+	program := cfg.ProgramPath
+	if program == "" {
+		program = "program"
+	}
+	files := append(append([]pkg.File{}, cfg.PkgFiles...), pkg.File{HostPath: cfg.BinaryPath, GuestPath: program})
+	digest, err := b.recorder.Record(ctx, BuildRecord{
+		Manifest: m,
+		Config:   cfg,
+		Files:    files,
+		RenderManifest: func(hostRef func(string) string) string {
+			return buildManifest(cfg, hostRef)
+		},
+	})
+	if err != nil {
+		slog.Warn("build: image recipe not recorded; the image cannot be pushed", "image", m.Ref(), "err", err)
+		return m
+	}
+	if err := b.store.SetRecipe(m.Ref(), digest); err != nil {
+		slog.Warn("build: image recipe not linked to its tag", "image", m.Ref(), "err", err)
+		return m
+	}
+	m.Recipe = digest
+	return m
 }
 
 // resolvConf is the /etc/resolv.conf baked into every image. It is the same on
