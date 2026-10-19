@@ -1,11 +1,13 @@
 name: Registry Worker
 # Typechecks and tests the registry Worker (registry/worker) against local R2
-# and D1 (Miniflare), and checks both environments still bundle.
+# and D1 (Miniflare), checks both environments still bundle, and runs the Go
+# client end to end against the Worker under wrangler dev.
 'on':
   pull_request:
     paths:
     - registry/worker/**
     - internal/registry/**
+    - tests/registry/**
     - .github/workflows/registry.yml
   push:
     branches:
@@ -13,6 +15,7 @@ name: Registry Worker
     paths:
     - registry/worker/**
     - internal/registry/**
+    - tests/registry/**
     - .github/workflows/registry.yml
   workflow_dispatch: {}
 permissions:
@@ -44,3 +47,25 @@ jobs:
       run: |
         pnpm exec wrangler deploy --dry-run --env staging --outdir "$RUNNER_TEMP/staging"
         pnpm exec wrangler deploy --dry-run --env production --outdir "$RUNNER_TEMP/production"
+  e2e:
+    name: Go client against the Worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.2
+        cache: true
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '24'
+    - name: Install the Worker
+      working-directory: registry/worker
+      run: |
+        npm install -g pnpm@11.25.0
+        pnpm install --frozen-lockfile
+    - name: Push, pull and auth against wrangler dev
+      run: go test -tags registry_e2e -count=1 -v -timeout 10m ./tests/registry/...
