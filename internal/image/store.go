@@ -333,6 +333,50 @@ func (s *Store) resolveRefName(ref string) (string, string, error) {
 	return "", "", fmt.Errorf("%s not found", ref)
 }
 
+// Tag gives the image ref resolves to another name:tag, as a second tag of
+// the same stored disk with the same config and recipe.
+func (s *Store) Tag(ref, name, tag string) (Manifest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sha, srcRef, err := s.resolveRefName(ref)
+	if err != nil {
+		return Manifest{}, err
+	}
+	m, err := s.readRefManifest(sha, srcRef)
+	if err != nil {
+		return Manifest{}, err
+	}
+	m.Name, m.Tag = name, tag
+	data, err := Marshal(m)
+	if err != nil {
+		return Manifest{}, fmt.Errorf("image store tag: %w", err)
+	}
+	imgDir := filepath.Join(s.root, sha)
+	dst := name + ":" + tag
+	if err := os.MkdirAll(filepath.Join(imgDir, "tags"), 0o755); err != nil {
+		return Manifest{}, fmt.Errorf("image store tag: %w", err)
+	}
+	if err := writeFileAtomic(tagManifestPath(imgDir, dst), data); err != nil {
+		return Manifest{}, fmt.Errorf("image store tag: %w", err)
+	}
+	if err := s.addRef(dst, sha); err != nil {
+		return Manifest{}, fmt.Errorf("image store tag: %w", err)
+	}
+	return m, nil
+}
+
+// TempFile creates an empty file inside the store, on the same file system
+// as stored disks, so PutMove of it is a rename.
+func (s *Store) TempFile(pattern string) (string, error) {
+	f, err := os.CreateTemp(s.root, pattern)
+	if err != nil {
+		return "", fmt.Errorf("image store temp: %w", err)
+	}
+	name := f.Name()
+	_ = f.Close()
+	return name, nil
+}
+
 // SetRecipe records the recipe digest of the image tagged ref.
 func (s *Store) SetRecipe(ref, digest string) error {
 	s.mu.Lock()

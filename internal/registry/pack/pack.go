@@ -108,10 +108,18 @@ func (w *Writer) Add(b Blob) error {
 	return nil
 }
 
-// Close finishes the last pack and returns every pack written.
+// Close finishes the last pack and returns every pack not yet taken.
 func (w *Writer) Close() []Pack {
 	w.flush()
-	return w.done
+	return w.Take()
+}
+
+// Take returns the packs finished so far and forgets them, so a caller can
+// upload packs as they fill instead of holding a whole push in memory.
+func (w *Writer) Take() []Pack {
+	done := w.done
+	w.done = nil
+	return done
 }
 
 func (w *Writer) flush() {

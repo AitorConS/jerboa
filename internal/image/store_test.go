@@ -494,3 +494,20 @@ func TestStore_TrustedSkipsRehashUntilDiskChanges(t *testing.T) {
 	require.NoError(t, os.WriteFile(stored, []byte("original contents"), 0o644))
 	require.True(t, s.Trusted(stored, m.DiskDigest))
 }
+
+func TestStoreTagAddsNameForSameDisk(t *testing.T) {
+	s, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, s.Put("web", "local", validManifest(), makeDiskFile(t)))
+	require.NoError(t, s.SetRecipe("web:local", "sha256:"+strings.Repeat("c", 64)))
+	m, err := s.Tag("web:local", "alice/web", "v1")
+	require.NoError(t, err)
+	require.Equal(t, "alice/web", m.Name)
+	got, disk, err := s.Get("alice/web:v1")
+	require.NoError(t, err)
+	require.Equal(t, "v1", got.Tag)
+	require.Equal(t, "sha256:"+strings.Repeat("c", 64), got.Recipe)
+	_, orig, err := s.Get("web:local")
+	require.NoError(t, err)
+	require.Equal(t, orig, disk)
+}
