@@ -1,0 +1,67 @@
+# Jerboa image registry: the Worker that authenticates and verifies writes.
+# Reads (pulls) are served by R2 through its custom domain and never reach it.
+# Protocol: docs/registry-protocol.md.
+name = "jerboa-registry"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Local development and tests (wrangler dev, vitest). Deployments use the
+# staging and production environments below.
+[vars]
+CDN_BASE = "http://localhost:8788/cdn"
+GITHUB_API = "https://api.github.com"
+GITHUB_CLIENT_ID = "local-development"
+NAMESPACE_QUOTA_BYTES = "10737418240"
+
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "jerboa-registry-local"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "jerboa-registry-local"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["17 4 * * *"]
+
+[env.staging]
+name = "jerboa-registry-staging"
+routes = [{ pattern = "staging.registry.jerboa.dev", custom_domain = true }]
+triggers = { crons = ["17 4 * * *"] }
+[env.staging.vars]
+CDN_BASE = "https://cdn.staging.registry.jerboa.dev"
+GITHUB_API = "https://api.github.com"
+GITHUB_CLIENT_ID = "REPLACE_WITH_STAGING_GITHUB_CLIENT_ID"
+NAMESPACE_QUOTA_BYTES = "10737418240"
+[[env.staging.r2_buckets]]
+binding = "BLOBS"
+bucket_name = "jerboa-registry-staging"
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "jerboa-registry-staging"
+database_id = "REPLACE_WITH_STAGING_D1_ID"
+migrations_dir = "migrations"
+
+[env.production]
+name = "jerboa-registry"
+routes = [{ pattern = "registry.jerboa.dev", custom_domain = true }]
+triggers = { crons = ["17 4 * * *"] }
+[env.production.vars]
+CDN_BASE = "https://cdn.registry.jerboa.dev"
+GITHUB_API = "https://api.github.com"
+GITHUB_CLIENT_ID = "REPLACE_WITH_PRODUCTION_GITHUB_CLIENT_ID"
+NAMESPACE_QUOTA_BYTES = "10737418240"
+[[env.production.r2_buckets]]
+binding = "BLOBS"
+bucket_name = "jerboa-registry"
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "jerboa-registry"
+database_id = "REPLACE_WITH_PRODUCTION_D1_ID"
+migrations_dir = "migrations"
+
+# Secret, set per environment with `wrangler secret put JWT_SIGNING_KEY --env <env>`:
+#   JWT_SIGNING_KEY  random 32+ byte key that signs the 15-minute push tokens.
