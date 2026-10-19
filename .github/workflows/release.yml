@@ -379,6 +379,11 @@ jobs:
         path: jerboa/dist/macos-arm64/tools/mkfs
         if-no-files-found: error
         retention-days: 30
+  determinism:
+    name: mkfs determinism across hosts
+    needs:
+    - inputs
+    uses: ./.github/workflows/determinism.yml
   kernel-tools-arm64:
     name: Native Linux ARM64 mkfs
     runs-on: ubuntu-24.04-arm
@@ -459,6 +464,7 @@ jobs:
     - build-distro
     - build-macos
     - kernel-tools-arm64
+    - determinism
     - windows
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

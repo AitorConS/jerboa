@@ -1,0 +1,95 @@
+name: mkfs determinism
+# Image recipes are assembled by each client with its own mkfs, so one toolset
+# version must produce byte-identical disks on every host platform. This builds
+# a fixed synthetic catalog natively on each platform and requires the same
+# digests everywhere. release.yml calls it before assembling a candidate.
+'on':
+  pull_request:
+    paths:
+    - kernel/**
+    - internal/image/**
+    - internal/tools/**
+    - internal/package/**
+    - cmd/jerboa-determinism/**
+    - .github/workflows/determinism.yml
+  push:
+    branches:
+    - main
+    paths:
+    - kernel/**
+    - internal/image/**
+    - internal/tools/**
+    - internal/package/**
+    - cmd/jerboa-determinism/**
+    - .github/workflows/determinism.yml
+  schedule:
+  - cron: '17 3 * * *'
+  workflow_dispatch: {}
+  workflow_call: {}
+permissions:
+  contents: read
+jobs:
+  build:
+    name: Build catalog (${{ matrix.host }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - host: linux-amd64
+          runner: ubuntu-latest
+          tools: make -C kernel tools
+        - host: linux-arm64
+          runner: ubuntu-24.04-arm
+          tools: make -C kernel tools
+        - host: darwin-arm64
+          runner: macos-26
+          tools: make -C kernel PLATFORM=virt tools
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.2
+        cache: true
+    - name: Build mkfs natively
+      run: ${{ matrix.tools }}
+    - name: Build the catalog twice and record digests
+      # boot.img and kernel.img come from the signed stable release, so every
+      # host feeds mkfs the same bytes.
+      run: go run ./cmd/jerboa-determinism -mkfs kernel/output/tools/bin/mkfs -out digests-${{ matrix.host }}.json
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: determinism-${{ matrix.host }}
+        path: digests-${{ matrix.host }}.json
+        if-no-files-found: error
+        retention-days: 14
+  compare:
+    name: Same disks on every host
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        pattern: determinism-*
+        merge-multiple: true
+        path: digests
+    - name: Compare
+      run: |
+        python3 - <<'PY'
+        import json, pathlib, sys
+        results = {p.stem.removeprefix('digests-'): json.loads(p.read_text())
+                   for p in sorted(pathlib.Path('digests').glob('digests-*.json'))}
+        if len(results) != 3:
+            sys.exit(f'expected 3 hosts, got {sorted(results)}')
+        reference = next(iter(results.values()))
+        failed = False
+        for image in sorted(reference):
+            seen = {host: r.get(image) for host, r in results.items()}
+            ok = len(set(seen.values())) == 1
+            failed |= not ok
+            print(('OK  ' if ok else 'DIFF'), image, seen if not ok else reference[image])
+        sys.exit(1 if failed else 0)
+        PY
