@@ -108,16 +108,18 @@ jobs:
       run: |
         npm install -g pnpm@11.25.0
         pnpm install --frozen-lockfile
-    - name: Refuse unconfigured environments
-      run: |
-        if grep -n 'REPLACE_WITH_STAGING' wrangler.toml; then
-          echo "::error::Fill in the staging IDs in registry/worker/wrangler.toml (docs/release-process.md)"
-          exit 1
-        fi
+    # IDs and the signing key come from the GitHub environment, which
+    # jerboa-infra (Terraform) manages.
+    - name: Configure the environment
+      env:
+        REGISTRY_D1_DATABASE_ID: ${{ vars.REGISTRY_D1_DATABASE_ID }}
+        REGISTRY_GITHUB_CLIENT_ID: ${{ vars.REGISTRY_GITHUB_CLIENT_ID }}
+        REGISTRY_JWT_SIGNING_KEY: ${{ secrets.REGISTRY_JWT_SIGNING_KEY }}
+      run: scripts/configure-env.sh staging "$RUNNER_TEMP/secrets.json"
     - name: Apply D1 migrations
       run: pnpm exec wrangler d1 migrations apply jerboa-registry-staging --env staging --remote
     - name: Deploy
-      run: pnpm exec wrangler deploy --env staging
+      run: pnpm exec wrangler deploy --env staging --secrets-file "$RUNNER_TEMP/secrets.json"
   smoke-staging:
     name: End to end against staging
     needs: deploy-staging
@@ -167,16 +169,18 @@ jobs:
       run: |
         npm install -g pnpm@11.25.0
         pnpm install --frozen-lockfile
-    - name: Refuse unconfigured environments
-      run: |
-        if grep -n 'REPLACE_WITH_PRODUCTION' wrangler.toml; then
-          echo "::error::Fill in the production IDs in registry/worker/wrangler.toml (docs/release-process.md)"
-          exit 1
-        fi
+    # IDs and the signing key come from the GitHub environment, which
+    # jerboa-infra (Terraform) manages.
+    - name: Configure the environment
+      env:
+        REGISTRY_D1_DATABASE_ID: ${{ vars.REGISTRY_D1_DATABASE_ID }}
+        REGISTRY_GITHUB_CLIENT_ID: ${{ vars.REGISTRY_GITHUB_CLIENT_ID }}
+        REGISTRY_JWT_SIGNING_KEY: ${{ secrets.REGISTRY_JWT_SIGNING_KEY }}
+      run: scripts/configure-env.sh production "$RUNNER_TEMP/secrets.json"
     - name: Apply D1 migrations
       run: pnpm exec wrangler d1 migrations apply jerboa-registry --env production --remote
     - name: Deploy
-      run: pnpm exec wrangler deploy --env production
+      run: pnpm exec wrangler deploy --env production --secrets-file "$RUNNER_TEMP/secrets.json"
     - name: Check discovery
       run: |
         curl -fsS -A jerboa-deploy https://registry.jerboa.dev/v2/ | tee /dev/stderr | grep -q '"api":1'

@@ -230,39 +230,35 @@ The `Registry Worker` workflow tests every change. A merge to `main` then:
 
 Production deploys only from a manual run of the workflow with `deploy_production`, approved through the `registry-production` environment.
 
-### One-time setup
+### Infrastructure
 
-Do this once per environment; staging names shown.
+The private repository `AitorConS/jerboa-infra` (Terraform) holds everything except the Worker code:
+- the buckets, D1 databases and CDN hosts;
+- the zone's cache and rate-limiting rules;
+- the deploy token;
+- the `registry-staging` and `registry-production` GitHub environments, which give the deploy jobs what they need:
 
-1. **Storage and database** (Cloudflare dashboard, or `wrangler` logged in to the account):
-   ```sh
-   cd registry/worker
-   pnpm exec wrangler r2 bucket create jerboa-registry-staging
-   pnpm exec wrangler d1 create jerboa-registry-staging   # note the database_id
-   ```
-2. **CDN host:** in R2 → `jerboa-registry-staging` → Settings → Custom Domains, connect `cdn.staging.registry.jerboa.dev`. Then add a **Cache Rule** for that hostname:
-   - *Eligible for cache*, respecting origin `Cache-Control`.
-   - Objects carry `immutable` (packs, recipes, locations) or `max-age=60` (tags).
-3. **GitHub OAuth App** (GitHub → Settings → Developer settings → OAuth Apps → New):
-   - Homepage `https://jerboa.dev`; any callback URL (the device flow doesn't use it).
-   - Tick **Enable Device Flow**.
-   - Note the client ID. No client secret is needed: the Worker only calls the GitHub API with the user's token.
-4. **`wrangler.toml`:** replace `REPLACE_WITH_STAGING_D1_ID` and `REPLACE_WITH_STAGING_GITHUB_CLIENT_ID` (neither is secret), and merge. Deploy jobs refuse to run while placeholders remain.
-5. **Worker secret:** a random push-token signing key, at least 32 characters:
-   ```sh
-   openssl rand -base64 48 | pnpm exec wrangler secret put JWT_SIGNING_KEY --env staging
-   ```
-6. **GitHub repository settings:**
-   - Repository variable `CLOUDFLARE_ACCOUNT_ID`.
-   - Secret `CLOUDFLARE_API_TOKEN`: a token with *Workers Scripts: Edit*, *D1: Edit*, *Workers R2 Storage: Edit* and *Workers Routes: Edit* on the account.
-   - Environments `registry-staging` and `registry-production`; give the latter required reviewers.
-7. **Staging test account:** a GitHub account (e.g. `jerboa-e2e`) logs in to staging once (`jerboa login staging.registry.jerboa.dev`) and creates a token (`jerboa registry pat create ci --registry staging.registry.jerboa.dev`). Store that token as the `registry-staging` environment secret `REGISTRY_E2E_TOKEN`, and the account's login as the variable `REGISTRY_E2E_NAMESPACE`.
-8. **Plan:** the Workers Paid plan ($5/month) once usage passes the free plan's 100 000 requests a day; D1 is included in it. Expected costs are in the registry design notes: storage dominates, and pulls through the CDN cost almost nothing.
+| Setting | Kind | Content |
+|---|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | variable | the Cloudflare account |
+| `REGISTRY_D1_DATABASE_ID` | variable | the D1 database |
+| `REGISTRY_GITHUB_CLIENT_ID` | variable | the GitHub OAuth App |
+| `CLOUDFLARE_API_TOKEN` | secret | a token limited to deploying Workers |
+| `REGISTRY_JWT_SIGNING_KEY` | secret | the push-token signing key |
+| `REGISTRY_E2E_NAMESPACE`, `REGISTRY_E2E_TOKEN` | variable, secret | the staging test account (staging only) |
+
+At deploy time, `registry/worker/scripts/configure-env.sh` fills the IDs into `wrangler.toml` and passes the key with `wrangler deploy --secrets-file`. Deploy jobs fail until `jerboa-infra` has been applied.
+
+`jerboa-infra`'s README covers:
+- the first apply;
+- the two steps no API can do: the OAuth Apps with device flow, and the staging test account's token;
+- credential rotation.
 
 ### Day to day
 
 - **Logs:** `pnpm exec wrangler tail --env production`. Errors are logged as `internal error`; the daily garbage collection logs a `gc` line with what it removed.
 - **Rollback:** `pnpm exec wrangler rollback --env production` restores the previous Worker version. Migrations only add tables and columns, so an older Worker keeps working with a newer schema.
 - **Schema changes:** add a file to `registry/worker/migrations/`. Staging applies it on merge; production applies it on the manual deploy, before the new Worker goes live.
-- **Abuse:** revoke a namespace's tokens by setting `revoked_at` on its rows in `tokens`, and delete its tags. Garbage collection removes the content a week later. Add WAF rate-limiting rules on `/auth/*` and on `PUT /v2/*` for each Worker hostname.
+- **Abuse:** revoke a namespace's tokens by setting `revoked_at` on its rows in `tokens`, and delete its tags. Garbage collection removes the content a week later.
 - **Quota:** `NAMESPACE_QUOTA_BYTES` in `wrangler.toml`, per environment.
+- **Rate limits:** the zone's rate-limiting rule in `jerboa-infra` (`registry_rate_limit`).

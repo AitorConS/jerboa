@@ -45,11 +45,17 @@ pnpm exec wrangler dev --local --port 8788
 
 ## Deploy
 
-Each environment (`staging`, `production`) has its own R2 bucket, D1 database,
-custom domain and GitHub OAuth App. The one-time setup is in
-[`docs/release-process.md`](../../docs/release-process.md). Then:
+The `Registry Worker` workflow deploys:
+- **staging:** on every merge to `main`;
+- **production:** from a manual, approved run.
+
+Each environment (`staging`, `production`) has its own R2 bucket, D1 database, custom domain and GitHub OAuth App. All of them are managed by Terraform in `AitorConS/jerboa-infra`, which also sets the deploy job's GitHub environment. See [`docs/release-process.md`](../../docs/release-process.md).
+
+To deploy by hand, export the same variables the job gets from its environment, then:
 
 ```sh
+scripts/configure-env.sh staging secrets.json   # fills wrangler.toml; don't commit it
 pnpm exec wrangler d1 migrations apply jerboa-registry-staging --env staging --remote
-pnpm exec wrangler deploy --env staging
+pnpm exec wrangler deploy --env staging --secrets-file secrets.json
+rm secrets.json && git checkout wrangler.toml
 ```
