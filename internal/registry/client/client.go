@@ -125,6 +125,28 @@ func (c *Client) CreatePAT(ctx context.Context, credential, name string) (id, to
 	return out.ID, out.Token, err
 }
 
+// PAT describes a personal access token, without its secret.
+type PAT struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	CreatedAt  int64  `json:"created_at"`
+	LastUsedAt *int64 `json:"last_used_at"`
+}
+
+// ListPATs lists the account's personal access tokens.
+func (c *Client) ListPATs(ctx context.Context, credential string) ([]PAT, error) {
+	var out struct {
+		PATs []PAT `json:"pats"`
+	}
+	err := c.do(ctx, http.MethodGet, c.Base+"/auth/pats", credential, nil, "", &out)
+	return out.PATs, err
+}
+
+// RevokePAT revokes one personal access token.
+func (c *Client) RevokePAT(ctx context.Context, credential, id string) error {
+	return c.do(ctx, http.MethodDelete, c.Base+"/auth/pats/"+id, credential, nil, "", nil)
+}
+
 func (c *Client) repo(namespace, repository string) string {
 	return c.Base + "/v2/" + namespace + "/" + repository
 }
@@ -169,6 +191,12 @@ func (c *Client) PutRecipe(ctx context.Context, token, namespace, repository, di
 func (c *Client) PutTag(ctx context.Context, token, namespace, repository, tag, recipe string) error {
 	url := c.repo(namespace, repository) + "/tags/" + tag
 	return c.do(ctx, http.MethodPut, url, token, jsonBody(map[string]string{"recipe": recipe}), "application/json", nil)
+}
+
+// DeleteTag removes a tag; its recipe and blobs are collected a week later
+// unless another tag uses them.
+func (c *Client) DeleteTag(ctx context.Context, token, namespace, repository, tag string) error {
+	return c.do(ctx, http.MethodDelete, c.repo(namespace, repository)+"/tags/"+tag, token, nil, "", nil)
 }
 
 // TagRecipe reads the recipe digest a tag points to, from the CDN.

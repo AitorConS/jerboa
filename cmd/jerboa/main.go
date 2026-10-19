@@ -99,6 +99,7 @@ func newRootCmd() *cobra.Command {
 		newPullCmd(&endpoint),
 		newLoginCmd(),
 		newLogoutCmd(),
+		newRegistryCmd(),
 		newSignCmd(&endpoint),
 		newVerifyCmd(&endpoint),
 		newPsCmd(&endpoint, &outputFmt),

@@ -406,7 +406,7 @@ func TestFormatSize(t *testing.T) {
 func TestRootCmd_RegistryCommands(t *testing.T) {
 	root := newRootCmd()
 
-	for _, name := range []string{"push", "pull", "login", "logout", "tag"} {
+	for _, name := range []string{"push", "pull", "login", "logout", "tag", "registry"} {
 		cmd, _, err := root.Find([]string{name})
 		require.NoError(t, err, name)
 		require.Equal(t, name, cmd.Name())

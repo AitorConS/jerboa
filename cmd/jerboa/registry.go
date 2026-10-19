@@ -185,3 +185,69 @@ func newPullCmd(endpoint *string) *cobra.Command {
 		},
 	}
 }
+
+func newRegistryCmd() *cobra.Command {
+	var registry string
+	cmd := &cobra.Command{
+		Use:   "registry",
+		Short: "Manage your account on an image registry",
+	}
+	cmd.PersistentFlags().StringVar(&registry, "registry", naming.DefaultRegistry, "registry host")
+	pat := &cobra.Command{Use: "pat", Short: "Personal access tokens, for CI"}
+	pat.AddCommand(&cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a personal access token; it is shown once",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cred, err := credentials.For(registry)
+			if err != nil {
+				return err
+			}
+			id, token, err := client.New(registry).CreatePAT(cmd.Context(), cred, args[0])
+			if err != nil {
+				return fmt.Errorf("pat create: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", token)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], id, credentials.EnvToken)
+			return nil
+		},
+	})
+	pat.AddCommand(&cobra.Command{
+		Use:     "ls",
+		Aliases: []string{"list"},
+		Short:   "List personal access tokens",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cred, err := credentials.For(registry)
+			if err != nil {
+				return err
+			}
+			pats, err := client.New(registry).ListPATs(cmd.Context(), cred)
+			if err != nil {
+				return fmt.Errorf("pat ls: %w", err)
+			}
+			for _, p := range pats {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", p.ID, p.Name)
+			}
+			return nil
+		},
+	})
+	pat.AddCommand(&cobra.Command{
+		Use:   "rm <id>",
+		Short: "Revoke a personal access token",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cred, err := credentials.For(registry)
+			if err != nil {
+				return err
+			}
+			if err := client.New(registry).RevokePAT(cmd.Context(), cred, args[0]); err != nil {
+				return fmt.Errorf("pat rm: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Revoked %s\n", args[0])
+			return nil
+		},
+	})
+	cmd.AddCommand(pat)
+	return cmd
+}
