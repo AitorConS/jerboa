@@ -2,6 +2,11 @@ name: Registry Worker
 # Typechecks and tests the registry Worker (registry/worker) against local R2
 # and D1 (Miniflare), checks both environments still bundle, and runs the Go
 # client end to end against the Worker under wrangler dev.
+#
+# Deployment: every change merged to main deploys to staging, applies its D1
+# migrations and runs the end-to-end test against it with a test account.
+# Production deploys only from a manual run with deploy_production, through
+# the protected registry-production environment. Setup: docs/release-process.md.
 'on':
   pull_request:
     paths:
@@ -17,7 +22,12 @@ name: Registry Worker
     - internal/registry/**
     - tests/registry/**
     - .github/workflows/registry.yml
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      deploy_production:
+        description: Deploy the tested Worker to production (registry.jerboa.dev)
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -69,3 +79,104 @@ jobs:
         pnpm install --frozen-lockfile
     - name: Push, pull and auth against wrangler dev
       run: go test -tags registry_e2e -count=1 -v -timeout 10m ./tests/registry/...
+  deploy-staging:
+    name: Deploy to staging
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+    - test
+    - e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: registry-staging
+    concurrency:
+      group: registry-staging
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: registry/worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '24'
+    - name: Install
+      run: |
+        npm install -g pnpm@11.25.0
+        pnpm install --frozen-lockfile
+    - name: Refuse unconfigured environments
+      run: |
+        if grep -n 'REPLACE_WITH_STAGING' wrangler.toml; then
+          echo "::error::Fill in the staging IDs in registry/worker/wrangler.toml (docs/release-process.md)"
+          exit 1
+        fi
+    - name: Apply D1 migrations
+      run: pnpm exec wrangler d1 migrations apply jerboa-registry-staging --env staging --remote
+    - name: Deploy
+      run: pnpm exec wrangler deploy --env staging
+  smoke-staging:
+    name: End to end against staging
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: registry-staging
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.2
+        cache: true
+    - name: Push, pull and check the CDN cache
+      env:
+        JERBOA_REGISTRY_E2E_HOST: staging.registry.jerboa.dev
+        JERBOA_REGISTRY_E2E_TOKEN: ${{ secrets.REGISTRY_E2E_TOKEN }}
+        JERBOA_REGISTRY_E2E_NAMESPACE: ${{ vars.REGISTRY_E2E_NAMESPACE }}
+      run: go test -tags registry_e2e -count=1 -v -timeout 10m ./tests/registry/...
+  deploy-production:
+    name: Deploy to production
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_production && github.ref == 'refs/heads/main'
+    needs:
+    - test
+    - e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: registry-production
+    concurrency:
+      group: registry-production
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: registry/worker
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      with:
+        node-version: '24'
+    - name: Install
+      run: |
+        npm install -g pnpm@11.25.0
+        pnpm install --frozen-lockfile
+    - name: Refuse unconfigured environments
+      run: |
+        if grep -n 'REPLACE_WITH_PRODUCTION' wrangler.toml; then
+          echo "::error::Fill in the production IDs in registry/worker/wrangler.toml (docs/release-process.md)"
+          exit 1
+        fi
+    - name: Apply D1 migrations
+      run: pnpm exec wrangler d1 migrations apply jerboa-registry --env production --remote
+    - name: Deploy
+      run: pnpm exec wrangler deploy --env production
+    - name: Check discovery
+      run: |
+        curl -fsS -A jerboa-deploy https://registry.jerboa.dev/v2/ | tee /dev/stderr | grep -q '"api":1'

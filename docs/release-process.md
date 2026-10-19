@@ -208,3 +208,61 @@ the release, including the daemon service capabilities needed for guest DNS.
 Promotion never substitutes the installer from its own checkout. Retrying a
 legacy candidate without a tracked installer leaves the bootstrap alias alone;
 publish a new candidate to update it.
+
+## Image registry operations
+
+The image registry (`registry.jerboa.dev`, [user guide]({% link registry.md %}),
+[protocol]({% link registry-protocol.md %})) is a Cloudflare Worker in
+`registry/worker`. It runs in two environments, each with its own resources:
+
+| | Staging | Production |
+|---|---|---|
+| Worker | `jerboa-registry-staging` on `staging.registry.jerboa.dev` | `jerboa-registry` on `registry.jerboa.dev` |
+| R2 bucket | `jerboa-registry-staging` | `jerboa-registry` |
+| CDN host (R2 custom domain) | `cdn.staging.registry.jerboa.dev` | `cdn.registry.jerboa.dev` |
+| D1 database | `jerboa-registry-staging` | `jerboa-registry` |
+| GitHub OAuth App | Jerboa Registry (staging) | Jerboa Registry |
+| GitHub environment | `registry-staging` | `registry-production` (required reviewers) |
+
+The `Registry Worker` workflow tests every change. A merge to `main` then:
+1. deploys to staging and applies its D1 migrations;
+2. runs the end-to-end test against staging with a test account. That run pushes to a fresh repository, pulls, checks the CDN cache, and deletes its tags.
+
+Production deploys only from a manual run of the workflow with `deploy_production`, approved through the `registry-production` environment.
+
+### One-time setup
+
+Do this once per environment; staging names shown.
+
+1. **Storage and database** (Cloudflare dashboard, or `wrangler` logged in to the account):
+   ```sh
+   cd registry/worker
+   pnpm exec wrangler r2 bucket create jerboa-registry-staging
+   pnpm exec wrangler d1 create jerboa-registry-staging   # note the database_id
+   ```
+2. **CDN host:** in R2 → `jerboa-registry-staging` → Settings → Custom Domains, connect `cdn.staging.registry.jerboa.dev`. Then add a **Cache Rule** for that hostname:
+   - *Eligible for cache*, respecting origin `Cache-Control`.
+   - Objects carry `immutable` (packs, recipes, locations) or `max-age=60` (tags).
+3. **GitHub OAuth App** (GitHub → Settings → Developer settings → OAuth Apps → New):
+   - Homepage `https://jerboa.dev`; any callback URL (the device flow doesn't use it).
+   - Tick **Enable Device Flow**.
+   - Note the client ID. No client secret is needed: the Worker only calls the GitHub API with the user's token.
+4. **`wrangler.toml`:** replace `REPLACE_WITH_STAGING_D1_ID` and `REPLACE_WITH_STAGING_GITHUB_CLIENT_ID` (neither is secret), and merge. Deploy jobs refuse to run while placeholders remain.
+5. **Worker secret:** a random push-token signing key, at least 32 characters:
+   ```sh
+   openssl rand -base64 48 | pnpm exec wrangler secret put JWT_SIGNING_KEY --env staging
+   ```
+6. **GitHub repository settings:**
+   - Repository variable `CLOUDFLARE_ACCOUNT_ID`.
+   - Secret `CLOUDFLARE_API_TOKEN`: a token with *Workers Scripts: Edit*, *D1: Edit*, *Workers R2 Storage: Edit* and *Workers Routes: Edit* on the account.
+   - Environments `registry-staging` and `registry-production`; give the latter required reviewers.
+7. **Staging test account:** a GitHub account (e.g. `jerboa-e2e`) logs in to staging once (`jerboa login staging.registry.jerboa.dev`) and creates a token (`jerboa registry pat create ci --registry staging.registry.jerboa.dev`). Store that token as the `registry-staging` environment secret `REGISTRY_E2E_TOKEN`, and the account's login as the variable `REGISTRY_E2E_NAMESPACE`.
+8. **Plan:** the Workers Paid plan ($5/month) once usage passes the free plan's 100 000 requests a day; D1 is included in it. Expected costs are in the registry design notes: storage dominates, and pulls through the CDN cost almost nothing.
+
+### Day to day
+
+- **Logs:** `pnpm exec wrangler tail --env production`. Errors are logged as `internal error`; the daily garbage collection logs a `gc` line with what it removed.
+- **Rollback:** `pnpm exec wrangler rollback --env production` restores the previous Worker version. Migrations only add tables and columns, so an older Worker keeps working with a newer schema.
+- **Schema changes:** add a file to `registry/worker/migrations/`. Staging applies it on merge; production applies it on the manual deploy, before the new Worker goes live.
+- **Abuse:** revoke a namespace's tokens by setting `revoked_at` on its rows in `tokens`, and delete its tags. Garbage collection removes the content a week later. Add WAF rate-limiting rules on `/auth/*` and on `PUT /v2/*` for each Worker hostname.
+- **Quota:** `NAMESPACE_QUOTA_BYTES` in `wrangler.toml`, per environment.

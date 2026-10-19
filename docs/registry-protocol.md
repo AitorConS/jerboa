@@ -2,7 +2,7 @@
 layout: default
 title: Registry protocol
 description: "Wire protocol of the Jerboa image registry: recipes, blobs, packs, authentication, push and pull."
-nav_order: 13
+nav_order: 12
 ---
 
 # Registry protocol (v1)
