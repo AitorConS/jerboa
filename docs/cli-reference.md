@@ -385,6 +385,14 @@ digest. Local variants coexist and take precedence over the remote index.
 versions, hashes and provenance. See [ARM64 package workflow]({% link packages-arm64.md %})
 for local sysroots, compatibility rules and reproducible Firecracker acceptance.
 
+Every build is also recorded as a **recipe**: the mkfs manifest with each file
+replaced by its SHA-256, the pinned kernel toolset version, and the expected disk
+digest. The files themselves are kept once each in the daemon's blob store
+(`~/.jerboa/blobs`). A recipe rebuilds the same disk byte-for-byte on any host, which
+is how registry pushes and pulls will transfer images. `jerboa images inspect`
+shows the recipe digest and `jerboa images recipe <ref>` prints the recipe.
+Images whose toolset has no version marker are built without one.
+
 `pkg load` uses the root command's endpoint and authentication configuration,
 including `--host` and `JERBOA_HOST`. Use `--source jerboa` for local packages.
 `pkg push` without `--platform` prefers the default platform, then a legacy

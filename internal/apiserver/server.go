@@ -24,6 +24,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/network"
+	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/AitorConS/jerboa/internal/volume"
@@ -58,6 +59,9 @@ type Server struct {
 	mkfsMu       sync.Mutex
 	mkfsResolver func(context.Context) (image.MkfsFunc, error)
 	mkfsCached   image.MkfsFunc
+	// recipes holds build inputs and image recipes; nil disables recording.
+	recipes      *cas.Store
+	toolsetFor   func(platform string) (*image.Toolset, error)
 	volFmtMu     sync.Mutex
 	volFmtResolv func(context.Context) (volume.Formatter, error)
 	volFmtCached volume.Formatter
@@ -285,6 +289,8 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleImageGet(req.Params)
 	case "Image.Remove":
 		return s.handleImageRemove(req.Params)
+	case "Image.Recipe":
+		return s.handleImageRecipe(req.Params)
 	case "VM.Run":
 		return s.handleRun(ctx, req.Params)
 	case "VM.Start":

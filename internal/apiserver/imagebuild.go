@@ -22,6 +22,8 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
+	"github.com/AitorConS/jerboa/internal/registry/cas"
+	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/AitorConS/jerboa/internal/volume"
 )
@@ -49,6 +51,34 @@ func (s *Server) EnableImageBuildResolver(resolver func(context.Context) (image.
 	s.mkfsResolver = resolver
 	s.mkfsCached = nil
 	s.mkfsMu.Unlock()
+}
+
+// EnableRecipes records every build as an image recipe in store, its inputs
+// stored by digest, so the image can be pushed to a registry. toolsetFor
+// describes the toolset mkfs builds a platform's images with.
+func (s *Server) EnableRecipes(store *cas.Store, toolsetFor func(platform string) (*image.Toolset, error)) {
+	s.recipes = store
+	s.toolsetFor = toolsetFor
+}
+
+// buildToolset returns the toolset to record a build of binaryPath with, or
+// nil when recipes are disabled or the toolset cannot be pinned.
+func (s *Server) buildToolset(platform, binaryPath string) *image.Toolset {
+	if s.recipes == nil || s.toolsetFor == nil {
+		return nil
+	}
+	if platform == "" {
+		var err error
+		if platform, err = pkg.ELFPlatform(binaryPath); err != nil {
+			return nil
+		}
+	}
+	ts, err := s.toolsetFor(platform)
+	if err != nil {
+		slog.Warn("image build: no recipe will be recorded", "err", err)
+		return nil
+	}
+	return ts
 }
 
 // imageBuildEnabled reports whether an mkfs resolver is configured.
@@ -332,6 +362,7 @@ func imageManifestResult(m image.Manifest) api.ImageManifestResult {
 		DiskSize:   m.DiskSize,
 		Created:    m.Created.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		Layout:     m.Layout,
+		Recipe:     m.Recipe,
 	}
 }
 
@@ -397,7 +428,13 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		return
 	}
 
-	m, err := image.NewBuilder(s.imgStore).Build(ctx, image.BuildConfig{
+	builder := image.NewBuilder(s.imgStore)
+	toolset := s.buildToolset(p.Platform, binaryPath)
+	if toolset != nil {
+		builder.WithRecorder(recipe.Recorder{Store: s.recipes})
+	}
+	m, err := builder.Build(ctx, image.BuildConfig{
+		Toolset:  toolset,
 		Name:     p.Name,
 		Platform: p.Platform, Packages: p.Packages,
 		Tag:         p.Tag,
@@ -465,6 +502,71 @@ func (s *Server) pruneImages() {
 	if len(removed) > 0 {
 		slog.Info("image store: removed unreferenced images", "count", len(removed))
 	}
+	s.pruneRecipeBlobs()
+}
+
+// recipeBlobGrace protects blobs a build in progress has stored but not yet
+// referenced from a recipe.
+const recipeBlobGrace = time.Hour
+
+// pruneRecipeBlobs removes stored blobs that no remaining image's recipe uses.
+func (s *Server) pruneRecipeBlobs() {
+	if s.recipes == nil {
+		return
+	}
+	images, err := s.imgStore.List()
+	if err != nil {
+		slog.Warn("blob store: list images", "err", err)
+		return
+	}
+	keep := map[string]bool{}
+	for _, m := range images {
+		if m.Recipe == "" || keep[m.Recipe] {
+			continue
+		}
+		keep[m.Recipe] = true
+		r, err := recipe.Load(s.recipes, m.Recipe)
+		if err != nil {
+			// Keep what can still be found rather than guess.
+			slog.Warn("blob store: unreadable recipe; skipping prune", "image", m.Ref(), "err", err)
+			return
+		}
+		for _, b := range r.Blobs {
+			keep[b.Digest] = true
+		}
+	}
+	removed, err := s.recipes.Prune(func(d string) bool { return keep[d] }, recipeBlobGrace)
+	if err != nil {
+		slog.Warn("blob store: prune", "err", err)
+	}
+	if len(removed) > 0 {
+		slog.Info("blob store: removed unused blobs", "count", len(removed))
+	}
+}
+
+// handleImageRecipe returns the recipe an image tag was built from.
+func (s *Server) handleImageRecipe(params json.RawMessage) (any, *api.RPCError) {
+	if s.imgStore == nil || s.recipes == nil {
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Image.Recipe (recipes disabled)"}
+	}
+	var p struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	m, _, err := s.imgStore.Resolve(p.Ref)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	if m.Recipe == "" {
+		return nil, &api.RPCError{Code: -32000, Message: p.Ref + " has no recipe; rebuild it with this daemon"}
+	}
+	data, err := s.recipes.ReadBytes(m.Recipe)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	return json.RawMessage(data), nil
 }
 
 // extractBuildContext untars stream into dir and returns the extracted files as

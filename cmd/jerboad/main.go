@@ -26,6 +26,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
+	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/scheduler"
 	"github.com/AitorConS/jerboa/internal/slogformat"
 	"github.com/AitorConS/jerboa/internal/snapshot"
@@ -426,6 +427,16 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			return tools.ResolveMkfs(rctx, toolsDir, "")
 		})
 		slog.Info("jerboad: image build enabled", "store", storePath)
+		// Builds are recorded as recipes over a content-addressed blob store
+		// beside the image store, so images can be pushed to a registry.
+		blobsPath := filepath.Join(filepath.Dir(storePath), "blobs")
+		if blobs, err := cas.New(blobsPath); err != nil {
+			slog.Warn("jerboad: blob store unavailable; builds will not record recipes", "err", err)
+		} else {
+			vmSrv.EnableRecipes(blobs, func(platform string) (*image.Toolset, error) {
+				return tools.ToolsetFor(toolsDir, platform)
+			})
+		}
 	}
 	if volStore, err := volume.NewStore(volumeStorePath(storePath)); err != nil {
 		slog.Warn("jerboad: volume store unavailable", "err", err)

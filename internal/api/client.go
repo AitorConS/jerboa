@@ -513,6 +513,18 @@ func (c *Client) ImageGet(_ context.Context, ref string) (ImageManifestResult, e
 	return out, nil
 }
 
+// ImageRecipe returns the recipe document an image tag was built from.
+func (c *Client) ImageRecipe(_ context.Context, ref string) (json.RawMessage, error) {
+	var out json.RawMessage
+	p := struct {
+		Ref string `json:"ref"`
+	}{Ref: ref}
+	if err := c.call("Image.Recipe", p, &out); err != nil {
+		return nil, fmt.Errorf("client image recipe: %w", err)
+	}
+	return out, nil
+}
+
 // ImageRemove deletes a name:tag (or sha) reference from the daemon's store.
 func (c *Client) ImageRemove(_ context.Context, ref string) error {
 	p := struct {

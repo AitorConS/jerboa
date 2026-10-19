@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"text/tabwriter"
 
@@ -51,6 +52,22 @@ func newImagesCmd(endpoint *string, outputFmt *string) *cobra.Command {
 			return err
 		}
 		return printJSON(cmd.OutOrStdout(), m)
+	}})
+	cmd.AddCommand(&cobra.Command{Use: "recipe <ref>", Short: "Show the recipe that rebuilds an image's disk from its inputs", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := api.Dial(*endpoint)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		raw, err := client.ImageRecipe(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return fmt.Errorf("images recipe: %w", err)
+		}
+		return printJSON(cmd.OutOrStdout(), v)
 	}})
 	return cmd
 

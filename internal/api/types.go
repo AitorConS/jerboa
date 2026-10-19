@@ -371,6 +371,9 @@ type ImageManifestResult struct {
 	DiskSize     int64           `json:"disk_size"`
 	Created      string          `json:"created"`
 	Layout       string          `json:"layout,omitempty"`
+	// Recipe is the digest of the recipe the image was built from; empty for
+	// images built without one, which cannot be pushed.
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // SnapshotParams names a snapshot and, for create/restore, the target VM.
