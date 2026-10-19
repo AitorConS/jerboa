@@ -64,7 +64,7 @@ closure_function(1, 1, status, write_file,
                  buffer b)
 {
     // openat would be nicer really
-    buffer tmpbuf = little_stack_buffer(NAME_MAX + 1);
+    buffer tmpbuf = little_stack_buffer(PATH_MAX + 1);
     char *z = cstring(bound(path), tmpbuf);
     int fd = open(z, O_CREAT|O_WRONLY, 0644);
     ssize_t xfer, len = buffer_length(b);
@@ -100,7 +100,7 @@ closure_function(3, 2, boolean, readdir_each_child,
 // isn't there an internal readdir?
 void readdir(filesystem fs, heap h, tuple w, buffer path)
 {
-    buffer tmpbuf = little_stack_buffer(NAME_MAX + 1);
+    buffer tmpbuf = little_stack_buffer(PATH_MAX + 1);
     tuple t = get_tuple(w, sym(children));
     if (t) {
         mkdir(cstring(path, tmpbuf), 0777);
@@ -143,7 +143,7 @@ static void dump_fsentry(int indent, symbol name, tuple t)
         print_colored(indent, TERM_COLOR_BLUE, name, true);
         iterate(c, stack_closure(dump_fsentry_each, indent));
     } else if ((target_buf = get(t, sym(linktarget)))) {
-        buffer tmpbuf = little_stack_buffer(NAME_MAX + 1);
+        buffer tmpbuf = little_stack_buffer(PATH_MAX + 1);
         print_colored(indent, TERM_COLOR_CYAN, name, false);
         printf(" -> %s\n", cstring(target_buf, tmpbuf));
     } else

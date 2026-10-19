@@ -153,7 +153,9 @@ static buffer read_stdin(heap h)
 buffer lookup_file(heap h, const char *target_root, buffer name, struct stat *st)
 {
     buffer target_name = NULL;
-    buffer tmpbuf = little_stack_buffer(NAME_MAX + 1);
+    /* Holds whole host paths, not single names: a build context's deep
+       dependency trees (node_modules) easily exceed NAME_MAX. */
+    buffer tmpbuf = little_stack_buffer(PATH_MAX + 1);
 
     // try target_root
     if (target_root != NULL) {
@@ -213,7 +215,7 @@ void read_file(heap h, const char *target_root, buffer dest, buffer name)
         name = target_name;
     }
 
-    buffer tmpbuf = little_stack_buffer(NAME_MAX + 1);
+    buffer tmpbuf = little_stack_buffer(PATH_MAX + 1);
     int fd = open(cstring(name, tmpbuf), O_RDONLY);
     if (fd < 0) halt("couldn't open file %b: %s\n", name, errno_sstring());
     u64 size = st.st_size;
