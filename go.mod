@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/containers/gvisor-tap-vsock v0.8.9
+	github.com/klauspost/compress v1.19.1
 	github.com/mattn/go-isatty v0.0.24
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/prometheus/client_golang v1.24.1
