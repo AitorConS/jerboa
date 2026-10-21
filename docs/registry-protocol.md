@@ -79,6 +79,8 @@ Every digest is `sha256:<64 lowercase hex>`.
 5. For each range: `GET {cdn}/packs/<hex>` with `Range: bytes=<start>-<end>`. Decompress each frame, bounded to the blob's size from the recipe; verify the SHA-256 (`pack.ReadBlob`); store it.
 6. Obtain the recipe's `mkfs` (`tools.MkfsForVersion`), assemble the disk (`recipe.Assemble`), verify `diskDigest`, and store the image.
 
+7. `POST https://registry.jerboa.dev/v2/<ns>/<repo>/pulls`, anonymous and without a body, reports the pull for the hub's counter. The server answers 204, also for unknown repositories. The client sends it once, waits at most 2 seconds and ignores the result.
+
 Retries:
 - A failed range is retried with backoff.
 - A blob that fails verification aborts the pull. It is never stored.

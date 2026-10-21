@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
@@ -199,8 +200,15 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 	if err := recipe.Assemble(ctx, r, o.Store, mkfs, o.Out); err != nil {
 		return res, fmt.Errorf("pull: %w", err)
 	}
+	// The hub's pull counter: best effort, bounded, never fails the pull.
+	countCtx, cancel := context.WithTimeout(ctx, countPullTimeout)
+	_ = o.Client.CountPull(countCtx, o.Ref.Namespace, o.Ref.Repository)
+	cancel()
 	return res, nil
 }
+
+// countPullTimeout bounds how long a pull waits to report itself.
+const countPullTimeout = 2 * time.Second
 
 func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []string, sizes map[string]int64, res *PullResult) error {
 	locs, err := o.Client.Locations(ctx, cdn, digest)
