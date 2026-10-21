@@ -1,5 +1,6 @@
 import { issuePushToken, loginWithGitHub, nowSeconds, pats } from "./auth";
 import type { Env } from "./env";
+import { catalog } from "./catalog";
 import { errorResponse, RegistryError } from "./errors";
 import { collectGarbage } from "./gc";
 import { deleteTag, listTags, missingBlobs, putPack, putRecipe, putTag } from "./push";
@@ -33,6 +34,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (kind === "tags" && arg && parts.length === 5 && m === "PUT") return putTag(req, env, ns, repo, arg);
     if (kind === "tags" && arg && parts.length === 5 && m === "DELETE") return deleteTag(req, env, ns, repo, arg);
   }
+  if (parts[0] === "v2" && parts.length >= 2 && m === "GET") return catalog(url, env, parts.slice(1));
   // Local development only: serve the R2 layout the way the CDN would.
   if (parts[0] === "cdn" && env.CDN_BASE.endsWith("/cdn") && (m === "GET" || m === "HEAD")) {
     return serveCDN(req, env, parts.slice(1).join("/"));

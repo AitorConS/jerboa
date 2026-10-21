@@ -6,8 +6,12 @@ const TAG = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/;
 const HEX = /^[0-9a-f]{64}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 
-export function checkRepo(namespace: string, repo: string): void {
+export function checkNamespace(namespace: string): void {
   if (!NAMESPACE.test(namespace)) throw invalid("NAME_INVALID", `invalid namespace ${JSON.stringify(namespace)}`);
+}
+
+export function checkRepo(namespace: string, repo: string): void {
+  checkNamespace(namespace);
   if (repo.length > 128 || !REPOSITORY.test(repo)) throw invalid("NAME_INVALID", `invalid repository ${JSON.stringify(repo)}`);
 }
 

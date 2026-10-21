@@ -87,7 +87,7 @@ export async function putRecipe(req: Request, env: Env, ns: string, repo: string
   if (await env.DB.prepare(`SELECT 1 FROM recipes WHERE digest = ?1`).bind(digest).first()) {
     return Response.json({ recipe: digest });
   }
-  const blobs = await checkRecipe(bytes, digest);
+  const { blobs, summary } = await checkRecipe(bytes, digest);
   const { results } = await env.DB.prepare(
     `SELECT digest, pack, offset, length FROM blobs WHERE digest IN (SELECT json_extract(value, '$.digest') FROM json_each(?1))`,
   )
@@ -111,8 +111,8 @@ export async function putRecipe(req: Request, env: Env, ns: string, repo: string
   const now = nowSeconds();
   await env.DB.batch([
     env.DB.prepare(
-      `INSERT OR IGNORE INTO recipes (digest, size, created_at, untagged_since) VALUES (?1, ?2, ?3, ?3)`,
-    ).bind(digest, bytes.length, now),
+      `INSERT OR IGNORE INTO recipes (digest, size, created_at, untagged_since, summary) VALUES (?1, ?2, ?3, ?3, ?4)`,
+    ).bind(digest, bytes.length, now, JSON.stringify(summary)),
     env.DB.prepare(`INSERT OR IGNORE INTO recipe_packs (recipe, pack) SELECT ?1, value FROM json_each(?2)`).bind(
       digest,
       JSON.stringify(packs),
@@ -161,6 +161,7 @@ export async function putTag(req: Request, env: Env, ns: string, repo: string, t
        ON CONFLICT (repo_id, tag) DO UPDATE SET recipe = ?3, updated_at = ?4`,
     ).bind(id, tag, recipe, now),
     env.DB.prepare(`UPDATE recipes SET untagged_since = NULL WHERE digest = ?1`).bind(recipe),
+    touchRepo(env, id, now),
   ];
   if (old && old.recipe !== recipe) stmts.push(markUntagged(env, old.recipe, now));
   await env.DB.batch(stmts);
@@ -169,6 +170,9 @@ export async function putTag(req: Request, env: Env, ns: string, repo: string, t
   });
   return Response.json({ tag, recipe });
 }
+
+const touchRepo = (env: Env, id: number, now: number) =>
+  env.DB.prepare(`UPDATE repos SET updated_at = ?2 WHERE id = ?1`).bind(id, now);
 
 function markUntagged(env: Env, recipe: string, now: number): D1PreparedStatement {
   return env.DB.prepare(
@@ -181,17 +185,24 @@ export async function deleteTag(req: Request, env: Env, ns: string, repo: string
   checkRepo(ns, repo);
   checkTag(tag);
   await requirePush(req, env, ns, repo);
+  await removeTag(env, ns, repo, tag);
+  return new Response(null, { status: 204 });
+}
+
+/** Deletes a tag; its recipe becomes garbage once no tag uses it. The caller checks access. */
+export async function removeTag(env: Env, ns: string, repo: string, tag: string): Promise<void> {
   const id = await repoID(env, ns, repo, false);
   const old = id
     ? await env.DB.prepare(`SELECT recipe FROM tags WHERE repo_id = ?1 AND tag = ?2`).bind(id, tag).first<{ recipe: string }>()
     : null;
   if (!old) throw new RegistryError(404, "NOT_FOUND", `${ns}/${repo}:${tag} does not exist`);
+  const now = nowSeconds();
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM tags WHERE repo_id = ?1 AND tag = ?2`).bind(id, tag),
-    markUntagged(env, old.recipe, nowSeconds()),
+    markUntagged(env, old.recipe, now),
+    touchRepo(env, id!, now),
   ]);
   await env.BLOBS.delete(tagKey(ns, repo, tag));
-  return new Response(null, { status: 204 });
 }
 
 /** GET /v2/<ns>/<repo>/tags (public) */

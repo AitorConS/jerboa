@@ -28,31 +28,40 @@ async function github<T>(env: Env, path: string, token: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-/** POST /auth/github: exchanges a GitHub token for a registry refresh token. */
-export async function loginWithGitHub(req: Request, env: Env): Promise<Response> {
-  const body = (await req.json().catch(() => null)) as { access_token?: unknown } | null;
-  if (!body || typeof body.access_token !== "string" || body.access_token === "") {
-    throw invalid("BAD_REQUEST", "access_token is required");
-  }
-  const user = await github<{ id: number; login: string }>(env, "/user", body.access_token);
-  const orgs = await github<{ login: string }[]>(env, "/user/orgs?per_page=100", body.access_token);
+/**
+ * Creates or updates the account behind a GitHub token, recording the
+ * organizations the user belongs to now.
+ */
+export async function upsertAccount(env: Env, githubToken: string): Promise<Account> {
+  const user = await github<{ id: number; login: string }>(env, "/user", githubToken);
+  const orgs = await github<{ login: string }[]>(env, "/user/orgs?per_page=100", githubToken);
   const login = user.login.toLowerCase();
-  const orgLogins = JSON.stringify(orgs.map((o) => o.login.toLowerCase()).sort());
-  const now = nowSeconds();
+  const orgLogins = orgs.map((o) => o.login.toLowerCase()).sort();
   // A GitHub id keeps its account across renames; the login follows it.
   const account = await env.DB.prepare(
     `INSERT INTO accounts (github_id, login, orgs, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)
      ON CONFLICT (github_id) DO UPDATE SET login = ?2, orgs = ?3, updated_at = ?4
      RETURNING id`,
   )
-    .bind(user.id, login, orgLogins, now)
+    .bind(user.id, login, JSON.stringify(orgLogins), nowSeconds())
     .first<{ id: number }>();
   if (!account) throw new RegistryError(500, "INTERNAL", "account not stored");
+  return { id: account.id, login, orgs: orgLogins };
+}
+
+/** POST /auth/github: exchanges a GitHub token for a registry refresh token. */
+export async function loginWithGitHub(req: Request, env: Env): Promise<Response> {
+  const body = (await req.json().catch(() => null)) as { access_token?: unknown } | null;
+  if (!body || typeof body.access_token !== "string" || body.access_token === "") {
+    throw invalid("BAD_REQUEST", "access_token is required");
+  }
+  const { id, login } = await upsertAccount(env, body.access_token);
+  const now = nowSeconds();
   const token = randomToken("jrt_");
   await env.DB.prepare(
     `INSERT INTO tokens (id, account_id, kind, hash, created_at, expires_at) VALUES (?1, ?2, 'refresh', ?3, ?4, ?5)`,
   )
-    .bind(crypto.randomUUID(), account.id, await sha256Hex(new TextEncoder().encode(token)), now, now + REFRESH_TTL)
+    .bind(crypto.randomUUID(), id, await sha256Hex(new TextEncoder().encode(token)), now, now + REFRESH_TTL)
     .run();
   return Response.json({ token, login });
 }
@@ -80,7 +89,7 @@ function bearer(req: Request): string | null {
 
 const SCOPE = /^repository:([^/:]+)\/([^/:]+):push$/;
 
-function canPush(account: Account, namespace: string): boolean {
+export function canPush(account: Account, namespace: string): boolean {
   return namespace === account.login || account.orgs.includes(namespace);
 }
 
@@ -118,39 +127,56 @@ export async function requirePush(req: Request, env: Env, namespace: string, rep
   return claims.login;
 }
 
+export interface PAT {
+  id: string;
+  name: string;
+  created_at: number;
+  last_used_at: number | null;
+}
+
+/** Issues a personal access token; the token itself is only ever returned here. */
+export async function createPAT(env: Env, accountId: number, name: string): Promise<{ id: string; name: string; token: string }> {
+  name = name.slice(0, 64);
+  if (!name) throw invalid("BAD_REQUEST", "name is required");
+  const token = randomToken("jpat_");
+  const id = crypto.randomUUID();
+  await env.DB.prepare(`INSERT INTO tokens (id, account_id, kind, name, hash, created_at) VALUES (?1, ?2, 'pat', ?3, ?4, ?5)`)
+    .bind(id, accountId, name, await sha256Hex(new TextEncoder().encode(token)), nowSeconds())
+    .run();
+  return { id, name, token };
+}
+
+export async function listPATs(env: Env, accountId: number): Promise<PAT[]> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, name, created_at, last_used_at FROM tokens
+     WHERE account_id = ?1 AND kind = 'pat' AND revoked_at IS NULL ORDER BY created_at`,
+  )
+    .bind(accountId)
+    .all<PAT>();
+  return results;
+}
+
+/** Revokes one of the account's personal access tokens, or throws NOT_FOUND. */
+export async function revokePAT(env: Env, accountId: number, id: string): Promise<void> {
+  const res = await env.DB.prepare(
+    `UPDATE tokens SET revoked_at = ?1 WHERE id = ?2 AND account_id = ?3 AND kind = 'pat' AND revoked_at IS NULL`,
+  )
+    .bind(nowSeconds(), id, accountId)
+    .run();
+  if (!res.meta.changes) throw new RegistryError(404, "NOT_FOUND", "no such token");
+}
+
 /** /auth/pats: personal access tokens for CI. */
 export async function pats(req: Request, env: Env, id?: string): Promise<Response> {
   const account = await accountFromBearer(req, env);
-  const now = nowSeconds();
   if (req.method === "POST" && !id) {
     const body = (await req.json().catch(() => null)) as { name?: unknown } | null;
-    const name = typeof body?.name === "string" ? body.name.slice(0, 64) : "";
-    if (!name) throw invalid("BAD_REQUEST", "name is required");
-    const token = randomToken("jpat_");
-    const tokenId = crypto.randomUUID();
-    await env.DB.prepare(
-      `INSERT INTO tokens (id, account_id, kind, name, hash, created_at) VALUES (?1, ?2, 'pat', ?3, ?4, ?5)`,
-    )
-      .bind(tokenId, account.id, name, await sha256Hex(new TextEncoder().encode(token)), now)
-      .run();
-    return Response.json({ id: tokenId, name, token }, { status: 201 });
+    const created = await createPAT(env, account.id, typeof body?.name === "string" ? body.name : "");
+    return Response.json(created, { status: 201 });
   }
-  if (req.method === "GET" && !id) {
-    const { results } = await env.DB.prepare(
-      `SELECT id, name, created_at, last_used_at FROM tokens
-       WHERE account_id = ?1 AND kind = 'pat' AND revoked_at IS NULL ORDER BY created_at`,
-    )
-      .bind(account.id)
-      .all();
-    return Response.json({ pats: results });
-  }
+  if (req.method === "GET" && !id) return Response.json({ pats: await listPATs(env, account.id) });
   if (req.method === "DELETE" && id) {
-    const res = await env.DB.prepare(
-      `UPDATE tokens SET revoked_at = ?1 WHERE id = ?2 AND account_id = ?3 AND kind = 'pat' AND revoked_at IS NULL`,
-    )
-      .bind(now, id, account.id)
-      .run();
-    if (!res.meta.changes) throw new RegistryError(404, "NOT_FOUND", "no such token");
+    await revokePAT(env, account.id, id);
     return new Response(null, { status: 204 });
   }
   throw new RegistryError(405, "METHOD", "method not allowed");

@@ -147,6 +147,20 @@ Other tag operations:
 
 Before uploading anything, the client assembles the image from the recipe and its local blob store and checks the disk digest, so it never publishes a recipe that does not rebuild its disk.
 
+## Catalog
+
+Anonymous JSON reads for the hub and for scripts. Answers carry `Cache-Control: public, max-age=60`. A repository whose tags were all deleted leaves search and namespace listings.
+
+| Request | Answer |
+|---|---|
+| `GET /v2/_search?q=<text>&page=<n>&sort=pulls\|updated` | `{"repos": [card…], "next": bool}`: 20 per page; `q` matches `<ns>/<repo>` and the description, case-insensitively; an empty `q` lists everything |
+| `GET /v2/<ns>` | `{"namespace", "repos": [card…]}`, most recently updated first; 404 without repositories |
+| `GET /v2/<ns>/<repo>` | a card plus `readme`, `created` and `tags` (how many) |
+| `GET /v2/<ns>/<repo>/tags/<tag>` | `{"tag", "recipe", "size", "updated", "summary"}` |
+
+- **Card:** `{"namespace", "name", "description", "pulls", "updated"}`. Times are Unix seconds.
+- **Summary:** what the recipe says about the image, read without validation: `platform`, `layout`, `memory`, `cpus`, `env`, `ports`, `packages` (`[{"name", "version"}]`), `toolset` (its version), `diskSize`, `blobCount` and `blobBytes`. It is `null` if the recipe cannot be read.
+
 ## Errors
 
 Errors are JSON with an HTTP status:
