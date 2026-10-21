@@ -57,6 +57,8 @@ jerboa pull aitorcons/web:v1
 jerboa run aitorcons/web:v1 -p 8080:8080
 ```
 
+After a successful pull, the daemon tells the registry that the repository was pulled, without credentials, so the hub can show an approximate pull count. Each address counts once per repository every 10 minutes.
+
 A reference is `[registry/]namespace/repository[:tag|@sha256:<digest>]`:
 - The registry defaults to `registry.jerboa.dev`.
 - The tag defaults to `latest`.

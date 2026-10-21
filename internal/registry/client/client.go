@@ -212,6 +212,13 @@ func (c *Client) EditRepo(ctx context.Context, token, namespace, repository stri
 	return c.do(ctx, http.MethodPatch, c.repo(namespace, repository), token, jsonBody(changes), "application/json", nil)
 }
 
+// CountPull reports a pull for the hub's counter. It is anonymous, sent once
+// without retries, and its answer carries nothing, so callers ignore errors.
+func (c *Client) CountPull(ctx context.Context, namespace, repository string) error {
+	_, err := c.once(ctx, http.MethodPost, c.repo(namespace, repository)+"/pulls", "", nil, "", nil)
+	return err
+}
+
 // TagRecipe reads the recipe digest a tag points to, from the CDN.
 func (c *Client) TagRecipe(ctx context.Context, cdn, namespace, repository, tag string) (string, error) {
 	var out struct {
