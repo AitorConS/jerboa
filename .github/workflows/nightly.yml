@@ -92,7 +92,7 @@ jobs:
     - name: Run benchmarks
       run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
     - name: Upload benchmark results
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: benchmark-results-${{ github.run_id }}
         path: benchmark-results.txt
@@ -189,7 +189,7 @@ jobs:
         } >> "$GITHUB_STEP_SUMMARY"
     - name: Upload benchmark results
       if: always()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: image-benchmarks-${{ github.run_id }}
         path: |
@@ -223,7 +223,7 @@ jobs:
         done
     - name: Upload any fuzz crashers
       if: failure()
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: fuzz-crashers-${{ github.run_id }}
         path: '**/testdata/fuzz/**'
