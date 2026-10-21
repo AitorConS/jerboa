@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -248,6 +249,71 @@ func newRegistryCmd() *cobra.Command {
 			return nil
 		},
 	})
-	cmd.AddCommand(pat)
+	cmd.AddCommand(pat, newRepoCmd(&registry))
 	return cmd
+}
+
+func newRepoCmd(registry *string) *cobra.Command {
+	repo := &cobra.Command{Use: "repo", Short: "Repository details shown on the hub"}
+	var description, readme string
+	edit := &cobra.Command{
+		Use:   "edit <[registry/]namespace/repository>",
+		Short: "Set a repository's description or README",
+		Example: `  jerboa registry repo edit aitorcons/web --description "Static web server"
+  jerboa registry repo edit aitorcons/web --readme README.md`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, err := naming.ParseImageReference(args[0])
+			if err != nil {
+				return fmt.Errorf("repo edit: %w", err)
+			}
+			if ref.Digest != "" || strings.Contains(args[0][strings.LastIndex(args[0], "/")+1:], ":") {
+				return fmt.Errorf("repo edit: name a repository, without a tag or digest")
+			}
+			if ref.Registry == naming.DefaultRegistry {
+				ref.Registry = *registry
+			}
+			var changes client.RepoChanges
+			if cmd.Flags().Changed("description") {
+				changes.Description = &description
+			}
+			if cmd.Flags().Changed("readme") {
+				data, err := readFileOrStdin(cmd, readme)
+				if err != nil {
+					return fmt.Errorf("repo edit: %w", err)
+				}
+				text := string(data)
+				changes.Readme = &text
+			}
+			if changes.Description == nil && changes.Readme == nil {
+				return fmt.Errorf("repo edit: set --description, --readme or both")
+			}
+			cred, err := credentials.For(ref.Registry)
+			if err != nil {
+				return fmt.Errorf("repo edit: %w", err)
+			}
+			c := client.New(ref.Registry)
+			token, err := c.PushToken(cmd.Context(), cred, ref.Namespace, ref.Repository)
+			if err != nil {
+				return fmt.Errorf("repo edit: %w", err)
+			}
+			if err := c.EditRepo(cmd.Context(), token, ref.Namespace, ref.Repository, changes); err != nil {
+				return fmt.Errorf("repo edit: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Updated %s/%s\n", ref.Namespace, ref.Repository)
+			return nil
+		},
+	}
+	edit.Flags().StringVar(&description, "description", "", "one-line description, at most 200 characters")
+	edit.Flags().StringVar(&readme, "readme", "", "Markdown file to show as the README, or - for stdin (at most 64 KiB)")
+	repo.AddCommand(edit)
+	return repo
+}
+
+// readFileOrStdin reads a file, or standard input for "-".
+func readFileOrStdin(cmd *cobra.Command, path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
+	}
+	return os.ReadFile(path)
 }

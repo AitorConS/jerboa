@@ -80,6 +80,16 @@ Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
 
 `jerboa registry pat ls` lists your tokens; `jerboa registry pat rm <id>` revokes one.
 
+## Description and README
+
+Each repository can carry a one-line description and a Markdown README, shown on its page on the hub. Set them from the command line or from CI, with the same credentials as a push:
+
+```sh
+jerboa registry repo edit aitorcons/web --description "Static web server" --readme README.md
+```
+
+Either flag can be used alone. `--readme -` reads the README from standard input.
+
 ## Limits
 
 | Limit | Value |
@@ -88,6 +98,8 @@ Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
 | Largest file, compressed | 64 MiB |
 | Files per image | 100 000 |
 | Tags per repository | 10 000 |
+| Description | 200 characters, one line |
+| README | 64 KiB |
 
 A recipe that no tag references is deleted after 7 days, along with any files no remaining recipe uses.
 
