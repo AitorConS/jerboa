@@ -199,6 +199,19 @@ func (c *Client) DeleteTag(ctx context.Context, token, namespace, repository, ta
 	return c.do(ctx, http.MethodDelete, c.repo(namespace, repository)+"/tags/"+tag, token, nil, "", nil)
 }
 
+// RepoChanges are the repository fields EditRepo sets; nil fields keep their
+// value.
+type RepoChanges struct {
+	Description *string `json:"description,omitempty"`
+	Readme      *string `json:"readme,omitempty"`
+}
+
+// EditRepo sets a repository's description or README, which the hub shows.
+// It needs a push token for the repository.
+func (c *Client) EditRepo(ctx context.Context, token, namespace, repository string, changes RepoChanges) error {
+	return c.do(ctx, http.MethodPatch, c.repo(namespace, repository), token, jsonBody(changes), "application/json", nil)
+}
+
 // TagRecipe reads the recipe digest a tag points to, from the CDN.
 func (c *Client) TagRecipe(ctx context.Context, cdn, namespace, repository, tag string) (string, error) {
 	var out struct {

@@ -137,6 +137,14 @@ Other tag operations:
 
 Before uploading anything, the client assembles the image from the recipe and its local blob store and checks the disk digest, so it never publishes a recipe that does not rebuild its disk.
 
+## Repository details
+
+`PATCH /v2/<ns>/<repo>` sets what the hub shows about a repository. It needs a push token for the repository and takes `{"description": "…", "readme": "…"}`; either field may be left out.
+- **`description`:** whitespace collapses to single spaces; at most 200 characters.
+- **`readme`:** Markdown, at most 64 KiB.
+
+It answers 404 for a repository nothing was pushed to.
+
 ## Errors
 
 Errors are JSON with an HTTP status:

@@ -25,13 +25,14 @@ type Server struct {
 	mu        sync.Mutex
 	objects   map[string][]byte
 	locations map[string]pack.Location
+	repos     map[string]map[string]string
 	// Requests counts requests by "METHOD /first/segments".
 	Requests map[string]int
 }
 
 // New starts a fake registry.
 func New() *Server {
-	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, Requests: map[string]int{}}
+	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, Requests: map[string]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -45,6 +46,13 @@ func (s *Server) Object(key string) ([]byte, bool) {
 	defer s.mu.Unlock()
 	b, ok := s.objects[key]
 	return b, ok
+}
+
+// Repo returns the fields PATCH /v2/<ns>/<repo> set on a repository.
+func (s *Server) Repo(namespace, repository string) map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.repos[namespace+"/"+repository]
 }
 
 // Corrupt flips one byte of a stored object.
@@ -75,6 +83,26 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": s.URL + "/cdn", "github_client_id": "test"})
 	case parts[0] == "cdn":
 		s.serveCDN(w, r, strings.Join(parts[1:], "/"))
+	case parts[0] == "v2" && len(parts) == 3 && r.Method == http.MethodPatch:
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			fail(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing token")
+			return
+		}
+		var changes map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&changes); err != nil || len(changes) == 0 {
+			fail(w, http.StatusBadRequest, "BAD_REQUEST", "nothing to change")
+			return
+		}
+		s.mu.Lock()
+		key := parts[1] + "/" + parts[2]
+		if s.repos[key] == nil {
+			s.repos[key] = map[string]string{}
+		}
+		for k, v := range changes {
+			s.repos[key][k] = v
+		}
+		s.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]string{"namespace": parts[1], "name": parts[2]})
 	case parts[0] == "v2" && len(parts) >= 4:
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			fail(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing token")
