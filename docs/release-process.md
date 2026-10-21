@@ -212,12 +212,8 @@ publish a new candidate to update it.
 ## Image registry operations
 
 The image registry (`registry.jerboa.dev`, [user guide]({% link registry.md %}),
-[protocol]({% link registry-protocol.md %})) is a Cloudflare Worker kept in the
-private repository `AitorConS/jerboa-registry`, whose `docs/operations.md`
-covers its environments, deploys and day-to-day operations. Its
-infrastructure is Terraform in the private repository `AitorConS/jerboa-infra`.
-
-The Go client and the protocol stay here. The Worker's CI runs this
-repository's `tests/registry` end to end against the Worker on every change
-and daily against `main`, so a client change that breaks the protocol fails
-there within a day.
+[protocol]({% link registry-protocol.md %})) server and its operations live in
+a private repository. The Go client and the protocol stay here; the server's
+CI runs this repository's `tests/registry` end to end on every change and
+daily against `main`, so a client change that breaks the protocol fails there
+within a day.
