@@ -212,53 +212,12 @@ publish a new candidate to update it.
 ## Image registry operations
 
 The image registry (`registry.jerboa.dev`, [user guide]({% link registry.md %}),
-[protocol]({% link registry-protocol.md %})) is a Cloudflare Worker in
-`registry/worker`. It runs in two environments, each with its own resources:
+[protocol]({% link registry-protocol.md %})) is a Cloudflare Worker kept in the
+private repository `AitorConS/jerboa-registry`, whose `docs/operations.md`
+covers its environments, deploys and day-to-day operations. Its
+infrastructure is Terraform in the private repository `AitorConS/jerboa-infra`.
 
-| | Staging | Production |
-|---|---|---|
-| Worker | `jerboa-registry-staging` on `staging.registry.jerboa.dev` | `jerboa-registry` on `registry.jerboa.dev` |
-| R2 bucket | `jerboa-registry-staging` | `jerboa-registry` |
-| CDN host (R2 custom domain) | `cdn.staging.registry.jerboa.dev` | `cdn.registry.jerboa.dev` |
-| D1 database | `jerboa-registry-staging` | `jerboa-registry` |
-| GitHub OAuth App | Jerboa Registry (staging) | Jerboa Registry |
-| GitHub environment | `registry-staging` | `registry-production` (required reviewers) |
-
-The `Registry Worker` workflow tests every change. A merge to `main` then:
-1. deploys to staging and applies its D1 migrations;
-2. runs the end-to-end test against staging with a test account. That run pushes to a fresh repository, pulls, checks the CDN cache, and deletes its tags.
-
-Production deploys only from a manual run of the workflow with `deploy_production`, approved through the `registry-production` environment.
-
-### Infrastructure
-
-The private repository `AitorConS/jerboa-infra` (Terraform) holds everything except the Worker code:
-- the buckets, D1 databases and CDN hosts;
-- the zone's cache and rate-limiting rules;
-- the deploy token;
-- the `registry-staging` and `registry-production` GitHub environments, which give the deploy jobs what they need:
-
-| Setting | Kind | Content |
-|---|---|---|
-| `CLOUDFLARE_ACCOUNT_ID` | variable | the Cloudflare account |
-| `REGISTRY_D1_DATABASE_ID` | variable | the D1 database |
-| `REGISTRY_GITHUB_CLIENT_ID` | variable | the GitHub OAuth App |
-| `CLOUDFLARE_API_TOKEN` | secret | a token limited to deploying Workers |
-| `REGISTRY_JWT_SIGNING_KEY` | secret | the push-token signing key |
-| `REGISTRY_E2E_NAMESPACE`, `REGISTRY_E2E_TOKEN` | variable, secret | the staging test account (staging only) |
-
-At deploy time, `registry/worker/scripts/configure-env.sh` fills the IDs into `wrangler.toml` and passes the key with `wrangler deploy --secrets-file`. Deploy jobs fail until `jerboa-infra` has been applied.
-
-`jerboa-infra`'s README covers:
-- the first apply;
-- the two steps no API can do: the OAuth Apps with device flow, and the staging test account's token;
-- credential rotation.
-
-### Day to day
-
-- **Logs:** `pnpm exec wrangler tail --env production`. Errors are logged as `internal error`; the daily garbage collection logs a `gc` line with what it removed.
-- **Rollback:** `pnpm exec wrangler rollback --env production` restores the previous Worker version. Migrations only add tables and columns, so an older Worker keeps working with a newer schema.
-- **Schema changes:** add a file to `registry/worker/migrations/`. Staging applies it on merge; production applies it on the manual deploy, before the new Worker goes live.
-- **Abuse:** revoke a namespace's tokens by setting `revoked_at` on its rows in `tokens`, and delete its tags. Garbage collection removes the content a week later.
-- **Quota:** `NAMESPACE_QUOTA_BYTES` in `wrangler.toml`, per environment.
-- **Rate limits:** the zone's rate-limiting rule in `jerboa-infra` (`registry_rate_limit`).
+The Go client and the protocol stay here. The Worker's CI runs this
+repository's `tests/registry` end to end against the Worker on every change
+and daily against `main`, so a client change that breaks the protocol fails
+there within a day.

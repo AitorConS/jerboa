@@ -1,14 +1,15 @@
 //go:build registry_e2e
 
-// Package registry runs the Go registry client against the real Worker
-// (registry/worker), so both implementations of docs/registry-protocol.md are
-// checked against each other.
+// Package registry runs the Go registry client against the real Worker, so
+// both implementations of docs/registry-protocol.md are checked against each
+// other. The Worker lives in the private AitorConS/jerboa-registry repository,
+// whose CI runs these tests.
 //
 // Locally it starts the Worker under wrangler dev, with local R2 and D1 and a
-// fake GitHub:
+// fake GitHub, from a checkout of that repository:
 //
-//	(cd registry/worker && pnpm install)
-//	go test -tags registry_e2e ./tests/registry/...
+//	(cd <worker> && pnpm install)
+//	JERBOA_REGISTRY_WORKER=<worker> go test -tags registry_e2e ./tests/registry/...
 //
 // Against a deployed registry (staging), it uses a test account's personal
 // access token instead of the device flow, pushes to a repository unique to
@@ -33,7 +34,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -105,10 +105,12 @@ func freePort(t *testing.T) int {
 // startWorker runs the Worker with fresh local state and returns its host.
 func startWorker(t *testing.T, github string) string {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	dir := filepath.Join(filepath.Dir(file), "..", "..", "registry", "worker")
+	dir := os.Getenv("JERBOA_REGISTRY_WORKER")
+	if dir == "" {
+		t.Skip("set JERBOA_REGISTRY_WORKER to a checkout of the registry Worker")
+	}
 	if _, err := os.Stat(filepath.Join(dir, "node_modules", ".bin", "wrangler")); err != nil {
-		t.Skip("run pnpm install in registry/worker first")
+		t.Skipf("run pnpm install in %s first", dir)
 	}
 	state := t.TempDir()
 	migrate := exec.Command("pnpm", "exec", "wrangler", "d1", "migrations", "apply", "jerboa-registry-local", "--local", "--persist-to", state)
