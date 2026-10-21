@@ -13,18 +13,18 @@ the disk locally with the recipe's pinned `mkfs`. mkfs is byte-identical across
 hosts for one toolset version (enforced by the `mkfs determinism` CI workflow),
 so the result is exactly the published disk, which the client verifies.
 
-This document is the contract between the registry server (a Cloudflare Worker
-over R2 and D1) and the Jerboa daemon. Go types live in
+This document is the contract between the registry server and the Jerboa
+daemon. Go types live in
 `internal/registry/{recipe,pack,cas}`.
 
 ## Hosts
 
-| Host | Serves | Through |
-|---|---|---|
-| `registry.jerboa.dev` | Authentication and every write | The Worker |
-| `cdn.registry.jerboa.dev` | Every read during a pull | R2 behind the Cloudflare CDN |
+| Host | Serves |
+|---|---|
+| `registry.jerboa.dev` | Authentication and every write |
+| `cdn.registry.jerboa.dev` | Every read during a pull, as static files |
 
-A pull never reaches the Worker or the database. `GET https://registry.jerboa.dev/v2/`
+A pull reads only from the CDN. `GET https://registry.jerboa.dev/v2/`
 returns the discovery document (cacheable for 5 minutes):
 
 ```json
@@ -46,8 +46,8 @@ Every digest is `sha256:<64 lowercase hex>`.
 
 - **Blob:** the bytes of one file an image is built from, identified by the SHA-256 of its **uncompressed** bytes.
 - **Recipe:** canonical JSON (`application/vnd.jerboa.image.recipe.v1+json`, see
-  `recipe.Recipe`). Its digest is the SHA-256 of exactly those bytes. A server
-  stores recipe bytes as received and never re-encodes them.
+  `recipe.Recipe`). Its digest is the SHA-256 of exactly those bytes, which the
+  registry serves unchanged.
 - **Pack:** a concatenation of independent zstd frames, one per blob, in the order
   of its index. A pack has no header; it is identified by the SHA-256 of its
   bytes. A pack holds at most 64 MiB (v1), so the largest blob must compress to
@@ -93,9 +93,9 @@ provider.
 
 1. The client runs the [GitHub device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow) with `github_client_id` from discovery and the `read:org` scope. The user approves in a browser.
 2. `POST /auth/github` with `{"access_token": "<github token>"}`.
-   - The Worker reads the user and their organizations from the GitHub API, creates or updates the account, and discards the GitHub token.
+   - The registry reads the user and their organizations from GitHub and does not keep the GitHub token.
    - It answers `{"token": "jrt_…", "login": "aitorcons"}`.
-   - The `jrt_` refresh token lasts 90 days, can be revoked, and is stored only as a SHA-256 hash.
+   - The `jrt_` refresh token lasts 90 days and can be revoked.
 
 ### Personal access tokens (CI)
 
@@ -107,27 +107,17 @@ Authenticated with a refresh token or a PAT:
 ### Scoped tokens
 
 `POST /auth/token` with `Authorization: Bearer <jrt_ or jpat_>` and a body such as
-`{"scopes": ["repository:aitorcons/web:push"]}` returns `{"token": "<jwt>", "expires_in": 900}`.
+`{"scopes": ["repository:aitorcons/web:push"]}` returns `{"token": "<token>", "expires_in": 900}`. Clients treat the token as opaque.
 
-The JWT is HS256 with claims:
-- `sub`: account id
-- `login`
-- `scopes`
-- `exp`
-
-A namespace is granted only if it is the account's login, or an organization the account belonged to the last time it logged in. Every write below needs `Authorization: Bearer <jwt>` with the matching `push` scope.
+A namespace is granted only if it is the account's login, or an organization the account belonged to the last time it logged in. Every write below needs `Authorization: Bearer <token>` with the matching `push` scope.
 
 ## Push
 
 1. **Missing blobs:** `POST /v2/<ns>/<repo>/blobs/missing` with `{"digests": [...]}` (at most 10 000 per call) → `{"missing": [...]}`.
 2. **Packs:** for each pack of missing blobs, `PUT /v2/<ns>/<repo>/packs/<hex>` with `Content-Type: application/vnd.jerboa.pack.v1`.
    - Body (`pack.EncodeUpload`): a 4-byte big-endian index length, the JSON index `{"digest","size","blobs":[{"digest","size","offset","length"}]}`, then the pack bytes.
-   - The server verifies the pack completely before anything becomes visible (`pack.DecodeUpload` semantics):
-     - the pack digest and size;
-     - frames that tile the pack in order;
-     - every blob decompressed to its declared size and checked against its digest.
-   - Without this check, a client could register a digest with other bytes and poison deduplication for everyone.
-   - It then stores the pack and registers each blob that has no location yet. A blob keeps its first location for ever.
+   - The server rejects the upload unless it passes `pack.DecodeUpload`: the pack digest and size, frames that tile the pack in order, and every blob decompressed to its declared size and digest.
+   - A blob already stored keeps its existing location.
    - Re-uploading a stored pack returns 200 with nothing changed.
 3. **Recipe:** `PUT /v2/<ns>/<repo>/recipes/<hex>` with the recipe bytes.
    - The server checks:
@@ -135,11 +125,11 @@ A namespace is granted only if it is the account's login, or an organization the
      - the schema, media type, and sorted and unique blobs;
      - the size limits;
      - that every listed blob is registered.
-   - It writes `recipes/<hex>.json` and `locations/<hex>.json`, and records which packs the recipe uses.
+   - It publishes `recipes/<hex>.json` and `locations/<hex>.json`.
    - Idempotent.
 4. **Tag:** `PUT /v2/<ns>/<repo>/tags/<tag>` with `{"recipe": "sha256:…"}`.
    - The recipe must exist.
-   - The server updates the database, then `tags/<ns>/<repo>/<tag>`.
+   - The server publishes `tags/<ns>/<repo>/<tag>`.
 
 Other tag operations:
 - `DELETE /v2/<ns>/<repo>/tags/<tag>` removes a tag.
@@ -182,12 +172,10 @@ Errors are JSON with an HTTP status:
 
 ## Garbage collection
 
-A daily job:
-1. Deletes recipes that no tag has referenced for 7 days.
-2. Deletes packs that no remaining recipe uses for 7 days, with their blob registrations.
-
-Locations of deleted recipes go with them. A blob whose pack was deleted becomes
-missing again and is uploaded afresh by the next push that needs it.
+Recipes that no tag has referenced for 7 days are deleted, with their
+locations, and so are packs that no remaining recipe uses. A blob whose pack
+was deleted is reported missing again, so the next push that needs it uploads
+it afresh.
 
 ## Versioning
 
