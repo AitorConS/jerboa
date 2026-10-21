@@ -284,8 +284,10 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 	mkfs := fakeMkfsPath(t)
 	mkfsFor := func(context.Context, string) (string, error) { return mkfs, nil }
 	builder := newStore(t)
-	v1 := buildApp(t, mkfs, builder, "console.log('v1')")
-	v2 := buildApp(t, mkfs, builder, "console.log('v2')")
+	// The repository name makes the app unique to the run, so v2 has one new
+	// blob even on a shared registry that holds earlier runs' content.
+	v1 := buildApp(t, mkfs, builder, fmt.Sprintf("console.log('v1 %s')", repo))
+	v2 := buildApp(t, mkfs, builder, fmt.Sprintf("console.log('v2 %s')", repo))
 	token, err := cl.PushToken(ctx, credential, ns, repo)
 	require.NoError(t, err)
 	if remote {
