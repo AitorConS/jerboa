@@ -27,7 +27,9 @@ func digestOf(b []byte) string {
 // registry Worker's tests decode, so both sides of the protocol are checked
 // against the same bytes:
 //
-//	JERBOA_WORKER_FIXTURE=registry/worker/test/fixtures/go.json go test ./internal/registry/recipe -run WorkerFixture
+//	JERBOA_WORKER_FIXTURE=<worker>/test/fixtures/go.json go test ./internal/registry/recipe -run WorkerFixture
+//
+// where <worker> is a checkout of the registry Worker (AitorConS/jerboa-registry).
 func TestWriteWorkerFixture(t *testing.T) {
 	out := os.Getenv("JERBOA_WORKER_FIXTURE")
 	if out == "" {
