@@ -111,7 +111,7 @@ def lock():
              'runtime_sha': sha(os.environ['RUNTIME_SHA']),
              'kernel_version': version(os.environ['KERNEL_VERSION']),
              'run_id': os.environ['GITHUB_RUN_ID'], 'repository': os.environ['GITHUB_REPOSITORY'],
-             'toolchains': {'go': '1.27.2', 'node': '22', 'rust': '1.97.0'}}
+             'toolchains': {'go': '1.27.3', 'node': '22', 'rust': '1.97.0'}}
     write_json('release-lock.json', value)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
         for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source']:

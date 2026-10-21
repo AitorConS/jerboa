@@ -19,7 +19,7 @@ immutable release inputs.
 The `release.yml` workflow builds a complete product candidate on explicit
 request. `build-macos` runs on the GitHub-hosted `macos-26` Apple Silicon
 runner and is required before candidate assembly. It installs ARM64 ELF
-binutils with Homebrew, Go 1.27.2 and Rust 1.97.0. The Desktop and Firecracker
+binutils with Homebrew, Go 1.27.3 and Rust 1.97.0. The Desktop and Firecracker
 commits are explicit immutable inputs recorded in the signed inventory.
 The default Firecracker revision is `6750fc374d4758a8181d75e5299e7137a110dd41`;
 validate the fork API before selecting a different revision. Native dependencies are built
