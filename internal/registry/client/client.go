@@ -212,6 +212,12 @@ func (c *Client) EditRepo(ctx context.Context, token, namespace, repository stri
 	return c.do(ctx, http.MethodPatch, c.repo(namespace, repository), token, jsonBody(changes), "application/json", nil)
 }
 
+// DeleteRepo deletes a repository with its tags, description and README. It
+// needs a push token for the repository.
+func (c *Client) DeleteRepo(ctx context.Context, token, namespace, repository string) error {
+	return c.do(ctx, http.MethodDelete, c.repo(namespace, repository), token, nil, "", nil)
+}
+
 // CountPull reports a pull for the hub's counter. It is anonymous, sent once
 // without retries, and its answer carries nothing, so callers ignore errors.
 func (c *Client) CountPull(ctx context.Context, namespace, repository string) error {

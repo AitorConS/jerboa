@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -24,4 +25,21 @@ func TestEditRepoSendsOnlyTheFieldsSet(t *testing.T) {
 	require.Equal(t, map[string]string{"description": description, "readme": readme}, srv.Repo("aitorcons", "web"))
 
 	require.Error(t, c.EditRepo(context.Background(), "", "aitorcons", "web", client.RepoChanges{Readme: &readme}))
+}
+
+func TestDeleteRepo(t *testing.T) {
+	srv := registrytest.New()
+	defer srv.Close()
+	c := client.New(srv.Host())
+	ctx := context.Background()
+
+	description := "Static web server"
+	require.NoError(t, c.EditRepo(ctx, "push-token", "aitorcons", "web", client.RepoChanges{Description: &description}))
+	require.Error(t, c.DeleteRepo(ctx, "", "aitorcons", "web"))
+	require.NoError(t, c.DeleteRepo(ctx, "push-token", "aitorcons", "web"))
+	require.Nil(t, srv.Repo("aitorcons", "web"))
+
+	var re *client.Error
+	require.ErrorAs(t, c.DeleteRepo(ctx, "push-token", "aitorcons", "web"), &re)
+	require.Equal(t, http.StatusNotFound, re.Status)
 }
