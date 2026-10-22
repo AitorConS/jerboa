@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,8 +15,14 @@ func TestLocalName(t *testing.T) {
 		"web:v2":                   {"web", "v2"},
 		"web":                      {"web", "latest"},
 	} {
-		name, tag := localName(in)
+		name, tag, err := localName(in)
+		require.NoError(t, err, in)
 		require.Equal(t, want, [2]string{name, tag}, in)
+	}
+	// Registry references are checked when tagging, not first at push.
+	for _, in := range []string{"AitorCons/web:v1", "aitorcons/web:-bad", "aitorcons/web@sha256:" + strings.Repeat("0", 64), "a//web"} {
+		_, _, err := localName(in)
+		require.Error(t, err, in)
 	}
 }
 
