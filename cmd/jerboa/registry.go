@@ -98,14 +98,22 @@ func newLogoutCmd() *cobra.Command {
 
 // localName splits a tag target: a registry reference becomes its store name
 // and tag; anything else is name[:tag].
-func localName(target string) (string, string) {
-	if ref, err := naming.ParseImageReference(target); err == nil && ref.Digest == "" {
-		return ref.Name(), ref.Tag
+func localName(target string) (string, string, error) {
+	// A name with a slash is a registry reference: check it now, not at push.
+	if strings.Contains(target, "/") {
+		ref, err := naming.ParseImageReference(target)
+		if err != nil {
+			return "", "", err
+		}
+		if ref.Digest != "" {
+			return "", "", fmt.Errorf("%s: tag with a tag, not a digest", target)
+		}
+		return ref.Name(), ref.Tag, nil
 	}
-	if i := strings.LastIndex(target, ":"); i > 0 && !strings.Contains(target[i:], "/") {
-		return target[:i], target[i+1:]
+	if i := strings.LastIndex(target, ":"); i > 0 {
+		return target[:i], target[i+1:], nil
 	}
-	return target, "latest"
+	return target, "latest", nil
 }
 
 func newTagCmd(endpoint *string) *cobra.Command {
@@ -121,7 +129,10 @@ func newTagCmd(endpoint *string) *cobra.Command {
 				return fmt.Errorf("tag: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
-			name, tag := localName(args[1])
+			name, tag, err := localName(args[1])
+			if err != nil {
+				return fmt.Errorf("tag: %w", err)
+			}
 			if _, err := c.ImageTag(cmd.Context(), api.ImageTagParams{Source: args[0], Name: name, Tag: tag}); err != nil {
 				return fmt.Errorf("tag: %w", err)
 			}

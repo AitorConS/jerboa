@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -42,4 +43,18 @@ func TestDeleteRepo(t *testing.T) {
 	var re *client.Error
 	require.ErrorAs(t, c.DeleteRepo(ctx, "push-token", "aitorcons", "web"), &re)
 	require.Equal(t, http.StatusNotFound, re.Status)
+}
+
+func TestMissingRecipeAndTagSayNotFound(t *testing.T) {
+	srv := registrytest.New()
+	defer srv.Close()
+	c := client.New(srv.Host())
+	ctx := context.Background()
+	cdn := srv.URL + "/cdn"
+
+	digest := "sha256:" + strings.Repeat("0", 64)
+	_, err := c.Recipe(ctx, cdn, digest)
+	require.EqualError(t, err, "recipe "+digest+" not found in the registry")
+	_, err = c.TagRecipe(ctx, cdn, "aitorcons", "web", "nope")
+	require.EqualError(t, err, "aitorcons/web:nope not found in the registry")
 }
