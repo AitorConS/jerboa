@@ -244,6 +244,10 @@ func (c *Client) TagRecipe(ctx context.Context, cdn, namespace, repository, tag 
 func (c *Client) Recipe(ctx context.Context, cdn, digest string) ([]byte, error) {
 	var data []byte
 	if err := c.do(ctx, http.MethodGet, cdn+"/recipes/"+strings.TrimPrefix(digest, "sha256:")+".json", "", nil, "", &data); err != nil {
+		var re *Error
+		if errors.As(err, &re) && re.Status == http.StatusNotFound {
+			return nil, fmt.Errorf("recipe %s not found in the registry", digest)
+		}
 		return nil, err
 	}
 	sum := sha256.Sum256(data)
