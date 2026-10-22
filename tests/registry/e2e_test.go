@@ -292,8 +292,11 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 	require.NoError(t, err)
 	if remote {
 		t.Cleanup(func() {
-			for _, tag := range []string{"v1", "v2"} {
-				_ = cl.DeleteTag(context.Background(), token, ns, repo, tag)
+			// The repository too, not only its tags, so runs leave nothing behind.
+			if err := cl.DeleteRepo(context.Background(), token, ns, repo); err != nil {
+				for _, tag := range []string{"v1", "v2"} {
+					_ = cl.DeleteTag(context.Background(), token, ns, repo, tag)
+				}
 			}
 		})
 	}
