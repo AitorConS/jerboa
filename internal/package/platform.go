@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 )
 
 // Provenance records reproducible source identity, never host paths or image environment.
@@ -84,6 +85,26 @@ func hostExecutableFormat(data []byte) string {
 	return ""
 }
 
+// CheckGuestPath rejects a guest path that leaves the image root or holds
+// characters no file name needs: quotes, backslashes and control characters.
+// Manifests quote every name, so this is a second line of defense.
+func CheckGuestPath(p string) error {
+	if !utf8.ValidString(p) {
+		return fmt.Errorf("invalid guest path %q: not UTF-8", p)
+	}
+	for _, r := range p {
+		if r == '"' || r == '\\' || r < 0x20 || r == 0x7f {
+			return fmt.Errorf("invalid guest path %q: unsupported character %q", p, r)
+		}
+	}
+	for _, c := range strings.Split(filepath.ToSlash(p), "/") {
+		if c == ".." {
+			return fmt.Errorf("invalid guest path %q", p)
+		}
+	}
+	return nil
+}
+
 // ValidateFiles validates the exact guest tree, including data collisions and every ELF.
 func ValidateFiles(files []File, platform string) error {
 	if err := ValidatePlatform(platform); err != nil {
@@ -95,10 +116,8 @@ func ValidateFiles(files []File, platform string) error {
 	dirs := map[string]bool{}
 	for _, f := range files {
 		gp := guestPathOf(f)
-		for _, c := range strings.Split(filepath.ToSlash(gp), "/") {
-			if c == ".." {
-				return fmt.Errorf("invalid guest path %q", gp)
-			}
+		if err := CheckGuestPath(gp); err != nil {
+			return err
 		}
 		gp = tarEntryName(gp)
 		if gp == "" {

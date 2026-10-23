@@ -204,6 +204,25 @@ buffer lookup_file(heap h, const char *target_root, buffer name, struct stat *st
     return target_name;
 }
 
+/* With JERBOA_MKFS_HOST_ROOT set, host files must resolve inside that
+ * directory: a caller assembling an untrusted manifest from a blob store sets
+ * it so no manifest can read anything else. */
+static void check_host_root(const char *path)
+{
+    const char *root = getenv("JERBOA_MKFS_HOST_ROOT");
+    if (!root || !*root)
+        return;
+    char real_root[PATH_MAX], real_path[PATH_MAX];
+    if (!realpath(root, real_root))
+        halt("couldn't resolve host root %s: %s\n", isstring((char *)root, strlen(root)), errno_sstring());
+    if (!realpath(path, real_path))
+        halt("couldn't resolve host file %s: %s\n", isstring((char *)path, strlen(path)), errno_sstring());
+    int len = strlen(real_root);
+    if (strncmp(real_path, real_root, len) || real_path[len] != '/')
+        halt("host file %s is outside %s\n", isstring((char *)path, strlen(path)),
+             isstring((char *)root, strlen(root)));
+}
+
 // its nice that we can append a file to any existing buffer, but harsh we have to grow the buffer
 void read_file(heap h, const char *target_root, buffer dest, buffer name)
 {
@@ -216,6 +235,7 @@ void read_file(heap h, const char *target_root, buffer dest, buffer name)
     }
 
     buffer tmpbuf = little_stack_buffer(PATH_MAX + 1);
+    check_host_root(cstring(name, tmpbuf));
     int fd = open(cstring(name, tmpbuf), O_RDONLY);
     if (fd < 0) halt("couldn't open file %b: %s\n", name, errno_sstring());
     u64 size = st.st_size;

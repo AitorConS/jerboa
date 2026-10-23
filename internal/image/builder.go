@@ -601,9 +601,20 @@ func manifestName(name string) string {
 	if !strings.ContainsAny(name, manifestNameTerminals) {
 		return name
 	}
+	return quoteManifestString(name)
+}
+
+// manifestValueTerminals are value terminators in the Nanos tuple parser.
+// Values have a smaller terminal set than names: only whitespace and parens/brackets.
+// Unlike names, values may contain ':', '/', '|' unquoted.
+const manifestValueTerminals = " \t\n\r()[]"
+
+// quoteManifestString always quotes s, escaping quotes and backslashes, so no
+// file name can end the string early and add keys of its own.
+func quoteManifestString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
-	for _, r := range name {
+	for _, r := range s {
 		if r == '"' || r == '\\' {
 			b.WriteByte('\\')
 		}
@@ -613,27 +624,13 @@ func manifestName(name string) string {
 	return b.String()
 }
 
-// manifestValueTerminals are value terminators in the Nanos tuple parser.
-// Values have a smaller terminal set than names: only whitespace and parens/brackets.
-// Unlike names, values may contain ':', '/', '|' unquoted.
-const manifestValueTerminals = " \t\n\r()[]"
-
 // manifestValue returns v formatted for use as a manifest tuple value, quoting
 // it when it contains characters the tuple parser would treat as terminators.
 func manifestValue(v string) string {
 	if v != "" && !strings.ContainsAny(v, manifestValueTerminals+"\"\\") {
 		return v
 	}
-	var b strings.Builder
-	b.WriteByte('"')
-	for _, r := range v {
-		if r == '"' || r == '\\' {
-			b.WriteByte('\\')
-		}
-		b.WriteRune(r)
-	}
-	b.WriteByte('"')
-	return b.String()
+	return quoteManifestString(v)
 }
 
 // writeManifestChildren serializes the children of node into b at the given indent level.
@@ -655,9 +652,9 @@ func writeManifestChildren(b *strings.Builder, node *manifestNode, indent string
 			// Quoted: host paths can contain spaces or parens (e.g. extracted
 			// package files like "Lorem ipsum.txt" or "script (dev).tmpl"),
 			// which the tuple parser would otherwise treat as value terminators.
-			b.WriteString(`(contents:(host:"`)
-			b.WriteString(filepath.ToSlash(hostRef(child.hostPath)))
-			b.WriteString(`"))` + "\n")
+			b.WriteString(`(contents:(host:`)
+			b.WriteString(quoteManifestString(filepath.ToSlash(hostRef(child.hostPath))))
+			b.WriteString(`))` + "\n")
 		} else {
 			inner := indent + "    "
 			b.WriteString("(\n")
