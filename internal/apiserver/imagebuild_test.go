@@ -336,33 +336,30 @@ func TestVolumeSeed_RejectsMismatchedDiskPath(t *testing.T) {
 	require.Contains(t, err.Error(), "disk_path does not match the requested volume")
 }
 
-// TestVolumeSeed_HostVolumeNotInDaemonStore is the F-012 regression: on Windows
-// the volume lives on the host filesystem and is absent from the daemon's own
-// volume store, so the seed must proceed using the client-supplied,
-// daemon-visible disk path (the same path `run -v` attaches) instead of failing
-// to re-resolve the volume in the daemon store. Here the daemon store is empty
-// and the disk already exists on disk (as `volume create` leaves it).
-func TestVolumeSeed_HostVolumeNotInDaemonStore(t *testing.T) {
-	volStore, err := volume.NewStore(t.TempDir()) // empty: volume created client-side on the host
+// TestVolumeSeed_RejectsVolumeOutsideStore checks a seed never writes a
+// client-supplied disk path: seeding truncates the file, so only a volume the
+// daemon owns can be seeded.
+func TestVolumeSeed_RejectsVolumeOutsideStore(t *testing.T) {
+	volStore, err := volume.NewStore(t.TempDir())
 	require.NoError(t, err)
 	client := startSeedServer(t, volStore)
 
 	diskPath := filepath.Join(t.TempDir(), "disk.img")
-	require.NoError(t, os.WriteFile(diskPath, make([]byte, 128), 0o600))
+	sentinel := []byte("keep me")
+	require.NoError(t, os.WriteFile(diskPath, sentinel, 0o600))
 
 	ctxTar := buildContextTar(t, map[string][]byte{"db/PG_VERSION": []byte("16")})
-	res, err := client.VolumeSeed(context.Background(), api.VolumeSeedParams{
+	_, err = client.VolumeSeed(context.Background(), api.VolumeSeedParams{
 		VolumeName: "pgdata",
 		DiskPath:   diskPath,
 		Label:      "pgdata",
 		SizeBytes:  128,
 	}, ctxTar)
-	require.NoError(t, err)
-	require.Equal(t, diskPath, res.DiskPath)
+	require.ErrorContains(t, err, "not found")
 
 	data, err := os.ReadFile(diskPath)
 	require.NoError(t, err)
-	require.Contains(t, string(data), "PG_VERSION")
+	require.Equal(t, sentinel, data)
 }
 
 // TestVolumeSeed_MissingDiskErrors confirms seeding a disk that does not exist

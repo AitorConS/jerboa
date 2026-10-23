@@ -60,7 +60,8 @@ type PortMapSpec struct {
 
 // VolumeMountSpec is the wire representation of a volume mount.
 type VolumeMountSpec struct {
-	// Name is resolved by the daemon; DiskPath is retained for legacy clients.
+	// Name is resolved by the daemon, which fills in DiskPath; a request
+	// without a Name is refused.
 	Name      string `json:"name,omitempty"`
 	DiskPath  string `json:"disk_path"`
 	GuestPath string `json:"guest_path"`
@@ -79,7 +80,8 @@ type RunParams struct {
 	// image store. When set it takes precedence over ImagePath.
 	Image string `json:"image,omitempty"`
 	// ImagePath is a direct path to a bootable disk image on the daemon's
-	// filesystem. Used for file-based runs when Image is empty.
+	// filesystem. Used for file-based runs when Image is empty. The daemon
+	// accepts it only from a local client that owns the file.
 	ImagePath      string            `json:"image_path"`
 	Memory         string            `json:"memory"`
 	CPUs           int               `json:"cpus"`
