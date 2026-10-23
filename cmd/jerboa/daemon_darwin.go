@@ -83,10 +83,17 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 			observabilityArgs += "<string>" + f.name + "</string><string>" + xmlText(*f.dst) + "</string>"
 		}
 	}
+	if ensureObservabilityToken(cfg) {
+		dirty = true
+	}
 	if dirty {
 		if err := config.Save(config.DefaultPath(), cfg); err != nil {
 			return err
 		}
+	}
+	obsEnv := ""
+	if cfg.Daemon.ObservabilityToken != "" {
+		obsEnv = "<key>JERBOA_OBSERVABILITY_TOKEN</key><string>" + xmlText(cfg.Daemon.ObservabilityToken) + "</string>"
 	}
 
 	token := config.ResolveToken()
@@ -133,7 +140,7 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	plist := `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
  <key>Label</key><string>` + nativeService + `</string>
  <key>ProgramArguments</key><array><string>` + xmlText(bin) + `</string><string>--host</string><string>` + xmlText(endpoint) + `</string>` + hypervisorArgs + toolsArgs + observabilityArgs + `</array>
- <key>EnvironmentVariables</key><dict><key>JERBOA_AUTH_TOKEN</key><string>` + xmlText(token) + `</string><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+ <key>EnvironmentVariables</key><dict><key>JERBOA_AUTH_TOKEN</key><string>` + xmlText(token) + `</string>` + obsEnv + `<key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
  <key>RunAtLoad</key><true/><key>StandardOutPath</key><string>` + xmlText(log) + `</string><key>StandardErrorPath</key><string>` + xmlText(log) + `</string></dict></plist>`
 	plistPath := filepath.Join(dir, nativeService+".plist")
 	if err := os.WriteFile(plistPath, []byte(plist), 0600); err != nil {

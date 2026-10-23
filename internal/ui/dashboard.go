@@ -286,7 +286,7 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 		CreatedAt:     v.CreatedAt.Format(time.RFC3339),
 		IPAddress:     v.Cfg.IPAddress,
 		GatewayIP:     v.Cfg.GatewayIP,
-		Env:           v.Cfg.Env,
+		Env:           maskEnv(v.Cfg.Env),
 		Ports:         ports,
 	}
 	if startedAt != nil {
@@ -298,6 +298,85 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 	return row
 }
 
+// NewServer returns the dashboard's HTTP handler: the pages and JSON API behind
+// the token (when set), a sign-in form that stores the token in a cookie for
+// browsers, and a Host check when bound to loopback.
+func NewServer(addr, token string, mgr vm.Manager, version string) http.Handler {
+	h := NewHandler(mgr, addr, version)
+	protected := httpauth.Bearer(token, h)
+	mux := http.NewServeMux()
+	mux.Handle("/ui/login", loginHandler(token))
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Send a browser without the token to the sign-in form instead of a
+		// bare 401; API clients still get the 401.
+		if token != "" && !httpauth.Authorized(token, r) && r.Method == http.MethodGet &&
+			!strings.HasPrefix(r.URL.Path, "/ui/api/") && strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+			return
+		}
+		protected.ServeHTTP(w, r)
+	}))
+	return httpauth.LoopbackHost(addr, mux)
+}
+
+// loginHandler serves a form that checks the observability token and stores
+// it in an HttpOnly, SameSite=Strict cookie for the dashboard's page loads
+// and fetches.
+func loginHandler(token string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token == "" {
+			http.Redirect(w, r, "/ui", http.StatusSeeOther)
+			return
+		}
+		failed := false
+		if r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, 4096)
+			got := r.PostFormValue("token")
+			probe := &http.Request{Header: http.Header{"Authorization": {"Bearer " + got}}}
+			if httpauth.Authorized(token, probe) {
+				// Secure only over TLS: the dashboard is usually served over
+				// plain HTTP on loopback, where a Secure cookie is never sent.
+				http.SetCookie(w, &http.Cookie{Name: httpauth.CookieName, Value: got, Path: "/", //nolint:gosec // see above
+					HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
+				http.Redirect(w, r, "/ui", http.StatusSeeOther)
+				return
+			}
+			failed = true
+			time.Sleep(500 * time.Millisecond)
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
+		if failed {
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+		_ = loginTmpl.Execute(w, failed)
+	})
+}
+
+var loginTmpl = template.Must(template.New("login").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Jerboa dashboard: sign in</title>
+<style>body{font-family:system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem}input{width:100%;padding:.5rem;margin:.5rem 0}</style></head>
+<body><h1>Jerboa dashboard</h1>
+<p>Enter the observability token (<code>observability_token</code> in <code>~/.jerboa/config.toml</code>, or the daemon's <code>JERBOA_OBSERVABILITY_TOKEN</code>).</p>
+{{if .}}<p role="alert">That token is not valid.</p>{{end}}
+<form method="post" action="/ui/login"><label for="token">Token</label><input id="token" name="token" type="password" autocomplete="off" required autofocus><button type="submit">Sign in</button></form>
+</body></html>`))
+
+// maskEnv hides the values of a VM's environment variables, which commonly
+// hold credentials; the dashboard shows which variables are set, not their
+// contents.
+func maskEnv(env []string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+	out := make([]string, len(env))
+	for i, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		out[i] = k + "=****"
+	}
+	return out
+}
+
 // Serve runs the web dashboard on addr until ctx is canceled.
 //
 // When token is non-empty, every route requires an "Authorization: Bearer
@@ -305,16 +384,9 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 // hand VM names, IPs, and serial logs to anyone who can reach the port. An empty
 // token preserves the previous unauthenticated behavior.
 func Serve(ctx context.Context, addr, token string, mgr vm.Manager, version string) error {
-	h := NewHandler(mgr, addr, version)
-	mux := http.NewServeMux()
-	mux.Handle("/", h)
-	mux.Handle("/ui", h)
-	mux.Handle("/ui/", h)
-	mux.Handle("/ui/api/vms", h)
-
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           httpauth.Bearer(token, mux),
+		Handler:           NewServer(addr, token, mgr, version),
 		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

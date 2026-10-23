@@ -23,8 +23,17 @@ Jerboa exposes observability from the daemon, not the CLI.
 Enable with:
 
 ```bash
-jerboad --metrics-addr :9090
+jerboad --metrics-addr 127.0.0.1:9090
 ```
+
+On loopback no token is needed, and requests must name `localhost` or a
+loopback address in `Host`, so a web page cannot read the endpoint through DNS
+rebinding. To serve metrics or the dashboard on another address, give the daemon
+a read-only token with `--observability-token-file` (a `0600` file) or
+`JERBOA_OBSERVABILITY_TOKEN`; without one the daemon refuses to start, unless
+you pass `--insecure`. Scrapers send it as `Authorization: Bearer <token>`.
+`jerboa daemon start --metrics-addr ... --ui-addr ...` generates the token and
+stores it as `observability_token` in `~/.jerboa/config.toml`.
 
 Endpoints:
 
@@ -49,7 +58,9 @@ Enable with:
 jerboad --trace-addr localhost:4317
 ```
 
-The daemon emits VM lifecycle spans through OTLP gRPC.
+The daemon emits VM lifecycle spans through OTLP gRPC. Spans go to a collector
+on this host in plain text and to any other host over TLS; set
+`OTEL_EXPORTER_OTLP_INSECURE=true` to send them unencrypted anyway.
 
 ## Logging
 
@@ -66,8 +77,12 @@ The daemon defaults to text logs.
 Enable with:
 
 ```bash
-jerboad --ui-addr :8080
+jerboad --ui-addr 127.0.0.1:8080
 ```
+
+With a token configured, a browser is sent to `/ui/login`, which stores the
+token in an HttpOnly cookie. The dashboard lists which environment variables a
+VM has, not their values.
 
 Routes:
 
@@ -76,6 +91,13 @@ Routes:
 - `/ui/api/vm/{id}`
 - `/ui/api/vm/{id}/logs`
 - `/ui/api/vm/{id}/stats`
+
+## Cluster
+
+`--cluster-addr` serves the gossip endpoint that other nodes join. Every node
+needs the same token, from `--cluster-token-file` or `JERBOA_CLUSTER_TOKEN`; the
+daemon refuses to serve gossip without one unless you pass `--insecure-cluster`.
+Gossip is plain HTTP, so keep it on a private network.
 
 ## VM Stats
 

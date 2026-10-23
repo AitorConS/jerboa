@@ -22,6 +22,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/cluster"
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/dnsserver"
+	"github.com/AitorConS/jerboa/internal/httpauth"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/netconst"
@@ -74,6 +75,7 @@ func newRootCmd() *cobra.Command {
 		nativePeering  string
 		vmLogMaxBytes  int64
 		allowInsecure  bool
+		insecureClust  bool
 		authTokenFile  string
 		clusterTokFile string
 		obsTokenFile   string
@@ -112,6 +114,9 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 			if obsToken, err = resolveSecret(obsToken, obsTokenFile, "JERBOA_OBSERVABILITY_TOKEN"); err != nil {
+				return err
+			}
+			if err := checkExposure(metricsAddr, uiAddr, obsToken, clusterAddr, clusterToken, allowInsecure, insecureClust); err != nil {
 				return err
 			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
@@ -169,7 +174,9 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&authTokenFile, "auth-token-file", "",
 		"file holding the client auth token (mode 0600); alternative to JERBOA_AUTH_TOKEN")
 	root.Flags().BoolVar(&allowInsecure, "insecure", false,
-		"allow serving a TCP endpoint without an auth token (unsafe; a Unix socket needs no token)")
+		"allow serving a TCP endpoint, or metrics and the dashboard off loopback, without a token (unsafe; a Unix socket needs no token)")
+	root.Flags().BoolVar(&insecureClust, "insecure-cluster", false,
+		"allow cluster gossip without --cluster-token-file/JERBOA_CLUSTER_TOKEN (unsafe: any host that reaches --cluster-addr can join)")
 	root.Flags().StringVar(&qemuBin, "qemu", vm.DefaultQEMUBinary(),
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
@@ -391,7 +398,8 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		swimCluster = cluster.NewSwimCluster(cluster.ParseAddr(clusterAddr), 0, 0, 0, cluster.WithToken(clusterToken))
 		mux := http.NewServeMux()
 		cluster.RegisterGossipHandler(mux, swimCluster)
-		clusterSrv := &http.Server{Addr: clusterAddr, Handler: mux, ReadHeaderTimeout: 30 * time.Second}
+		clusterSrv := &http.Server{Addr: clusterAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 		go func() {
 			slog.Info("cluster gossip listening", "addr", clusterAddr)
 			if err := clusterSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -431,7 +439,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	} else if strings.HasPrefix(endpoint, "tcp://") {
 		slog.Warn("jerboad: TCP endpoint without --auth-token is reachable by any local process; set a token")
 	}
-	if addr, ok := strings.CutPrefix(endpoint, "tcp://"); ok && !isLoopbackAddr(addr) {
+	if addr, ok := strings.CutPrefix(endpoint, "tcp://"); ok && !httpauth.IsLoopbackAddr(addr) {
 		// Clients authenticate with a challenge, so the token itself is never
 		// sent, but the session that follows is not encrypted.
 		slog.Warn("jerboad: the API is reachable from other hosts and its traffic is not encrypted; "+
@@ -689,32 +697,33 @@ func resolveSecret(flagValue, file, envVar string) (string, error) {
 	return os.Getenv(envVar), nil
 }
 
+// checkExposure refuses to serve observability endpoints off loopback without
+// a token, and cluster gossip without a token at all, unless the operator opts
+// out explicitly. The dashboard shows VM names, addresses and serial logs;
+// gossip accepts membership from whoever can reach it.
+func checkExposure(metricsAddr, uiAddr, obsToken, clusterAddr, clusterToken string, allowInsecure, insecureCluster bool) error {
+	for _, e := range []struct{ flag, addr string }{{"--metrics-addr", metricsAddr}, {"--ui-addr", uiAddr}} {
+		if e.addr != "" && obsToken == "" && !allowInsecure && !httpauth.IsLoopbackAddr(e.addr) {
+			return fmt.Errorf("jerboad: refusing to serve %s %q off loopback without a token; "+
+				"bind it to 127.0.0.1, set --observability-token-file or JERBOA_OBSERVABILITY_TOKEN, or pass --insecure", e.flag, e.addr)
+		}
+	}
+	if clusterAddr != "" && clusterToken == "" && !insecureCluster {
+		return fmt.Errorf("jerboad: refusing to serve cluster gossip on %q without a token; "+
+			"set --cluster-token-file or JERBOA_CLUSTER_TOKEN on every node, or pass --insecure-cluster", clusterAddr)
+	}
+	return nil
+}
+
 // warnIfExposed logs a warning when an auxiliary HTTP endpoint is bound to a
 // non-loopback address without a token, since that hands its data (VM names,
 // IPs, logs, or cluster membership) to anyone who can reach the port.
 func warnIfExposed(kind, addr string, hasToken bool) {
-	if hasToken || isLoopbackAddr(addr) {
+	if hasToken || httpauth.IsLoopbackAddr(addr) {
 		return
 	}
 	slog.Warn("endpoint is exposed without authentication; bind to 127.0.0.1 or set a token",
 		"endpoint", kind, "addr", addr)
-}
-
-// isLoopbackAddr reports whether addr's host is the loopback interface. A bare
-// port (":9090") or a wildcard host ("0.0.0.0", "::") is treated as non-loopback
-// because it is reachable from off-host.
-func isLoopbackAddr(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	if host == "" {
-		return false
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback()
-	}
-	return host == "localhost"
 }
 
 type clusterMemberAdapter struct {
