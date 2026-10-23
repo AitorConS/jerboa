@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -237,8 +238,13 @@ func (c *Client) TagRecipe(ctx context.Context, cdn, namespace, repository, tag 
 		}
 		return "", err
 	}
+	if !recipeDigestRE.MatchString(out.Recipe) {
+		return "", fmt.Errorf("registry: tag %s/%s:%s names an invalid recipe %q", namespace, repository, tag, out.Recipe)
+	}
 	return out.Recipe, nil
 }
+
+var recipeDigestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // Recipe reads recipe bytes from the CDN and checks them against digest.
 func (c *Client) Recipe(ctx context.Context, cdn, digest string) ([]byte, error) {
@@ -268,6 +274,9 @@ func (c *Client) Locations(ctx context.Context, cdn, recipe string) (map[string]
 
 // ReadRange reads length bytes of a pack starting at offset.
 func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, length int64) ([]byte, error) {
+	if err := (pack.Location{Pack: packDigest, Offset: offset, Length: length}).Validate(); err != nil {
+		return nil, fmt.Errorf("registry: %w", err)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cdn+"/packs/"+strings.TrimPrefix(packDigest, "sha256:"), nil)
 	if err != nil {
 		return nil, fmt.Errorf("registry: %w", err)

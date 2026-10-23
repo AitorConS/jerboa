@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 
 	"github.com/klauspost/compress/zstd"
@@ -248,6 +249,20 @@ type Location struct {
 	Offset int64  `json:"offset"`
 	Length int64  `json:"length"`
 }
+
+// Validate checks a location a registry returned names a whole frame inside
+// a pack no larger than MaxSize, so it can be fetched and sliced safely.
+func (l Location) Validate() error {
+	if !packDigestRE.MatchString(l.Pack) {
+		return fmt.Errorf("pack: invalid pack digest %q", l.Pack)
+	}
+	if l.Offset < 0 || l.Length <= 0 || l.Length > MaxSize || l.Offset > MaxSize-l.Length {
+		return fmt.Errorf("pack: frame %d+%d is outside a pack", l.Offset, l.Length)
+	}
+	return nil
+}
+
+var packDigestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // PlanRanges groups the frames to fetch into as few range requests as
 // possible, merging frames of a pack that are at most maxGap bytes apart:

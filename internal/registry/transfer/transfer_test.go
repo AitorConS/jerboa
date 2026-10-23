@@ -4,7 +4,10 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/binary"
+	"encoding/json"
 	"math/rand/v2"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +19,7 @@ import (
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/registry/client"
+	"github.com/AitorConS/jerboa/internal/registry/pack"
 	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/AitorConS/jerboa/internal/registry/registrytest"
 	"github.com/stretchr/testify/require"
@@ -185,4 +189,67 @@ func TestPushRefusesRecipeThatDoesNotRebuild(t *testing.T) {
 	_, err = Push(context.Background(), PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Store: local, Recipe: v1, Mkfs: e.mkfsFor})
 	require.ErrorContains(t, err, "does not rebuild")
 	require.Empty(t, e.reg.Packs())
+}
+
+func TestPullRejectsHostileLocations(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	local := newStore(t)
+	v1 := e.build(t, local, "version 1")
+	_, err := Push(ctx, PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Store: local, Recipe: v1, Mkfs: e.mkfsFor})
+	require.NoError(t, err)
+	key := "locations/" + strings.TrimPrefix(v1, "sha256:") + ".json"
+	data, ok := e.reg.Object(key)
+	require.True(t, ok)
+	var locs struct {
+		Blobs map[string]pack.Location `json:"blobs"`
+	}
+	require.NoError(t, json.Unmarshal(data, &locs))
+
+	for name, mutate := range map[string]func(l *pack.Location){
+		"negative length": func(l *pack.Location) { l.Length = -1000 },
+		"negative offset": func(l *pack.Location) { l.Offset = -1 },
+		"huge length":     func(l *pack.Location) { l.Length = 1 << 40 },
+		"bad pack":        func(l *pack.Location) { l.Pack = "../x" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			hostile := map[string]pack.Location{}
+			for d, l := range locs.Blobs {
+				mutate(&l)
+				hostile[d] = l
+			}
+			b, err := json.Marshal(map[string]any{"blobs": hostile})
+			require.NoError(t, err)
+			e.reg.SetObject(key, b)
+			_, err = Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "d")})
+			require.ErrorContains(t, err, "pack: ")
+		})
+	}
+}
+
+func TestPushUploadsOnlyTheRecipesBlobs(t *testing.T) {
+	e := newEnv(t)
+	local := newStore(t)
+	v1 := e.build(t, local, "version 1")
+	other, err := local.PutBytes([]byte("a blob of another image"))
+	require.NoError(t, err)
+
+	uploaded := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/blobs/missing"):
+			_ = json.NewEncoder(w).Encode(map[string][]string{"missing": {other}})
+		case strings.Contains(r.URL.Path, "/packs/"):
+			uploaded = true
+			w.WriteHeader(http.StatusCreated)
+		default:
+			w.WriteHeader(http.StatusCreated)
+		}
+	}))
+	defer srv.Close()
+	ref, err := naming.ParseImageReference(strings.TrimPrefix(srv.URL, "http://") + "/alice/web:v1")
+	require.NoError(t, err)
+	_, err = Push(context.Background(), PushOptions{Client: client.New(ref.Registry), Token: "t", Ref: ref, Store: local, Recipe: v1, Mkfs: e.mkfsFor})
+	require.ErrorContains(t, err, "does not use")
+	require.False(t, uploaded)
 }

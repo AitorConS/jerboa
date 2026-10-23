@@ -28,6 +28,9 @@ func mkfsForVersion(ctx context.Context, toolsDir, version string, client func()
 	if err != nil {
 		return "", fmt.Errorf("tools: %w", err)
 	}
+	if err := release.CheckToolsetVersion(v); err != nil {
+		return "", fmt.Errorf("tools: %w", err)
+	}
 	if HasLocalVersion(toolsDir) && sameToolsetVersion(LocalVersion(toolsDir), v) {
 		installed := filepath.Join(toolsDir, "mkfs")
 		if isExecutableFile(installed) {
@@ -53,7 +56,8 @@ func mkfsForVersion(ctx context.Context, toolsDir, version string, client func()
 	if err != nil {
 		return "", fmt.Errorf("tools: %w", err)
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Only the daemon's user may replace the binaries it runs.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("tools: create %s: %w", dir, err)
 	}
 	if err := cl.DownloadArtifact(ctx, a, cached); err != nil {
