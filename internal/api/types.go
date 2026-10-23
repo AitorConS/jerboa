@@ -212,13 +212,22 @@ type IDParams struct {
 const ProtoVersion = 3
 
 // AuthParams is the payload of the Auth.Hello handshake. When the daemon is
-// configured with a token, the first request on every connection must be
-// Auth.Hello carrying the matching token before any other method is accepted.
-// Proto carries the client's wire protocol version (0 when a legacy client omits
-// it, in which case the daemon skips the compatibility check).
+// configured with a token, every connection must authenticate before any
+// other method is accepted. A current client first calls Auth.Challenge and
+// sends Proof, AuthProof(token, nonce), so the token never crosses the wire;
+// an older client sends Token itself. Proto carries the client's wire protocol
+// version (0 when a legacy client omits it, in which case the daemon skips the
+// compatibility check).
 type AuthParams struct {
-	Token string `json:"token"`
+	Token string `json:"token,omitempty"`
+	Proof string `json:"proof,omitempty"`
 	Proto int    `json:"proto,omitempty"`
+}
+
+// ChallengeResult is the daemon's reply to Auth.Challenge: a fresh nonce the
+// client must answer with an HMAC proof in Auth.Hello.
+type ChallengeResult struct {
+	Nonce []byte `json:"nonce"`
 }
 
 // HelloResult is the daemon's Auth.Hello acknowledgement. Proto reports the

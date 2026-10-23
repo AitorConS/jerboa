@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -78,11 +80,37 @@ func ResolveEndpoint(override string) string {
 	return DefaultEndpoint()
 }
 
+var (
+	sessionTokenMu sync.RWMutex
+	sessionToken   string
+)
+
+// SetSessionToken records the token this process authenticates with when it
+// was found somewhere other than the environment (the config file, or the
+// daemon rendezvous file). It stays in the process instead of being exported
+// to JERBOA_AUTH_TOKEN, which every child process (build hooks, package
+// managers and their install scripts) would inherit.
+func SetSessionToken(token string) {
+	sessionTokenMu.Lock()
+	defer sessionTokenMu.Unlock()
+	sessionToken = token
+}
+
+// SessionToken returns the token recorded by SetSessionToken.
+func SessionToken() string {
+	sessionTokenMu.RLock()
+	defer sessionTokenMu.RUnlock()
+	return sessionToken
+}
+
 // ResolveToken returns the client auth token: the JERBOA_AUTH_TOKEN environment
-// variable takes precedence over the config file's [daemon] token. Empty means
-// no authentication.
+// variable takes precedence over the session token and the config file's
+// [daemon] token. Empty means no authentication.
 func ResolveToken() string {
 	if v := os.Getenv("JERBOA_AUTH_TOKEN"); v != "" {
+		return v
+	}
+	if v := SessionToken(); v != "" {
 		return v
 	}
 	if cfg, err := Load(DefaultPath()); err == nil {
@@ -95,7 +123,7 @@ func ResolveToken() string {
 func DefaultPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), ".jerboa", "config.toml")
+		return filepath.Join(noHomeDir(), "config.toml")
 	}
 	return filepath.Join(home, ".jerboa", "config.toml")
 }
@@ -106,14 +134,27 @@ func DefaultPath() string {
 func DaemonFilePath() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(os.TempDir(), ".jerboa", "daemon.json")
+		return filepath.Join(noHomeDir(), "daemon.json")
 	}
 	return filepath.Join(home, ".jerboa", "daemon.json")
+}
+
+// noHomeDir is where the config lives when there is no home directory: a
+// per-user directory under the OS temp dir, so one user's files are never
+// read by another through a shared path. Load refuses files in it that the
+// caller does not own.
+func noHomeDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("jerboa-%d", os.Getuid()), ".jerboa")
 }
 
 // Load reads the config file at path. Returns defaults if the file does not exist.
 func Load(path string) (*Config, error) {
 	cfg := &Config{Hypervisor: "qemu"}
+	if strings.HasPrefix(path, os.TempDir()) {
+		if err := checkOwner(path); err != nil {
+			return nil, err
+		}
+	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return cfg, nil

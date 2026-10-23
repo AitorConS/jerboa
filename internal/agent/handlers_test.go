@@ -40,9 +40,12 @@ func startNullRPCStub(t *testing.T) string {
 						return
 					}
 					resp := api.Response{JSONRPC: "2.0", ID: req.ID}
-					if req.Method == "Auth.Hello" {
+					switch req.Method {
+					case "Auth.Challenge":
+						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+					case "Auth.Hello":
 						resp.Result = json.RawMessage(`{"status":"ok"}`)
-					} else {
+					default:
 						resp.Result = json.RawMessage(`null`)
 					}
 					_ = enc.Encode(resp)

@@ -66,6 +66,12 @@ func Listen(endpoint string) (net.Listener, error) {
 	if network == "unix" {
 		// Restrict the socket to the owning user: the daemon is unauthenticated
 		// over Unix sockets, so filesystem permissions are the access control.
+		// Chmod follows symlinks, so first make sure the path is still the
+		// socket just bound and not a link swapped in since.
+		if fi, err := os.Lstat(address); err != nil || fi.Mode()&os.ModeSocket == 0 {
+			_ = l.Close()
+			return nil, fmt.Errorf("api server: %s is not the socket just created", address)
+		}
 		if err := os.Chmod(address, 0o600); err != nil {
 			_ = l.Close()
 			return nil, fmt.Errorf("api server chmod socket %s: %w", address, err)

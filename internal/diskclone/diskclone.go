@@ -64,7 +64,7 @@ func Clone(dst, src string) (method Method, err error) {
 	return MethodSparseCopy, nil
 }
 
-// SparseCopy copies src to dst (mode 0600, truncated), leaving holes for source
+// SparseCopy copies src to dst (mode 0600, replacing any existing dst), leaving holes for source
 // holes and for all-zero blocks. The result reads back byte-identical to src.
 func SparseCopy(dst, src string) (err error) {
 	in, err := os.Open(src) //nolint:gosec // daemon-owned image store path
@@ -76,7 +76,12 @@ func SparseCopy(dst, src string) (err error) {
 	if err != nil {
 		return fmt.Errorf("diskclone: stat %s: %w", src, err)
 	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // caller-owned path
+	// Create dst afresh: O_EXCL refuses a file or symlink planted at the path
+	// between the remove and the open, so the copy never writes through it.
+	if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("diskclone: remove stale %s: %w", dst, err)
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // caller-owned path
 	if err != nil {
 		return fmt.Errorf("diskclone: create %s: %w", dst, err)
 	}

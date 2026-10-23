@@ -83,6 +83,8 @@ func startStubServer(t *testing.T) string {
 					}
 					resp := api.Response{JSONRPC: "2.0", ID: req.ID}
 					switch {
+					case req.Method == "Auth.Challenge":
+						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
 					case req.Method == "Daemon.Version":
 						resp.Result = json.RawMessage(`{"version":"v1.2.3"}`)
 					case strings.Contains(string(req.Params), "FORCE_ERROR"):
@@ -204,7 +206,10 @@ func startProtoServer(t *testing.T, proto int) string {
 						return
 					}
 					resp := api.Response{JSONRPC: "2.0", ID: req.ID}
-					if req.Method == "Auth.Hello" {
+					switch req.Method {
+					case "Auth.Challenge":
+						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+					case "Auth.Hello":
 						raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: proto})
 						resp.Result = raw
 					}

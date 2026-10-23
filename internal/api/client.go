@@ -11,6 +11,8 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
+
+	"github.com/AitorConS/jerboa/internal/config"
 )
 
 // Client connects to a jerboad server over a Unix socket or TCP.
@@ -26,9 +28,14 @@ type Client struct {
 
 // Dial connects to the jerboad server at endpoint. The endpoint may carry a
 // scheme (unix:// or tcp://); a bare value is treated as a Unix socket path.
-// The auth token is read from the JERBOA_AUTH_TOKEN environment variable.
+// The auth token is read from the JERBOA_AUTH_TOKEN environment variable, or
+// else the process's session token (config.SetSessionToken).
 func Dial(endpoint string) (*Client, error) {
-	return DialWithToken(endpoint, os.Getenv("JERBOA_AUTH_TOKEN"))
+	token := os.Getenv("JERBOA_AUTH_TOKEN")
+	if token == "" {
+		token = config.SessionToken()
+	}
+	return DialWithToken(endpoint, token)
 }
 
 // DialWithToken connects like Dial and, when token is non-empty, performs the
@@ -59,17 +66,40 @@ func DialWithToken(endpoint, token string) (*Client, error) {
 	return c, nil
 }
 
-// sendAuth performs the Auth.Hello handshake on a connection's encoder/decoder,
-// carrying this build's wire protocol version so the daemon can reject a
-// mismatch. It also checks the daemon's advertised proto in the reply, catching
+// sendAuth authenticates a connection: it asks the daemon for a challenge
+// and answers it with an HMAC of the token, so the token itself is never sent
+// (a process squatting the daemon's port, or anyone reading the connection,
+// learns nothing reusable). The Auth.Hello carries this build's wire protocol
+// version so the daemon can reject a mismatch, and the reply's proto catches
 // the reverse case (a newer client talking to an older daemon).
 func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
-	raw, err := json.Marshal(AuthParams{Token: token, Proto: ProtoVersion})
+	var challenge ChallengeResult
+	if err := authCall(enc, dec, 1, "Auth.Challenge", struct{}{}, &challenge); err != nil {
+		return fmt.Errorf("%w (a daemon this old does not support challenge authentication; update jerboad)", err)
+	}
+	if len(challenge.Nonce) < 16 {
+		return fmt.Errorf("authentication failed: daemon sent an invalid challenge")
+	}
+	var hello HelloResult
+	if err := authCall(enc, dec, 2, "Auth.Hello", AuthParams{Proof: AuthProof(token, challenge.Nonce), Proto: ProtoVersion}, &hello); err != nil {
+		return err
+	}
+	// A daemon that advertises a proto version must match ours. A zero/absent
+	// proto is a daemon that predates negotiation — leave it to the caller.
+	if hello.Proto != 0 && hello.Proto != ProtoVersion {
+		return fmt.Errorf(
+			"protocol version mismatch: daemon speaks v%d, this jerboa speaks v%d — update jerboa to match the daemon",
+			hello.Proto, ProtoVersion)
+	}
+	return nil
+}
+
+func authCall(enc *json.Encoder, dec *json.Decoder, id int64, method string, params, out any) error {
+	raw, err := json.Marshal(params)
 	if err != nil {
 		return fmt.Errorf("marshal auth: %w", err)
 	}
-	req := Request{JSONRPC: "2.0", ID: 1, Method: "Auth.Hello", Params: json.RawMessage(raw)}
-	if err := enc.Encode(req); err != nil {
+	if err := enc.Encode(Request{JSONRPC: "2.0", ID: id, Method: method, Params: json.RawMessage(raw)}); err != nil {
 		return fmt.Errorf("send auth: %w", err)
 	}
 	var resp Response
@@ -79,15 +109,8 @@ func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
 	if resp.Error != nil {
 		return fmt.Errorf("authentication failed: %s", resp.Error.Message)
 	}
-	// A daemon that advertises a proto version must match ours. A zero/absent
-	// proto is a daemon that predates negotiation — leave it to the caller.
 	if len(resp.Result) > 0 {
-		var hello HelloResult
-		if err := json.Unmarshal(resp.Result, &hello); err == nil && hello.Proto != 0 && hello.Proto != ProtoVersion {
-			return fmt.Errorf(
-				"protocol version mismatch: daemon speaks v%d, this jerboa speaks v%d — update jerboa to match the daemon",
-				hello.Proto, ProtoVersion)
-		}
+		_ = json.Unmarshal(resp.Result, out)
 	}
 	return nil
 }
