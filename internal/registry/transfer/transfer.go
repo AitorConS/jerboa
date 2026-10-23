@@ -88,6 +88,10 @@ func Push(ctx context.Context, o PushOptions) (PushResult, error) {
 		return nil
 	}
 	for _, d := range missing {
+		// Upload only this recipe's blobs, whatever the registry asks for.
+		if _, ok := sizes[d]; !ok {
+			return res, fmt.Errorf("push: the registry asked for blob %s, which this image does not use", d)
+		}
 		path, err := o.Store.Path(d)
 		if err != nil {
 			return res, fmt.Errorf("push: %w", err)
@@ -221,6 +225,9 @@ func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []str
 		if !ok {
 			return fmt.Errorf("pull: the registry does not say where blob %s is", d)
 		}
+		if err := l.Validate(); err != nil {
+			return fmt.Errorf("pull: blob %s: %w", d, err)
+		}
 		want[d] = l
 	}
 	ranges := pack.PlanRanges(want, sizes, maxRangeGap)
@@ -250,6 +257,11 @@ func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []str
 		go func(rg pack.Range) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			defer func() {
+				if r := recover(); r != nil {
+					fail(fmt.Errorf("pull: pack %s: %v", rg.Pack, r))
+				}
+			}()
 			data, err := o.Client.ReadRange(ctx, cdn, rg.Pack, rg.Offset, rg.Length)
 			if err != nil {
 				fail(fmt.Errorf("pull: %w", err))
@@ -257,6 +269,10 @@ func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []str
 			}
 			for _, e := range rg.Entries {
 				start := e.Offset - rg.Offset
+				if start < 0 || e.Length <= 0 || start > int64(len(data))-e.Length {
+					fail(fmt.Errorf("pull: blob %s is outside the range read", e.Digest))
+					return
+				}
 				blob, err := pack.ReadBlob(data[start:start+e.Length], e)
 				if err != nil {
 					fail(fmt.Errorf("pull: %w", err))

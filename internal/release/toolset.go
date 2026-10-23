@@ -35,6 +35,27 @@ func NormalizeToolsetVersion(version string) (string, error) {
 	return "v" + strings.TrimPrefix(v, "v"), nil
 }
 
+// revokedToolsets lists toolset versions whose mkfs must not assemble images,
+// with the reason. A recipe names its toolset, so without this list any recipe
+// could pick an old mkfs with a known flaw; the fix ships in a later version.
+var revokedToolsets = map[string]string{}
+
+// CheckToolsetVersion reports an error when version is revoked.
+func CheckToolsetVersion(version string) error {
+	return checkToolsetVersion(version, revokedToolsets)
+}
+
+func checkToolsetVersion(version string, revoked map[string]string) error {
+	v, err := NormalizeToolsetVersion(version)
+	if err != nil {
+		return err
+	}
+	if reason, ok := revoked[v]; ok {
+		return fmt.Errorf("release: toolset %s is revoked: %s", v, reason)
+	}
+	return nil
+}
+
 // FetchToolset downloads and verifies the signed toolset document for version.
 func (c *Client) FetchToolset(ctx context.Context, version string) (*Toolset, error) {
 	v, err := NormalizeToolsetVersion(version)

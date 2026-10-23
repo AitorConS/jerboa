@@ -64,6 +64,12 @@ A reference is `[registry/]namespace/repository[:tag|@sha256:<digest>]`:
 - The tag defaults to `latest`.
 - A digest names an exact recipe and never changes.
 
+### What a pull checks
+
+Every file, pack and recipe a pull downloads is checked against its SHA-256 digest, and the assembled disk is checked against the recipe's digest. Before assembling, the daemon also checks that the recipe's manifest reads only the recipe's own files, so a recipe cannot make `mkfs` read anything else on your machine.
+
+A tag is only as trustworthy as the registry that serves it: the registry decides which recipe a tag points to. To run exactly the image you reviewed, pull it by digest (`jerboa images inspect` shows it) and pin that digest in scripts and compose files.
+
 ## CI
 
 Create a personal access token once, on a machine where you are logged in:
