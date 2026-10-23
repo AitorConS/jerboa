@@ -302,7 +302,7 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 	case "Image.Pull":
 		return s.handleImagePull(ctx, req.Params)
 	case "VM.Run":
-		return s.handleRun(ctx, req.Params)
+		return s.handleRun(withPeer(ctx, conn), req.Params)
 	case "VM.Start":
 		return s.handleStart(ctx, req.Params)
 	case "VM.Stop":
@@ -452,6 +452,13 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			}
 			imagePath = resolved
 		}
+	}
+	if (p.Image == "" && imagePath != "") || (looksLikePath(p.Image) && !s.isStoredImage(p.Image)) {
+		checked, err := hostImagePathCheck(ctx, imagePath)
+		if err != nil {
+			return nil, &api.RPCError{Code: -32602, Message: err.Error()}
+		}
+		imagePath = checked
 	}
 
 	architecture := ""
