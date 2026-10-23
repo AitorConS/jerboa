@@ -76,9 +76,11 @@ func (s *Server) handleVolume(method string, raw json.RawMessage) (any, *api.RPC
 func (s *Server) resolveNamedVolumes(mounts []api.VolumeMountSpec) *api.RPCError {
 	for i := range mounts {
 		m := &mounts[i]
+		// Volumes are referenced by name: a client-supplied host path would let
+		// the daemon format or attach any file it can write.
 		if m.Name == "" {
-			continue
-		} // Compatibility with clients that supply host paths.
+			return &api.RPCError{Code: -32602, Message: "volumes must be referenced by name; raw disk paths are not accepted"}
+		}
 		if s.volStore == nil {
 			return &api.RPCError{Code: -32000, Message: "volume store disabled"}
 		}

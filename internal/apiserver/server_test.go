@@ -607,30 +607,22 @@ func TestServer_Run_WithHealthCheckAndRestart(t *testing.T) {
 	require.Equal(t, "starting", detail.Health)
 }
 
-func TestServer_Run_WithVolumes(t *testing.T) {
+// TestServer_Run_RejectsRawVolumePath checks a run cannot attach a host file
+// by path: volumes are referenced by name and resolved by the daemon.
+func TestServer_Run_RejectsRawVolumePath(t *testing.T) {
 	client, _ := startTestServer(t)
 
-	// A read-only volume must already carry a filesystem; use a disk stamped with
-	// the TFS magic so the daemon's read-only-formatted check passes. (A raw,
-	// unformatted read-only volume is now rejected up front — see
-	// TestEnsureVolumesFormatted_ReadOnlyUnformatted_ClearError.)
 	diskPath := filepath.Join(t.TempDir(), "disk.img")
 	require.NoError(t, os.WriteFile(diskPath, append([]byte("NVMTFS"), make([]byte, 4096)...), 0o644))
 
-	info, err := client.Run(context.Background(), api.RunParams{
+	_, err := client.Run(context.Background(), api.RunParams{
 		ImagePath: "test.img",
 		Memory:    "256M",
 		Volumes: []api.VolumeMountSpec{
 			{DiskPath: diskPath, GuestPath: "/mnt/data", ReadOnly: true},
 		},
 	})
-	require.NoError(t, err)
-
-	detail, err := client.Inspect(context.Background(), info.ID)
-	require.NoError(t, err)
-	require.Len(t, detail.Volumes, 1)
-	require.Equal(t, "/mnt/data", detail.Volumes[0].GuestPath)
-	require.True(t, detail.Volumes[0].ReadOnly)
+	require.ErrorContains(t, err, "referenced by name")
 }
 
 // --- Daemon ---

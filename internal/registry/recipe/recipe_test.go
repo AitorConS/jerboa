@@ -139,7 +139,19 @@ func TestParseRequiresCanonicalValidRecipe(t *testing.T) {
 		r.Blobs = append(r.Blobs, Blob{Digest: "sha256:" + strings.Repeat("f", 64), Size: 1})
 	}), "not used")
 	require.ErrorContains(t, mutate(func(r *Recipe) { r.Blobs[0], r.Blobs[1] = r.Blobs[1], r.Blobs[0] }), "sorted")
-	require.ErrorContains(t, mutate(func(r *Recipe) { r.Manifest += `x:(contents:(host:"/etc/passwd"))` }), "host path")
+	for _, entry := range []string{
+		`x:(contents:(host:"/etc/passwd"))`,
+		`x:(contents:(host :"/etc/passwd"))`,
+		"x:(contents:(host\t:/etc/passwd))",
+		`x:(contents:("host":"/etc/passwd"))`,
+		`x:(contents:("ho\st":"/etc/passwd"))`,
+	} {
+		require.ErrorContains(t, mutate(func(r *Recipe) { r.Manifest = "(" + entry + " " + r.Manifest[1:] }), "host path", entry)
+	}
+	require.ErrorContains(t, mutate(func(r *Recipe) { r.Manifest += `(x:y)` }), "more than one")
+	require.ErrorContains(t, mutate(func(r *Recipe) {
+		r.Manifest = `(note:"blob:` + r.Blobs[0].Digest + `" ` + r.Manifest[1:]
+	}), "malformed blob reference")
 	require.ErrorContains(t, mutate(func(r *Recipe) { r.Toolset.Version = "latest" }), "toolset version")
 	require.ErrorContains(t, mutate(func(r *Recipe) { r.Architecture = "arm64" }), "architecture")
 }
@@ -150,4 +162,12 @@ func TestAssembleNeedsEveryBlob(t *testing.T) {
 	require.NoError(t, os.Remove(p))
 	err := Assemble(context.Background(), f.r, f.store, f.mkfs, filepath.Join(t.TempDir(), "d"))
 	require.ErrorContains(t, err, "not in the store")
+}
+
+func TestAssembledManifestReadsOnlyRecipeBlobs(t *testing.T) {
+	f := build(t)
+	p, err := f.store.Path(f.r.Blobs[0].Digest)
+	require.NoError(t, err)
+	require.NoError(t, checkAssembledHosts(f.r, f.store, `(a:(contents:(host:"`+p+`")))`))
+	require.ErrorContains(t, checkAssembledHosts(f.r, f.store, `(a:(contents:(host:"/etc/passwd")))`), "host path")
 }

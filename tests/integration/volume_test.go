@@ -64,7 +64,7 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, err)
 	_, err = volStore.Create("testdata", 1<<30)
 	require.NoError(t, err)
-	vol, err := volStore.Get("testdata")
+	_, err = volStore.Get("testdata")
 	require.NoError(t, err)
 
 	mgr := vm.NewQEMUManager(defaultQEMU)
@@ -72,6 +72,7 @@ func TestVolumePersistence(t *testing.T) {
 	require.NoError(t, err)
 	srv, err := apiserver.NewServer(mgr, netStore, defaultSocket, nil, "", nil)
 	require.NoError(t, err)
+	srv.SetVolumeStore(volStore)
 	srv.EnableVolumeFormatResolver(func(context.Context) (volume.Formatter, error) {
 		return volFmt, nil
 	})
@@ -99,7 +100,7 @@ func TestVolumePersistence(t *testing.T) {
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
 		Volumes: []api.VolumeMountSpec{
-			{DiskPath: vol.DiskPath, GuestPath: "/data", Label: vol.Label},
+			{Name: "testdata", GuestPath: "/data"},
 		},
 	})
 	require.NoError(t, err)
@@ -139,7 +140,7 @@ func TestVolumePersistence(t *testing.T) {
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
 		Volumes: []api.VolumeMountSpec{
-			{DiskPath: vol.DiskPath, GuestPath: "/data", Label: vol.Label},
+			{Name: "testdata", GuestPath: "/data"},
 		},
 	})
 	require.NoError(t, err)

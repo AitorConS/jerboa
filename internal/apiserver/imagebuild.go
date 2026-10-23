@@ -187,24 +187,24 @@ func (s *Server) handleVolumeSeed(ctx context.Context, params json.RawMessage, s
 		return
 	}
 
-	// The disk to seed is the client-supplied, daemon-visible path — the same path
-	// `jerboa run -v` attaches. On Windows the volume lives on the host filesystem
-	// (reachable by the daemon under /mnt/<drive>/…) and is absent from the
-	// daemon's own volume store, so re-resolving it there fails and made seeding
-	// impossible on the only supported Windows path. When the
-	// daemon DOES own the volume (Linux-native, shared store) the paths are
-	// cross-checked so a client cannot redirect the seed onto another volume's disk.
+	// The disk to seed is the daemon's own volume: seeding truncates the file,
+	// so a client-supplied path is never written. Legacy volumes outside the
+	// store are moved in with 'jerboa volume migrate'.
 	s.resourceMu.Lock()
 	defer s.resourceMu.Unlock()
-	diskPath := p.DiskPath
-	if vol, err := s.volStore.Get(p.VolumeName); err == nil {
-		if filepath.Clean(p.DiskPath) != filepath.Clean(vol.DiskPath) {
-			drain(stream)
-			s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path does not match the requested volume"})
-			return
-		}
-		diskPath = vol.DiskPath
+	vol, err := s.volStore.Get(p.VolumeName)
+	if err != nil {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: fmt.Sprintf(
+			"volume %q not found; create the volume first with 'jerboa volume create %s'", p.VolumeName, p.VolumeName)})
+		return
 	}
+	if p.DiskPath != "" && filepath.Clean(p.DiskPath) != filepath.Clean(vol.DiskPath) {
+		drain(stream)
+		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: "disk_path does not match the requested volume"})
+		return
+	}
+	diskPath := vol.DiskPath
 
 	// Seeding writes a filesystem into an existing disk image; it never creates the
 	// backing file. Require it to exist so a typo'd name or an unseeded create fails
@@ -591,10 +591,8 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
 		}
-		for _, part := range strings.Split(filepath.ToSlash(hdr.Name), "/") {
-			if part == ".." {
-				return nil, fmt.Errorf("invalid guest path %q", hdr.Name)
-			}
+		if err := pkg.CheckGuestPath(hdr.Name); err != nil {
+			return nil, err
 		}
 		guestPath := filepath.ToSlash(filepath.Clean("/" + strings.TrimSuffix(hdr.Name, "/")))
 		switch hdr.Typeflag {
