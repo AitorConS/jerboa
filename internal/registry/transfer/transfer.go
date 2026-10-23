@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -141,6 +142,8 @@ type PullOptions struct {
 	Out string
 	// Parallel bounds concurrent range requests; zero means 4.
 	Parallel int
+	// NoCount skips reporting the pull to the hub's counter.
+	NoCount bool
 }
 
 // PullResult reports what a pull fetched.
@@ -170,6 +173,8 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		if digest, err = o.Client.TagRecipe(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag); err != nil {
 			return res, fmt.Errorf("pull: %w", err)
 		}
+	} else if err := o.Client.HasRecipe(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, digest); err != nil {
+		return res, fmt.Errorf("pull: %w", err)
 	}
 	data, err := o.Client.Recipe(ctx, d.CDN, digest)
 	if err != nil {
@@ -205,10 +210,19 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		return res, fmt.Errorf("pull: %w", err)
 	}
 	// The hub's pull counter: best effort, bounded, never fails the pull.
-	countCtx, cancel := context.WithTimeout(ctx, countPullTimeout)
-	_ = o.Client.CountPull(countCtx, o.Ref.Namespace, o.Ref.Repository)
-	cancel()
+	if !o.NoCount {
+		countCtx, cancel := context.WithTimeout(ctx, countPullTimeout)
+		_ = o.Client.CountPull(countCtx, o.Ref.Namespace, o.Ref.Repository)
+		cancel()
+	}
 	return res, nil
+}
+
+// DoNotTrack reports whether the environment asks not to report pulls, by the
+// DO_NOT_TRACK convention: any value but empty, "0" or "false".
+func DoNotTrack() bool {
+	v := strings.TrimSpace(os.Getenv("DO_NOT_TRACK"))
+	return v != "" && v != "0" && !strings.EqualFold(v, "false")
 }
 
 // countPullTimeout bounds how long a pull waits to report itself.

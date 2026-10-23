@@ -451,6 +451,8 @@ type ImagePushResult struct {
 // ImagePullParams pulls [registry/]ns/repo[:tag|@digest].
 type ImagePullParams struct {
 	Reference string `json:"reference"`
+	// NoCount skips reporting the pull to the hub's counter.
+	NoCount bool `json:"no_count,omitempty"`
 }
 
 // ImagePullResult reports a pull and the image it stored.
