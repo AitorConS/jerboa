@@ -50,6 +50,8 @@ func startAgentRPCStub(t *testing.T, refCh chan<- string) string {
 					}
 					resp := api.Response{JSONRPC: "2.0", ID: req.ID}
 					switch req.Method {
+					case "Auth.Challenge":
+						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
 					case "Auth.Hello":
 						resp.Result = json.RawMessage(`{"status":"ok"}`)
 					case "Image.Get":

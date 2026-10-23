@@ -681,7 +681,8 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | Flag | Description |
 |---|---|
 | `-H, --host` | Listen endpoint |
-| `--auth-token` | Shared secret for `Auth.Hello` (env: `JERBOA_AUTH_TOKEN`); empty disables auth |
+| `--auth-token-file` | File (mode `0600`) holding the client auth token; alternatively set `JERBOA_AUTH_TOKEN`. Clients prove they hold it with an HMAC challenge, so the token is never sent. On a TCP endpoint it must be at least 32 characters (`openssl rand -hex 32`) |
+| `--auth-token` | Deprecated: a token on the command line is visible to other local users in `ps`. Use `--auth-token-file` or `JERBOA_AUTH_TOKEN` |
 | `--insecure` | Allow serving a TCP endpoint without an auth token (unsafe). A TCP endpoint with no token is rejected at startup otherwise; a Unix socket needs no token (it is restricted to the owning user with `0600` permissions) |
 | `--qemu` | QEMU binary path (default `qemu-system-x86_64`) |
 | `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |

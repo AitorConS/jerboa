@@ -74,6 +74,9 @@ func newRootCmd() *cobra.Command {
 		nativePeering  string
 		vmLogMaxBytes  int64
 		allowInsecure  bool
+		authTokenFile  string
+		clusterTokFile string
+		obsTokenFile   string
 		snapshotDir    string
 		snapshotCount  int
 		snapshotBytes  int64
@@ -90,9 +93,9 @@ func newRootCmd() *cobra.Command {
 			if endpoint == "" {
 				endpoint = config.DefaultEndpoint()
 			}
-			authToken := authTokenFlag
-			if authToken == "" {
-				authToken = os.Getenv("JERBOA_AUTH_TOKEN")
+			authToken, err := resolveSecret(authTokenFlag, authTokenFile, "JERBOA_AUTH_TOKEN")
+			if err != nil {
+				return err
 			}
 			// Fail closed: a TCP endpoint with no token is reachable by any local
 			// process (and, depending on bind address, the LAN). A daemon that can
@@ -102,11 +105,14 @@ func newRootCmd() *cobra.Command {
 				return fmt.Errorf("jerboad: refusing to serve TCP endpoint %q without authentication; "+
 					"set --auth-token or JERBOA_AUTH_TOKEN, or pass --insecure to override", endpoint)
 			}
-			if clusterToken == "" {
-				clusterToken = os.Getenv("JERBOA_CLUSTER_TOKEN")
+			if err := checkTokenStrength(endpoint, authToken, allowInsecure); err != nil {
+				return err
 			}
-			if obsToken == "" {
-				obsToken = os.Getenv("JERBOA_OBSERVABILITY_TOKEN")
+			if clusterToken, err = resolveSecret(clusterToken, clusterTokFile, "JERBOA_CLUSTER_TOKEN"); err != nil {
+				return err
+			}
+			if obsToken, err = resolveSecret(obsToken, obsTokenFile, "JERBOA_OBSERVABILITY_TOKEN"); err != nil {
+				return err
 			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
 			var fcOpts []vm.FCOption
@@ -157,6 +163,11 @@ func newRootCmd() *cobra.Command {
 	_ = root.Flags().MarkDeprecated("socket", "use --host instead")
 	root.Flags().StringVar(&authTokenFlag, "auth-token", "",
 		"shared secret required from clients via Auth.Hello (env: JERBOA_AUTH_TOKEN); empty disables auth")
+	// A secret on the command line is readable by every local user through
+	// ps and /proc/<pid>/cmdline; the file and environment forms are not.
+	_ = root.Flags().MarkDeprecated("auth-token", "it exposes the token to other local users; use --auth-token-file or JERBOA_AUTH_TOKEN")
+	root.Flags().StringVar(&authTokenFile, "auth-token-file", "",
+		"file holding the client auth token (mode 0600); alternative to JERBOA_AUTH_TOKEN")
 	root.Flags().BoolVar(&allowInsecure, "insecure", false,
 		"allow serving a TCP endpoint without an auth token (unsafe; a Unix socket needs no token)")
 	root.Flags().StringVar(&qemuBin, "qemu", vm.DefaultQEMUBinary(),
@@ -197,10 +208,16 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&clusterAddr, "cluster-addr", "",
 		"HTTP address for cluster gossip endpoint (e.g. :7946); empty disables cluster")
 	root.Flags().StringVar(&clusterToken, "cluster-token", "",
-		"shared secret authenticating cluster gossip between nodes (env: JERBOA_CLUSTER_TOKEN); must match on all nodes; empty leaves gossip unauthenticated")
+		"shared secret authenticating cluster gossip between nodes (env: JERBOA_CLUSTER_TOKEN); must match on all nodes")
+	_ = root.Flags().MarkDeprecated("cluster-token", "it exposes the token to other local users; use --cluster-token-file or JERBOA_CLUSTER_TOKEN")
+	root.Flags().StringVar(&clusterTokFile, "cluster-token-file", "",
+		"file holding the cluster gossip token (mode 0600); alternative to JERBOA_CLUSTER_TOKEN")
 	root.Flags().StringVar(&obsToken, "observability-token", "",
 		"read-only bearer token required to scrape --metrics-addr and the --ui-addr dashboard (env: JERBOA_OBSERVABILITY_TOKEN); "+
-			"kept separate from --auth-token so scraping never grants daemon access; empty leaves these endpoints unauthenticated")
+			"kept separate from --auth-token so scraping never grants daemon access")
+	_ = root.Flags().MarkDeprecated("observability-token", "it exposes the token to other local users; use --observability-token-file or JERBOA_OBSERVABILITY_TOKEN")
+	root.Flags().StringVar(&obsTokenFile, "observability-token-file", "",
+		"file holding the observability token (mode 0600); alternative to JERBOA_OBSERVABILITY_TOKEN")
 	root.Flags().StringVar(&portPublish, "port-publish", network.PublishAuto,
 		"how published ports reach guests on Linux: auto (kernel NAT for clients on this host when available, else userspace proxy), "+
 			"nat, nat-lan (kernel NAT for clients on other hosts too, as Docker does; those connections skip the host's INPUT firewall rules) or proxy")
@@ -414,6 +431,12 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	} else if strings.HasPrefix(endpoint, "tcp://") {
 		slog.Warn("jerboad: TCP endpoint without --auth-token is reachable by any local process; set a token")
 	}
+	if addr, ok := strings.CutPrefix(endpoint, "tcp://"); ok && !isLoopbackAddr(addr) {
+		// Clients authenticate with a challenge, so the token itself is never
+		// sent, but the session that follows is not encrypted.
+		slog.Warn("jerboad: the API is reachable from other hosts and its traffic is not encrypted; "+
+			"prefer a Unix socket or 127.0.0.1, or tunnel it (for example over SSH)", "endpoint", endpoint)
+	}
 
 	// Attach the daemon's image store (opened earlier, above) so it can
 	// resolve image references for VM.Run and serve Image.List/Image.Remove.
@@ -621,6 +644,49 @@ func splitCommaList(s string) []string {
 
 func volumeStorePath(storePath string) string {
 	return filepath.Join(filepath.Dir(storePath), "volumes")
+}
+
+// minTCPTokenLength is the shortest token accepted on a TCP endpoint, which
+// any local process (or, bound off loopback, any host) can try tokens on.
+// Generated tokens are 64 hex characters.
+const minTCPTokenLength = 32
+
+// checkTokenStrength refuses a guessable token on a TCP endpoint. A Unix
+// socket is already limited to its owner by file permissions.
+func checkTokenStrength(endpoint, token string, allowInsecure bool) error {
+	if token == "" || allowInsecure || !strings.HasPrefix(endpoint, "tcp://") || len(token) >= minTCPTokenLength {
+		return nil
+	}
+	return fmt.Errorf("jerboad: the auth token for TCP endpoint %q is too short (%d characters, want at least %d); "+
+		"generate one with: openssl rand -hex 32", endpoint, len(token), minTCPTokenLength)
+}
+
+// resolveSecret returns a secret from, in order, its (deprecated) flag, a
+// file, or an environment variable. The file must not be readable by group
+// or others, since it would hand the secret to other local users.
+func resolveSecret(flagValue, file, envVar string) (string, error) {
+	if flagValue != "" {
+		return flagValue, nil
+	}
+	if file != "" {
+		info, err := os.Stat(file)
+		if err != nil {
+			return "", fmt.Errorf("jerboad: %w", err)
+		}
+		if info.Mode().Perm()&0o077 != 0 {
+			return "", fmt.Errorf("jerboad: %s is readable by other users (mode %04o); run chmod 600 %s", file, info.Mode().Perm(), file)
+		}
+		data, err := os.ReadFile(file) //nolint:gosec // operator-chosen secret file
+		if err != nil {
+			return "", fmt.Errorf("jerboad: %w", err)
+		}
+		v := strings.TrimSpace(string(data))
+		if v == "" {
+			return "", fmt.Errorf("jerboad: %s is empty", file)
+		}
+		return v, nil
+	}
+	return os.Getenv(envVar), nil
 }
 
 // warnIfExposed logs a warning when an auxiliary HTTP endpoint is bound to a

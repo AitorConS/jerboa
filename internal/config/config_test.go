@@ -181,3 +181,12 @@ func TestSave_PreservesNonEmptyDaemonFields(t *testing.T) {
 	require.Equal(t, "s3cret", reloaded.Daemon.Token)
 	require.Equal(t, "firecracker", reloaded.Hypervisor)
 }
+
+func TestResolveToken_SessionTokenStaysOutOfTheEnvironment(t *testing.T) {
+	t.Setenv("JERBOA_AUTH_TOKEN", "")
+	t.Setenv("HOME", t.TempDir())
+	SetSessionToken("session-secret")
+	t.Cleanup(func() { SetSessionToken("") })
+	require.Equal(t, "session-secret", ResolveToken())
+	require.Empty(t, os.Getenv("JERBOA_AUTH_TOKEN"))
+}

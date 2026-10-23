@@ -53,14 +53,15 @@ func newRootCmd() *cobra.Command {
 				override = socketFlag
 			}
 			endpoint = config.ResolveEndpoint(override)
-			// Surface a config-file token through the environment so api.Dial
-			// (which reads JERBOA_AUTH_TOKEN) authenticates transparently.
+			// Hand a config-file token to api.Dial through the session token,
+			// not the environment, so child processes do not inherit it.
+			config.SetSessionToken("")
 			if tok := config.ResolveToken(); tok != "" {
-				_ = os.Setenv("JERBOA_AUTH_TOKEN", tok)
+				config.SetSessionToken(tok)
 			}
 			if runtime.GOOS == "darwin" && config.ResolveToken() == "" && endpoint == config.DefaultEndpoint() {
 				if tok, _, err := wslboot.LoadDaemonFile(daemonJSONPath()); err == nil && tok != "" {
-					_ = os.Setenv("JERBOA_AUTH_TOKEN", tok)
+					config.SetSessionToken(tok)
 				}
 			}
 			// On Windows the daemon lives in the dedicated WSL2 distro: auto-start
@@ -178,7 +179,7 @@ func ensureDaemon(ctx context.Context, override string) (string, error) {
 			return "", fmt.Errorf("daemon token: %w", err)
 		}
 		token = t
-		_ = os.Setenv("JERBOA_AUTH_TOKEN", token)
+		config.SetSessionToken(token)
 	}
 	// The daemon lives in the dedicated jerboa distro; auto-boot requires it.
 	installed, err := wsldistro.Exists()
