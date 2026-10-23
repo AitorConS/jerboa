@@ -5,11 +5,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/client"
 	"github.com/AitorConS/jerboa/internal/registry/credentials"
+	"github.com/AitorConS/jerboa/internal/registry/transfer"
 	"github.com/spf13/cobra"
 )
 
@@ -187,7 +189,7 @@ func newPullCmd(endpoint *string) *cobra.Command {
 				return fmt.Errorf("pull: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
-			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0]})
+			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack()})
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
@@ -206,16 +208,21 @@ func newRegistryCmd() *cobra.Command {
 	}
 	cmd.PersistentFlags().StringVar(&registry, "registry", naming.DefaultRegistry, "registry host")
 	pat := &cobra.Command{Use: "pat", Short: "Personal access tokens, for CI"}
-	pat.AddCommand(&cobra.Command{
+	var patOpts client.PATOptions
+	create := &cobra.Command{
 		Use:   "create <name>",
 		Short: "Create a personal access token; it is shown once",
-		Args:  cobra.ExactArgs(1),
+		Example: `  jerboa registry pat create ci
+  jerboa registry pat create release --namespace acme --expires-in 30`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cred, err := credentials.For(registry)
 			if err != nil {
 				return err
 			}
-			id, token, err := client.New(registry).CreatePAT(cmd.Context(), cred, args[0])
+			opts := patOpts
+			opts.Name = args[0]
+			id, token, err := client.New(registry).CreatePAT(cmd.Context(), cred, opts)
 			if err != nil {
 				return fmt.Errorf("pat create: %w", err)
 			}
@@ -223,7 +230,11 @@ func newRegistryCmd() *cobra.Command {
 			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], id, credentials.EnvToken)
 			return nil
 		},
-	})
+	}
+	create.Flags().IntVar(&patOpts.ExpiresInDays, "expires-in", 0, "days until the token expires, 1 to 365 (default: the registry's, 90)")
+	create.Flags().StringArrayVar(&patOpts.Namespaces, "namespace", nil, "namespace the token may push to (repeatable; default: all of yours)")
+	create.Flags().BoolVar(&patOpts.Delete, "delete", false, "let the token delete tags and repositories")
+	pat.AddCommand(create)
 	pat.AddCommand(&cobra.Command{
 		Use:     "ls",
 		Aliases: []string{"list"},
@@ -239,7 +250,18 @@ func newRegistryCmd() *cobra.Command {
 				return fmt.Errorf("pat ls: %w", err)
 			}
 			for _, p := range pats {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\n", p.ID, p.Name)
+				expires := "never"
+				if p.ExpiresAt != nil {
+					expires = time.Unix(*p.ExpiresAt, 0).UTC().Format("2006-01-02")
+				}
+				scope := "all namespaces"
+				if len(p.Namespaces) > 0 {
+					scope = strings.Join(p.Namespaces, ",")
+				}
+				if p.Delete {
+					scope += " +delete"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\texpires %s\t%s\n", p.ID, p.Name, expires, scope)
 			}
 			return nil
 		},
@@ -323,8 +345,15 @@ func newRepoCmd(registry *string) *cobra.Command {
 
 // readFileOrStdin reads a file, or standard input for "-".
 func readFileOrStdin(cmd *cobra.Command, path string) ([]byte, error) {
+	var data []byte
+	var err error
 	if path == "-" {
-		return io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
+		data, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
+	} else {
+		data, err = os.ReadFile(path) //nolint:gosec // a file the user names
 	}
-	return os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return data, nil
 }

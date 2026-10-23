@@ -332,7 +332,7 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 | `tag <image> <target>` | Give a stored image another name, e.g. the reference to push it as |
 | `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to |
 | `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store |
-| `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host) |
+| `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host; `create` takes `--expires-in <days>`, `--namespace` and `--delete`) |
 
 ```sh
 jerboa build . --name web

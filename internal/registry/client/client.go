@@ -108,30 +108,65 @@ func (c *Client) LoginWithGitHub(ctx context.Context, githubToken string) (token
 // PushToken exchanges a refresh token or personal access token for a
 // short-lived token that may push to namespace/repository.
 func (c *Client) PushToken(ctx context.Context, credential, namespace, repository string) (string, error) {
+	return c.token(ctx, credential, namespace, repository, "push")
+}
+
+// DeleteToken is PushToken that may also delete tags and the repository. The
+// registry grants it to the namespace's owner, an organization's admins, and
+// personal access tokens created with delete.
+func (c *Client) DeleteToken(ctx context.Context, credential, namespace, repository string) (string, error) {
+	token, err := c.token(ctx, credential, namespace, repository, "push,delete")
+	if err != nil && IsStatus(err, http.StatusForbidden) {
+		return "", fmt.Errorf("deleting in %s/%s needs its owner, an organization admin, or a token created with --delete: %w", namespace, repository, err)
+	}
+	return token, err
+}
+
+func (c *Client) token(ctx context.Context, credential, namespace, repository, actions string) (string, error) {
 	var out struct {
 		Token string `json:"token"`
 	}
-	scope := fmt.Sprintf("repository:%s/%s:push", namespace, repository)
+	scope := fmt.Sprintf("repository:%s/%s:%s", namespace, repository, actions)
 	err := c.do(ctx, http.MethodPost, c.Base+"/auth/token", credential, jsonBody(map[string][]string{"scopes": {scope}}), "application/json", &out)
 	return out.Token, err
 }
 
-// CreatePAT creates a personal access token.
-func (c *Client) CreatePAT(ctx context.Context, credential, name string) (id, token string, err error) {
+// IsStatus reports whether err is a registry error with the HTTP status.
+func IsStatus(err error, status int) bool {
+	var re *Error
+	return errors.As(err, &re) && re.Status == status
+}
+
+// PATOptions describe a new personal access token. Zero values take the
+// registry's defaults: 90 days, every namespace the account can push to, and
+// no deletes.
+type PATOptions struct {
+	Name          string   `json:"name"`
+	ExpiresInDays int      `json:"expires_in_days,omitempty"`
+	Namespaces    []string `json:"namespaces,omitempty"`
+	Delete        bool     `json:"delete,omitempty"`
+}
+
+// CreatePAT creates a personal access token. Only a login credential can
+// create one, not another personal access token.
+func (c *Client) CreatePAT(ctx context.Context, credential string, opts PATOptions) (id, token string, err error) {
 	var out struct {
 		ID    string `json:"id"`
 		Token string `json:"token"`
 	}
-	err = c.do(ctx, http.MethodPost, c.Base+"/auth/pats", credential, jsonBody(map[string]string{"name": name}), "application/json", &out)
+	err = c.do(ctx, http.MethodPost, c.Base+"/auth/pats", credential, jsonBody(opts), "application/json", &out)
 	return out.ID, out.Token, err
 }
 
 // PAT describes a personal access token, without its secret.
 type PAT struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	CreatedAt  int64  `json:"created_at"`
-	LastUsedAt *int64 `json:"last_used_at"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	CreatedAt  int64    `json:"created_at"`
+	LastUsedAt *int64   `json:"last_used_at"`
+	ExpiresAt  *int64   `json:"expires_at"`
+	Namespaces []string `json:"namespaces"`
+	Delete     bool     `json:"delete"`
 }
 
 // ListPATs lists the account's personal access tokens.
@@ -223,6 +258,20 @@ func (c *Client) DeleteRepo(ctx context.Context, token, namespace, repository st
 // without retries, and its answer carries nothing, so callers ignore errors.
 func (c *Client) CountPull(ctx context.Context, namespace, repository string) error {
 	_, err := c.once(ctx, http.MethodPost, c.repo(namespace, repository)+"/pulls", "", nil, "", nil)
+	return err
+}
+
+// HasRecipe reports whether a repository has ever tagged a recipe, from the
+// CDN. A pull by digest checks it, so a digest from another repository is not
+// taken for one of this repository's images.
+func (c *Client) HasRecipe(ctx context.Context, cdn, namespace, repository, digest string) error {
+	if !recipeDigestRE.MatchString(digest) {
+		return fmt.Errorf("registry: invalid recipe digest %q", digest)
+	}
+	err := c.do(ctx, http.MethodGet, cdn+"/refs/"+namespace+"/"+repository+"/"+strings.TrimPrefix(digest, "sha256:"), "", nil, "", nil)
+	if IsStatus(err, http.StatusNotFound) {
+		return fmt.Errorf("%s is not in %s/%s", digest, namespace, repository)
+	}
 	return err
 }
 

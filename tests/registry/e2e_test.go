@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"debug/elf"
+	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -49,17 +50,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeGitHub serves the device flow and the two REST calls the Worker makes.
-// The device flow always approves alice, who belongs to the acme organization.
+// e2eClientSecret is the OAuth client secret the Worker and the fake GitHub
+// share; the Worker's local client id is "local-development".
+const e2eClientSecret = "e2e-client-secret"
+
+// fakeGitHub serves the device flow and the REST calls the Worker makes. The
+// device flow always approves alice, an admin of the acme organization; bob
+// is a plain member of it. gh-other is a token another OAuth App holds.
 func fakeGitHub(t *testing.T) *httptest.Server {
 	t.Helper()
+	type membership struct {
+		id    int
+		login string
+		role  string
+	}
 	users := map[string]struct {
 		id    int
 		login string
-		orgs  []string
+		orgs  []membership
 	}{
-		"gh-alice": {1, "alice", []string{"acme"}},
-		"gh-bob":   {2, "bob", nil},
+		"gh-alice": {1, "alice", []membership{{100, "acme", "admin"}}},
+		"gh-bob":   {2, "bob", []membership{{100, "acme", "member"}}},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -71,6 +82,24 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 		case "/login/oauth/access_token":
 			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "gh-alice"})
 			return
+		case "/applications/local-development/token":
+			// The Worker checks a token was issued to its own OAuth App.
+			id, secret, ok := r.BasicAuth()
+			if !ok || id != "local-development" || secret != e2eClientSecret || r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			var body struct {
+				AccessToken string `json:"access_token"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			u, ok := users[body.AccessToken]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"scopes": []string{"read:org"}, "user": map[string]any{"id": u.id, "login": u.login}})
+			return
 		}
 		u, ok := users[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
 		if !ok {
@@ -80,10 +109,18 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 		switch r.URL.Path {
 		case "/user":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": u.id, "login": u.login})
+		case "/user/memberships/orgs":
+			out := []map[string]any{}
+			if r.URL.Query().Get("page") == "1" || r.URL.Query().Get("page") == "" {
+				for _, o := range u.orgs {
+					out = append(out, map[string]any{"state": "active", "role": o.role, "organization": map[string]any{"id": o.id, "login": o.login}})
+				}
+			}
+			_ = json.NewEncoder(w).Encode(out)
 		case "/user/orgs":
-			orgs := []map[string]string{}
+			orgs := []map[string]any{}
 			for _, o := range u.orgs {
-				orgs = append(orgs, map[string]string{"login": o})
+				orgs = append(orgs, map[string]any{"id": o.id, "login": o.login})
 			}
 			_ = json.NewEncoder(w).Encode(orgs)
 		default:
@@ -125,7 +162,9 @@ func startWorker(t *testing.T, github string) string {
 		"--port", fmt.Sprint(port), "--persist-to", state, "--show-interactive-dev-session=false",
 		"--var", "GITHUB_API:"+github,
 		"--var", "CDN_BASE:"+base+"/cdn",
-		"--var", "JWT_SIGNING_KEY:e2e-signing-key-that-is-long-enough-0123456789")
+		"--var", "JWT_SIGNING_KEY:e2e-signing-key-that-is-long-enough-0123456789",
+		"--var", "GITHUB_CLIENT_SECRET:"+e2eClientSecret,
+		"--var", "GITHUB_TOKEN_KEY:"+base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
 	dev.Dir = dir
 	// pnpm starts wrangler, which starts workerd: stop the whole process
 	// group, or the grandchildren keep the output pipe open for ever.
@@ -236,16 +275,32 @@ func TestWorkerEndToEnd(t *testing.T) {
 	require.Equal(t, "alice", login)
 
 	// CI uses a personal access token; alice may push for her organization.
-	patID, pat, err := cl.CreatePAT(ctx, refresh, "ci")
+	patID, pat, err := cl.CreatePAT(ctx, refresh, client.PATOptions{Name: "ci", ExpiresInDays: 30})
 	require.NoError(t, err)
 	pats, err := cl.ListPATs(ctx, refresh)
 	require.NoError(t, err)
 	require.Len(t, pats, 1)
 	require.Equal(t, "ci", pats[0].Name)
+	require.NotNil(t, pats[0].ExpiresAt)
 	runFlow(t, ctx, cl, pat, "acme", "web", false)
+
+	// A personal access token cannot mint another, nor delete unless created
+	// to; alice, an admin of acme, can delete with her login.
+	_, _, err = cl.CreatePAT(ctx, pat, client.PATOptions{Name: "more"})
+	require.True(t, client.IsStatus(err, http.StatusForbidden), "got %v", err)
+	_, err = cl.DeleteToken(ctx, pat, "acme", "web")
+	require.True(t, client.IsStatus(err, http.StatusForbidden), "got %v", err)
+	del, err := cl.DeleteToken(ctx, refresh, "acme", "web")
+	require.NoError(t, err)
+	require.NoError(t, cl.DeleteTag(ctx, del, "acme", "web", "v1"))
+
 	require.NoError(t, cl.RevokePAT(ctx, refresh, patID))
 	_, err = cl.PushToken(ctx, pat, "acme", "web")
 	require.True(t, client.IsCode(err, "UNAUTHORIZED"), "got %v", err)
+
+	// A GitHub token issued to another app does not sign in.
+	_, _, err = cl.LoginWithGitHub(ctx, "gh-other")
+	require.True(t, client.IsStatus(err, http.StatusUnauthorized), "got %v", err)
 
 	other, err := cl.PushToken(ctx, refresh, "alice", "other")
 	require.NoError(t, err)
@@ -292,10 +347,15 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 	require.NoError(t, err)
 	if remote {
 		t.Cleanup(func() {
-			// The repository too, not only its tags, so runs leave nothing behind.
-			if err := cl.DeleteRepo(context.Background(), token, ns, repo); err != nil {
+			// The repository too, not only its tags, so runs leave nothing
+			// behind. A registry without the delete action takes a push token.
+			del, err := cl.DeleteToken(context.Background(), credential, ns, repo)
+			if err != nil {
+				del = token
+			}
+			if err := cl.DeleteRepo(context.Background(), del, ns, repo); err != nil {
 				for _, tag := range []string{"v1", "v2"} {
-					_ = cl.DeleteTag(context.Background(), token, ns, repo, tag)
+					_ = cl.DeleteTag(context.Background(), del, ns, repo, tag)
 				}
 			}
 		})

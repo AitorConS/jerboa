@@ -253,3 +253,36 @@ func TestPushUploadsOnlyTheRecipesBlobs(t *testing.T) {
 	require.ErrorContains(t, err, "does not use")
 	require.False(t, uploaded)
 }
+
+func TestPullByDigestNeedsTheRepositorysRecipe(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	local := newStore(t)
+	v1 := e.build(t, local, "version 1")
+	_, err := Push(ctx, PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Store: local, Recipe: v1, Mkfs: e.mkfsFor})
+	require.NoError(t, err)
+
+	other, err := naming.ParseImageReference(e.reg.Host() + "/bob/official@" + v1)
+	require.NoError(t, err)
+	_, err = Pull(ctx, PullOptions{Client: e.cl, Ref: other, Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "d")})
+	require.ErrorContains(t, err, "is not in bob/official")
+}
+
+func TestPullNoCountSkipsTheCounter(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	local := newStore(t)
+	v1 := e.build(t, local, "version 1")
+	_, err := Push(ctx, PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Store: local, Recipe: v1, Mkfs: e.mkfsFor})
+	require.NoError(t, err)
+	_, err = Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "d"), NoCount: true})
+	require.NoError(t, err)
+	require.Zero(t, e.reg.Pulls("alice", "web"))
+}
+
+func TestDoNotTrack(t *testing.T) {
+	for v, want := range map[string]bool{"": false, "0": false, "false": false, "1": true, "true": true} {
+		t.Setenv("DO_NOT_TRACK", v)
+		require.Equal(t, want, DoNotTrack(), v)
+	}
+}

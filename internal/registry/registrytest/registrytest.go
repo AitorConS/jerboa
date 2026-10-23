@@ -125,12 +125,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Lock()
 		prefix := "tags/" + parts[1] + "/" + parts[2] + "/"
+		refs := "refs/" + parts[1] + "/" + parts[2] + "/"
 		found := s.repos[parts[1]+"/"+parts[2]] != nil
 		delete(s.repos, parts[1]+"/"+parts[2])
 		for key := range s.objects {
 			if strings.HasPrefix(key, prefix) {
 				delete(s.objects, key)
 				found = true
+			}
+			if strings.HasPrefix(key, refs) {
+				delete(s.objects, key)
 			}
 		}
 		s.mu.Unlock()
@@ -243,6 +247,7 @@ func (s *Server) serveWrite(w http.ResponseWriter, r *http.Request, ns, repo, ki
 		}
 		doc, _ := json.Marshal(map[string]string{"recipe": req.Recipe})
 		s.objects["tags/"+ns+"/"+repo+"/"+arg] = doc
+		s.objects["refs/"+ns+"/"+repo+"/"+strings.TrimPrefix(req.Recipe, "sha256:")] = []byte("{}")
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag": arg, "recipe": req.Recipe})
 	default:
 		fail(w, http.StatusNotFound, "NOT_FOUND", r.URL.Path)
