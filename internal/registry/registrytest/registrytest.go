@@ -63,6 +63,13 @@ func (s *Server) Pulls(namespace, repository string) int {
 	return s.pulls[namespace+"/"+repository]
 }
 
+// SetObject replaces a stored object, to serve what a hostile registry would.
+func (s *Server) SetObject(key string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.objects[key] = data
+}
+
 // Corrupt flips one byte of a stored object.
 func (s *Server) Corrupt(key string, at int) {
 	s.mu.Lock()
