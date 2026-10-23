@@ -67,6 +67,9 @@ type Observability struct {
 	UIAddr      string
 	TraceAddr   string
 	LogFormat   string
+	// Token protects metrics and the dashboard; it reaches the daemon through
+	// JERBOA_OBSERVABILITY_TOKEN, never its command line.
+	Token string
 }
 
 // EnsureDaemon returns nil once the daemon is reachable. If it is not already
@@ -299,10 +302,19 @@ func buildLaunchArgs(cfg Config, wslLog string) (args, env []string) {
 	args = append(args, "--", "bash", "-c", inner)
 
 	env = append(env, os.Environ()...)
+	// WSLENV exports these variables into the WSL environment so the daemon
+	// reads them without a token ever appearing on a command line.
+	var wslenv []string
 	if cfg.Token != "" {
-		// WSLENV exports the variable into the WSL environment so the daemon
-		// reads it without the token ever appearing on a command line.
-		env = append(env, "JERBOA_AUTH_TOKEN="+cfg.Token, "WSLENV=JERBOA_AUTH_TOKEN/u")
+		env = append(env, "JERBOA_AUTH_TOKEN="+cfg.Token)
+		wslenv = append(wslenv, "JERBOA_AUTH_TOKEN/u")
+	}
+	if cfg.Observability.Token != "" {
+		env = append(env, "JERBOA_OBSERVABILITY_TOKEN="+cfg.Observability.Token)
+		wslenv = append(wslenv, "JERBOA_OBSERVABILITY_TOKEN/u")
+	}
+	if len(wslenv) > 0 {
+		env = append(env, "WSLENV="+strings.Join(wslenv, ":"))
 	}
 	return args, env
 }
