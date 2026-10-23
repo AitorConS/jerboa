@@ -101,6 +101,7 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 	defer func() { _ = os.Remove(out) }()
 	res, err := transfer.Pull(ctx, transfer.PullOptions{
 		Client: client.New(ref.Registry), Ref: ref, Store: s.recipes, Mkfs: s.registryMkfs, Out: out,
+		NoCount: p.NoCount || transfer.DoNotTrack(),
 	})
 	if err != nil {
 		return nil, rpcErr(err)

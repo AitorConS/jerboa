@@ -57,7 +57,9 @@ jerboa pull aitorcons/web:v1
 jerboa run aitorcons/web:v1 -p 8080:8080
 ```
 
-After a successful pull, the daemon tells the registry that the repository was pulled, without credentials, so the hub can show an approximate pull count. Each address counts once per repository every 10 minutes.
+After a successful pull, the daemon tells the registry that the repository was pulled, without credentials, so the hub can show an approximate pull count. Each address counts once per repository every 10 minutes. Set `DO_NOT_TRACK=1` (for the CLI or the daemon) to skip it.
+
+A pull by digest also checks that the repository you named has published that recipe, so `aitorcons/web@sha256:…` never runs another repository's image.
 
 A reference is `[registry/]namespace/repository[:tag|@sha256:<digest>]`:
 - The registry defaults to `registry.jerboa.dev`.
@@ -75,8 +77,10 @@ A tag is only as trustworthy as the registry that serves it: the registry decide
 Create a personal access token once, on a machine where you are logged in:
 
 ```sh
-jerboa registry pat create github-actions
+jerboa registry pat create github-actions --namespace aitorcons --expires-in 90
 ```
+
+A token expires after 90 days unless `--expires-in` (1 to 365 days) says otherwise. `--namespace` (repeatable) limits it to some of your namespaces, and only a token created with `--delete` may delete tags or repositories. A token cannot create other tokens: run `pat create` where you are logged in.
 
 Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
 
@@ -85,6 +89,8 @@ Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
   env:
     JERBOA_REGISTRY_TOKEN: ${{ secrets.JERBOA_REGISTRY_TOKEN }}
 ```
+
+`JERBOA_REGISTRY_TOKEN` is only sent to `registry.jerboa.dev`. For another registry, also set `JERBOA_REGISTRY_HOST` to its host.
 
 `jerboa registry pat ls` lists your tokens; `jerboa registry pat rm <id>` revokes one.
 

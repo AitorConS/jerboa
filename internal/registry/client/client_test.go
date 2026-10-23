@@ -2,7 +2,9 @@ package client_test
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -79,4 +81,33 @@ func TestReadRangeRefusesOutOfBoundsRanges(t *testing.T) {
 	}
 	_, err := c.ReadRange(context.Background(), srv.URL+"/cdn", "../x", 0, 1)
 	require.ErrorContains(t, err, "invalid pack digest")
+}
+
+func TestTokenScopesAndPATOptions(t *testing.T) {
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, r.URL.Path+" "+string(b))
+		if strings.Contains(string(b), "delete") && r.URL.Path == "/auth/token" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"DENIED","message":"no"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"token":"x","id":"1"}`))
+	}))
+	defer srv.Close()
+	c := &client.Client{Base: srv.URL}
+	ctx := context.Background()
+
+	_, err := c.PushToken(ctx, "jrt", "acme", "web")
+	require.NoError(t, err)
+	_, err = c.DeleteToken(ctx, "jrt", "acme", "web")
+	require.ErrorContains(t, err, "organization admin")
+	_, _, err = c.CreatePAT(ctx, "jrt", client.PATOptions{Name: "ci", ExpiresInDays: 30, Namespaces: []string{"acme"}, Delete: true})
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		`/auth/token {"scopes":["repository:acme/web:push"]}`,
+		`/auth/token {"scopes":["repository:acme/web:push,delete"]}`,
+		`/auth/pats {"name":"ci","expires_in_days":30,"namespaces":["acme"],"delete":true}`,
+	}, bodies)
 }
