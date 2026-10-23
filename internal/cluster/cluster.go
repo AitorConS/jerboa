@@ -57,6 +57,11 @@ func validEntry(e memberEntry) bool {
 	if err != nil || host == "" || port == "" {
 		return false
 	}
+	// Never gossip to link-local (cloud metadata) or unspecified addresses:
+	// a member entry decides where this node sends requests.
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()) {
+		return false
+	}
 	switch e.Status {
 	case StatusAlive, StatusSuspect, StatusDead, StatusLeft:
 	default:
@@ -208,7 +213,7 @@ func (c *SwimCluster) Join(ctx context.Context, seedAddrs ...string) error {
 		if resp.StatusCode == http.StatusOK {
 			var remote gossipPayload
 			if decErr := json.NewDecoder(resp.Body).Decode(&remote); decErr == nil {
-				c.mergeEntriesLocked(remote.Members)
+				c.mergeEntriesLocked(remote.MemberID, remote.Members)
 			}
 		}
 		resp.Body.Close()
@@ -275,7 +280,7 @@ func (c *SwimCluster) HandleGossip(payload gossipPayload) gossipPayload {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.mergeEntriesLocked(payload.Members)
+	c.mergeEntriesLocked(payload.MemberID, payload.Members)
 
 	if m, ok := c.members[payload.MemberID]; ok {
 		m.LastSeen = time.Now()
@@ -348,7 +353,7 @@ func (c *SwimCluster) doGossip(ctx context.Context) {
 		var remote gossipPayload
 		if decErr := json.NewDecoder(resp.Body).Decode(&remote); decErr == nil {
 			c.mu.Lock()
-			c.mergeEntriesLocked(remote.Members)
+			c.mergeEntriesLocked(remote.MemberID, remote.Members)
 			if m, ok := c.members[remote.MemberID]; ok {
 				m.LastSeen = time.Now()
 			}
@@ -386,6 +391,11 @@ func (c *SwimCluster) checkSuspicions() {
 			m.Status = StatusDead
 			slog.Warn("cluster member declared dead", "member", m.ID, "addr", m.Addr)
 		}
+		// Forget members that have been gone for a while, so dead and left
+		// entries do not accumulate.
+		if (m.Status == StatusDead || m.Status == StatusLeft) && now.Sub(m.LastSeen) > 10*c.deadTimeout {
+			delete(c.members, m.ID)
+		}
 	}
 }
 
@@ -400,7 +410,18 @@ func (c *SwimCluster) markSuspect(addr string) {
 	}
 }
 
-func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
+// maxMembers bounds the member table, so gossip cannot grow it without limit.
+const maxMembers = 1024
+
+// maxClockSkew is how far in the future a gossiped last-seen time may be; a
+// later one is clamped to now, so an entry cannot pin itself as fresh forever.
+const maxClockSkew = time.Minute
+
+// mergeEntriesLocked folds gossiped entries from sender into the table. Only a
+// member itself may change its address or announce that it left; others can
+// relay its liveness and declare it dead.
+func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
+	now := time.Now()
 	for _, e := range entries {
 		if e.ID == c.local.ID {
 			continue
@@ -413,8 +434,16 @@ func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
 		}
 		existing, ok := c.members[e.ID]
 		entryTime, _ := time.Parse(time.RFC3339, e.LastSeen)
+		if entryTime.After(now.Add(maxClockSkew)) {
+			entryTime = now
+		}
+		self := e.ID == sender
 
 		if !ok {
+			if len(c.members) >= maxMembers {
+				slog.Warn("cluster: member table full; ignoring new member")
+				continue
+			}
 			c.members[e.ID] = &Member{
 				ID:       e.ID,
 				Addr:     e.Addr,
@@ -429,10 +458,12 @@ func (c *SwimCluster) mergeEntriesLocked(entries []memberEntry) {
 			continue
 		}
 
-		if e.Status == StatusDead || e.Status == StatusLeft {
+		if e.Status == StatusDead || (e.Status == StatusLeft && self) {
 			existing.Status = e.Status
 		} else if entryTime.After(existing.LastSeen) {
-			existing.Addr = e.Addr
+			if self {
+				existing.Addr = e.Addr
+			}
 			existing.VMCount = e.VMCount
 			existing.CPUCap = e.CPUCap
 			existing.MemCap = e.MemCap

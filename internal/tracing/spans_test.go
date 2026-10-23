@@ -98,3 +98,12 @@ func TestSpanWithRetryAttrs(t *testing.T) {
 	}
 	require.Equal(t, "always", attrs["vm.restart.policy"])
 }
+
+func TestExportInsecureOnlyToLoopback(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "")
+	require.True(t, exportInsecure("localhost:4317"))
+	require.True(t, exportInsecure("127.0.0.1:4317"))
+	require.False(t, exportInsecure("collector.example:4317"))
+	t.Setenv("OTEL_EXPORTER_OTLP_INSECURE", "true")
+	require.True(t, exportInsecure("collector.example:4317"))
+}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -231,7 +233,24 @@ func observabilityFromConfig(cfg *config.Config) wslboot.Observability {
 		UIAddr:      cfg.Daemon.UIAddr,
 		TraceAddr:   cfg.Daemon.TraceAddr,
 		LogFormat:   cfg.Daemon.LogFormat,
+		Token:       cfg.Daemon.ObservabilityToken,
 	}
+}
+
+// ensureObservabilityToken generates and records a token for the managed
+// daemon's metrics and dashboard when either is enabled and none exists yet.
+// It reports whether cfg changed and needs saving.
+func ensureObservabilityToken(cfg *config.Config) bool {
+	if cfg.Daemon.ObservabilityToken != "" || (cfg.Daemon.MetricsAddr == "" && cfg.Daemon.UIAddr == "") {
+		return false
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return false
+	}
+	cfg.Daemon.ObservabilityToken = hex.EncodeToString(b)
+	fmt.Fprintln(os.Stderr, "Metrics and the dashboard need the token stored as observability_token in "+config.DefaultPath())
+	return true
 }
 
 // daemonJSONPath returns the path to the client-owned daemon secret file.

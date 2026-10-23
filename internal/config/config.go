@@ -48,6 +48,10 @@ type DaemonConfig struct {
 	UIAddr      string `toml:"ui_addr,omitempty"`
 	TraceAddr   string `toml:"trace_addr,omitempty"`
 	LogFormat   string `toml:"log_format,omitempty"`
+	// ObservabilityToken protects the managed daemon's metrics and dashboard.
+	// It is generated when either is enabled and handed to the daemon through
+	// its environment.
+	ObservabilityToken string `toml:"observability_token,omitempty"`
 }
 
 // DefaultEndpoint returns the per-platform default daemon endpoint. Windows

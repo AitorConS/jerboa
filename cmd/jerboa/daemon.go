@@ -126,6 +126,9 @@ func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 			dirty = true
 		}
 	}
+	if ensureObservabilityToken(cfg) {
+		dirty = true
+	}
 	if dirty {
 		if err := config.Save(config.DefaultPath(), cfg); err != nil {
 			return wslboot.Config{}, "", fmt.Errorf("persist daemon observability config: %w", err)

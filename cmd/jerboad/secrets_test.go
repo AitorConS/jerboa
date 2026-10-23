@@ -31,3 +31,14 @@ func TestCheckTokenStrength(t *testing.T) {
 	require.NoError(t, checkTokenStrength("unix:///tmp/j.sock", "short", false))
 	require.NoError(t, checkTokenStrength("tcp://127.0.0.1:7890", "0123456789abcdef0123456789abcdef", false))
 }
+
+func TestCheckExposure(t *testing.T) {
+	require.NoError(t, checkExposure("127.0.0.1:9090", "localhost:8080", "", "", "", false, false))
+	require.ErrorContains(t, checkExposure(":9090", "", "", "", "", false, false), "--metrics-addr")
+	require.ErrorContains(t, checkExposure("", "0.0.0.0:8080", "", "", "", false, false), "--ui-addr")
+	require.NoError(t, checkExposure(":9090", ":8080", "obs-token", "", "", false, false))
+	require.NoError(t, checkExposure(":9090", "", "", "", "", true, false))
+	require.ErrorContains(t, checkExposure("", "", "", ":7946", "", false, false), "cluster")
+	require.NoError(t, checkExposure("", "", "", ":7946", "cluster-token", false, false))
+	require.NoError(t, checkExposure("", "", "", ":7946", "", false, true))
+}
