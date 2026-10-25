@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -367,16 +366,18 @@ project markers (go.mod, package.json, etc.).`,
 }
 
 // runBuildCommand executes a single shell command string in dir, writing output to w.
-// Uses sh -c on Unix and cmd /c on Windows so arbitrary shell syntax works.
-func runBuildCommand(ctx context.Context, dir, command string, w io.Writer) error {
-	var cmd *exec.Cmd
+// Uses sh -c on Unix and cmd /c on Windows so arbitrary shell syntax works. The
+// command runs in sb, with network access only when network is set.
+func runBuildCommand(ctx context.Context, sb builder.Sandbox, network bool, dir, command string, w io.Writer) error {
+	name, args := "sh", []string{"-c", command}
 	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, "cmd", "/c", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+		name, args = "cmd", []string{"/c", command}
 	}
-	cmd.Dir = dir
-	cmd.Env = builder.Env()
+	cmd, done, err := sb.Command(ctx, builder.Step{Dir: dir, Network: network}, name, args...)
+	if err != nil {
+		return fmt.Errorf("run command: %w", err)
+	}
+	defer done()
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
@@ -445,11 +446,18 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 	}
 
+	sandbox := cfg.BuildSandbox()
+	fmt.Fprintln(infoW, sandbox.Describe())
+
 	// Execute user-defined build commands (unikernel.toml [build] run = [...]).
 	// These run before the driver packages the project — equivalent to RUN in a Dockerfile.
+	network := cfg != nil && cfg.Build.Network
+	if len(buildRun) > 0 && !network && !sandbox.Off {
+		fmt.Fprintln(infoW, "build commands run without network access; set [build] network = true to allow it")
+	}
 	for _, command := range buildRun {
 		fmt.Fprintf(infoW, "$ %s\n", command)
-		if err := runBuildCommand(cmd.Context(), srcPath, command, subW); err != nil {
+		if err := runBuildCommand(cmd.Context(), sandbox, network, srcPath, command, subW); err != nil {
 			return "", "", "", nil, nil, false, fmt.Errorf("build: run %q: %w", command, err)
 		}
 	}
@@ -460,6 +468,7 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		Platform:       buildPlatform,
 		Output:         subW,
 		InstallScripts: installScripts,
+		Sandbox:        sandbox,
 	})
 	if err != nil {
 		return "", "", "", nil, nil, false, fmt.Errorf("build %s: %w", detected, err)
@@ -640,6 +649,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			Platform:       buildPlatform,
 			Output:         subW,
 			InstallScripts: cfg.Build.InstallScripts,
+			Sandbox:        cfg.BuildSandbox(),
 		})
 		if err != nil {
 			return "", "", nil, false, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)

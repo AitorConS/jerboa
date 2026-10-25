@@ -225,6 +225,8 @@ Key flags:
 | `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through. Node builds package `node_modules` (the production dependencies the driver installs); other languages ignore it by default, and `.unignore` can exclude it explicitly. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 | `install_scripts` | `true` lets `npm` run dependencies' install scripts (`preinstall`, `install`, `postinstall`) on the build machine. Off by default: `npm` runs with `--ignore-scripts` |
+| `sandbox` | `false` runs build steps directly on the build machine instead of confined (see below). Default `true` |
+| `network` | `true` lets `[build] run` commands reach the network. Off by default; `npm`, `pip`, `cargo` and `go build` always may, to fetch dependencies |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from
 package files; the program is executed from its real in-image path, so binaries
@@ -272,6 +274,18 @@ Build driver behavior to know:
 - Build steps (`[build] run`, `npm`, `pip`, `cargo`, `go build`) run without
   Jerboa's own credentials in their environment (`JERBOA_REGISTRY_TOKEN`,
   `JERBOA_AUTH_TOKEN` and the other `JERBOA_*` tokens).
+- Build steps run in a sandbox: bubblewrap (`bwrap`) on Linux, `sandbox-exec`
+  on macOS. A confined step reads the host but writes only to the project
+  directory, the tools' caches (the user cache directory, `~/.npm`,
+  `~/.cargo`, `~/.rustup`, `GOPATH`, `GOCACHE`, `GOMODCACHE`) and a private
+  temporary directory (`TMPDIR`); it cannot read `~/.jerboa`, `~/.aws`,
+  `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker` or `~/.gnupg`.
+  `[build] run` commands have no network unless `[build] network = true`;
+  the language tools keep it to fetch dependencies. A step that writes
+  elsewhere (for example straight to `/tmp`) fails: write under `TMPDIR` or
+  the project, or set `[build] sandbox = false`. Without `bwrap` (install
+  the `bubblewrap` package) or `sandbox-exec`, and on Windows, steps run
+  directly with a private `TMPDIR`, and the build warns.
 - The build context leaves out common credential files by default: `.env`,
   `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `.aws/`, `.ssh/`, `id_rsa`,
   `id_dsa`, `id_ecdsa`, `id_ed25519`, `*.pem` and `*.key`. Re-include one the
