@@ -83,6 +83,11 @@ func TestVolumePersistence(t *testing.T) {
 	client := dialWithRetry(t, defaultSocket)
 	defer func() { _ = client.Close() }()
 
+	// Guests join only networks the daemon created.
+	_, err = client.NetworkCreate(ctx, "voltest0", "10.123.0.0/24", "bridge")
+	require.NoError(t, err)
+	defer func() { _ = client.NetworkRemove(ctx, "voltest0") }()
+
 	info1, err := client.Run(ctx, api.RunParams{
 		ImagePath: diskPath,
 		Memory:    "256M",
@@ -92,9 +97,6 @@ func TestVolumePersistence(t *testing.T) {
 		// host 18080 → guest 8080.
 		NetworkName: "voltest0",
 		IPAddress:   "10.123.0.2",
-		GatewayIP:   "10.123.0.1",
-		BridgeName:  "jerboa-bvol",
-		SubnetMask:  "24",
 		PortMaps: []api.PortMapSpec{
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},
@@ -132,9 +134,6 @@ func TestVolumePersistence(t *testing.T) {
 		// host 18080 → guest 8080.
 		NetworkName: "voltest0",
 		IPAddress:   "10.123.0.2",
-		GatewayIP:   "10.123.0.1",
-		BridgeName:  "jerboa-bvol",
-		SubnetMask:  "24",
 		PortMaps: []api.PortMapSpec{
 			{HostPort: 18080, GuestPort: 8080, Protocol: "tcp"},
 		},

@@ -100,6 +100,9 @@ func reconcileNetwork(vmID string, cfg Config) {
 			slog.Debug("reconcile: detach TAP", "vm_id", vmID, "err", err)
 		}
 	}
+	if cfg.IPAddress != "" {
+		network.UnguardTap(tap, guestMACFromIP(cfg.IPAddress), cfg.IPAddress)
+	}
 }
 
 // adoptMonitor watches a re-adopted VM's process and transitions it to stopped

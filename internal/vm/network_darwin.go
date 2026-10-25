@@ -21,6 +21,42 @@ type nativeNetworkGroup struct {
 	members       map[string]bool
 }
 
+// initGuestEgress installs the default egress policy of QEMU guests: they reach
+// public addresses, but not the host's loopback (through their gateway) nor
+// private, shared or link-local addresses, unless WithGuestHostAccess is set.
+// Traffic inside a network and published ports are not affected.
+func (m *QEMUManager) initGuestEgress() {
+	if m.guestHostAccess {
+		return
+	}
+	m.nativeEgress = func(_, address string, _ uint16, _ bool) bool {
+		return publicEgressAddress(address)
+	}
+}
+
+var nonPublicEgress = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16", "224.0.0.0/3"} {
+		_, n, _ := net.ParseCIDR(c)
+		out = append(out, n)
+	}
+	return out
+}()
+
+// publicEgressAddress reports whether address is a public IPv4 address.
+func publicEgressAddress(address string) bool {
+	ip := net.ParseIP(address).To4()
+	if ip == nil {
+		return false
+	}
+	for _, n := range nonPublicEgress {
+		if n.Contains(ip) {
+			return false
+		}
+	}
+	return true
+}
+
 func (m *QEMUManager) prepareHostVM(v *VM) (func(), error) {
 	if v.Cfg.EmulateX86 {
 		v.AddWarning("x86 guest uses explicit TCG CPU emulation; ARM64 guests use native HVF")

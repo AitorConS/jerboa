@@ -6,6 +6,10 @@ import (
 	"os/exec"
 )
 
+// Linux guests use TAP networking: the nftables guard keeps them off the
+// host's loopback.
+func (m *QEMUManager) initGuestEgress() {}
+
 func validateHostConfig(cfg Config, _ string) error {
 	if cfg.EmulateX86 {
 		return fmt.Errorf("--emulate-x86 is a macOS compatibility option; Linux selects its accelerator directly")

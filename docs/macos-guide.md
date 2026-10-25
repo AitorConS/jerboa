@@ -217,9 +217,15 @@ Things to know:
 
 - **Your Mac cannot reach a VM's IP directly.** Publish a port and use
   `localhost` instead. VMs reach each other by IP or name without restrictions.
-- **A VM can reach services running on your Mac** through its network gateway
-  address (the first address of a named network's subnet, or `10.0.2.2` on the
-  default private network), which maps to your Mac's `localhost`.
+- **A VM cannot reach services running on your Mac by default.** The network
+  gateway address (the first address of a named network's subnet, or
+  `10.0.2.2` on the default private network) maps to your Mac's `localhost`,
+  but QEMU VMs may only open connections to public internet addresses: your
+  Mac's `localhost` and private, shared and link-local ranges (`10.0.0.0/8`,
+  `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`) are
+  refused. To restore access, start the daemon with
+  `JERBOA_GUEST_HOST_ACCESS=1 jerboa daemon restart`. Firecracker VMs use the
+  policy file below instead.
 - A VM can join one network at a time.
 - With Firecracker, health checks on a VM without `--network` need a published
   TCP port. On a named network, health checks work on any port.
@@ -252,7 +258,8 @@ rules too. To let a VM reach a service on your Mac through the gateway, allow
 `127.0.0.1` and that port. The policy applies to all VMs of the daemon, and you
 need to pass the variable again each time you start the daemon from the terminal.
 
-QEMU VMs are not restricted by this policy.
+QEMU VMs are not restricted by this policy; they follow the default described
+above.
 
 ## Volumes and disks
 
