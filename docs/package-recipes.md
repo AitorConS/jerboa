@@ -131,7 +131,15 @@ package with the index entry for the same version and platform:
 - **different content:** the whole publish fails before anything is
   uploaded. Bump the version instead of rebuilding over it.
 
-Archives are uploaded without `--clobber`; only `packages.json` is replaced.
+Archives are uploaded without `--clobber`; only `packages.json` and its
+signature are replaced.
+
+The publish job runs in the `release` environment, so it waits for a
+reviewer, and signs `packages.json` with the release key into
+`packages.json.minisig`. `jerboa` verifies that signature with the key it
+embeds before it reads the index, and refuses an index without one. An
+index served from this machine (`file://`, or http on loopback, as for a
+local mirror) may be unsigned; it is then accepted with a warning.
 
 ## Example: adding memcached
 

@@ -52,6 +52,10 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('image: ubuntu@sha256:',text)
   self.assertIn('runs-on: ${{ matrix.runner }}',text)
   self.assertNotIn("-name '*.tar.gz' -exec gh release upload",text)
+  publish=text[text.index('  publish-index:'):text.index('  select:')]
+  self.assertIn('environment: release',publish)
+  self.assertIn('bin/jerboa-sign -in dist/publish/packages.json',publish)
+  self.assertIn('packages.json.minisig',publish)
  def test_package_index_is_immutable(self):
   script=ROOT/'scripts/package-index.py'
   def stage(root,data,content):
