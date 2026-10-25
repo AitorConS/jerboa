@@ -58,3 +58,35 @@ func TestBearer_AcceptsCorrectToken(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 	require.Equal(t, "ok", rr.Body.String())
 }
+
+func TestBearer_AcceptsCookie(t *testing.T) {
+	h := Bearer("s3cret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: "s3cret"})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestLoopbackHost(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := LoopbackHost("127.0.0.1:8080", ok)
+	for host, want := range map[string]int{
+		"127.0.0.1:8080":        http.StatusOK,
+		"localhost:8080":        http.StatusOK,
+		"[::1]:8080":            http.StatusOK,
+		"attacker.example:8080": http.StatusMisdirectedRequest,
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		require.Equal(t, want, rec.Code, host)
+	}
+	// An endpoint bound off loopback is protected by its token instead.
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = "dashboard.example:8080"
+	rec := httptest.NewRecorder()
+	LoopbackHost(":8080", ok).ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+}

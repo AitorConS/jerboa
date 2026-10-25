@@ -144,8 +144,8 @@ Useful daemon flags:
 ```bash
 sudo jerboad \
   --host unix:///var/run/jerboad.sock \
-  --metrics-addr :9090 \
-  --ui-addr :8080 \
+  --metrics-addr 127.0.0.1:9090 \
+  --ui-addr 127.0.0.1:8080 \
   --vm-store sqlite
 ```
 

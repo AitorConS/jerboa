@@ -185,7 +185,7 @@ func Serve(ctx context.Context, addr, token string, c *Collectors) error {
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           httpauth.LoopbackHost(addr, mux),
 		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

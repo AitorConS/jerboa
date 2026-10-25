@@ -6,6 +6,9 @@ package tracing
 import (
 	"context"
 	"fmt"
+	"net"
+	"os"
+	"strconv"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -14,6 +17,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/credentials"
 )
 
 // Tracer returns the global tracer for the unikernel engine.
@@ -27,6 +31,24 @@ type Provider struct {
 	shutdownFn func(context.Context) error
 }
 
+// exportInsecure reports whether spans may go to addr unencrypted: only to a
+// collector on this host, or when OTEL_EXPORTER_OTLP_INSECURE=true asks for
+// it. Spans name VMs, images and networks, so they use TLS otherwise.
+func exportInsecure(addr string) bool {
+	if v, err := strconv.ParseBool(os.Getenv("OTEL_EXPORTER_OTLP_INSECURE")); err == nil {
+		return v
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // NewProvider creates an OTLP gRPC TracerProvider that exports to addr.
 // If addr is empty, a no-op provider is returned.
 func NewProvider(ctx context.Context, addr string, version string) (*Provider, error) {
@@ -34,10 +56,13 @@ func NewProvider(ctx context.Context, addr string, version string) (*Provider, e
 		return noopProvider(), nil
 	}
 
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(addr),
-		otlptracegrpc.WithInsecure(),
-	)
+	opts := []otlptracegrpc.Option{otlptracegrpc.WithEndpoint(addr)}
+	if exportInsecure(addr) {
+		opts = append(opts, otlptracegrpc.WithInsecure())
+	} else {
+		opts = append(opts, otlptracegrpc.WithTLSCredentials(credentials.NewClientTLSFromCert(nil, "")))
+	}
+	exporter, err := otlptracegrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("tracing: create OTLP exporter: %w", err)
 	}
