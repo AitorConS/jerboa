@@ -68,6 +68,7 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 				return fmt.Errorf("compose up: %w", err)
 			}
 			scopeImplicitComposeNetwork(&f, composeFile)
+			resolveComposeImages(&f, composeFile)
 			order, err := compose.TopologicalSort(f.Services)
 			if err != nil {
 				return fmt.Errorf("compose up: %w", err)
@@ -528,6 +529,25 @@ func waitForHealthy(cmd *cobra.Command, client *api.Client, id, name string, tim
 
 // Implicit defaults belong to this compose file, preventing unrelated projects
 // from silently joining the same network. Explicit names keep existing semantics.
+// resolveComposeImages makes image file paths relative to the compose file,
+// not to the current directory, as Docker Compose does for paths.
+func resolveComposeImages(f *compose.File, path string) {
+	dir := filepath.Dir(path)
+	for key, svc := range f.Services {
+		img := svc.Image
+		if img == "" || filepath.IsAbs(img) {
+			continue
+		}
+		candidate := filepath.Join(dir, img)
+		if _, err := os.Stat(candidate); isFilePath(img) || err == nil {
+			if abs, err := filepath.Abs(candidate); err == nil {
+				svc.Image = abs
+				f.Services[key] = svc
+			}
+		}
+	}
+}
+
 func scopeImplicitComposeNetwork(f *compose.File, path string) {
 	if !f.ImplicitDefault {
 		return

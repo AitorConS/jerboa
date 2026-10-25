@@ -50,6 +50,9 @@ volumes:
     size: 1G
 ```
 
+An `image:` that is a file path (`./disk.img`, or a file next to the compose
+file) is resolved relative to the compose file, not the current directory.
+
 ## What The Parser Enforces
 
 - `version`, if present, must be `"1"`

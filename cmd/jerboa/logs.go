@@ -11,7 +11,7 @@ import (
 )
 
 func newLogsCmd(socketPath *string) *cobra.Command {
-	var follow bool
+	var follow, raw bool
 	cmd := &cobra.Command{
 		Use:   "logs <id>",
 		Short: "Print captured serial console output for a VM",
@@ -28,7 +28,7 @@ func newLogsCmd(socketPath *string) *cobra.Command {
 			}()
 
 			if follow {
-				collector := newHintCollector(cmd.OutOrStdout())
+				collector := newHintCollector(guestOutput(cmd.OutOrStdout(), raw))
 				err := followLogs(cmd.Context(), client, args[0], collector)
 				collector.PrintHints(cmd.ErrOrStderr())
 				return err
@@ -38,7 +38,7 @@ func newLogsCmd(socketPath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("logs: %w", err)
 			}
-			fmt.Fprint(cmd.OutOrStdout(), resp.Logs)
+			fmt.Fprint(guestOutput(cmd.OutOrStdout(), raw), resp.Logs)
 			// Explain known Nanos failure signatures (fork/exec attempts, missing
 			// shared libraries...) so the user does not have to decode them.
 			printNanosHints(cmd.ErrOrStderr(), resp.Logs)
@@ -47,6 +47,8 @@ func newLogsCmd(socketPath *string) *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false,
 		"stream new serial output until the VM stops (Ctrl-C to detach)")
+	cmd.Flags().BoolVar(&raw, "raw", false,
+		"print the output unfiltered, terminal control sequences included")
 	return cmd
 }
 
