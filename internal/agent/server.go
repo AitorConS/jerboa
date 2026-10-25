@@ -509,8 +509,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// maxBodyBytes bounds a request body; every agent request is a small JSON
+// document.
+const maxBodyBytes = 1 << 20
+
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
-	if err := json.NewDecoder(r.Body).Decode(out); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodyBytes)).Decode(out); err != nil {
 		WriteError(w, http.StatusBadRequest, KindInvalid, "invalid JSON body: "+err.Error())
 		return false
 	}

@@ -54,6 +54,9 @@ func TestPkgLoadRootInitialization(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("JERBOA_AUTH_TOKEN", "")
 			t.Setenv("JERBOA_HOST", "")
+			// The root command records the config token for this process;
+			// later tests dial servers that do not authenticate.
+			t.Cleanup(func() { config.SetSessionToken("") })
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			defer listener.Close()
@@ -78,10 +81,15 @@ func TestPkgLoadRootInitialization(t *testing.T) {
 				}
 				defer c.Close()
 				_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+				dec, enc := json.NewDecoder(c), json.NewEncoder(c)
 				var req api.Request
-				_ = json.NewDecoder(c).Decode(&req)
+				_ = dec.Decode(&req)
+				if req.Method == "Auth.Challenge" {
+					_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": api.ChallengeResult{Nonce: testNonce}})
+					_ = dec.Decode(&req)
+				}
 				received <- req
-				_ = json.NewEncoder(c).Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32000, "message": "review-auth-reached"}})
+				_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32000, "message": "review-auth-reached"}})
 			}()
 			root := newRootCmd()
 			root.SetOut(io.Discard)
@@ -94,13 +102,16 @@ func TestPkgLoadRootInitialization(t *testing.T) {
 				require.Equal(t, "Auth.Hello", req.Method)
 				var auth api.AuthParams
 				require.NoError(t, json.Unmarshal(req.Params, &auth))
-				require.Equal(t, "config-secret", auth.Token)
+				require.True(t, api.CheckAuthProof("config-secret", testNonce, auth.Proof))
+				require.Empty(t, auth.Token, "the token itself must not be sent")
 			case <-time.After(5 * time.Second):
 				t.Fatal("root never connected to selected endpoint")
 			}
 		})
 	}
 }
+
+var testNonce = []byte("0123456789abcdef0123456789abcdef")
 
 func TestPkgRootRejectsInvalidPlatform(t *testing.T) {
 	root := newRootCmd()

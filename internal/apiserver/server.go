@@ -73,9 +73,14 @@ type Server struct {
 	volSeedResol func(context.Context) (volume.Seeder, error)
 	volSeedCache volume.Seeder
 	authToken    string
-	collectors   *metrics.Collectors
-	startingMu   sync.Mutex
-	starting     map[string]struct{}
+	// handshakes bounds the connections that have not authenticated yet.
+	handshakes chan struct{}
+	// handshakeTimeout and authFailureDelay default to the constants above.
+	handshakeTimeout time.Duration
+	authFailureDelay time.Duration
+	collectors       *metrics.Collectors
+	startingMu       sync.Mutex
+	starting         map[string]struct{}
 	// nameMu serializes the VM-name uniqueness check with VM creation so two
 	// concurrent runs cannot both register the same name.
 	nameMu     sync.Mutex
@@ -133,7 +138,8 @@ func NewServer(mgr vm.Manager, netStore *network.Store, endpoint string, shutdow
 	if err != nil {
 		return nil, err
 	}
-	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister}, nil
+	return &Server{mgr: mgr, netStore: netStore, listener: l, shutdownFn: shutdownFn, version: version, resolver: scheduler.NewResolver(mgr), cluster: clusterLister, handshakes: make(chan struct{}, maxPendingHandshake),
+		handshakeTimeout: handshakeTimeout, authFailureDelay: authFailureDelay}, nil
 }
 
 // Serve accepts connections and handles them until ctx is canceled.
@@ -166,8 +172,46 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 }
 
+// Limits on what an unauthenticated peer can make the daemon hold: a client
+// that has not completed Auth.Hello gets a small read budget, a deadline, and
+// one of a bounded number of handshake slots, so it cannot exhaust memory or
+// connections before proving it holds the token. An authenticated request is
+// still bounded, generously, so a single malformed message cannot do the same.
+const (
+	preAuthReadLimit    = 64 << 10
+	requestReadLimit    = 64 << 20
+	maxPendingHandshake = 64
+	handshakeTimeout    = 10 * time.Second
+	// authFailureDelay slows down token guessing: every failed handshake costs
+	// the peer this long before the connection is closed.
+	authFailureDelay = 500 * time.Millisecond
+)
+
+// budgetReader caps how many bytes the JSON decoder may pull from the
+// connection for the current request. It wraps only the decoder: streaming
+// methods read the connection directly once dispatched.
+type budgetReader struct {
+	r io.Reader
+	n int64
+}
+
+func (b *budgetReader) Read(p []byte) (int, error) {
+	if b.n <= 0 {
+		return 0, errRequestTooLarge
+	}
+	if int64(len(p)) > b.n {
+		p = p[:b.n]
+	}
+	n, err := b.r.Read(p)
+	b.n -= int64(n)
+	return n, err //nolint:wrapcheck // passthrough reader
+}
+
+var errRequestTooLarge = fmt.Errorf("request too large")
+
 func (s *Server) handle(ctx context.Context, conn net.Conn) {
-	dec := json.NewDecoder(conn)
+	budget := &budgetReader{r: conn}
+	dec := json.NewDecoder(budget)
 	enc := json.NewEncoder(conn)
 	// currentReqID is the ID of the request being processed; the panic handler
 	// uses it to address the error response. Safe without synchronization: the
@@ -186,32 +230,42 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			slog.Warn("api server close conn", "err", err)
 		}
 	}()
-	authed := s.authToken == ""
-	for dec.More() {
+	if s.authToken != "" {
+		if s.handshakes != nil {
+			select {
+			case s.handshakes <- struct{}{}:
+			default:
+				slog.Warn("api server: too many pending handshakes; dropping connection", "remote", conn.RemoteAddr().String())
+				return
+			}
+		}
+		released := s.handshakes == nil
+		release := func() {
+			if !released {
+				released = true
+				<-s.handshakes
+			}
+		}
+		defer release()
+		if s.handshakeTimeout > 0 {
+			_ = conn.SetReadDeadline(time.Now().Add(s.handshakeTimeout))
+		}
+		if !s.handshake(conn, budget, dec, enc, &currentReqID) {
+			return
+		}
+		release()
+		_ = conn.SetReadDeadline(time.Time{})
+	}
+	for {
+		budget.n = requestReadLimit
+		if !dec.More() {
+			return
+		}
 		var req api.Request
 		if err := dec.Decode(&req); err != nil {
 			return
 		}
 		currentReqID = req.ID
-		if !authed {
-			// Until authenticated, only Auth.Hello is accepted. Any failure
-			// closes the connection.
-			if req.Method != "Auth.Hello" || !s.checkAuth(req.Params) {
-				_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32001, Message: "authentication required"}})
-				return
-			}
-			// Refuse a client whose wire protocol differs from ours. A client
-			// that omits proto (0) predates negotiation and is left alone.
-			if proto := helloProto(req.Params); proto != 0 && proto != api.ProtoVersion {
-				_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32002, Message: fmt.Sprintf(
-					"protocol version mismatch: daemon speaks v%d, client speaks v%d — update jerboa to match the daemon",
-					api.ProtoVersion, proto)}})
-				return
-			}
-			authed = true
-			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: helloResult()})
-			continue
-		}
 		result, rpcErr := s.dispatch(ctx, &req, conn, dec)
 		if result == attachHandled {
 			return
@@ -234,14 +288,59 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// checkAuth reports whether params carries the configured auth token, using a
-// constant-time comparison.
-func (s *Server) checkAuth(params json.RawMessage) bool {
+// handshake authenticates a connection. Until it succeeds only Auth.Challenge
+// and Auth.Hello are accepted, and any failure closes the connection. A client
+// proves it holds the token either with an HMAC of a fresh server nonce
+// (Auth.Challenge then Auth.Hello{proof}), which never puts the token on the
+// wire, or, for older clients, by sending the token itself.
+func (s *Server) handshake(conn net.Conn, budget *budgetReader, dec *json.Decoder, enc *json.Encoder, reqID *int64) bool {
+	var nonce []byte
+	for {
+		budget.n = preAuthReadLimit
+		var req api.Request
+		if err := dec.Decode(&req); err != nil {
+			return false
+		}
+		*reqID = req.ID
+		switch {
+		case req.Method == "Auth.Challenge" && nonce == nil:
+			nonce = api.NewAuthNonce()
+			raw, _ := json.Marshal(api.ChallengeResult{Nonce: nonce})
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: raw})
+			continue
+		case req.Method == "Auth.Hello" && s.checkAuth(req.Params, nonce):
+		default:
+			slog.Warn("api server: authentication failed", "remote", conn.RemoteAddr().String())
+			time.Sleep(s.authFailureDelay)
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32001, Message: "authentication required"}})
+			return false
+		}
+		// Refuse a client whose wire protocol differs from ours. A client
+		// that omits proto (0) predates negotiation and is left alone.
+		if proto := helloProto(req.Params); proto != 0 && proto != api.ProtoVersion {
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32002, Message: fmt.Sprintf(
+				"protocol version mismatch: daemon speaks v%d, client speaks v%d — update jerboa to match the daemon",
+				api.ProtoVersion, proto)}})
+			return false
+		}
+		_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: helloResult()})
+		return true
+	}
+}
+
+// checkAuth reports whether params prove knowledge of the configured auth
+// token: an HMAC proof over nonce when the client asked for a challenge, or
+// the token itself from a client that did not. Both comparisons are
+// constant-time.
+func (s *Server) checkAuth(params json.RawMessage, nonce []byte) bool {
 	var p api.AuthParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(p.Token), []byte(s.authToken)) == 1
+	if nonce != nil {
+		return p.Token == "" && api.CheckAuthProof(s.authToken, nonce, p.Proof)
+	}
+	return p.Proof == "" && subtle.ConstantTimeCompare([]byte(p.Token), []byte(s.authToken)) == 1
 }
 
 // helloProto extracts the client's advertised wire protocol version from the
