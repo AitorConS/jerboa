@@ -298,6 +298,13 @@ WorkingDirectory=${JERBOA_HOME}
 # Networking: TAP/routing, raw sockets, and the service-discovery DNS port.
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+# The daemon and its VMMs never gain privileges, keep /tmp to themselves and
+# cannot modify the OS.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+RestrictSUIDSGID=yes
+LockPersonality=yes
 EnvironmentFile=${ENV_FILE}
 ExecStart=${PREFIX}/jerboad --host ${endpoint} --hypervisor ${HYPERVISOR}
 Restart=on-failure

@@ -464,7 +464,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	if runtime.GOOS == "darwin" {
 		return m.buildNativeCmd(ctx, cfg, qmpAddr)
 	}
-	driveArg := "file=" + cfg.ImagePath + ",format=raw,if=virtio" + bootDiskSnapshotOpt(cfg) + qemuDriveIOOpts(cfg)
+	driveArg := "file=" + qemuOptValue(cfg.ImagePath) + ",format=raw,if=virtio" + bootDiskSnapshotOpt(cfg) + qemuDriveIOOpts(cfg)
 	if cfg.DiskIOPS > 0 {
 		driveArg += fmt.Sprintf(",throttling.iops-total=%d", cfg.DiskIOPS)
 	}
@@ -490,6 +490,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 		args = append(args, "-kernel", m.kernelPath)
 	}
 	args = append(args, kvmAccelArgs()...)
+	args = append(args, qemuSandboxArgs(m.qemuBin)...)
 	if cfg.CPUs > 0 {
 		args = append(args, "-smp", fmt.Sprintf("%d", cfg.CPUs))
 	}
@@ -519,6 +520,29 @@ var (
 // hardware virtualization and the host CPU model; without it QEMU silently
 // falls back to TCG software emulation, which is an order of magnitude slower
 // for guest CPU work.
+// qemuSandboxArgs enables QEMU's seccomp sandbox on Linux when the binary
+// supports it: the VMM then cannot spawn processes, gain privileges or use
+// obsolete system calls. JERBOA_QEMU_SANDBOX=off disables it.
+func qemuSandboxArgs(qemuBin string) []string {
+	if runtime.GOOS != "linux" || os.Getenv("JERBOA_QEMU_SANDBOX") == "off" {
+		return nil
+	}
+	sandboxProbe.Do(func() {
+		out, err := exec.Command(qemuBin, "-help").Output() //nolint:gosec,noctx // configured QEMU binary, short probe
+		if err != nil || !strings.Contains(string(out), "-sandbox") {
+			slog.Warn("QEMU has no seccomp sandbox support; VMs run without it", "qemu", qemuBin)
+			return
+		}
+		sandboxArgs = []string{"-sandbox", "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny"}
+	})
+	return sandboxArgs
+}
+
+var (
+	sandboxProbe sync.Once
+	sandboxArgs  []string
+)
+
 func kvmAccelArgs() []string {
 	kvmProbeOnce.Do(func() {
 		f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
@@ -578,12 +602,18 @@ func buildNetArgs(cfg Config) []string {
 	return []string{"-net", "none"}
 }
 
+// qemuOptValue escapes a value for a QEMU option list, where a comma
+// separates options and ",," stands for a literal comma.
+func qemuOptValue(v string) string {
+	return strings.ReplaceAll(v, ",", ",,")
+}
+
 // buildVolumeArgs appends extra virtio-blk drives for each volume mount.
 // Each volume gets its own drive index (starting at 1; index 0 is the boot disk).
 func buildVolumeArgs(cfg Config) []string {
 	var args []string
 	for i, vol := range cfg.Volumes {
-		drive := fmt.Sprintf("file=%s,format=raw,if=virtio,index=%d", vol.DiskPath, i+1)
+		drive := fmt.Sprintf("file=%s,format=raw,if=virtio,index=%d", qemuOptValue(vol.DiskPath), i+1)
 		if vol.ReadOnly {
 			drive += ",readonly=on"
 		}

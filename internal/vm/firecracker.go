@@ -137,7 +137,7 @@ func NewFirecrackerManager(fcBin, kernelImage string, opts ...FCOption) *Firecra
 		cfgPathForProcess:  func(p string) string { return p },
 		shutdownAPI:        fcSendCtrlAltDel,
 		rewriteConfigPaths: func(*fcVMConfig) {},
-		vmmLogPath:         func(id string) string { return filepath.Join(os.TempDir(), "fc-"+id+"-vmm.log") },
+		vmmLogPath:         func(id string) string { return filepath.Join(qmpRuntimeDir(), "fc-"+id+"-vmm.log") },
 		readVMMLog:         os.ReadFile,
 		shutdownGrace:      gracePeriod,
 		applyLimits:        defaultApplyLimits,
@@ -937,7 +937,7 @@ func ensureFile(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create dir for %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, 0o644) //nolint:gosec // daemon-owned runtime log path
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o600) //nolint:gosec // daemon-owned runtime log path
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}
@@ -948,11 +948,11 @@ func ensureFile(path string) error {
 }
 
 func fcSocketPath(id string) string {
-	return filepath.Join(os.TempDir(), "fc-"+id+".sock")
+	return filepath.Join(qmpRuntimeDir(), "fc-"+id+".sock")
 }
 
 func fcConfigPath(id string) string {
-	return filepath.Join(os.TempDir(), "fc-"+id+"-config.json")
+	return filepath.Join(qmpRuntimeDir(), "fc-"+id+"-config.json")
 }
 
 // rootfsPath returns the per-VM ephemeral root disk path. Firecracker has no
