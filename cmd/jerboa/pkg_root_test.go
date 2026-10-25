@@ -54,6 +54,9 @@ func TestPkgLoadRootInitialization(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			t.Setenv("JERBOA_AUTH_TOKEN", "")
 			t.Setenv("JERBOA_HOST", "")
+			// The root command records the config token for this process;
+			// later tests dial servers that do not authenticate.
+			t.Cleanup(func() { config.SetSessionToken("") })
 			listener, err := net.Listen("tcp", "127.0.0.1:0")
 			require.NoError(t, err)
 			defer listener.Close()
