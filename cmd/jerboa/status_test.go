@@ -24,7 +24,7 @@ func TestStatusWithVM(t *testing.T) {
 	client, socketPath := startDaemon(t)
 	storePath := t.TempDir()
 
-	info, err := client.Run(context.Background(), api.RunParams{ImagePath: "test.img", Memory: "256M"})
+	info, err := client.Run(context.Background(), api.RunParams{ImagePath: testImage(t), Memory: "256M"})
 	require.NoError(t, err)
 
 	out := execRoot(t, socketPath, storePath, "status")
