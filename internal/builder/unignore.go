@@ -23,6 +23,21 @@ var DefaultIgnorePatterns = []string{
 	"dist",
 	".next",
 	"target",
+	// Credentials that commonly sit in a project directory. A project that
+	// does need one in its image re-includes it in .unignore (e.g. "!app.pem").
+	".env",
+	".env.*",
+	".npmrc",
+	".pypirc",
+	".netrc",
+	".aws",
+	".ssh",
+	"id_rsa",
+	"id_dsa",
+	"id_ecdsa",
+	"id_ed25519",
+	"*.pem",
+	"*.key",
 }
 
 // IgnoreMatcher determines whether a file should be excluded from the build context.

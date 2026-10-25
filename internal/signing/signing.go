@@ -16,8 +16,17 @@ const (
 	privKeyFile   = "signing.key"
 	pubKeyFile    = "signing.pub"
 	sigExt        = ".sig"
-	signatureType = "ed25519"
+	signatureType = "jerboa-ed25519-v1"
+	// legacySignatureType signed the bare digest string, with no context to
+	// tell it apart from any other message signed by the same key.
+	legacySignatureType = "ed25519"
+	signatureContext    = "jerboa image signature v1\n"
 )
+
+// signedMessage is what a signature covers: the digest under a fixed context.
+func signedMessage(digest string) []byte {
+	return []byte(signatureContext + digest)
+}
 
 // Signature represents an Ed25519 signature over a manifest digest.
 type Signature struct {
@@ -50,10 +59,10 @@ func GenerateKeyPair() (*KeyPair, error) {
 
 // Sign signs the given digest with the private key and returns a Signature.
 func Sign(kp *KeyPair, digest string) (*Signature, error) {
-	if kp.PrivateKey == nil {
-		return nil, fmt.Errorf("sign: private key is nil")
+	if len(kp.PrivateKey) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("sign: private key is %d bytes, want %d", len(kp.PrivateKey), ed25519.PrivateKeySize)
 	}
-	sig := ed25519.Sign(kp.PrivateKey, []byte(digest))
+	sig := ed25519.Sign(kp.PrivateKey, signedMessage(digest))
 	return &Signature{
 		Type:      signatureType,
 		KeyID:     kp.KeyID,
@@ -64,6 +73,12 @@ func Sign(kp *KeyPair, digest string) (*Signature, error) {
 
 // Verify checks that sig is a valid Ed25519 signature over digest by publicKey.
 func Verify(publicKey ed25519.PublicKey, sig *Signature) error {
+	if len(publicKey) != ed25519.PublicKeySize {
+		return fmt.Errorf("verify: public key is %d bytes, want %d", len(publicKey), ed25519.PublicKeySize)
+	}
+	if sig.Type == legacySignatureType {
+		return fmt.Errorf("verify: signature uses the legacy format; sign the image again")
+	}
 	if sig.Type != signatureType {
 		return fmt.Errorf("verify: unsupported signature type %q", sig.Type)
 	}
@@ -74,7 +89,7 @@ func Verify(publicKey ed25519.PublicKey, sig *Signature) error {
 	if err != nil {
 		return fmt.Errorf("verify: decode signature: %w", err)
 	}
-	if !ed25519.Verify(publicKey, []byte(sig.Digest), sigBytes) {
+	if !ed25519.Verify(publicKey, signedMessage(sig.Digest), sigBytes) {
 		return fmt.Errorf("verify: signature invalid")
 	}
 	return nil
@@ -179,6 +194,13 @@ func (s *Store) LoadKeyPair() (*KeyPair, error) {
 		return nil, fmt.Errorf("load public key: invalid PEM block")
 	}
 	pubKey := ed25519.PublicKey(pubBlock.Bytes)
+	if len(privKey) != ed25519.PrivateKeySize || len(pubKey) != ed25519.PublicKeySize {
+		return nil, fmt.Errorf("load key pair: keys are %d and %d bytes, want %d and %d",
+			len(privKey), len(pubKey), ed25519.PrivateKeySize, ed25519.PublicKeySize)
+	}
+	if !pubKey.Equal(privKey.Public()) {
+		return nil, fmt.Errorf("load key pair: %s does not belong to %s", pubKeyFile, privKeyFile)
+	}
 
 	return &KeyPair{
 		PrivateKey: privKey,

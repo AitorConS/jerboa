@@ -224,6 +224,7 @@ Key flags:
 | `layout` | `compact` (default) or `standard`; see `--layout` |
 | `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through. Node builds package `node_modules` (the production dependencies the driver installs); other languages ignore it by default, and `.unignore` can exclude it explicitly. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
+| `install_scripts` | `true` lets `npm` run dependencies' install scripts (`preinstall`, `install`, `postinstall`) on the build machine. Off by default: `npm` runs with `--ignore-scripts` |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from
 package files; the program is executed from its real in-image path, so binaries
@@ -265,8 +266,16 @@ Build driver behavior to know:
   appended after the defaults and take precedence.
 - Node builds reinstall production dependencies when manifests, lockfiles, runtime
   version or host platform change, or when `node_modules` is missing. If `package-lock.json` exists, the driver uses
-  `npm ci --omit=dev --no-audit --no-fund`; otherwise it uses
-  `npm install --omit=dev --no-audit --no-fund`.
+  `npm ci --omit=dev --no-audit --no-fund --ignore-scripts`; otherwise it uses
+  `npm install --omit=dev --no-audit --no-fund --ignore-scripts`. Set
+  `[build] install_scripts = true` for dependencies that need their install scripts.
+- Build steps (`[build] run`, `npm`, `pip`, `cargo`, `go build`) run without
+  Jerboa's own credentials in their environment (`JERBOA_REGISTRY_TOKEN`,
+  `JERBOA_AUTH_TOKEN` and the other `JERBOA_*` tokens).
+- The build context leaves out common credential files by default: `.env`,
+  `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `.aws/`, `.ssh/`, `id_rsa`,
+  `id_dsa`, `id_ecdsa`, `id_ed25519`, `*.pem` and `*.key`. Re-include one the
+  image needs with a negated pattern in `.unignore`, e.g. `!certs/server.pem`.
 - Python builds cache dependency installs. `pip install` runs only when
   `requirements.txt` or the Python version changes, tracked by
   `packages/.jerboa-deps-stamp`. Delete `packages/` or that stamp file to force
@@ -317,7 +326,8 @@ Resolve the image through the daemon and sign its disk digest with the default E
 Resolve the image through the daemon, hash its actual disk contents, and verify the
 signature against that digest. `run --verify enforce` pins the verified digest;
 each hypervisor verifies the bytes while writing its private boot copy and starts
-the VM only if the digest matches.
+the VM only if the digest matches. Signatures made before the `jerboa-ed25519-v1`
+format are refused; run `jerboa sign <image>` again to replace them.
 
 ---
 

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,6 +67,15 @@ func startPkgServer(t *testing.T) (*httptest.Server, func(idx pkg.Index, archive
 		for name, versions := range idx.Packages {
 			for i := range versions {
 				versions[i].Platform = "linux/" + pkg.ArchSlug()
+				// A downloadable entry names its archive's digest and size,
+				// as the published index does.
+				if u, err := url.Parse(versions[i].URL); err == nil && versions[i].SHA256 == "" {
+					if data, ok := archives[u.Path]; ok {
+						sum := sha256.Sum256(data)
+						versions[i].SHA256 = hex.EncodeToString(sum[:])
+						versions[i].Size = int64(len(data))
+					}
+				}
 			}
 			idx.Packages[name] = versions
 		}

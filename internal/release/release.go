@@ -108,7 +108,16 @@ func (c *Client) FetchManifest(ctx context.Context, channel string) (*Manifest, 
 	if err := c.Pub.Verify(manifestBytes, sigBytes); err != nil {
 		return nil, err
 	}
-	return ParseManifest(manifestBytes)
+	m, err := ParseManifest(manifestBytes)
+	if err != nil {
+		return nil, err
+	}
+	// A validly signed manifest of another channel must not stand in for this
+	// one, or a beta build could be served as stable.
+	if m.Channel != channel {
+		return nil, fmt.Errorf("release: %s manifest is signed for channel %q", channel, m.Channel)
+	}
+	return m, nil
 }
 
 // DownloadArtifact streams a.URL to dest, verifying length and SHA-256 against

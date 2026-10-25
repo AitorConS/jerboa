@@ -21,7 +21,9 @@ elif name=='getent':
     else: sys.exit(2)
 elif name=='curl':
     url=args[-3]; out=pathlib.Path(args[-1])
-    if url.endswith(('stable.json','manifest.json')): out.write_bytes((root/'manifest').read_bytes())
+    if '/releases/' in url and os.environ.get('NO_RELEASE_MANIFEST'): sys.exit(22)
+    elif '/releases/' in url and url.endswith('manifest.json') and (root/'release-manifest').exists(): out.write_bytes((root/'release-manifest').read_bytes())
+    elif url.endswith(('stable.json','manifest.json')): out.write_bytes((root/'manifest').read_bytes())
     elif url.endswith('.minisig'): out.write_text('mock signature')
     elif os.environ.get('FAIL_DOWNLOAD') or (url.endswith('.zst') and os.environ.get('FAIL_ZST')): sys.exit(22)
     elif url.endswith('.zst'): out.write_bytes(b'corrupt' if os.environ.get('CORRUPT') else b'ZST:'+(b'tampered' if os.environ.get('CORRUPT_ZST') else b'binary'))
@@ -74,7 +76,7 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     manifest={'components':{key:{'version':'v0.51.2','platforms':{'linux-amd64':{'sha256':digest,'size':len(b'binary')}}} for key in ['cli','daemon']}}
     (root/'manifest').write_text(json.dumps(manifest))
     env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'FIXTURE':str(root),'HYPERVISOR':'qemu','SUDO_USER':'tester'}
-    for key in ['RELEASE_BASE','JERBOA_PORT','FC_ARCH','FIRECRACKER_VERSION']: env.pop(key,None)
+    for key in ['RELEASE_BASE','JERBOA_PORT','FC_ARCH','FIRECRACKER_VERSION','FIRECRACKER_SHA256']: env.pop(key,None)
     def run(*args, ok=True, **overrides):
         result=subprocess.run(['bash',str(runner),*args],env={**env,**overrides},capture_output=True,text=True)
         assert (result.returncode==0)==ok,result.stdout+result.stderr
@@ -117,18 +119,29 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
         calls=(root/'calls').read_text()
         assert any(line.split()[-3].endswith('/jerboa-linux-amd64') for line in calls.splitlines() if line.startswith('curl'))
         assert (root/'usr/local/bin/jerboa').read_bytes()==b'binary'
-    result=run('--version','0.51.1')
-    assert 'without a signed checksum' in result.stdout
+    # Versions other than the current stable one are checked against the
+    # signed manifest published with that release.
+    run('--version','0.51.1',ok=False,NO_RELEASE_MANIFEST='1')
+    run('--version','0.51.1',ok=False)
+    (root/'release-manifest').write_text(json.dumps({'components':{key:{'version':'v0.51.1','platforms':{'linux-amd64':{'sha256':digest,'size':len(b'binary')}}} for key in ['cli','daemon']}}))
+    run('--version','0.51.1',ok=False,CORRUPT='1')
+    run('--version','0.51.1',ok=False,BAD_SIGNATURE='1')
+    (root/'calls').write_text('')
+    run('--version','0.51.1')
     calls=(root/'calls').read_text()
-    assert '/cli/v0.51.2/jerboa-linux-amd64' in calls and '/daemon/v0.51.2/jerboad-linux-amd64' in calls
+    assert '/releases/v0.51.1/manifest.json.minisig' in calls
     assert '/cli/v0.51.1/jerboa-linux-amd64' in calls
+    (root/'release-manifest').unlink()
     assert 'systemctl restart jerboad.service' in calls
     assert 'firecracker-microvm' not in calls
     (root/'dev').mkdir()
     (root/'dev/kvm').touch()
-    run(HYPERVISOR='firecracker')
+    # The firecracker archive must match a pinned or supplied checksum.
+    run(ok=False,HYPERVISOR='firecracker')
+    run(ok=False,HYPERVISOR='firecracker',FIRECRACKER_VERSION='v1.18.0')
+    run(HYPERVISOR='firecracker',FIRECRACKER_SHA256=digest)
     assert (root/'usr/local/bin/firecracker').read_bytes()==b'firecracker'
-    print('PASS: version parsing, latest/pinned URLs, zstd variants with fallback, platform checks, QEMU without KVM, upgrades, token preservation, signature/checksum/download failures.')
+    print('PASS: version parsing, latest/pinned URLs, signed historical manifests, zstd variants with fallback, platform checks, QEMU without KVM, upgrades, token preservation, signature/checksum/download failures, firecracker checksum.')
 
     manifest['components']['macos']={'version':'v0.51.2','platforms':{'darwin-arm64':{
         'sha256':digest,'url':'https://releases.jerboa.dev/macos/v0.51.2/jerboa-0.51.2-macos-arm64.pkg'}}}

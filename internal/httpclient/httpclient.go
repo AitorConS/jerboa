@@ -31,13 +31,26 @@ import (
 // Default bounds an entire request with a total deadline. Use it for small
 // metadata fetches (manifests, signatures, index JSON), never for streaming a
 // large artifact to disk — see the package doc and Streaming.
-var Default = &http.Client{Timeout: 30 * time.Second}
+var Default = &http.Client{Timeout: 30 * time.Second, CheckRedirect: noDowngrade}
+
+// noDowngrade follows redirects as net/http does by default, except that a
+// request which started over https is never sent on over plain http.
+func noDowngrade(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return fmt.Errorf("stopped after %d redirects", len(via))
+	}
+	if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect from %s to non-https %s", via[0].URL.Host, req.URL.Redacted())
+	}
+	return nil
+}
 
 // Streaming is for large, streamed downloads. It deliberately sets no
 // Client.Timeout: liveness comes from the transport's connection-setup timeouts
 // plus caller-side stall detection (CopyWithStall), so a slow-but-progressing
 // transfer of any size completes instead of being killed by a total deadline.
 var Streaming = &http.Client{
+	CheckRedirect: noDowngrade,
 	Transport: &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{

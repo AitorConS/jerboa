@@ -67,7 +67,6 @@ jobs:
     uses: ./.github/workflows/validate.yml
     with:
       full: true
-    secrets: inherit
   kernel-stage:
     name: Stage selected kernel toolset
     runs-on: ubuntu-latest

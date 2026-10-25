@@ -147,7 +147,7 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 	// connection. It lands in <arch>.tar.gz.partial, so an interrupted download
 	// resumes there and never leaves a truncated archive at archivePath.
 	partial := archivePath + httpclient.PartialSuffix
-	size, sum, err := httpclient.Resumable{}.Fetch(context.Background(), downloadURL, partial)
+	size, sum, err := httpclient.Resumable{MaxSize: maxOpsPackageSize}.Fetch(context.Background(), downloadURL, partial)
 	if err != nil {
 		return fmt.Errorf("ops download %s/%s: %w", namespace, name, err)
 	}
