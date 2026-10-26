@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/stretchr/testify/require"
@@ -85,6 +86,8 @@ func startStubServer(t *testing.T) string {
 					switch {
 					case req.Method == "Auth.Challenge":
 						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+					case req.Method == "Auth.Hello":
+						resp.Result = helloOK("secret-token", req.Params, api.ProtoVersion)
 					case req.Method == "Daemon.Version":
 						resp.Result = json.RawMessage(`{"version":"v1.2.3"}`)
 					case strings.Contains(string(req.Params), "FORCE_ERROR"):
@@ -182,6 +185,16 @@ func TestDial_BadEndpoint(t *testing.T) {
 	require.Error(t, err)
 }
 
+// helloOK accepts an Auth.Hello the way the daemon does: it reports proto and
+// answers the client's nonce for token (the stubs' challenge nonce is 32 zero
+// bytes).
+func helloOK(token string, params json.RawMessage, proto int) json.RawMessage {
+	var p api.AuthParams
+	_ = json.Unmarshal(params, &p)
+	raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: proto, ServerProof: api.ServerAuthProof(token, make([]byte, 32), p.ClientNonce)})
+	return raw
+}
+
 // startProtoServer stubs a daemon whose Auth.Hello reply advertises the given
 // wire protocol version, so the client's proto negotiation can be exercised.
 func startProtoServer(t *testing.T, proto int) string {
@@ -210,8 +223,7 @@ func startProtoServer(t *testing.T, proto int) string {
 					case "Auth.Challenge":
 						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
 					case "Auth.Hello":
-						raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: proto})
-						resp.Result = raw
+						resp.Result = helloOK("tok", req.Params, proto)
 					}
 					_ = enc.Encode(resp)
 				}
@@ -231,4 +243,57 @@ func TestClient_ProtoMismatch(t *testing.T) {
 	_, err := api.DialWithToken(startProtoServer(t, api.ProtoVersion+1), "tok")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "protocol version mismatch")
+}
+
+// startImpostor stubs a process holding the daemon's address without its
+// token: it accepts any proof and answers Auth.Hello with helloResult, and
+// reports any request that follows the handshake.
+func startImpostor(t *testing.T, helloResult json.RawMessage) (string, <-chan string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	after := make(chan string, 4)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+		for {
+			var req api.Request
+			if err := dec.Decode(&req); err != nil {
+				return
+			}
+			resp := api.Response{JSONRPC: "2.0", ID: req.ID}
+			switch req.Method {
+			case "Auth.Challenge":
+				resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+			case "Auth.Hello":
+				resp.Result = helloResult
+			default:
+				after <- req.Method
+			}
+			_ = enc.Encode(resp)
+		}
+	}()
+	return "tcp://" + ln.Addr().String(), after
+}
+
+func TestClient_RefusesADaemonThatCannotProveTheToken(t *testing.T) {
+	none, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: api.ProtoVersion})
+	forged, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: api.ProtoVersion, ServerProof: api.ServerAuthProof("not-the-token", make([]byte, 32), []byte("guessed client nonce"))})
+	for name, hello := range map[string]json.RawMessage{"no proof": none, "wrong proof": forged} {
+		t.Run(name, func(t *testing.T) {
+			endpoint, after := startImpostor(t, hello)
+			_, err := api.DialWithToken(endpoint, "secret-token")
+			require.ErrorContains(t, err, "authentication failed")
+			select {
+			case method := <-after:
+				t.Fatalf("client sent %s to a daemon that did not prove the token", method)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+	}
 }

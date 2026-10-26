@@ -219,11 +219,13 @@ const ProtoVersion = 3
 // sends Proof, AuthProof(token, nonce), so the token never crosses the wire;
 // an older client sends Token itself. Proto carries the client's wire protocol
 // version (0 when a legacy client omits it, in which case the daemon skips the
-// compatibility check).
+// compatibility check). ClientNonce asks the daemon to prove it holds the
+// token too, in HelloResult.ServerProof.
 type AuthParams struct {
-	Token string `json:"token,omitempty"`
-	Proof string `json:"proof,omitempty"`
-	Proto int    `json:"proto,omitempty"`
+	Token       string `json:"token,omitempty"`
+	Proof       string `json:"proof,omitempty"`
+	Proto       int    `json:"proto,omitempty"`
+	ClientNonce []byte `json:"client_nonce,omitempty"`
 }
 
 // ChallengeResult is the daemon's reply to Auth.Challenge: a fresh nonce the
@@ -235,9 +237,12 @@ type ChallengeResult struct {
 // HelloResult is the daemon's Auth.Hello acknowledgement. Proto reports the
 // daemon's wire protocol version so the client can detect talking to an
 // incompatible (older) daemon that did not itself reject the handshake.
+// ServerProof answers the client's nonce: ServerAuthProof(token, nonce,
+// client nonce), sent only once the client has proved it holds the token.
 type HelloResult struct {
-	Status string `json:"status"`
-	Proto  int    `json:"proto,omitempty"`
+	Status      string `json:"status"`
+	Proto       int    `json:"proto,omitempty"`
+	ServerProof string `json:"server_proof,omitempty"`
 }
 
 // NetworkCreateParams are the parameters for Network.Create.

@@ -100,3 +100,36 @@ func TestHandshake_IdlePeerTimesOut(t *testing.T) {
 	_, err = conn.Read(make([]byte, 1))
 	require.Error(t, err, "an idle unauthenticated connection must be closed")
 }
+
+func TestHandshake_DaemonProvesTheTokenAfterTheClient(t *testing.T) {
+	addr := startHandshakeServer(t, "s3cret-token")
+	conn, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer conn.Close()
+	dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+	resp := rawCall(t, dec, enc, 1, "Auth.Challenge", struct{}{})
+	require.Nil(t, resp.Error)
+	var challenge api.ChallengeResult
+	require.NoError(t, json.Unmarshal(resp.Result, &challenge))
+	clientNonce := api.NewAuthNonce()
+	resp = rawCall(t, dec, enc, 2, "Auth.Hello", api.AuthParams{Proof: api.AuthProof("s3cret-token", challenge.Nonce), Proto: api.ProtoVersion, ClientNonce: clientNonce})
+	require.Nil(t, resp.Error)
+	var hello api.HelloResult
+	require.NoError(t, json.Unmarshal(resp.Result, &hello))
+	require.True(t, api.CheckServerAuthProof("s3cret-token", challenge.Nonce, clientNonce, hello.ServerProof))
+	require.False(t, api.CheckServerAuthProof("other-token", challenge.Nonce, clientNonce, hello.ServerProof))
+}
+
+func TestHandshake_NoProofForAPeerWithoutTheToken(t *testing.T) {
+	addr := startHandshakeServer(t, "s3cret-token")
+	conn, err := net.Dial("tcp", addr)
+	require.NoError(t, err)
+	defer conn.Close()
+	dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+	require.Nil(t, rawCall(t, dec, enc, 1, "Auth.Challenge", struct{}{}).Error)
+	// The daemon answers a client nonce only after a valid proof, so it
+	// cannot be used to compute answers for someone else's nonce.
+	resp := rawCall(t, dec, enc, 2, "Auth.Hello", api.AuthParams{Proof: api.AuthProof("guess", []byte("x")), ClientNonce: api.NewAuthNonce()})
+	require.NotNil(t, resp.Error)
+	require.Empty(t, resp.Result)
+}

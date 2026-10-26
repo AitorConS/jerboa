@@ -44,7 +44,7 @@ func startNullRPCStub(t *testing.T) string {
 					case "Auth.Challenge":
 						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
 					case "Auth.Hello":
-						resp.Result = json.RawMessage(`{"status":"ok"}`)
+						resp.Result = helloOK("daemon-token", req.Params)
 					default:
 						resp.Result = json.RawMessage(`null`)
 					}
@@ -54,6 +54,15 @@ func startNullRPCStub(t *testing.T) string {
 		}
 	}()
 	return "tcp://" + ln.Addr().String()
+}
+
+// helloOK accepts an Auth.Hello and answers the client's nonce for token, as
+// the daemon does (the stubs' challenge nonce is 32 zero bytes).
+func helloOK(token string, params json.RawMessage) json.RawMessage {
+	var p api.AuthParams
+	_ = json.Unmarshal(params, &p)
+	raw, _ := json.Marshal(api.HelloResult{Status: "ok", ServerProof: api.ServerAuthProof(token, make([]byte, 32), p.ClientNonce)})
+	return raw
 }
 
 func newStubServer(t *testing.T) *Server {
