@@ -136,4 +136,24 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('electron-builder --win',step)
   for command in ['npm ci','npm install','npm run','node ']:
    self.assertNotIn(command,step)
+ def test_windows_smoke_gates_assembly_on_a_per_run_runner(self):
+  text=(ROOT/'.github/workflows/release.yml').read_text()
+  def job(name,next_job):return text.split('  '+name+':\n',1)[1].split('  '+next_job+':\n',1)[0]
+  up=job('windows-runner-up','windows-smoke')
+  smoke=job('windows-smoke','windows-runner-down')
+  down=job('windows-runner-down','assemble')
+  self.assertIn('    - windows-smoke\n',text.split('  assemble:\n',1)[1].split('    steps:',1)[0])
+  for part in (up,down):
+   self.assertIn('environment: windows-runner\n',part)
+   self.assertIn('id-token: write',part)
+  # The smoke runs only on this run's machine, with no secrets or cloud access.
+  self.assertIn('- ${{ needs.windows-runner-up.outputs.label }}',smoke)
+  self.assertNotIn('secrets.',smoke)
+  self.assertNotIn('id-token',smoke)
+  self.assertNotIn('environment:',smoke)
+  self.assertIn('scripts/windows-install-smoke.sh',smoke)
+  self.assertIn("if: always() && needs.windows-runner-up.outputs.instance_id != ''",down)
+  script=(ROOT/'scripts/release/windows-runner.sh').read_text()
+  self.assertIn('echo "::add-mask::$jit"',script)
+  self.assertNotIn('set -x',script)
 if __name__=='__main__':unittest.main()

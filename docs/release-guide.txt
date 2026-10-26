@@ -77,10 +77,12 @@ mas de una solicitud, incluyendo la prueba del conjunto de kernels seleccionado.
 El runner KVM necesita cc con libc estatica, QEMU, Firecracker y acceso a /dev/kvm.
 
 Espera a que termine TODO el workflow correctamente. Compila y prueba el motor,
-prepara Linux/WSL, Mac y Windows y ensambla el candidato firmado. La prueba del
-instalador de Windows ya no forma parte del workflow: si la release cambia la ruta
-de Windows o WSL, ejecuta scripts/windows-install-smoke.sh a mano en un Windows
-con WSL2. Los kernels Linux elegidos se arrancan con QEMU y Firecracker.
+prepara Linux/WSL, Mac y Windows, valida el instalador Windows y ensambla el
+candidato firmado. La prueba del instalador corre en una maquina Windows de EC2
+creada solo para esta ejecucion (windows-runner-up) y destruida al final
+(windows-runner-down); necesita el entorno windows-runner configurado por
+jerboa-infra. Si falla, vuelve a ejecutar windows-runner-up (no solo los trabajos
+fallidos). Los kernels Linux elegidos se arrancan con QEMU y Firecracker.
 La distribucion y las descargas usan los mismos archivos comprobados.
 Stable todavia no cambia.
 

@@ -51,12 +51,11 @@ preview, as selected for this rollout.
    product version, Desktop SHA, Firecracker SHA, kernel source and kernel version.
 4. Approve the KVM validation environment after reviewing the source revisions.
 5. Wait for validation, the selected toolset's QEMU/KVM and Firecracker boot
-   checks, Linux builds, Mac packaging and Windows packaging. Windows consumes the
-   current run's CLI artifact plus an explicit version/hash manifest; it never
-   fetches stable to decide what to package. The candidate workflow no longer runs
-   the Windows installer smoke (the self-hosted Windows runner lacked the capacity
-   for it); run `scripts/windows-install-smoke.sh` by hand on a Windows machine with
-   WSL2 when a release changes the Windows or WSL path.
+   checks, Linux builds, Mac packaging, Windows packaging and the full Windows
+   installer smoke. Windows consumes the current run's CLI artifact plus an
+   explicit version/hash manifest; it never fetches stable to decide what to package.
+   The installer smoke runs on a Windows machine started for this run only (see
+   [Windows installer smoke](#windows-installer-smoke)); assembly waits for it.
 6. Download `release-candidate` and `macos-app` from the run. The candidate includes a
    signed manifest, a signed inventory with source revisions, exact payload hashes,
    and a generated Windows update feed. Stable remains unchanged.
@@ -68,6 +67,41 @@ Candidates currently retain artifacts for 30 days (platform intermediates use th
 repository default unless overridden). Expired candidates must be rebuilt and
 revalidated. Never pretend a rebuilt binary is the old candidate. R2 release artifacts
 are retained; these workflows contain no automated deletion.
+
+### Windows installer smoke
+
+The smoke installs the signed `desktop-windows` installer silently, provisions the
+WSL2 distro from the run's `distro-rootfs` artifact and boots example unikernels
+through `scripts/windows-install-smoke.sh`. Hosted runners do not offer WSL2, so the
+candidate workflow brings its own machine:
+
+- `windows-runner-up` (GitHub-hosted Linux, `windows-runner` environment) registers
+  a single-job [just-in-time runner](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/autoscaling-with-self-hosted-runners#using-just-in-time-runners)
+  labelled `jerboa-run-<run id>-<attempt>`, starts one EC2 Windows instance from the
+  prepared image and launch template, and waits until the runner is online. It
+  starts once Windows packaging and the WSL rootfs are built.
+- `windows-smoke` runs on that runner only. It has read-only repository access and
+  no secrets.
+- `windows-runner-down` always runs once an instance was started: it terminates the
+  instance and removes the runner registration if the machine never took the job.
+  The instance also stops itself after its job and at the latest 90 minutes after
+  boot.
+
+`scripts/release/windows-runner.sh` holds these steps. AWS access uses the job's
+OIDC token and a role that may only start and terminate these instances; the runner
+is registered through a GitHub App installed on this repository alone. The image,
+launch template, role and App come from the `jerboa-infra` Windows runner setup,
+which also fills the `windows-runner` environment (main only): variables
+`WINDOWS_RUNNER_ROLE_ARN`, `WINDOWS_RUNNER_REGION`,
+`WINDOWS_RUNNER_LAUNCH_TEMPLATE_ID`, `WINDOWS_RUNNER_APP_ID` and secret
+`WINDOWS_RUNNER_APP_PRIVATE_KEY`.
+
+The smoke is required: if the environment is not configured, `windows-runner-up`
+fails with the list of missing settings and no candidate is assembled. To retry a
+failed smoke, re-run `windows-runner-up` (which re-runs its dependents) rather than
+only the failed jobs: a new machine is registered under the new attempt's label.
+To run the smoke by hand, use a Windows machine with WSL2 and follow the steps of
+`windows-smoke`.
 
 ## Promote
 
