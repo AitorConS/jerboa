@@ -527,13 +527,10 @@ func parseSubnet(cidr string) (*net.IPNet, net.IP, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse cidr %q: %w", cidr, err)
 	}
-	if ipNet.IP.To4() == nil {
-		return nil, nil, fmt.Errorf("only IPv4 subnets are supported")
+	if err := checkSubnet(ipNet); err != nil {
+		return nil, nil, err
 	}
-	gw := make(net.IP, len(ipNet.IP))
-	copy(gw, ipNet.IP)
-	gw[3] = 1
-	return ipNet, gw, nil
+	return ipNet, firstHost(ipNet), nil
 }
 
 func allocateSubnet(baseNet *net.IPNet, allocated []allocatedNet) (*net.IPNet, net.IP, error) {
@@ -550,12 +547,10 @@ func allocateSubnet(baseNet *net.IPNet, allocated []allocatedNet) (*net.IPNet, n
 		cidr := &net.IPNet{IP: subnetIP, Mask: mask}
 		// Skip any candidate that overlaps an existing network, not just an exact
 		// string match: an operator-created network with a wider or offset mask
-		// must not be silently re-used under a different /24.
-		if overlappingSubnet(cidr, allocated) == "" {
-			gw := make(net.IP, 4)
-			copy(gw, subnetIP)
-			gw[3] = 1
-			return cidr, gw, nil
+		// must not be silently re-used under a different /24. Skip the host's own
+		// networks too, so a bridge never shadows a route the host relies on.
+		if overlappingSubnet(cidr, allocated) == "" && hostConflict(cidr) == "" {
+			return cidr, firstHost(cidr), nil
 		}
 	}
 	return nil, nil, fmt.Errorf("no available /24 subnets in %s", baseNet.String())

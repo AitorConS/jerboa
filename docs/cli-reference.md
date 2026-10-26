@@ -463,7 +463,11 @@ package, then the sole downloaded variant; use the flag for explicit selection.
 
 Flags:
 
-- `--subnet`
+- `--subnet`: an IPv4 subnet from /16 to /29 inside 10.0.0.0/8, 172.16.0.0/12,
+  192.168.0.0/16 or 100.64.0.0/10. On Linux it must not overlap an address or
+  route the host already has, nor hold the guest DNS address 10.53.0.53. The
+  gateway is the subnet's first address. Without `--subnet`, a free /24 in
+  10.100.0.0/16 is chosen.
 - `--driver` (currently `bridge`)
 
 ### `jerboa network ls`
