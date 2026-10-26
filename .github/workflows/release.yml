@@ -55,7 +55,7 @@ jobs:
         KERNEL_VERSION: ${{ inputs.kernel_version }}
         KERNEL_SOURCE: ${{ inputs.kernel_source }}
         VERSION: ${{ inputs.version }}
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: release-lock
         path: release-lock.json
@@ -79,11 +79,11 @@ jobs:
       with:
         go-version: 1.27.3
         cache: true
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
         path: .
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: needs.inputs.outputs.kernel_source == 'build'
       with:
         name: kernel-linux
@@ -93,7 +93,7 @@ jobs:
       run: tar -xzf kernel-linux.tar.gz
     - name: Stage toolset and record hashes
       run: python3 scripts/release/candidate.py kernel
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: selected-kernel
         path: kernel-candidate/
@@ -109,11 +109,11 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
         path: .
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: selected-kernel
         path: kernel-candidate
@@ -125,12 +125,12 @@ jobs:
         command -v firecracker
     - name: Boot exact staged kernels
       run: python3 scripts/release/validate-kernel.py --work "$RUNNER_TEMP/kernel-boot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       if: always()
       with:
         name: kernel-boot-logs
         path: ${{ runner.temp }}/kernel-boot-${{ github.run_id }}-${{ github.run_attempt }}/*.log
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: validated-kernel
         path: kernel-candidate/
@@ -195,7 +195,7 @@ jobs:
       run: python3 scripts/release/candidate.py cli --file dist/jerboa-windows-amd64.exe --version "$CLI_VERSION"
         --out dist/manifest.json
     - name: Upload binaries
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: binaries-${{ matrix.goos }}-${{ matrix.goarch }}
         path: dist/
@@ -218,18 +218,18 @@ jobs:
       with:
         go-version: 1.27.3
         cache: true
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: validated-kernel
         path: kernel-candidate
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-linux-amd64
         path: dist
     - name: Build distro rootfs
       run: bash distro/build.sh
     - name: Upload rootfs artifact
-      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: distro-rootfs
         path: jerboa-rootfs-amd64.tar.gz
@@ -272,7 +272,7 @@ jobs:
       with:
         go-version: 1.27.3
         cache-dependency-path: jerboa/go.sum
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: '22'
     - name: Install build prerequisites
@@ -355,17 +355,17 @@ jobs:
         "$RES/bin/jerboad" --version
         "$RES/bin/firecracker" --version
         hdiutil verify "$DMG"
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: binaries-macos
         path: jerboa/dist/macos-release/*
         if-no-files-found: error
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: desktop-macos
         path: desktop/dist/jerboa-desktop-*-macos-arm64.dmg
         if-no-files-found: error
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: macos-app
         path: desktop/dist/jerboa-desktop-*-macos-arm64.zip
@@ -373,7 +373,7 @@ jobs:
         retention-days: 30
     # The native mkfs, published beside a newly built kernel so clients can
     # assemble recipes for that toolset version on macOS.
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: mkfs-darwin-arm64
         path: jerboa/dist/macos-arm64/tools/mkfs
@@ -397,7 +397,7 @@ jobs:
         persist-credentials: false
     - name: Build mkfs for Linux ARM64 hosts
       run: make -C kernel tools
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: mkfs-linux-arm64
         path: kernel/output/tools/bin/mkfs
@@ -424,10 +424,10 @@ jobs:
         token: ${{ secrets.DESKTOP_REPO_TOKEN }}
         persist-credentials: false
         path: desktop
-    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: '22'
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-windows-amd64
         path: cli
@@ -445,7 +445,7 @@ jobs:
         VERSION: ${{ needs.inputs.outputs.version }}
         CSC_LINK: ${{ secrets.CSC_LINK }}
         CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: desktop-windows
         path: |-
@@ -472,12 +472,12 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: needs.inputs.outputs.kernel_source == 'build'
       with:
         name: mkfs-linux-arm64
         path: mkfs-linux-arm64
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: needs.inputs.outputs.kernel_source == 'build'
       with:
         name: mkfs-darwin-arm64
@@ -486,28 +486,28 @@ jobs:
       with:
         go-version: 1.27.3
         cache: true
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         pattern: binaries-*
         merge-multiple: true
         path: dist
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: desktop-windows
         path: desktop-windows
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: desktop-macos
         path: desktop-macos
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: distro-rootfs
         path: distro
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
         path: .
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: validated-kernel
         path: kernel-candidate
@@ -515,7 +515,7 @@ jobs:
       run: |-
         go build -o bin/jerboa-manifest ./cmd/jerboa-manifest
         go build -o bin/jerboa-sign ./cmd/jerboa-sign
-    - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: macos-app
         path: native-macos
@@ -524,7 +524,7 @@ jobs:
       env:
         JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
         KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
         name: release-candidate
         path: candidate
