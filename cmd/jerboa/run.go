@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -27,6 +28,7 @@ func newRunCmd(socketPath *string) *cobra.Command {
 		rm          bool
 		volumes     []string
 		attach      bool
+		raw         bool
 		detach      bool
 		ipAddr      string
 		network     string
@@ -53,6 +55,12 @@ func newRunCmd(socketPath *string) *cobra.Command {
 			imageRef, imagePath, err := splitImageArg(imgArg)
 			if err != nil {
 				return fmt.Errorf("run: %w", err)
+			}
+			// The daemon resolves paths from its own working directory.
+			if imagePath != "" {
+				if abs, absErr := filepath.Abs(imagePath); absErr == nil {
+					imagePath = abs
+				}
 			}
 
 			if verify != "off" && imageRef != "" {
@@ -217,7 +225,7 @@ func newRunCmd(socketPath *string) *cobra.Command {
 			if attach {
 				// Collect the serial stream so known Nanos failure signatures can
 				// be explained once the VM stops (see hints.go).
-				collector := newHintCollector(cmd.OutOrStdout())
+				collector := newHintCollector(guestOutput(cmd.OutOrStdout(), raw))
 				if err := client.Attach(cmd.Context(), info.ID, collector); err != nil {
 					return fmt.Errorf("run: attach: %w", err)
 				}
@@ -239,6 +247,7 @@ func newRunCmd(socketPath *string) *cobra.Command {
 	cmd.Flags().BoolVar(&rm, "rm", false, "automatically remove the VM when it stops")
 	cmd.Flags().StringArrayVarP(&volumes, "volume", "v", nil, "mount a volume: name:guestpath[:ro] (repeatable)")
 	cmd.Flags().BoolVar(&attach, "attach", false, "attach to VM serial console (blocks until VM stops)")
+	cmd.Flags().BoolVar(&raw, "raw", false, "print the serial console unfiltered, terminal control sequences included")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", true, "run VM in the background")
 	cmd.Flags().StringVar(&ipAddr, "ip", "", "static IP address (requires --network)")
 	cmd.Flags().StringVar(&network, "network", "", "network name to attach (managed by 'jerboa network')")

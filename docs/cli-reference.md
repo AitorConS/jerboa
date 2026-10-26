@@ -88,6 +88,7 @@ Key flags:
 | `--rm` | Auto-remove after stop |
 | `-v, --volume` | Named volume mount `name:path[:ro]` |
 | `--attach` | Stream serial console and block |
+| `--raw` | With `--attach`, keep terminal control sequences in the console output |
 | `-d, --detach` | Detached mode, default `true` |
 | `--network` | Managed network name |
 | `--ip` | Static guest IP, requires `--network`; omitted, the daemon allocates one from the network's subnet |
@@ -134,9 +135,12 @@ Summary view of daemon-side VM counts and restart/health state.
 
 Print buffered serial console output.
 
-Flag:
+Flags:
 
 - `-f, --follow`: poll and stream appended output until the VM stops
+- `--raw`: print the output unfiltered. By default terminal control sequences
+  (colors, cursor movement, window titles) are removed from guest output, as
+  with `jerboa run --attach`, which also takes `--raw`
 
 When the output contains a known Nanos failure signature (`popen failure`,
 `error loading shared library`, `no space left on device`, …), an explanation

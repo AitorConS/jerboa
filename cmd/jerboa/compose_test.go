@@ -327,3 +327,19 @@ func TestImplicitComposeNetworksAreProjectScoped(t *testing.T) {
 	require.NotEqual(t, first.Services["web"].Networks, second.Services["web"].Networks)
 	require.NotContains(t, first.Networks, "default")
 }
+
+func TestResolveComposeImagesRelativeToFile(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "disk.img"), []byte("x"), 0o600))
+	f := compose.File{Services: map[string]compose.Service{
+		"bare": {Image: "disk.img"},
+		"dot":  {Image: "./sub/other.img"},
+		"ref":  {Image: "redis:latest"},
+		"abs":  {Image: "/abs/disk.img"},
+	}}
+	resolveComposeImages(&f, filepath.Join(dir, "jerboa-compose.yml"))
+	require.Equal(t, filepath.Join(dir, "disk.img"), f.Services["bare"].Image)
+	require.Equal(t, filepath.Join(dir, "sub", "other.img"), f.Services["dot"].Image)
+	require.Equal(t, "redis:latest", f.Services["ref"].Image)
+	require.Equal(t, "/abs/disk.img", f.Services["abs"].Image)
+}
