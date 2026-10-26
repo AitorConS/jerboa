@@ -130,7 +130,10 @@ jobs:
         set -euo pipefail
         mkdir -p dist/publish
         if gh release view pkg-index >/dev/null 2>&1; then
-          gh release download pkg-index --pattern packages.json --dir dist/publish
+          # Extend only an index this workflow signed: anyone who can edit
+          # release assets could otherwise have an entry signed with it.
+          gh release download pkg-index --pattern packages.json --pattern packages.json.minisig --dir dist/publish
+          bin/jerboa-verify dist/publish/packages.json
         else
           gh release create pkg-index --title "Package index" --notes "Runtime package archives and index."
         fi

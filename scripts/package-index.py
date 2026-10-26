@@ -22,11 +22,26 @@ def same_content(old, new):
     return bool(old.get("content_digest")) and old.get("content_digest") == new.get("content_digest")
 
 
+def archive_name(name, version, platform):
+    suffix = "-" + platform.replace("/", "-") if platform else ""
+    return f"{name}-{version}{suffix}.tar.gz"
+
+
+def check_urls(index, repository):
+    """Every entry must point at its own archive on this repository's index release."""
+    base = f"https://github.com/{repository}/releases/download/pkg-index/"
+    for name, versions in index["packages"].items():
+        for p in versions:
+            if p.get("url") != base + archive_name(name, p["version"], p.get("platform", "")):
+                raise SystemExit(f"Index entry {name}:{p['version']} points outside the package index")
+
+
 def main():
     source, destination = map(pathlib.Path, sys.argv[1:3])
     repository = sys.argv[3]
     index_path = destination / "packages.json"
     index = json.loads(index_path.read_text()) if index_path.exists() else {"packages": {}}
+    check_urls(index, repository)
     metadata = sorted(source.rglob("meta.json"))
     if not metadata:
         raise SystemExit("No package metadata found")
@@ -54,8 +69,7 @@ def main():
                 print(f"{name}:{version} ({platform or 'no platform'}) is already published", file=sys.stderr)
             continue
 
-        suffix = "-" + platform.replace("/", "-") if platform else ""
-        filename = f"{name}-{version}{suffix}.tar.gz"
+        filename = archive_name(name, version, platform)
         shutil.copyfile(archive, destination / filename)
         package["url"] = f"https://github.com/{repository}/releases/download/pkg-index/{filename}"
         versions.append(package)
