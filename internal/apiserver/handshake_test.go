@@ -17,6 +17,12 @@ import (
 
 func startHandshakeServer(t *testing.T, token string, timeout ...time.Duration) string {
 	t.Helper()
+	_, addr := newHandshakeServer(t, token, timeout...)
+	return addr
+}
+
+func newHandshakeServer(t *testing.T, token string, timeout ...time.Duration) (*Server, string) {
+	t.Helper()
 	srv, err := NewServer(vm.NewMockManager(), nil, "tcp://127.0.0.1:0", nil, "test", nil)
 	require.NoError(t, err)
 	srv.authFailureDelay = 0
@@ -27,7 +33,7 @@ func startHandshakeServer(t *testing.T, token string, timeout ...time.Duration) 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx) }()
 	t.Cleanup(cancel)
-	return srv.listener.Addr().String()
+	return srv, srv.listener.Addr().String()
 }
 
 func rawCall(t *testing.T, dec *json.Decoder, enc *json.Encoder, id int64, method string, params any) api.Response {
@@ -153,13 +159,18 @@ func TestHandshake_SlotsAreSharedOutPerPeer(t *testing.T) {
 }
 
 func TestHandshake_BusyDaemonSaysSo(t *testing.T) {
-	addr := startHandshakeServer(t, "s3cret-token")
+	srv, addr := newHandshakeServer(t, "s3cret-token")
 	// Hold every slot the way idle unauthenticated peers would.
 	for range maxPendingHandshake {
 		conn, err := net.Dial("tcp", addr)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = conn.Close() })
 	}
+	// Probe only once the daemon has accepted them all: a probe that arrives
+	// first takes a slot itself and authenticates.
+	require.Eventually(t, func() bool {
+		return len(srv.handshakes) == maxPendingHandshake
+	}, 5*time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		_, err := api.DialWithToken("tcp://"+addr, "s3cret-token")
 		return err != nil && strings.Contains(err.Error(), "daemon busy")
