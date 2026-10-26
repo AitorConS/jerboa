@@ -42,6 +42,8 @@ class KernelCandidateTests(unittest.TestCase):
             c.kernel()
             download.assert_not_called()
         self.record, _ = c.verify_kernel_toolset('kernel-candidate', self.spec)
+        # The selected-kernel upload, as kernel-stage produced it.
+        shutil.copytree('kernel-candidate', 'kernel-selected')
         self.boot = {'toolset': self.record, 'checks': {'qemu': 'pass', 'firecracker': 'pass'}}
         c.write_json('kernel-candidate/boot-validation.json', self.boot)
 
@@ -69,6 +71,33 @@ class KernelCandidateTests(unittest.TestCase):
         p.symlink_to(Path('outside').resolve())
         with self.assertRaisesRegex(ValueError, 'bytes changed'):
             c.verify_kernel_toolset('kernel-candidate', self.spec, True)
+
+    def test_boot_validation_may_only_add_its_report(self):
+        self.stage()
+        c.verify_selected_kernel()
+        # A toolset rewritten consistently after selection still verifies on
+        # its own, but no longer matches the selected upload.
+        for filename in ['kernel-fc.img', 'toolset.json']:
+            with self.subTest(filename=filename):
+                p = Path('kernel-candidate') / filename
+                original = p.read_bytes()
+                p.write_bytes(original + b' ')
+                with self.assertRaisesRegex(ValueError, 'differs from the selected'):
+                    c.verify_selected_kernel()
+                p.write_bytes(original)
+        # Assembly checks it before anything else.
+        Path('kernel-candidate/kernel-fc.img').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'differs from the selected'):
+            self.assemble_only()
+        Path('kernel-candidate/kernel-fc.img').unlink()
+        shutil.copyfile('kernel-selected/kernel-fc.img', 'kernel-candidate/kernel-fc.img')
+        Path('kernel-candidate/extra').write_bytes(b'x')
+        with self.assertRaisesRegex(ValueError, 'differs from the selected'):
+            c.verify_selected_kernel()
+        Path('kernel-candidate/extra').unlink()
+        Path('kernel-candidate/boot-validation.json').unlink()
+        with self.assertRaisesRegex(ValueError, 'differs from the selected'):
+            c.verify_selected_kernel()
 
     def test_provenance_must_match_candidate(self):
         self.stage()

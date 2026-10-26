@@ -260,6 +260,34 @@ def verify_kernel_toolset(directory, spec, require_boot=False):
     return record, boot
 
 
+def verify_selected_kernel(validated='kernel-candidate', selected='kernel-selected'):
+    """The boot-validated toolset must be the selected one, byte for byte.
+
+    kernel-stage selects the toolset on a GitHub-hosted runner; kernel-test
+    boots it on the self-hosted KVM runner and uploads it again with its boot
+    report. Only that report may differ: everything else is taken from the
+    selected upload, so the KVM runner cannot change what gets released."""
+    validated, selected = Path(validated), Path(selected)
+    def files(root):
+        out = {}
+        for p in sorted(root.rglob('*')):
+            if p.is_symlink() or not (p.is_file() or p.is_dir()):
+                raise ValueError('Unexpected kernel artifact entry: ' + str(p))
+            if p.is_file():
+                out[p.relative_to(root).as_posix()] = digest(p)
+        return out
+    want, got = files(selected), files(validated)
+    if not want or 'boot-validation.json' in want:
+        raise ValueError('Selected kernel toolset is incomplete')
+    report = got.pop('boot-validation.json', None)
+    if report is None or got != want:
+        raise ValueError('Boot-validated kernel differs from the selected toolset')
+
+
+def selected():
+    verify_selected_kernel()
+
+
 def kernel():
     """Stage the selected toolset once; boot validation and assembly reuse it."""
     spec = json.loads(Path('release-lock.json').read_text())
@@ -319,6 +347,7 @@ def assemble():
         key = safe_path(key); target = payload / key
         target.parent.mkdir(parents=True, exist_ok=True); shutil.copyfile(source, target)
         return {'url': BASE + '/' + key, **digest(target)}
+    verify_selected_kernel()
     kernel_record, kernel_boot = verify_kernel_toolset('kernel-candidate', spec, require_boot=True)
     components['kernel'] = {'version': spec['kernel_version'], 'files': {
         name: stage(Path('kernel-candidate') / filename, f'kernel/{spec["kernel_version"]}/{filename}')
@@ -586,6 +615,6 @@ def summary():
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','assemble','kernel','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','assemble','kernel','selected','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');a=p.parse_args()
     if a.command=='cli':cli(a)
     else:globals()[a.command]()

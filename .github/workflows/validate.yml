@@ -165,7 +165,9 @@ jobs:
       run: make build
     - name: Run integration tests
       run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
-    if: inputs.full
+    # Self-hosted KVM runner: never for pull requests from forks, whose
+    # workflow changes it would run. A maintainer pushes such a branch here.
+    if: inputs.full && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs:
     - lint
     - unit-tests
@@ -200,7 +202,9 @@ jobs:
       run: make build
     - name: Run E2E tests
       run: go test -tags e2e -count=1 -timeout 30m -v ./tests/e2e/...
-    if: inputs.full
+    # Self-hosted KVM runner: never for pull requests from forks, whose
+    # workflow changes it would run. A maintainer pushes such a branch here.
+    if: inputs.full && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs:
     - lint
     - unit-tests
@@ -244,11 +248,14 @@ jobs:
         full=os.environ["FULL"]=="true"
         optional={"kernel-build","kernel-host-tests","integration-tests","e2e-tests"} if not full else set()
         bad={k:v["result"] for k,v in jobs.items() if v["result"]!="success" and not(k in optional and v["result"]=="skipped")}
+        if bad and os.environ["FORK"]=="true":
+          print("::error::KVM tests do not run for pull requests from forks; a maintainer must push the branch to this repository")
         assert not bad,bad
         CHECK
       env:
         JOBS: ${{ toJSON(needs) }}
         FULL: ${{ inputs.full }}
+        FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
   kernel-host-tests:
     name: Kernel host tests
     runs-on: ubuntu-latest

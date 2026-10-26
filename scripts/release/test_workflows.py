@@ -1,5 +1,5 @@
 """Contract tests for release ownership without third-party YAML dependencies."""
-import hashlib,importlib.util,json,os,subprocess,sys,tempfile,unittest
+import hashlib,importlib.util,json,os,re,subprocess,sys,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 class WorkflowContracts(unittest.TestCase):
@@ -29,6 +29,29 @@ class WorkflowContracts(unittest.TestCase):
    self.assertIn('name: validated-kernel',part)
   self.assertIn('JERBOA_KERNEL_TOOLSET: kernel-candidate',text)
   self.assertNotIn('default: v0.2.0',text)
+ def test_self_hosted_jobs_never_run_fork_code(self):
+  workflows=ROOT/'.github/workflows'
+  fork="github.event.pull_request.head.repo.full_name == github.repository"
+  for path in sorted(workflows.glob('*.yml')):
+   text=path.read_text()
+   triggers=text.split('jobs:',1)[0]
+   self.assertNotIn('pull_request_target',triggers)
+   for job in re.split(r'\n  (?=[\w-]+:\n)',text.split('\njobs:\n',1)[1]):
+    if 'self-hosted' not in job:continue
+    with self.subTest(workflow=path.name,job=job.split(':',1)[0]):
+     # Jobs that pull requests can reach are gated on the kvm environment
+     # and on the pull request's branch living in this repository.
+     if 'pull_request' in triggers or 'workflow_call' in triggers:
+      self.assertIn('environment: kvm',job)
+      self.assertIn(fork,job)
+  # Release assembly takes the kernel from the GitHub-hosted selection; the
+  # KVM runner's upload may only add its boot report.
+  text=(workflows/'release.yml').read_text()
+  for job,next_job in [('build-distro','build-macos'),('assemble',None)]:
+   part=text.split('  '+job+':',1)[1]
+   if next_job:part=part.split('  '+next_job+':',1)[0]
+   self.assertIn('name: selected-kernel',part)
+  self.assertIn('candidate.py selected',text.split('  build-distro:',1)[1].split('  build-macos:',1)[0])
  def test_scope_handles_docs_and_kernel(self):
   spec=importlib.util.spec_from_file_location('scope',Path(__file__).with_name('ci-select.py'))
   scope=importlib.util.module_from_spec(spec);spec.loader.exec_module(scope)
