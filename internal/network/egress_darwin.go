@@ -194,20 +194,20 @@ func (p *nativeEgressPool) install(s *stack.Stack, gateway string, permitted fun
 		}
 		f.duplex(host, guest)
 	})
-	uf := udp.NewForwarder(s, func(r *udp.ForwarderRequest) {
+	uf := udp.NewForwarder(s, func(r *udp.ForwarderRequest) bool {
 		f := p.reserve(r.ID().RemoteAddress.String())
 		if f == nil {
-			return
+			return true
 		}
 		var wq waiter.Queue
 		ep, e := r.CreateEndpoint(&wq)
 		if e != nil {
 			f.close()
-			return
+			return true
 		}
 		guest := gonet.NewUDPConn(&wq, ep)
 		if !f.add(guest) {
-			return
+			return true
 		}
 		address := destination(r.ID())
 		go func() {
@@ -222,6 +222,7 @@ func (p *nativeEgressPool) install(s *stack.Stack, gateway string, permitted fun
 			go f.pump(host, guest, true)
 			f.pump(guest, host, true)
 		}()
+		return true
 	})
 	s.SetTransportProtocolHandler(tcp.ProtocolNumber, func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
 		if !permitted(id, false) {
