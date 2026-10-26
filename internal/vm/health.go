@@ -246,10 +246,16 @@ func probeHTTP(ctx context.Context, url string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := healthHTTPClient.Do(req)
 	if err != nil {
 		return false
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
+}
+
+// healthHTTPClient reports a redirect as the probe's answer instead of
+// following it, so a guest cannot point the daemon at another address.
+var healthHTTPClient = &http.Client{
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }

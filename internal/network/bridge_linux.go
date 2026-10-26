@@ -5,6 +5,7 @@ package network
 import (
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -43,15 +44,49 @@ func CreateBridge(cfg BridgeConfig) error {
 // EnsureBridge creates the bridge if it does not already exist, assigning the
 // gateway IP and bringing it up. Unlike CreateBridge it is idempotent, so it is
 // safe to call for a bridge shared by multiple VMs.
+//
+// Only bridges in the jerboa namespace are managed: an existing interface is
+// reused only when it is a bridge, so a guest is never attached to, and the
+// MTU never changed on, an interface the daemon does not own.
 func EnsureBridge(cfg BridgeConfig) error {
+	if err := checkManagedBridgeName(cfg.Name); err != nil {
+		return err
+	}
 	if bridgeExists(cfg.Name) {
+		if !isBridge(cfg.Name) {
+			return fmt.Errorf("interface %s exists and is not a bridge", cfg.Name)
+		}
 		// Bridges created before jumbo frames keep working: raise their MTU.
-		return setMTU(cfg.Name)
+		if err := setMTU(cfg.Name); err != nil {
+			return err
+		}
+		return GuardBridge(cfg.Name)
 	}
 	if err := CreateBridge(cfg); err != nil {
 		return err
 	}
-	return setMTU(cfg.Name)
+	if err := setMTU(cfg.Name); err != nil {
+		return err
+	}
+	return GuardBridge(cfg.Name)
+}
+
+// managedBridgePrefix is the prefix of every bridge the daemon creates
+// ("jerboa-br0" and the per-network "jerboa-br-<name>").
+const managedBridgePrefix = "jerboa-br"
+
+func checkManagedBridgeName(name string) error {
+	if !strings.HasPrefix(name, managedBridgePrefix) || len(name) > maxIfaceNameLen ||
+		strings.ContainsAny(name, "/. \t\n") {
+		return fmt.Errorf("bridge %q is not managed by jerboa", name)
+	}
+	return nil
+}
+
+// isBridge reports whether the interface is a Linux bridge.
+func isBridge(name string) bool {
+	_, err := os.Stat("/sys/class/net/" + name + "/bridge")
+	return err == nil
 }
 
 // setMTU sets netconst.BridgeMTU on a bridge or TAP.

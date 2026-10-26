@@ -95,6 +95,10 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	if cfg.Daemon.ObservabilityToken != "" {
 		obsEnv = "<key>JERBOA_OBSERVABILITY_TOKEN</key><string>" + xmlText(cfg.Daemon.ObservabilityToken) + "</string>"
 	}
+	// Opt-in guest access to the Mac's localhost and private addresses.
+	if os.Getenv("JERBOA_GUEST_HOST_ACCESS") == "1" {
+		obsEnv += "<key>JERBOA_GUEST_HOST_ACCESS</key><string>1</string>"
+	}
 
 	token := config.ResolveToken()
 	if token == "" {

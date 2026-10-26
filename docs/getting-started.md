@@ -302,6 +302,21 @@ jerboa run myapp:latest --network app -p 127.0.0.1:8080:80   # localhost only
 jerboa run myapp:latest --network app -p 8080:80             # all interfaces
 ```
 
+Ports baked into an image (`[run] ports` in `unikernel.toml`) publish on
+`127.0.0.1` unless the manifest gives a bind address; pass `-p` to publish them
+elsewhere.
+
+### Network isolation (Linux)
+
+VMs join only networks created with `jerboa network create`. On Linux the
+daemon installs nftables rules (tables `inet jerboa_guard` and
+`bridge jerboa_guard`) that keep guests away from the host's `127.0.0.1`, stop
+traffic routed between two Jerboa networks, let hosts outside reach guests only
+through published ports, and drop frames a guest sends with another guest's MAC
+or IP address. Without `nft` the daemon logs a warning and runs without them.
+IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
+are in use.
+
 **Windows / WSL2:** the daemon and the published port live inside the dedicated
 `jerboa` WSL2 distro. With WSL2's default NAT networking the port is **not**
 reachable at `localhost:<port>` on the Windows host — reach it at the distro IP

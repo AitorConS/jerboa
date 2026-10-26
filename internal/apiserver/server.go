@@ -593,38 +593,32 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	// The daemon owns each reservation until creation succeeds, rolling it back on failure.
 	assignedIP := ""
 	if p.NetworkName != "" {
+		// Only networks the daemon created can be joined. Their bridge,
+		// gateway and mask always come from the store: the daemon applies them
+		// to the host with network privileges, so a client must not be able to
+		// name another interface (eth0, docker0, a bridge of another network)
+		// or choose host routes.
 		n, nerr := s.netStore.Get(p.NetworkName)
 		if nerr != nil {
-			// Unknown (ad-hoc) network. It can only work if the client fully
-			// specified the addressing itself; without an IP the guest configures
-			// no address and the tap is never usable, so fail with the store's
-			// "not found" rather than booting a VM that can never reach the network.
-			if p.IPAddress == "" {
-				return nil, &api.RPCError{Code: -32000, Message: nerr.Error()}
-			}
-		} else {
-			if p.IPAddress == "" {
-				ip, aerr := s.netStore.AllocateIP(p.NetworkName)
-				if aerr != nil {
-					return nil, &api.RPCError{Code: -32000, Message: "allocate ip: " + aerr.Error()}
-				}
-				p.IPAddress = ip.String()
-				assignedIP = p.IPAddress
-			} else if rerr := s.netStore.ReserveIP(p.NetworkName, p.IPAddress); rerr != nil {
-				return nil, &api.RPCError{Code: -32000, Message: "reserve ip: " + rerr.Error()}
-			} else {
-				assignedIP = p.IPAddress
-			}
-			if p.GatewayIP == "" {
-				p.GatewayIP = n.Gateway
-			}
-			if p.BridgeName == "" {
-				p.BridgeName = n.Bridge
-			}
-			if p.SubnetMask == "" {
-				p.SubnetMask = maskFromCIDR(n.Subnet)
-			}
+			return nil, &api.RPCError{Code: -32000, Message: nerr.Error()}
 		}
+		if p.IPAddress == "" {
+			ip, aerr := s.netStore.AllocateIP(p.NetworkName)
+			if aerr != nil {
+				return nil, &api.RPCError{Code: -32000, Message: "allocate ip: " + aerr.Error()}
+			}
+			p.IPAddress = ip.String()
+			assignedIP = p.IPAddress
+		} else if rerr := s.netStore.ReserveIP(p.NetworkName, p.IPAddress); rerr != nil {
+			return nil, &api.RPCError{Code: -32000, Message: "reserve ip: " + rerr.Error()}
+		} else {
+			assignedIP = p.IPAddress
+		}
+		p.GatewayIP = n.Gateway
+		p.BridgeName = n.Bridge
+		p.SubnetMask = maskFromCIDR(n.Subnet)
+	} else {
+		p.GatewayIP, p.BridgeName, p.SubnetMask = "", "", ""
 	}
 
 	// Inherit defaults baked into the image manifest ([run] in unikernel.toml)
@@ -642,6 +636,14 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		// there is nothing to forward through, so leave them inert.
 		if len(portMaps) == 0 && (p.NetworkName != "" || runtime.GOOS == "darwin") && len(m.Config.Ports) > 0 {
 			if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
+				// An image's baked ports publish on localhost unless the
+				// manifest names a bind address: the image author, not the
+				// user running it, chose them.
+				for i := range specs {
+					if specs[i].BindAddr == "" {
+						specs[i].BindAddr = "127.0.0.1"
+					}
+				}
 				portMaps = portMapsFromSpec(specs)
 			}
 		}

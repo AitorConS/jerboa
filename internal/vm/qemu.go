@@ -69,6 +69,13 @@ func WithDiskDir(dir string) Option {
 	return func(m *QEMUManager) { m.diskDir = dir }
 }
 
+// WithGuestHostAccess lets guests on macOS open connections to the host's
+// loopback through their gateway and to private and link-local addresses.
+// Off by default.
+func WithGuestHostAccess(allow bool) Option {
+	return func(m *QEMUManager) { m.guestHostAccess = allow }
+}
+
 // QEMUManager implements Manager by spawning qemu-system-x86_64 processes.
 type QEMUManager struct {
 	nativeNetworkHost
@@ -80,6 +87,9 @@ type QEMUManager struct {
 	hchecker     *HealthChecker
 	metrics      MetricsSink
 	diskDir      string
+	// guestHostAccess disables the default egress policy of native guest
+	// networks (macOS); see WithGuestHostAccess.
+	guestHostAccess bool
 	// applyLimits places the hypervisor process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -98,6 +108,7 @@ func NewQEMUManager(qemuBin string, opts ...Option) *QEMUManager {
 	for _, o := range opts {
 		o(m)
 	}
+	m.initGuestEgress()
 	return m
 }
 
@@ -682,13 +693,7 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 		// tap. The bridge is intentionally left in place — it may be shared by
 		// other VMs and (for `jerboa network`-managed bridges) is owned by the
 		// network's lifecycle, not the VM's.
-		tap := v.Cfg.tapDevice()
-		if err := network.DetachTAP(tap); err != nil {
-			slog.Debug("qemu monitor: detach tap", "vm_id", v.ID, "err", err)
-		}
-		if err := network.DeleteTAPDevice(tap); err != nil {
-			slog.Debug("qemu monitor: delete tap", "vm_id", v.ID, "err", err)
-		}
+		teardownTAPNetwork(v.Cfg, v.ID, "qemu monitor")
 	}
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("monitor: transition to stopped", "vm_id", v.ID, "err", err)

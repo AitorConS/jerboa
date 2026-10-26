@@ -15,3 +15,7 @@ func CreateTAPDevice(string) error    { return unsupportedBridge() }
 func DeleteTAPDevice(string) error    { return unsupportedBridge() }
 func AttachTAP(string, string) error  { return unsupportedBridge() }
 func DetachTAP(string) error          { return unsupportedBridge() }
+func InstallGuard(string) error       { return unsupportedBridge() }
+func GuardBridge(string) error        { return unsupportedBridge() }
+func GuardTap(_, _, _ string) error   { return unsupportedBridge() }
+func UnguardTap(_, _, _ string)       {}

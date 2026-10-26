@@ -548,7 +548,9 @@ func TestServer_Inspect(t *testing.T) {
 func TestServer_DNSResolveAndList(t *testing.T) {
 	client, _ := startTestServer(t)
 
-	_, err := client.Run(context.Background(), api.RunParams{
+	_, err := client.NetworkCreate(context.Background(), "app", "10.100.1.0/24", "bridge")
+	require.NoError(t, err)
+	_, err = client.Run(context.Background(), api.RunParams{
 		ImagePath:   "test.img",
 		Memory:      "256M",
 		Name:        "frontend",

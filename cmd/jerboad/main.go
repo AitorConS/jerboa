@@ -305,7 +305,10 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors), vm.WithFCDiskDir(vmDiskDir), vm.WithFCTrustedImages(trusted))
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, fcOpts...)
 	case "qemu":
-		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir), vm.WithTrustedImages(trusted))
+		// JERBOA_GUEST_HOST_ACCESS=1 restores guest access to the host's
+		// loopback and private addresses on macOS.
+		hostAccess := os.Getenv("JERBOA_GUEST_HOST_ACCESS") == "1"
+		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir), vm.WithTrustedImages(trusted), vm.WithGuestHostAccess(hostAccess))
 	default:
 		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
 	}
@@ -503,6 +506,11 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		// assigned" never disables name resolution.
 		if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
 			slog.Warn("jerboad: guest dns address setup failed", "err", err)
+		}
+		// Isolate guest networks from the host's loopback, from each other
+		// and from address spoofing between guests.
+		if err := network.InstallGuard(netconst.DNSAnycastIP); err != nil {
+			slog.Warn("jerboad: guest network guard not installed; guests are not isolated from each other", "err", err)
 		}
 		// Upstream resolver for names the daemon does not own. Overridable so
 		// restricted/offline environments can point at their own resolver (or set

@@ -509,7 +509,28 @@ func setupTAPNetwork(cfg Config) error {
 	if err := network.EnsureBridge(network.BridgeConfig{Name: bridgeName, CIDR: cfg.GatewayIP + "/" + mask}); err != nil {
 		return err
 	}
+	if cfg.IPAddress != "" {
+		// Bind the tap to the guest's MAC and IP before the guest can send.
+		if err := network.GuardTap(cfg.tapDevice(), guestMACFromIP(cfg.IPAddress), cfg.IPAddress); err != nil {
+			return err
+		}
+	}
 	return network.AttachTAP(cfg.tapDevice(), bridgeName)
+}
+
+// teardownTAPNetwork undoes setupTAPNetwork for one VM. The bridge is left in
+// place: it may be shared by other VMs and belongs to the network.
+func teardownTAPNetwork(cfg Config, vmID, who string) {
+	tap := cfg.tapDevice()
+	if err := network.DetachTAP(tap); err != nil {
+		slog.Debug(who+": detach tap", "vm_id", vmID, "err", err)
+	}
+	if err := network.DeleteTAPDevice(tap); err != nil {
+		slog.Debug(who+": delete tap", "vm_id", vmID, "err", err)
+	}
+	if cfg.IPAddress != "" {
+		network.UnguardTap(tap, guestMACFromIP(cfg.IPAddress), cfg.IPAddress)
+	}
 }
 
 // Preserve supervisor failures even after the guest has emitted normal output.
@@ -555,13 +576,7 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 		fwd.Close()
 	}
 	if v.Cfg.NetworkName != "" {
-		tap := v.Cfg.tapDevice()
-		if err := network.DetachTAP(tap); err != nil {
-			slog.Debug("firecracker monitor: detach tap", "vm_id", v.ID, "err", err)
-		}
-		if err := network.DeleteTAPDevice(tap); err != nil {
-			slog.Debug("firecracker monitor: delete tap", "vm_id", v.ID, "err", err)
-		}
+		teardownTAPNetwork(v.Cfg, v.ID, "firecracker monitor")
 	}
 
 	// If the VM died with no serial output (e.g. Firecracker couldn't start the

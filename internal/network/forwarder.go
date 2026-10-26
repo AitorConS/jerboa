@@ -47,6 +47,10 @@ type Forwarder struct {
 // dialTimeout bounds how long a proxied connection waits to reach the guest.
 const dialTimeout = 10 * time.Second
 
+// maxProxyConns bounds the connections one forwarder proxies at a time;
+// further clients are closed until a slot frees up.
+const maxProxyConns = 4096
+
 // StartForwarder opens a TCP listener for each TCP port map and proxies accepted
 // connections to guestIP. UDP maps are not yet supported and are skipped with a
 // warning. The returned Forwarder must be closed when the VM stops.
@@ -141,6 +145,11 @@ func (f *Forwarder) serve(ln net.Listener, target string) {
 		}
 		if f.connections == nil {
 			f.connections = make(map[net.Conn]struct{})
+		}
+		if len(f.connections) >= maxProxyConns {
+			f.mu.Unlock()
+			_ = client.Close()
+			continue
 		}
 		f.connections[client] = struct{}{}
 		f.wg.Add(1)
