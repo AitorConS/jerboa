@@ -20,7 +20,9 @@ import (
 	"github.com/AitorConS/jerboa/internal/network"
 )
 
-var defaultCommandFunc CommandFunc = exec.CommandContext
+// defaultCommandFunc starts VMMs; on Linux it drops the daemon's ambient
+// capabilities first (see VMMExecArg).
+var defaultCommandFunc CommandFunc = vmmCommand
 
 const gracePeriod = 30 * time.Second
 

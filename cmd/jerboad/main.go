@@ -42,6 +42,12 @@ import (
 var version = "dev"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == vm.VMMExecArg {
+		// Re-executed to launch a VMM without the daemon's capabilities.
+		err := vm.ExecVMM(os.Args[2:])
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(127)
+	}
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
