@@ -117,4 +117,15 @@ class WorkflowContracts(unittest.TestCase):
      r=subprocess.run([sys.executable,str(script),src,dst,'o/r'],capture_output=True,text=True)
      self.assertEqual(r.returncode==0,ok,r.stderr)
      if not ok:self.assertIn('points outside the package index',r.stderr)
+ def test_distro_inputs_are_pinned(self):
+  # The WSL rootfs is signed into releases: its base image and Firecracker
+  # are pinned and checked, Firecracker to the same digest install.sh uses.
+  text=(ROOT/'distro/Dockerfile').read_text()
+  self.assertRegex(text,r'(?m)^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$')
+  version=re.search(r'ARG FIRECRACKER_VERSION=(\S+)',text).group(1)
+  arch=re.search(r'ARG FC_ARCH=(\S+)',text).group(1)
+  digest=re.search(r'ARG FIRECRACKER_SHA256=([0-9a-f]{64})',text).group(1)
+  self.assertIn(f'{version}-{arch}) fc_digest={digest} ;;',(ROOT/'scripts/install.sh').read_text())
+  self.assertIn('"${FIRECRACKER_SHA256}  /tmp/fc.tgz" | sha256sum -c -',text)
+  self.assertLess(text.index('sha256sum -c'),text.index('tar -xzf /tmp/fc.tgz'))
 if __name__=='__main__':unittest.main()
