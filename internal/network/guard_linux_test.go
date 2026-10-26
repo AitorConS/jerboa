@@ -3,6 +3,8 @@
 package network
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -51,5 +53,45 @@ func TestGuardRulesetMentionsDNS(t *testing.T) {
 	r := guardRuleset("10.53.0.53")
 	if strings.Count(r, "10.53.0.53") != 3 {
 		t.Fatalf("dns address not used in input chain: %s", r)
+	}
+}
+
+func TestGuardRulesetDropsSpoofedLoopbackAndNonIPv4Frames(t *testing.T) {
+	r := guardRuleset("10.53.0.53")
+	// Loopback destinations only come in on lo: not from a guest's bridge
+	// and not from another host.
+	if !strings.Contains(r, "type filter hook prerouting priority raw; policy accept;\n\t\tiifname != \"lo\" ip daddr 127.0.0.0/8 drop") {
+		t.Fatalf("loopback guard missing: %s", r)
+	}
+	// Guarded taps send only IPv4 and ARP, after the MAC check.
+	mac := strings.Index(r, "iifname . ether saddr != @tap_mac drop")
+	types := strings.Index(r, "ether type != { ip, arp } drop")
+	if mac < 0 || types < mac {
+		t.Fatalf("ether type filter missing or before the MAC check: %s", r)
+	}
+}
+
+func TestDisableIPv6(t *testing.T) {
+	dir := t.TempDir()
+	prev := ipv6ConfDir
+	ipv6ConfDir = dir
+	t.Cleanup(func() { ipv6ConfDir = prev })
+
+	// A kernel without IPv6 has nothing to change.
+	if err := disableIPv6("jerboa-br-x"); err != nil {
+		t.Fatal(err)
+	}
+	conf := filepath.Join(dir, "jerboa-br-x")
+	if err := os.MkdirAll(conf, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := disableIPv6("jerboa-br-x"); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"accept_ra": "0", "disable_ipv6": "1"} {
+		got, err := os.ReadFile(filepath.Join(conf, name))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s = %q, %v; want %q", name, got, err, want)
+		}
 	}
 }

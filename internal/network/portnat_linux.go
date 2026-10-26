@@ -29,7 +29,9 @@ import (
 // cannot override. With --port-publish nat-lan the prerouting hook translates
 // them too, and two rules in the iptables filter table accept the forwarded
 // connections, as Docker does for its own ports (+37 % Redis requests from a
-// LAN client). Those connections then skip the host's INPUT rules.
+// LAN client). Those connections then skip the host's INPUT rules. Ports
+// published on a loopback address stay local: a packet from another host
+// addressed to 127.0.0.0/8 is never translated.
 const natTable = "jerboa"
 
 // natRuleset returns the table, with the prerouting chain for clients on
@@ -43,6 +45,7 @@ func natRuleset(lan bool) string {
 	chain prerouting {
 		type nat hook prerouting priority dstnat; policy accept;
 		iifname "jerboa-br*" return
+		ip daddr 127.0.0.0/8 return
 		fib daddr type local dnat ip to meta l4proto . th dport map @pub_any
 		dnat ip to ip daddr . meta l4proto . th dport map @pub_addr
 	}`

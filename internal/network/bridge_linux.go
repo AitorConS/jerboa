@@ -3,10 +3,12 @@
 package network
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -63,6 +65,9 @@ func EnsureBridge(cfg BridgeConfig) error {
 		if err := setMTU(cfg.Name); err != nil {
 			return err
 		}
+		if err := disableIPv6(cfg.Name); err != nil {
+			return err
+		}
 		return GuardBridge(cfg.Name)
 	}
 	if err := CreateBridge(cfg); err != nil {
@@ -71,7 +76,29 @@ func EnsureBridge(cfg BridgeConfig) error {
 	if err := setMTU(cfg.Name); err != nil {
 		return err
 	}
+	if err := disableIPv6(cfg.Name); err != nil {
+		return err
+	}
 	return GuardBridge(cfg.Name)
+}
+
+// ipv6ConfDir is where the kernel exposes per-interface IPv6 settings.
+var ipv6ConfDir = "/proc/sys/net/ipv6/conf"
+
+// disableIPv6 turns IPv6 off on a bridge. Guests are IPv4 only, and with IPv6
+// on, the host would accept router advertisements a guest sends and route
+// through it. A kernel without IPv6 has no setting to change.
+func disableIPv6(bridge string) error {
+	dir := filepath.Join(ipv6ConfDir, bridge)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	for _, kv := range [][2]string{{"accept_ra", "0"}, {"disable_ipv6", "1"}} {
+		if err := os.WriteFile(filepath.Join(dir, kv[0]), []byte(kv[1]), 0o644); err != nil { //nolint:gosec // sysctl file
+			return fmt.Errorf("ipv6 %s on %s: %w", kv[0], bridge, err)
+		}
+	}
+	return nil
 }
 
 // checkBridgeCIDR applies the subnet rules of Store.Create again before an

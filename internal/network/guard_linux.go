@@ -16,12 +16,15 @@ import (
 // Guard rules for guest networks, in nftables tables owned by jerboad and
 // independent of the NAT table and of other firewall rules:
 //
-//   - guests cannot reach the host's loopback through their bridge (the
-//     bridges have route_localnet set for kernel port publishing);
+//   - nothing reaches the host's loopback addresses from outside the host:
+//     the bridges have route_localnet set for kernel port publishing, and a
+//     packet to 127.0.0.0/8 that arrives on another interface is spoofed;
 //   - the guest DNS address answers only on loopback and jerboa bridges;
 //   - traffic is not routed between two jerboa networks, and hosts outside
 //     only reach guests through published ports or replies;
-//   - a guest can only send frames with its own MAC and IPv4 address.
+//   - a guest can only send IPv4 and ARP frames, with its own MAC and IPv4
+//     address: IPv6 (router advertisements included) and VLAN-tagged frames
+//     are dropped, as on macOS.
 //
 // Installing the guard is best-effort: without nft the daemon logs a warning
 // and runs without it. IPv4 forwarding stays enabled host-wide, as routing
@@ -38,7 +41,7 @@ func guardRuleset(dnsIP string) string {
 	return `table inet ` + guardTable + ` {
 	chain prerouting {
 		type filter hook prerouting priority raw; policy accept;
-		iifname "jerboa-br*" ip daddr 127.0.0.0/8 drop
+		iifname != "lo" ip daddr 127.0.0.0/8 drop
 	}
 	chain input {
 		type filter hook input priority filter; policy accept;
@@ -67,6 +70,7 @@ table bridge ` + guardTable + ` {
 		type filter hook prerouting priority filter; policy accept;
 		iifname != @taps return
 		iifname . ether saddr != @tap_mac drop
+		ether type != { ip, arp } drop
 		ether type ip iifname . ip saddr != @tap_ip drop
 		ether type arp iifname . arp saddr ip != @tap_ip drop
 	}

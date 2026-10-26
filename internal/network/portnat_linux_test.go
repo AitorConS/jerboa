@@ -37,7 +37,8 @@ func TestNATRulesetLAN(t *testing.T) {
 	lan := natRuleset(true)
 	require.Contains(t, lan, "type nat hook prerouting priority dstnat;")
 	// Guests keep using the proxy, and only local destinations are translated.
-	require.Contains(t, lan, "iifname \"jerboa-br*\" return\n\t\tfib daddr type local dnat ip to meta l4proto . th dport map @pub_any")
+	// Loopback binds are never translated for clients on other hosts.
+	require.Contains(t, lan, "iifname \"jerboa-br*\" return\n\t\tip daddr 127.0.0.0/8 return\n\t\tfib daddr type local dnat ip to meta l4proto . th dport map @pub_any")
 	require.Contains(t, lan, "dnat ip to ip daddr . meta l4proto . th dport map @pub_addr")
 	require.Contains(t, lan, "hook output")
 }
