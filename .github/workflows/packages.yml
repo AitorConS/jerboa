@@ -55,6 +55,10 @@ jobs:
       with:
         go-version: 1.27.3
         cache: false
+    # The checkout belongs to the runner's user, not the container's root, so
+    # git refuses it as unsafe and go build cannot stamp the commit.
+    - name: Trust the checkout
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
     - name: Build CLI binaries
       run: make build
     - name: Fetch and verify source
