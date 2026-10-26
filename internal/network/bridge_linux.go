@@ -52,6 +52,9 @@ func EnsureBridge(cfg BridgeConfig) error {
 	if err := checkManagedBridgeName(cfg.Name); err != nil {
 		return err
 	}
+	if err := checkBridgeCIDR(cfg.CIDR); err != nil {
+		return fmt.Errorf("bridge %s: %w", cfg.Name, err)
+	}
 	if bridgeExists(cfg.Name) {
 		if !isBridge(cfg.Name) {
 			return fmt.Errorf("interface %s exists and is not a bridge", cfg.Name)
@@ -69,6 +72,23 @@ func EnsureBridge(cfg BridgeConfig) error {
 		return err
 	}
 	return GuardBridge(cfg.Name)
+}
+
+// checkBridgeCIDR applies the subnet rules of Store.Create again before an
+// address is put on the host, so a network stored by an older version cannot
+// claim a host route either: the gateway must be the subnet's first address.
+func checkBridgeCIDR(cidr string) error {
+	ip, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return fmt.Errorf("parse %q: %w", cidr, err)
+	}
+	if err := checkSubnet(ipNet); err != nil {
+		return fmt.Errorf("subnet %s %w", ipNet, err)
+	}
+	if !ip.Equal(firstHost(ipNet)) {
+		return fmt.Errorf("gateway %s is not the first address of %s", ip, ipNet)
+	}
+	return nil
 }
 
 // managedBridgePrefix is the prefix of every bridge the daemon creates
