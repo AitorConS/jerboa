@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
@@ -322,6 +323,46 @@ func TestOpsStore_Download_SHA256Mismatch(t *testing.T) {
 	require.ErrorIs(t, err, ErrChecksumMismatch)
 
 	require.False(t, store.IsDownloaded("eyberg", "badpkg", "1.0.0"))
+}
+
+func TestOpsStore_Download_RequiresSHA256(t *testing.T) {
+	var requests int
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("fake package content"))
+	}))
+	t.Cleanup(ts.Close)
+	origURL := OpsPackageBaseURL
+	OpsPackageBaseURL = ts.URL
+	t.Cleanup(func() { OpsPackageBaseURL = origURL })
+
+	store, err := NewOpsStore(t.TempDir())
+	require.NoError(t, err)
+	for _, sum := range []string{"", "abc", strings.Repeat("z", 64)} {
+		err := store.Download("eyberg", "nosum", "1.0.0", sum)
+		require.ErrorIs(t, err, ErrChecksumMissing, "sha256 %q", sum)
+	}
+	require.Zero(t, requests, "nothing is downloaded without a digest to check")
+	require.False(t, store.IsDownloaded("eyberg", "nosum", "1.0.0"))
+}
+
+func TestFetchOpsManifest_TooLarge(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"Packages":[`))
+		chunk := bytes.Repeat([]byte(" "), 1<<20)
+		for i := 0; i <= maxIndexSize>>20; i++ {
+			if _, err := w.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(ts.Close)
+	origURL := OpsPackageManifestURL
+	OpsPackageManifestURL = ts.URL + "/manifest.json"
+	t.Cleanup(func() { OpsPackageManifestURL = origURL })
+
+	_, err := FetchOpsManifest()
+	require.ErrorContains(t, err, "larger than")
 }
 
 func TestOpsStore_Download_AlreadyDownloaded(t *testing.T) {

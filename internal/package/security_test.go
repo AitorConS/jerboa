@@ -353,3 +353,85 @@ func TestStore_Extract_RejectsLinks(t *testing.T) {
 		})
 	}
 }
+
+// TestExtract_SymlinkClimbingThroughALink covers a link name that stays inside
+// the package once cleaned but climbs out on disk: an earlier entry plants
+// "s -> .", so each "s/" stays in place while each ".." really climbs.
+func TestExtract_SymlinkClimbingThroughALink(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewOpsStore(root)
+	require.NoError(t, err)
+	dir := store.PackageDir("evil", "pkg", "1.0")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+
+	secret := filepath.Join(t.TempDir(), "id_rsa")
+	require.NoError(t, os.WriteFile(secret, []byte("host secret"), 0o600))
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, d := range []string{"pkg/", "pkg/sysroot/", "pkg/sysroot/etc/", "pkg/sysroot/test/"} {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: d, Typeflag: tar.TypeDir, Mode: 0o755}))
+	}
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "pkg/sysroot/test/s", Typeflag: tar.TypeSymlink, Linkname: ".", Mode: 0o777}))
+	link := "../test/" + strings.Repeat("s/", 20) + strings.Repeat("../", 20) + strings.TrimPrefix(secret, "/")
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "pkg/sysroot/etc/leak", Typeflag: tar.TypeSymlink, Linkname: link, Mode: 0o777}))
+	require.NoError(t, tw.Close())
+	require.NoError(t, gz.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ArchSlug()+".tar.gz"), buf.Bytes(), 0o644))
+	require.NoError(t, store.Extract("evil", "pkg", "1.0"))
+
+	files, err := store.ExtractedFiles("evil", "pkg", "1.0")
+	require.NoError(t, err)
+	for _, f := range files {
+		if f.IsDir {
+			continue
+		}
+		data, err := os.ReadFile(f.HostPath)
+		require.NoError(t, err)
+		require.NotContains(t, string(data), "host secret", f.GuestPath)
+	}
+}
+
+// TestExtractedFiles_SkipsEscapingSymlinks covers the last layer: whatever
+// extraction let through, a link on disk is listed only by what it resolves
+// to, and only when that is a regular file inside the package.
+func TestExtractedFiles_SkipsEscapingSymlinks(t *testing.T) {
+	store, err := NewOpsStore(t.TempDir())
+	require.NoError(t, err)
+	dir := store.PackageDir("evil", "pkg", "1.0")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "sysroot", "lib"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "sysroot", "lib", "libz.so.1.3"), []byte("lib"), 0o644))
+	secret := filepath.Join(t.TempDir(), "id_rsa")
+	require.NoError(t, os.WriteFile(secret, []byte("host secret"), 0o600))
+	if err := os.Symlink(secret, filepath.Join(dir, "sysroot", "lib", "leak")); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	require.NoError(t, os.Symlink("libz.so.1.3", filepath.Join(dir, "sysroot", "lib", "libz.so.1")))
+
+	files, err := store.ExtractedFiles("evil", "pkg", "1.0")
+	require.NoError(t, err)
+	got := map[string]string{}
+	for _, f := range files {
+		got[f.GuestPath] = f.HostPath
+	}
+	require.NotContains(t, got, "lib/leak")
+	require.Contains(t, got, "lib/libz.so.1")
+	data, err := os.ReadFile(got["lib/libz.so.1"])
+	require.NoError(t, err)
+	require.Equal(t, "lib", string(data))
+}
+
+func TestPhysicallyWithin(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "sysroot", "lib")
+	require.NoError(t, os.MkdirAll(base, 0o755))
+	if err := os.Symlink(".", filepath.Join(base, "s")); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	require.True(t, physicallyWithin(dir, base, "libc.so.6"))
+	require.True(t, physicallyWithin(dir, base, "../share/x"))
+	require.True(t, physicallyWithin(dir, base, "s/libc.so.6"))
+	require.False(t, physicallyWithin(dir, base, "s/../x"), "a .. after a link climbs from the link's target")
+	require.False(t, physicallyWithin(dir, base, "../../../x"))
+}
