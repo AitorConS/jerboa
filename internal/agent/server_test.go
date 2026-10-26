@@ -53,7 +53,7 @@ func startAgentRPCStub(t *testing.T, refCh chan<- string) string {
 					case "Auth.Challenge":
 						resp.Result = json.RawMessage(`{"nonce":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
 					case "Auth.Hello":
-						resp.Result = json.RawMessage(`{"status":"ok"}`)
+						resp.Result = helloOK("daemon-token", req.Params)
 					case "Image.Get":
 						var p struct {
 							Ref string `json:"ref"`

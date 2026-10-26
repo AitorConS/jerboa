@@ -66,12 +66,14 @@ func DialWithToken(endpoint, token string) (*Client, error) {
 	return c, nil
 }
 
-// sendAuth authenticates a connection: it asks the daemon for a challenge
-// and answers it with an HMAC of the token, so the token itself is never sent
-// (a process squatting the daemon's port, or anyone reading the connection,
-// learns nothing reusable). The Auth.Hello carries this build's wire protocol
-// version so the daemon can reject a mismatch, and the reply's proto catches
-// the reverse case (a newer client talking to an older daemon).
+// sendAuth authenticates a connection both ways: it asks the daemon for a
+// challenge and answers it with an HMAC of the token, so the token itself is
+// never sent, and it requires the daemon to answer the client's own nonce the
+// same way before any request goes out. A process squatting the daemon's port,
+// or anyone reading the connection, learns nothing reusable and receives no
+// request. The Auth.Hello carries this build's wire protocol version so the
+// daemon can reject a mismatch, and the reply's proto catches the reverse case
+// (a newer client talking to an older daemon).
 func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
 	var challenge ChallengeResult
 	if err := authCall(enc, dec, 1, "Auth.Challenge", struct{}{}, &challenge); err != nil {
@@ -80,9 +82,17 @@ func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
 	if len(challenge.Nonce) < 16 {
 		return fmt.Errorf("authentication failed: daemon sent an invalid challenge")
 	}
+	clientNonce := NewAuthNonce()
 	var hello HelloResult
-	if err := authCall(enc, dec, 2, "Auth.Hello", AuthParams{Proof: AuthProof(token, challenge.Nonce), Proto: ProtoVersion}, &hello); err != nil {
+	params := AuthParams{Proof: AuthProof(token, challenge.Nonce), Proto: ProtoVersion, ClientNonce: clientNonce}
+	if err := authCall(enc, dec, 2, "Auth.Hello", params, &hello); err != nil {
 		return err
+	}
+	if !CheckServerAuthProof(token, challenge.Nonce, clientNonce, hello.ServerProof) {
+		if hello.ServerProof == "" {
+			return errors.New("authentication failed: the daemon did not prove it holds the token (update jerboad to this version)")
+		}
+		return errors.New("authentication failed: the daemon's proof does not match this token; the endpoint may not be jerboad")
 	}
 	// A daemon that advertises a proto version must match ours. A zero/absent
 	// proto is a daemon that predates negotiation — leave it to the caller.

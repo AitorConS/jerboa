@@ -323,7 +323,7 @@ func (s *Server) handshake(conn net.Conn, budget *budgetReader, dec *json.Decode
 				api.ProtoVersion, proto)}})
 			return false
 		}
-		_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: helloResult()})
+		_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: helloResult(s.serverProof(req.Params, nonce))})
 		return true
 	}
 }
@@ -353,10 +353,22 @@ func helloProto(params json.RawMessage) int {
 	return p.Proto
 }
 
+// serverProof answers an authenticated client's nonce, proving the daemon
+// holds the token too. It is empty for a client that sent none, or that
+// authenticated without a challenge.
+func (s *Server) serverProof(params json.RawMessage, nonce []byte) string {
+	var p api.AuthParams
+	if nonce == nil || json.Unmarshal(params, &p) != nil || len(p.ClientNonce) < 16 || len(p.ClientNonce) > 64 {
+		return ""
+	}
+	return api.ServerAuthProof(s.authToken, nonce, p.ClientNonce)
+}
+
 // helloResult is the Auth.Hello acknowledgement, carrying the daemon's wire
-// protocol version so the client can detect an incompatible (older) daemon.
-func helloResult() json.RawMessage {
-	raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: api.ProtoVersion})
+// protocol version so the client can detect an incompatible (older) daemon,
+// and the daemon's proof of the token when the client asked for one.
+func helloResult(serverProof string) json.RawMessage {
+	raw, _ := json.Marshal(api.HelloResult{Status: "ok", Proto: api.ProtoVersion, ServerProof: serverProof})
 	return raw
 }
 
