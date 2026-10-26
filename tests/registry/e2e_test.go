@@ -36,6 +36,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -54,9 +55,10 @@ import (
 // share; the Worker's local client id is "local-development".
 const e2eClientSecret = "e2e-client-secret"
 
-// fakeGitHub serves the device flow and the REST calls the Worker makes. The
-// device flow always approves alice, an admin of the acme organization; bob
-// is a plain member of it. gh-other is a token another OAuth App holds.
+// fakeGitHub serves the device flow, whether the client or the Worker runs it,
+// and the REST calls the Worker makes. The device flow answers pending once,
+// then approves alice, an admin of the acme organization; bob is a plain
+// member of it. gh-other is a token another OAuth App holds.
 func fakeGitHub(t *testing.T) *httptest.Server {
 	t.Helper()
 	type membership struct {
@@ -72,14 +74,28 @@ func fakeGitHub(t *testing.T) *httptest.Server {
 		"gh-alice": {1, "alice", []membership{{100, "acme", "admin"}}},
 		"gh-bob":   {2, "bob", []membership{{100, "acme", "member"}}},
 	}
+	var polls atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/login/device/code":
-			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "dev", "user_code": "E2E-CODE",
-				"verification_uri": "https://github.test/login/device", "expires_in": 60, "interval": 1})
-			return
-		case "/login/oauth/access_token":
+		case "/login/device/code", "/login/oauth/access_token":
+			if err := r.ParseForm(); err != nil || r.Method != http.MethodPost || r.Form.Get("client_id") != "local-development" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			if r.URL.Path == "/login/device/code" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "dev", "user_code": "E2E-CODE",
+					"verification_uri": "https://github.test/login/device", "expires_in": 60, "interval": 1})
+				return
+			}
+			if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:device_code" || r.Form.Get("device_code") != "dev" {
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "incorrect_device_code"})
+				return
+			}
+			if polls.Add(1) == 1 {
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "authorization_pending"})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "gh-alice"})
 			return
 		case "/applications/local-development/token":
@@ -161,6 +177,7 @@ func startWorker(t *testing.T, github string) string {
 	dev := exec.CommandContext(ctx, "pnpm", "exec", "wrangler", "dev", "--local", "--ip", "127.0.0.1",
 		"--port", fmt.Sprint(port), "--persist-to", state, "--show-interactive-dev-session=false",
 		"--var", "GITHUB_API:"+github,
+		"--var", "GITHUB_WEB:"+github,
 		"--var", "CDN_BASE:"+base+"/cdn",
 		"--var", "JWT_SIGNING_KEY:e2e-signing-key-that-is-long-enough-0123456789",
 		"--var", "GITHUB_CLIENT_SECRET:"+e2eClientSecret,
@@ -262,16 +279,11 @@ func TestWorkerEndToEnd(t *testing.T) {
 	host := startWorker(t, gh.URL)
 	cl := client.New(host)
 
-	// jerboa login: device flow, then the registry's refresh token.
+	// jerboa login: the device flow, run by the Worker if it offers to, then
+	// the registry's refresh token.
 	d, err := cl.Discover(ctx)
 	require.NoError(t, err)
-	flow := client.DeviceFlow{GitHub: gh.URL}
-	code, err := flow.Start(ctx, d.GitHubClientID)
-	require.NoError(t, err)
-	ghToken, err := flow.Wait(ctx, d.GitHubClientID, code)
-	require.NoError(t, err)
-	refresh, login, err := cl.LoginWithGitHub(ctx, ghToken)
-	require.NoError(t, err)
+	refresh, login := loginWithGitHub(t, ctx, cl, d, gh.URL)
 	require.Equal(t, "alice", login)
 
 	// CI uses a personal access token; alice may push for her organization.
@@ -298,9 +310,14 @@ func TestWorkerEndToEnd(t *testing.T) {
 	_, err = cl.PushToken(ctx, pat, "acme", "web")
 	require.True(t, client.IsCode(err, "UNAUTHORIZED"), "got %v", err)
 
-	// A GitHub token issued to another app does not sign in.
+	// A GitHub token issued to another app does not sign in; a Worker that
+	// runs the flow itself takes no GitHub token at all.
 	_, _, err = cl.LoginWithGitHub(ctx, "gh-other")
-	require.True(t, client.IsStatus(err, http.StatusUnauthorized), "got %v", err)
+	want := http.StatusUnauthorized
+	if d.Login == client.LoginDevice {
+		want = http.StatusGone
+	}
+	require.True(t, client.IsStatus(err, want), "got %v", err)
 
 	other, err := cl.PushToken(ctx, refresh, "alice", "other")
 	require.NoError(t, err)
@@ -309,6 +326,28 @@ func TestWorkerEndToEnd(t *testing.T) {
 	_, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: other, Ref: refOf(t, cl, "acme/web:v3"), Store: store, Recipe: v,
 		Mkfs: func(context.Context, string) (string, error) { return mkfs, nil }})
 	require.True(t, client.IsCode(err, "DENIED"), "got %v", err)
+}
+
+// loginWithGitHub logs in as alice through whichever flow the Worker offers,
+// and returns the refresh token and login.
+func loginWithGitHub(t *testing.T, ctx context.Context, cl *client.Client, d client.Discovery, github string) (string, string) {
+	t.Helper()
+	if d.Login == client.LoginDevice {
+		l, err := cl.StartLogin(ctx)
+		require.NoError(t, err)
+		require.Equal(t, "E2E-CODE", l.UserCode)
+		refresh, login, err := cl.WaitLogin(ctx, l)
+		require.NoError(t, err)
+		return refresh, login
+	}
+	flow := client.DeviceFlow{GitHub: github}
+	code, err := flow.Start(ctx, d.GitHubClientID)
+	require.NoError(t, err)
+	ghToken, err := flow.Wait(ctx, d.GitHubClientID, code)
+	require.NoError(t, err)
+	refresh, login, err := cl.LoginWithGitHub(ctx, ghToken)
+	require.NoError(t, err)
+	return refresh, login
 }
 
 func fakeMkfsPath(t *testing.T) string {

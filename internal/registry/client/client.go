@@ -49,6 +49,8 @@ type Client struct {
 	// HTTP performs requests; nil means a client suited to large bodies.
 	HTTP      *http.Client
 	UserAgent string
+	// sleep waits between login polls; replaced in tests.
+	sleep func(context.Context, time.Duration) error
 }
 
 // New returns a client for a registry host. Loopback hosts use plain HTTP,
@@ -72,10 +74,18 @@ func (c *Client) http() *http.Client {
 	return httpclient.Streaming
 }
 
+// LoginDevice is Discovery.Login of a registry that runs GitHub's device flow
+// itself (StartLogin, WaitLogin).
+const LoginDevice = "device"
+
 // Discovery is the registry's self-description.
 type Discovery struct {
-	API            int    `json:"api"`
-	CDN            string `json:"cdn"`
+	API int    `json:"api"`
+	CDN string `json:"cdn"`
+	// Login is LoginDevice when the registry runs the GitHub sign-in itself.
+	Login string `json:"login"`
+	// GitHubClientID is the GitHub app older registries have clients run the
+	// device flow with, then exchange the token (LoginWithGitHub).
 	GitHubClientID string `json:"github_client_id"`
 }
 
@@ -95,7 +105,8 @@ func (c *Client) Discover(ctx context.Context) (Discovery, error) {
 	return d, nil
 }
 
-// LoginWithGitHub exchanges a GitHub token for a registry refresh token.
+// LoginWithGitHub exchanges a GitHub token for a registry refresh token, on
+// registries that do not run the sign-in themselves.
 func (c *Client) LoginWithGitHub(ctx context.Context, githubToken string) (token, login string, err error) {
 	var out struct {
 		Token string `json:"token"`

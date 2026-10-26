@@ -28,8 +28,12 @@ A pull reads only from the CDN. `GET https://registry.jerboa.dev/v2/`
 returns the discovery document (cacheable for 5 minutes):
 
 ```json
-{"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "github_client_id": "Iv1.0123456789abcdef"}
+{"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "login": "device"}
 ```
+
+`"login": "device"` means the registry runs the GitHub sign-in itself (see
+[Login](#login-jerboa-login)). Older registries advertise
+`"github_client_id"` instead.
 
 ## Names
 
@@ -93,12 +97,20 @@ provider.
 
 ### Login (`jerboa login`)
 
-1. The client runs the [GitHub device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow) with `github_client_id` from discovery and the `read:org` scope. The user approves in a browser.
-   - A registry accepts any GitHub token issued to its app. So the client refuses to log in to another registry that advertises the default registry's `github_client_id`, and refuses when it cannot check. Such a registry can still be used with `--token`.
-2. `POST /auth/github` with `{"access_token": "<github token>"}`.
-   - The registry reads the user and their organizations from GitHub and does not keep the GitHub token.
-   - It answers `{"token": "jrt_…", "login": "aitorcons"}`.
-   - The `jrt_` refresh token lasts 90 days and can be revoked.
+The registry runs the [GitHub device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow) with the `read:org` scope; the GitHub token never reaches the client.
+
+1. `POST /auth/device` (no body) answers
+   `{"login_id": "jdl_…", "user_code": "ABCD-1234", "verification_uri": "https://github.com/login/device", "expires_in": 900, "interval": 5}`.
+   The client shows the code and the registry it is for; the user enters it at `verification_uri` and approves.
+2. The client polls `POST /auth/device/token` with `{"login_id": "jdl_…"}`, waiting `interval` seconds before each poll, until `expires_in` has passed:
+   - `202 {"status": "pending", "interval": 5}`: not answered yet. The client waits the `interval` given, which grows if it polls too fast.
+   - `200 {"token": "jrt_…", "login": "aitorcons"}`: signed in. A login id signs in once.
+   - `403`: the user denied it. `410`: the code expired. `404`: unknown or already used login id. The client stops and reports it.
+3. The `jrt_` refresh token lasts 90 days and can be revoked.
+
+**Older registries** advertise `github_client_id` instead of `"login": "device"`. With them the client runs the device flow itself with that app and posts the GitHub token to `POST /auth/github` with `{"access_token": "<github token>"}`, which answers as in step 2.
+- A registry accepts any GitHub token issued to its app. So the client refuses to log in to another registry that advertises the default registry's `github_client_id`, and refuses when it cannot check. Such a registry can still be used with `--token`.
+- Registries that run the flow themselves answer `POST /auth/github` with `410`.
 
 ### Personal access tokens (CI)
 
