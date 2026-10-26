@@ -193,6 +193,11 @@ func programInterp(f *elf.File) string {
 		if p.Type != elf.PT_INTERP {
 			continue
 		}
+		// An interpreter path is a short string; a larger segment is a
+		// malformed binary, not something to allocate for.
+		if p.Filesz == 0 || p.Filesz > 4096 {
+			return ""
+		}
 		data := make([]byte, p.Filesz)
 		if _, err := p.ReadAt(data, 0); err != nil {
 			return ""

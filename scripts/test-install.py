@@ -90,6 +90,8 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     for key in ['AmbientCapabilities', 'CapabilityBoundingSet']:
         capabilities=next(line.split('=',1)[1].split() for line in unit.splitlines() if line.startswith(key+'='))
         assert set(capabilities)=={'CAP_NET_ADMIN','CAP_NET_RAW','CAP_NET_BIND_SERVICE'}
+    for line in ['NoNewPrivileges=yes','PrivateTmp=yes','ProtectSystem=full']:
+        assert line in unit.splitlines(),line
     token=(root/'etc/jerboa/daemon.env').read_text()
     config=(root/'home/.jerboa/config.toml').read_text()
     assert token.strip().split('=',1)[1] in config

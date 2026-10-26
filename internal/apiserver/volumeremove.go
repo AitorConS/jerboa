@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/AitorConS/jerboa/internal/api"
-	"github.com/AitorConS/jerboa/internal/volume"
 )
 
 func (s *Server) volumeUnused(disk string) error {
@@ -35,37 +34,22 @@ func (s *Server) handleVolumeRemove(raw json.RawMessage) (any, *api.RPCError) {
 		return nil, &api.RPCError{Code: -32602, Message: err.Error()}
 	}
 	fail := volumeRPCError
-	if p.DiskPath == "" {
-		if s.volStore == nil {
-			return nil, fail(fmt.Errorf("volume store disabled"))
-		}
-		vol, err := s.volStore.Get(p.Name)
-		if err != nil {
-			return nil, fail(err)
-		}
-		if err := s.volumeUnused(vol.DiskPath); err != nil {
-			return nil, fail(err)
-		}
-		if err := s.volStore.Remove(p.Name); err != nil {
-			return nil, fail(err)
-		}
-		return map[string]string{"status": "ok"}, nil
+	// Only volumes of the daemon's own store are removed: a disk path names
+	// the volume to check, never another directory to delete from.
+	if s.volStore == nil {
+		return nil, fail(fmt.Errorf("volume store disabled"))
 	}
-	if err := s.volumeUnused(p.DiskPath); err != nil {
-		return nil, fail(err)
-	}
-	store, err := volume.NewStore(filepath.Dir(filepath.Dir(p.DiskPath)))
+	vol, err := s.volStore.Get(p.Name)
 	if err != nil {
 		return nil, fail(err)
 	}
-	vol, err := store.Get(p.Name)
-	if err != nil {
-		return nil, fail(err)
-	}
-	if filepath.Clean(vol.DiskPath) != filepath.Clean(p.DiskPath) {
+	if p.DiskPath != "" && filepath.Clean(vol.DiskPath) != filepath.Clean(p.DiskPath) {
 		return nil, fail(fmt.Errorf("volume path mismatch"))
 	}
-	if err := store.Remove(p.Name); err != nil {
+	if err := s.volumeUnused(vol.DiskPath); err != nil {
+		return nil, fail(err)
+	}
+	if err := s.volStore.Remove(p.Name); err != nil {
 		return nil, fail(err)
 	}
 	return map[string]string{"status": "ok"}, nil

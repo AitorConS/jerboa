@@ -19,6 +19,7 @@ func TestAuditVolumeRemoveRejectsReferencedDisk(t *testing.T) {
 	require.NoError(t, err)
 	vol, err := store.Create("data", 4096)
 	require.NoError(t, err)
+	s.volStore = store
 	v, err := mgr.Create(context.Background(), vm.Config{ImagePath: "test.img", Memory: "256M", Volumes: []vm.VolumeMount{{DiskPath: vol.DiskPath}}})
 	require.NoError(t, err)
 	raw, err := json.Marshal(api.VolumeRemoveParams{Name: "data", DiskPath: vol.DiskPath})
@@ -33,4 +34,20 @@ func TestAuditVolumeRemoveRejectsReferencedDisk(t *testing.T) {
 	_, rpcErr = s.handleVolumeRemove(raw)
 	require.Nil(t, rpcErr)
 	require.NoFileExists(t, vol.DiskPath)
+}
+
+func TestVolumeRemoveStaysInStore(t *testing.T) {
+	s, _, _ := newBugServer(t)
+	store, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	s.volStore = store
+	other, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	vol, err := other.Create("data", 4096)
+	require.NoError(t, err)
+	raw, err := json.Marshal(api.VolumeRemoveParams{Name: "data", DiskPath: vol.DiskPath})
+	require.NoError(t, err)
+	_, rpcErr := s.handleVolumeRemove(raw)
+	require.NotNil(t, rpcErr)
+	require.FileExists(t, vol.DiskPath)
 }
