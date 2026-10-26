@@ -51,6 +51,9 @@ type Client struct {
 	Pub PublicKey
 	// HTTP is the client used for downloads. Nil means httpclient.Default.
 	HTTP *http.Client
+	// StateDir is where the generation time of the newest accepted manifest
+	// is kept, to refuse older ones (see checkFresh). Empty disables the check.
+	StateDir string
 }
 
 // NewClient builds a Client from a base URL and an embedded minisign public key.
@@ -116,6 +119,9 @@ func (c *Client) FetchManifest(ctx context.Context, channel string) (*Manifest, 
 	// one, or a beta build could be served as stable.
 	if m.Channel != channel {
 		return nil, fmt.Errorf("release: %s manifest is signed for channel %q", channel, m.Channel)
+	}
+	if err := c.checkFresh(m); err != nil {
+		return nil, err
 	}
 	return m, nil
 }

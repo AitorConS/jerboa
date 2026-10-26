@@ -76,6 +76,16 @@ class ProtocolTests(unittest.TestCase):
         m=self.manifest();m['components']['desktop']['version']='v0.9.0'
         with self.assertRaisesRegex(ValueError,'Version'):c.assert_manifest(m,'v1.0.0')
 
+    def test_promotion_refuses_an_older_manifest(self):
+        old={'generated':'2026-10-21T10:00:00Z'}
+        c.check_generation({}, {})
+        c.check_generation({}, {'generated':'2026-10-01T10:00:00Z'})
+        c.check_generation(old, {'generated':'2026-10-21T10:00:00Z'})
+        c.check_generation(old, {'generated':'2026-10-22T10:00:00Z'})
+        for new in [{}, {'generated':'2026-10-20T10:00:00Z'}]:
+            with self.assertRaisesRegex(ValueError,'generated before'):c.check_generation(old,new)
+        self.assertRegex(c.generated_now(), r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+
     def test_promotion_rejects_failed_or_untrusted_run(self):
         with patch.dict(os.environ,{'CANDIDATE_RUN':'1','GITHUB_REPOSITORY':'AitorConS/jerboa','MACOS_EVIDENCE':'https://example.org/report'}):
             for field,value in [('conclusion','failure'),('head_branch','feature'),('event','pull_request'),('path','.github/workflows/main.yml')]:

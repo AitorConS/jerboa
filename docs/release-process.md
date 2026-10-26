@@ -134,6 +134,14 @@ stable backwards does not automatically downgrade already-updated Electron clien
 An emergency rollback requires a reviewed client/downgrade policy and restoration of
 the complete old manifest/signature/feed set; never modify historic binary contents.
 
+Every assembled manifest carries `generated`, its UTC creation time. The promoter
+refuses to publish a manifest generated before the live one, and clients record, per
+release origin and channel, the newest `generated` they accepted (in
+`~/.jerboa/release-state.json`) and refuse an older manifest, or one without the
+field once a dated one was seen. A restored old manifest is therefore refused by
+clients that saw a newer one: an emergency rollback means re-signing the old content
+as a new candidate, not republishing the old manifest bytes.
+
 Mac continues to use ad-hoc signatures and the documented preview installation flow.
 Production Developer ID/notarization requires a certificate and Apple credentials;
 `sign-notarize-macos.sh` contains the runtime signing procedure. Windows uses

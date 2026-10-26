@@ -311,7 +311,9 @@ def assemble():
     v = version(spec['version']); n = v[1:]
     root = Path('candidate'); root.mkdir(exist_ok=True)
     payload = root / 'payload'
-    manifest = {'channel': 'stable', 'components': {}}
+    # Clients refuse a manifest generated before one they already accepted, so
+    # an older signed manifest cannot be replayed to them.
+    manifest = {'channel': 'stable', 'generated': generated_now(), 'components': {}}
     components = manifest['components']
     def stage(source, key):
         key = safe_path(key); target = payload / key
@@ -358,6 +360,18 @@ def assemble():
     write_json(root / 'inventory.json', record)
     sign(root / 'manifest.json', f'release:{v}')
     sign(root / 'inventory.json', f'candidate:{spec["run_id"]} version:{v}')
+
+
+def generated_now():
+    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+
+def check_generation(old, new):
+    """Refuse to publish a manifest older than, or less dated than, the live one."""
+    if not old.get('generated'):
+        return
+    if not new.get('generated') or new['generated'] < old['generated']:
+        raise ValueError('Refusing a manifest generated before the published one')
 
 
 def verify_candidate(root):
@@ -480,6 +494,7 @@ def promote():
             raise ValueError('Kernel version already published with different bytes; bump kernel/VERSION')
         if old_v == v and digest(previous) != digest(root/'manifest.json'):
             raise ValueError('Version already published with another manifest; cut a new release')
+        check_generation(old, manifest)
     # Persist a signed promotion record before changing channel pointers.
     promotion = {'version': v, 'candidate_run': inv['run_id'], 'inventory': inv,
                  'macos_evidence': os.environ['MACOS_EVIDENCE']}
