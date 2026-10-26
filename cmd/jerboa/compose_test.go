@@ -322,8 +322,8 @@ func TestImplicitComposeNetworksAreProjectScoped(t *testing.T) {
 	require.NoError(t, err)
 	second, err := compose.Parse([]byte("services:\n  web:\n    image: app\n"))
 	require.NoError(t, err)
-	scopeImplicitComposeNetwork(&first, "/tmp/first/compose.yaml")
-	scopeImplicitComposeNetwork(&second, "/tmp/second/compose.yaml")
+	require.NoError(t, scopeComposeResources(&first, "/tmp/first/compose.yaml"))
+	require.NoError(t, scopeComposeResources(&second, "/tmp/second/compose.yaml"))
 	require.NotEqual(t, first.Services["web"].Networks, second.Services["web"].Networks)
 	require.NotContains(t, first.Networks, "default")
 }
@@ -342,4 +342,43 @@ func TestResolveComposeImagesRelativeToFile(t *testing.T) {
 	require.Equal(t, filepath.Join(dir, "sub", "other.img"), f.Services["dot"].Image)
 	require.Equal(t, "redis:latest", f.Services["ref"].Image)
 	require.Equal(t, "/abs/disk.img", f.Services["abs"].Image)
+}
+
+func TestComposeNetworksAndVolumesAreProjectScoped(t *testing.T) {
+	f, err := compose.Parse([]byte(`services:
+  web:
+    image: app
+    networks: [backend]
+    volumes: ["data:/data", "shared:/shared:ro"]
+networks:
+  backend: {}
+volumes:
+  data: {}
+  shared:
+    external: true
+`))
+	require.NoError(t, err)
+	require.NoError(t, scopeComposeResources(&f, "/tmp/p/compose.yaml"))
+
+	net := f.Services["web"].Networks[0]
+	require.True(t, strings.HasPrefix(net, "compose-") && strings.HasSuffix(net, "-backend"), net)
+	require.Contains(t, f.Networks, net)
+	require.NotContains(t, f.Networks, "backend")
+
+	vols := f.Services["web"].Volumes
+	require.True(t, strings.HasPrefix(vols[0], "compose-") && strings.HasSuffix(vols[0], "-data:/data"), vols[0])
+	require.Equal(t, "shared:/shared:ro", vols[1], "external volumes keep their name")
+	require.Contains(t, f.Volumes, "shared")
+	require.NotContains(t, f.Volumes, "data")
+
+	other, err := compose.Parse([]byte("services:\n  web:\n    image: app\n    networks: [backend]\nnetworks:\n  backend: {}\n"))
+	require.NoError(t, err)
+	require.NoError(t, scopeComposeResources(&other, "/tmp/q/compose.yaml"))
+	require.NotEqual(t, net, other.Services["web"].Networks[0], "two projects never share a network by name")
+}
+
+func TestComposeScopedNameTooLong(t *testing.T) {
+	f, err := compose.Parse([]byte("services:\n  web:\n    image: app\n    networks: [" + strings.Repeat("n", 60) + "]\nnetworks:\n  " + strings.Repeat("n", 60) + ": {}\n"))
+	require.NoError(t, err)
+	require.ErrorContains(t, scopeComposeResources(&f, "/tmp/p/compose.yaml"), "too long")
 }

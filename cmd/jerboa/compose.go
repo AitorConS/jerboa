@@ -16,6 +16,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/compose"
+	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/volume"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +68,9 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("compose up: %w", err)
 			}
-			scopeImplicitComposeNetwork(&f, composeFile)
+			if err := scopeComposeResources(&f, composeFile); err != nil {
+				return fmt.Errorf("compose up: %w", err)
+			}
 			resolveComposeImages(&f, composeFile)
 			order, err := compose.TopologicalSort(f.Services)
 			if err != nil {
@@ -95,6 +98,12 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 				}
 			}()
 			for volName, volCfg := range f.Volumes {
+				if volCfg.External {
+					if _, getErr := client.VolumeGet(cmd.Context(), volName); getErr != nil {
+						return fmt.Errorf("compose up: external volume %q: %w", volName, getErr)
+					}
+					continue
+				}
 				if _, getErr := client.VolumeGet(cmd.Context(), volName); getErr == nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, skipping\n", volName)
 					continue
@@ -121,6 +130,12 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 					driver = "bridge"
 				}
 				_, getErr := client.NetworkGet(cmd.Context(), netName)
+				if netCfg.External {
+					if getErr != nil {
+						return fmt.Errorf("compose up: external network %q: %w", netName, getErr)
+					}
+					continue
+				}
 				if getErr == nil {
 					fmt.Fprintf(cmd.OutOrStdout(), "network %s already exists, skipping\n", netName)
 					continue
@@ -527,8 +542,6 @@ func waitForHealthy(cmd *cobra.Command, client *api.Client, id, name string, tim
 	return fmt.Errorf("timed out waiting for %s to become healthy", name)
 }
 
-// Implicit defaults belong to this compose file, preventing unrelated projects
-// from silently joining the same network. Explicit names keep existing semantics.
 // resolveComposeImages makes image file paths relative to the compose file,
 // not to the current directory, as Docker Compose does for paths.
 func resolveComposeImages(f *compose.File, path string) {
@@ -548,20 +561,63 @@ func resolveComposeImages(f *compose.File, path string) {
 	}
 }
 
-func scopeImplicitComposeNetwork(f *compose.File, path string) {
-	if !f.ImplicitDefault {
-		return
-	}
+// scopeComposeResources renames the networks and volumes the compose file
+// owns to names scoped to its project, as Docker Compose does, so a compose
+// file cannot attach a volume or join a network of another project by naming
+// it. Only entries marked external keep their name and must already exist.
+func scopeComposeResources(f *compose.File, path string) error {
 	sum := sha256.Sum256([]byte(stateFilePath(path)))
-	name := fmt.Sprintf("compose-%x-default", sum[:6])
-	f.Networks[name] = f.Networks["default"]
-	delete(f.Networks, "default")
+	prefix := fmt.Sprintf("compose-%x-", sum[:6])
+	scoped := func(kind, name string) (string, error) {
+		n := prefix + name
+		if err := naming.ValidateResourceName(kind, n); err != nil {
+			return "", fmt.Errorf("%s %q: name too long for a project-scoped name: %w", kind, name, err)
+		}
+		return n, nil
+	}
+	networks := map[string]string{}
+	for name, n := range f.Networks {
+		if n.External {
+			continue
+		}
+		s, err := scoped("network", name)
+		if err != nil {
+			return err
+		}
+		networks[name] = s
+	}
+	volumes := map[string]string{}
+	for name, v := range f.Volumes {
+		if v.External {
+			continue
+		}
+		s, err := scoped("volume", name)
+		if err != nil {
+			return err
+		}
+		volumes[name] = s
+	}
+	for from, to := range networks {
+		f.Networks[to] = f.Networks[from]
+		delete(f.Networks, from)
+	}
+	for from, to := range volumes {
+		f.Volumes[to] = f.Volumes[from]
+		delete(f.Volumes, from)
+	}
 	for key, svc := range f.Services {
 		for i, network := range svc.Networks {
-			if network == "default" {
-				svc.Networks[i] = name
+			if to, ok := networks[network]; ok {
+				svc.Networks[i] = to
+			}
+		}
+		for i, spec := range svc.Volumes {
+			name, rest, _ := strings.Cut(spec, ":")
+			if to, ok := volumes[name]; ok {
+				svc.Volumes[i] = to + ":" + rest
 			}
 		}
 		f.Services[key] = svc
 	}
+	return nil
 }

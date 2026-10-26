@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/volume"
 	"gopkg.in/yaml.v3"
 )
@@ -71,11 +72,11 @@ func validate(f File) error {
 			if err := validateVolumeSpec(vol); err != nil {
 				return fmt.Errorf("compose: service %q volumes: %w", name, err)
 			}
+			// Every volume is declared, so one the project does not own is
+			// only ever used through an explicit external entry.
 			volName := strings.SplitN(vol, ":", 2)[0]
-			if len(f.Volumes) > 0 {
-				if _, ok := f.Volumes[volName]; !ok {
-					return fmt.Errorf("compose: service %q references unknown volume %q", name, volName)
-				}
+			if _, ok := f.Volumes[volName]; !ok {
+				return fmt.Errorf("compose: service %q references undeclared volume %q (declare it under volumes:, with external: true for an existing one)", name, volName)
 			}
 		}
 		if svc.HealthCheck != "" {
@@ -89,7 +90,21 @@ func validate(f File) error {
 			}
 		}
 	}
+	for name, n := range f.Networks {
+		if err := naming.ValidateResourceName("network", name); err != nil {
+			return fmt.Errorf("compose: %w", err)
+		}
+		if n.External && n.Subnet != "" {
+			return fmt.Errorf("compose: external network %q cannot set a subnet", name)
+		}
+	}
 	for name, vc := range f.Volumes {
+		if err := naming.ValidateResourceName("volume", name); err != nil {
+			return fmt.Errorf("compose: %w", err)
+		}
+		if vc.External && vc.Size != "" {
+			return fmt.Errorf("compose: external volume %q cannot set a size", name)
+		}
 		if vc.Size != "" {
 			if _, err := volume.ParseSize(vc.Size); err != nil {
 				return fmt.Errorf("compose: volume %q: invalid size %q: %w", name, vc.Size, err)

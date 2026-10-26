@@ -60,15 +60,21 @@ file) is resolved relative to the compose file, not the current directory.
 - every service must define `image`
 - `depends_on` targets must exist
 - referenced networks must exist in the top-level `networks` map
-- referenced named volumes must exist in the top-level `volumes` map
+- every named volume a service mounts must be declared in the top-level `volumes` map
+- network and volume names must be valid resource names
 
 ## Current Runtime Semantics
 
 - only the first network in `networks:` is actually wired to a service instance
 - services reach each other by service name over the daemon's guest DNS (e.g. a `web` service connects to `db:5432`); see [Service Discovery]({% link getting-started.md %}#service-discovery-guest-dns)
 - `ip:` pins a service to a static address on its network; without it the daemon's IPAM allocates one. Name resolution works either way, so `ip:` is only needed when a fixed address is required
-- top-level volumes are auto-created during `compose up`
-- top-level networks are auto-created during `compose up`
+- top-level volumes and networks belong to the stack: `compose up` creates them
+  under names scoped to the compose file (`compose-<hash>-<name>`), so two stacks
+  never share a volume or a network by naming the same one
+- to use a volume or network that already exists outside the stack, declare it
+  with `external: true`; it keeps its own name, must already exist and is never
+  created or removed by compose (an external volume takes no `size`, an external
+  network no `subnet`)
 - `compose down --volumes` removes only volumes created by that stack
 - stacks are tracked by separate `.jerboa-compose-<hash>.json` files next to their compose files; the hash identifies the full canonical compose path
 - state is written atomically as resources are created, so a failed `up` can be cleaned with `down`
@@ -96,6 +102,11 @@ Services are removed in alphabetical order. Startup dependencies do not currentl
 determine shutdown ordering.
 
 ## Upgrading Existing Stacks
+
+Stacks created before volumes and networks were scoped to their compose file
+used the plain names from the file. After upgrading, `compose up` creates new,
+empty scoped volumes. To keep using an existing volume's data, mark it
+`external: true` in the compose file (or copy its data into the new volume).
 
 Before upgrading from 0.51.1, stop existing stacks with the old CLI. Version
 0.51.2 does not automatically assign a legacy `.jerboa-compose-state.json` file
