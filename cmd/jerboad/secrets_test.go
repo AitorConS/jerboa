@@ -33,7 +33,10 @@ func TestCheckTokenStrength(t *testing.T) {
 }
 
 func TestCheckExposure(t *testing.T) {
-	require.NoError(t, checkExposure("127.0.0.1:9090", "localhost:8080", "", "", "", false, false))
+	require.NoError(t, checkExposure("127.0.0.1:9090", "", "", "", "", false, false))
+	require.ErrorContains(t, checkExposure("", "localhost:8080", "", "", "", false, false), "--ui-addr")
+	require.NoError(t, checkExposure("", "127.0.0.1:8080", "obs-token", "", "", false, false))
+	require.NoError(t, checkExposure("", "127.0.0.1:8080", "", "", "", true, false))
 	require.ErrorContains(t, checkExposure(":9090", "", "", "", "", false, false), "--metrics-addr")
 	require.ErrorContains(t, checkExposure("", "0.0.0.0:8080", "", "", "", false, false), "--ui-addr")
 	require.NoError(t, checkExposure(":9090", ":8080", "obs-token", "", "", false, false))

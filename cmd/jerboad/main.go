@@ -213,7 +213,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&metricsAddr, "metrics-addr", "",
 		"HTTP address for Prometheus metrics (e.g. :9090); empty disables metrics")
 	root.Flags().StringVar(&uiAddr, "ui-addr", "",
-		"HTTP address for web dashboard (e.g. :8080); empty disables dashboard")
+		"HTTP address for web dashboard (e.g. 127.0.0.1:8080); empty disables dashboard; needs an observability token")
 	root.Flags().StringVar(&logFormat, "log-format", "text",
 		"log format: text (default) or json")
 	root.Flags().StringVar(&traceAddr, "trace-addr", "",
@@ -348,7 +348,10 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	}
 
 	if uiAddr != "" {
-		warnIfExposed("dashboard", uiAddr, obsToken != "")
+		if obsToken == "" {
+			slog.Warn("dashboard is served without authentication; any local user can read VM names, addresses and logs",
+				"addr", uiAddr)
+		}
 		go func() {
 			if err := ui.Serve(ctx, uiAddr, obsToken, mgr, version); err != nil {
 				slog.Error("dashboard server", "err", err)
@@ -711,16 +714,19 @@ func resolveSecret(flagValue, file, envVar string) (string, error) {
 	return os.Getenv(envVar), nil
 }
 
-// checkExposure refuses to serve observability endpoints off loopback without
-// a token, and cluster gossip without a token at all, unless the operator opts
-// out explicitly. The dashboard shows VM names, addresses and serial logs;
-// gossip accepts membership from whoever can reach it.
+// checkExposure refuses to serve metrics off loopback without a token, the
+// dashboard without a token at all, and cluster gossip without a token at all,
+// unless the operator opts out explicitly. The dashboard shows VM names,
+// addresses and serial logs, and every local user can reach loopback; gossip
+// accepts membership from whoever can reach it.
 func checkExposure(metricsAddr, uiAddr, obsToken, clusterAddr, clusterToken string, allowInsecure, insecureCluster bool) error {
-	for _, e := range []struct{ flag, addr string }{{"--metrics-addr", metricsAddr}, {"--ui-addr", uiAddr}} {
-		if e.addr != "" && obsToken == "" && !allowInsecure && !httpauth.IsLoopbackAddr(e.addr) {
-			return fmt.Errorf("jerboad: refusing to serve %s %q off loopback without a token; "+
-				"bind it to 127.0.0.1, set --observability-token-file or JERBOA_OBSERVABILITY_TOKEN, or pass --insecure", e.flag, e.addr)
-		}
+	if metricsAddr != "" && obsToken == "" && !allowInsecure && !httpauth.IsLoopbackAddr(metricsAddr) {
+		return fmt.Errorf("jerboad: refusing to serve --metrics-addr %q off loopback without a token; "+
+			"bind it to 127.0.0.1, set --observability-token-file or JERBOA_OBSERVABILITY_TOKEN, or pass --insecure", metricsAddr)
+	}
+	if uiAddr != "" && obsToken == "" && !allowInsecure {
+		return fmt.Errorf("jerboad: refusing to serve the --ui-addr %q dashboard without a token, since other local users can reach it; "+
+			"set --observability-token-file or JERBOA_OBSERVABILITY_TOKEN, or pass --insecure", uiAddr)
 	}
 	if clusterAddr != "" && clusterToken == "" && !insecureCluster {
 		return fmt.Errorf("jerboad: refusing to serve cluster gossip on %q without a token; "+

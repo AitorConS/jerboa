@@ -142,12 +142,18 @@ sudo jerboad --host unix:///var/run/jerboad.sock
 Useful daemon flags:
 
 ```bash
+sudo sh -c 'umask 077; mkdir -p /etc/jerboa; openssl rand -hex 32 > /etc/jerboa/observability-token'
 sudo jerboad \
   --host unix:///var/run/jerboad.sock \
   --metrics-addr 127.0.0.1:9090 \
   --ui-addr 127.0.0.1:8080 \
+  --observability-token-file /etc/jerboa/observability-token \
   --vm-store sqlite
 ```
+
+The dashboard needs that token even on `127.0.0.1`, because every local user
+can reach loopback: open `http://127.0.0.1:8080/ui` and sign in with the
+contents of the file. Prometheus sends it as `Authorization: Bearer <token>`.
 
 ### Windows daemon
 
