@@ -35,6 +35,15 @@ const (
 
 // startDaemon launches an in-process daemon (with a fresh empty image store)
 // and returns a connected client.
+// testImage returns an absolute image file owned by the caller, which is what
+// the daemon accepts as a raw image path.
+func testImage(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "test.img")
+	require.NoError(t, os.WriteFile(p, nil, 0o600))
+	return p
+}
+
 func startDaemon(t *testing.T) (*api.Client, string) {
 	t.Helper()
 	return startDaemonWithStore(t, t.TempDir())
@@ -134,7 +143,7 @@ func TestPs_WithVM(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -156,7 +165,7 @@ func TestStop_Graceful(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -169,7 +178,7 @@ func TestStop_Force(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -207,7 +216,7 @@ func TestLogs(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -221,7 +230,7 @@ func TestInspect(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -237,7 +246,7 @@ func TestRm_StoppedVM(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -257,7 +266,7 @@ func TestExec_Signal(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 
@@ -350,7 +359,7 @@ func TestRm_RunningVM(t *testing.T) {
 	storePath := t.TempDir()
 
 	info, err := client.Run(context.Background(), api.RunParams{
-		ImagePath: "test.img", Memory: "256M",
+		ImagePath: testImage(t), Memory: "256M",
 	})
 	require.NoError(t, err)
 

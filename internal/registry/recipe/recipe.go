@@ -67,7 +67,10 @@ type Blob struct {
 	Size   int64  `json:"size"`
 }
 
-var placeholderRE = regexp.MustCompile(`"` + blobScheme + `(sha256:[0-9a-f]{64})"`)
+var (
+	placeholderRE = regexp.MustCompile(`"` + blobScheme + `(sha256:[0-9a-f]{64})"`)
+	blobRefRE     = regexp.MustCompile(`^` + blobScheme + `(sha256:[0-9a-f]{64})$`)
+)
 
 // Encode returns the canonical encoding whose SHA-256 identifies the recipe.
 func (r *Recipe) Encode() ([]byte, error) {
@@ -145,15 +148,23 @@ func (r *Recipe) Validate() error {
 		listed[b.Digest] = true
 	}
 	used := map[string]bool{r.Toolset.Boot: true, r.Toolset.Kernel: true}
-	for _, m := range placeholderRE.FindAllStringSubmatch(r.Manifest, -1) {
+	// The manifest is checked as mkfs parses it: every file mkfs would read
+	// from the host must be a blob, whatever the spelling of the key.
+	hosts, err := image.ManifestHosts(r.Manifest)
+	if err != nil {
+		return fmt.Errorf("recipe: %w", err)
+	}
+	for _, h := range hosts {
+		m := blobRefRE.FindStringSubmatch(h)
+		if m == nil {
+			return fmt.Errorf("recipe: manifest names a host path")
+		}
 		used[m[1]] = true
 	}
-	// A blob: reference the strict pattern did not match is malformed.
-	if strings.Count(r.Manifest, `"`+blobScheme) != len(placeholderRE.FindAllString(r.Manifest, -1)) {
+	// Assemble swaps placeholders by text, so each one must be a host value
+	// and nothing else.
+	if strings.Count(r.Manifest, `"`+blobScheme) != len(hosts) || len(placeholderRE.FindAllString(r.Manifest, -1)) != len(hosts) {
 		return fmt.Errorf("recipe: manifest has a malformed blob reference")
-	}
-	if strings.Contains(r.Manifest, "host:") && strings.Count(r.Manifest, "host:") != strings.Count(r.Manifest, `host:"`+blobScheme) {
-		return fmt.Errorf("recipe: manifest names a host path")
 	}
 	for d := range used {
 		if !listed[d] {
@@ -290,11 +301,17 @@ func Assemble(ctx context.Context, r *Recipe, store *cas.Store, mkfs, out string
 	if pathErr != nil {
 		return pathErr
 	}
+	if err := checkAssembledHosts(r, store, manifest); err != nil {
+		return err
+	}
 	boot, _ := store.Path(r.Toolset.Boot)
 	kernel, _ := store.Path(r.Toolset.Kernel)
 	_ = os.Remove(out)
 	cmd := exec.CommandContext(ctx, mkfs, "-b", boot, "-k", kernel, out) //nolint:gosec // mkfs resolved for the recipe's toolset
 	cmd.Stdin = strings.NewReader(manifest)
+	// An mkfs that knows this variable refuses host files outside the store;
+	// older ones ignore it, and the check above already holds.
+	cmd.Env = append(os.Environ(), HostRootEnv+"="+store.Root())
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("recipe: mkfs: %w: %s", err, lastLine(output))
 	}
@@ -305,6 +322,32 @@ func Assemble(ctx context.Context, r *Recipe, store *cas.Store, mkfs, out string
 	if got != r.DiskDigest {
 		_ = os.Remove(out)
 		return fmt.Errorf("recipe: assembled disk %s does not match %s", got, r.DiskDigest)
+	}
+	return nil
+}
+
+// HostRootEnv names the directory mkfs may read host files from.
+const HostRootEnv = "JERBOA_MKFS_HOST_ROOT"
+
+// checkAssembledHosts checks the manifest given to mkfs reads only the
+// recipe's blobs from the store.
+func checkAssembledHosts(r *Recipe, store *cas.Store, manifest string) error {
+	allowed := map[string]bool{}
+	for _, b := range r.Blobs {
+		p, err := store.Path(b.Digest)
+		if err != nil {
+			return fmt.Errorf("recipe: %w", err)
+		}
+		allowed[p] = true
+	}
+	hosts, err := image.ManifestHosts(manifest)
+	if err != nil {
+		return fmt.Errorf("recipe: %w", err)
+	}
+	for _, h := range hosts {
+		if !allowed[h] {
+			return fmt.Errorf("recipe: manifest names a host path")
+		}
 	}
 	return nil
 }

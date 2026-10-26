@@ -18,7 +18,7 @@ func TestDNSResolveAndList(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = client.Run(context.Background(), api.RunParams{
-		ImagePath:   "test.img",
+		ImagePath:   testImage(t),
 		Memory:      "256M",
 		Name:        "frontend",
 		NetworkName: "app",
@@ -49,7 +49,7 @@ func TestDNSResolveDuplicateNameRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = client.Run(context.Background(), api.RunParams{
-		ImagePath:   "test.img",
+		ImagePath:   testImage(t),
 		Memory:      "256M",
 		Name:        "api",
 		NetworkName: "app-a",
@@ -62,7 +62,7 @@ func TestDNSResolveDuplicateNameRejected(t *testing.T) {
 	// The second VM reusing the name "api" must be rejected, not booted into an
 	// ambiguous DNS state.
 	_, err = client.Run(context.Background(), api.RunParams{
-		ImagePath:   "test.img",
+		ImagePath:   testImage(t),
 		Memory:      "256M",
 		Name:        "api",
 		NetworkName: "app-b",
