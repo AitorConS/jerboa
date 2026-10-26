@@ -61,7 +61,8 @@ cmd_check() {
 cmd_launch() {
   : "${ROLE_ARN:?}" "${AWS_REGION:?}" "${LAUNCH_TEMPLATE_ID:?}" "${GH_TOKEN:?}" "${JIT_RUNNER_NAME:?}" "${RUNNER_LABEL:?}"
   local out="${GITHUB_OUTPUT:?}" userdata="${RUNNER_TEMP:?}/windows-runner-user-data.txt" jit image instance
-  trap 'rm -f "$userdata"' EXIT
+  # shellcheck disable=SC2064 # expand now: the local is gone when EXIT fires
+  trap "rm -f '${userdata}'" EXIT
 
   # Single-use registration: the runner takes exactly one job, then deregisters.
   jit=$(gh api -X POST "repos/${repo}/actions/runners/generate-jitconfig" \

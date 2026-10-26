@@ -166,9 +166,17 @@ func TestHandshake_BusyDaemonSaysSo(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = conn.Close() })
 	}
-	// Probe only once the daemon has accepted them all: a probe that arrives
-	// first takes a slot itself and authenticates.
+	// Probe only once the daemon is full: a probe that arrives first takes a
+	// slot itself and authenticates. Where loopback peers resolve to a uid
+	// (Linux) the per-peer cap fills first; elsewhere the overall one does.
 	require.Eventually(t, func() bool {
+		srv.pendingMu.Lock()
+		defer srv.pendingMu.Unlock()
+		for peer, n := range srv.pending {
+			if peer != "" && n >= maxPendingPerPeer {
+				return true
+			}
+		}
 		return len(srv.handshakes) == maxPendingHandshake
 	}, 5*time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
