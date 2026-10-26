@@ -92,6 +92,9 @@ jobs:
     if: needs.select.outputs.any == 'true'
   publish-index:
     name: Update Package Index
+    # The index is signed with the release key, which only this environment
+    # holds: clients refuse an index whose signature does not verify.
+    environment: release
     permissions:
       contents: write
     needs:
@@ -103,6 +106,14 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.3
+        cache: false
+    - name: Build signing utilities
+      run: |-
+        go build -o bin/jerboa-sign ./cmd/jerboa-sign
+        go build -o bin/jerboa-verify ./cmd/jerboa-verify
     - name: Download package artifacts
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
@@ -113,6 +124,8 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
+        JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
+        KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
       run: |
         set -euo pipefail
         mkdir -p dist/publish
@@ -129,10 +142,16 @@ jobs:
         while IFS= read -r archive; do
           gh release upload pkg-index "dist/publish/$archive"
         done < dist/new-archives.txt
-        gh release upload pkg-index dist/publish/packages.json --clobber
-        curl --fail --location --retry 5 --retry-all-errors \
-          "https://github.com/$GH_REPO/releases/download/pkg-index/packages.json" -o dist/public-index.json
-        python3 -c 'import json; a=json.load(open("dist/publish/packages.json")); b=json.load(open("dist/public-index.json")); assert a==b'
+        # Sign the exact bytes that are uploaded, and check the signature with
+        # the key clients embed before publishing either file.
+        bin/jerboa-sign -in dist/publish/packages.json -key-id "$KEY_ID" -comment "packages:$GITHUB_RUN_ID"
+        bin/jerboa-verify dist/publish/packages.json
+        gh release upload pkg-index dist/publish/packages.json dist/publish/packages.json.minisig --clobber
+        base="https://github.com/$GH_REPO/releases/download/pkg-index"
+        curl --fail --location --retry 5 --retry-all-errors "$base/packages.json" -o dist/public/packages.json --create-dirs
+        curl --fail --location --retry 5 --retry-all-errors "$base/packages.json.minisig" -o dist/public/packages.json.minisig
+        cmp dist/publish/packages.json dist/public/packages.json
+        bin/jerboa-verify dist/public/packages.json
   select:
     runs-on: ubuntu-latest
     outputs:

@@ -514,6 +514,10 @@ func TestFetchIndex_HTTP(t *testing.T) {
 	require.NoError(t, err)
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/packages.json" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(idxData)
 	}))
@@ -541,6 +545,10 @@ func TestFetchIndex_HTTPError(t *testing.T) {
 
 func TestFetchIndex_InvalidJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/packages.json" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("not json"))
 	}))

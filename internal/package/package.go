@@ -507,28 +507,16 @@ func FetchIndex() (*Index, error) {
 }
 
 // fetchIndexRaw downloads the remote package index, returning both the parsed
-// index and the raw JSON bytes (for cache writes).
+// index and the raw JSON bytes (for cache writes). The index names the SHA-256
+// of every archive, so it is verified against its minisign signature before it
+// is parsed (see verifyIndex).
 func fetchIndexRaw() (*Index, []byte, error) {
-	req, err := http.NewRequest(http.MethodGet, IndexURL, nil) //nolint:noctx // callers don't thread ctx yet
+	data, err := readIndexURL(IndexURL, maxIndexSize)
 	if err != nil {
-		return nil, nil, fmt.Errorf("package index request: %w", err)
+		return nil, nil, err
 	}
-	resp, err := httpclient.Default.Do(req)
-	if err != nil {
-		return nil, nil, fmt.Errorf("package index fetch: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, nil, fmt.Errorf("package index: HTTP %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxIndexSize+1))
-	if err != nil {
-		return nil, nil, fmt.Errorf("package index read: %w", err)
-	}
-	if len(data) > maxIndexSize {
-		return nil, nil, fmt.Errorf("package index is larger than %d bytes", maxIndexSize)
+	if err := verifyIndex(IndexURL, data); err != nil {
+		return nil, nil, err
 	}
 
 	var idx Index
