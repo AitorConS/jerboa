@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -120,6 +119,9 @@ type Options struct {
 	Output io.Writer
 	// InstallScripts lets npm run the install scripts of dependencies.
 	InstallScripts bool
+	// Sandbox confines the language tools, whose build scripts run project
+	// and dependency code. They keep network access to fetch dependencies.
+	Sandbox Sandbox
 }
 
 // buildOutput returns the writer for subprocess output, falling back to os.Stderr.
@@ -252,13 +254,16 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 			// machine; [build] install_scripts = true opts back in.
 			args = append(args, "--ignore-scripts")
 		}
-		installCmd := exec.CommandContext(ctx, "npm", args...)
-		installCmd.Dir = dir
-		installCmd.Env = Env()
+		installCmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Writable: []string{npmCache()}, Network: true}, "npm", args...)
+		if err != nil {
+			return BuildResult{}, fmt.Errorf("node driver: %w", err)
+		}
 		w := opts.buildOutput()
 		installCmd.Stdout = w
 		installCmd.Stderr = w
-		if err := installCmd.Run(); err != nil {
+		err = installCmd.Run()
+		done()
+		if err != nil {
 			return BuildResult{}, fmt.Errorf("node driver: npm install: %w", err)
 		}
 		if err := os.MkdirAll(filepath.Dir(stampPath), 0o755); err != nil {
@@ -403,7 +408,7 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 			}
 			defer func() { _ = os.RemoveAll(staging) }()
 			abiTag := "cp" + strings.ReplaceAll(pythonVersion, ".", "")
-			pipCmd := exec.CommandContext(ctx, "pip", "install",
+			pipCmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Network: true}, "pip", "install",
 				"-r", "requirements.txt",
 				"--target", staging,
 				"--upgrade",
@@ -413,12 +418,15 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 				"--abi", abiTag,
 				"--only-binary", ":all:",
 			)
-			pipCmd.Dir = dir
-			pipCmd.Env = Env()
+			if err != nil {
+				return BuildResult{}, fmt.Errorf("python driver: %w", err)
+			}
 			w := opts.buildOutput()
 			pipCmd.Stdout = w
 			pipCmd.Stderr = w
-			if err := pipCmd.Run(); err != nil {
+			err = pipCmd.Run()
+			done()
+			if err != nil {
 				return BuildResult{}, fmt.Errorf("python driver: pip install: %w", err)
 			}
 			packages := filepath.Join(dir, "packages")
@@ -587,19 +595,22 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 		args = append(args, opts.BuildArgs...)
 	}
 
-	cmd := exec.CommandContext(ctx, "cargo", args...)
-	cmd.Dir = dir
-	w := opts.buildOutput()
-	cmd.Stdout = w
-	cmd.Stderr = w
-	cmd.Env = Env("CARGO_BUILD_TARGET=" + target)
+	env := Env("CARGO_BUILD_TARGET=" + target)
 	if !rustStripConfigured(dir) {
 		// Symbols and debug info are a large share of a release binary and a
 		// unikernel never reads them.
-		cmd.Env = append(cmd.Env, "CARGO_PROFILE_RELEASE_STRIP=symbols")
+		env = append(env, "CARGO_PROFILE_RELEASE_STRIP=symbols")
 	}
-
-	if err := cmd.Run(); err != nil {
+	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Writable: cargoDirs(), Network: true, Env: env}, "cargo", args...)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("rust driver: %w", err)
+	}
+	w := opts.buildOutput()
+	cmd.Stdout = w
+	cmd.Stderr = w
+	err = cmd.Run()
+	done()
+	if err != nil {
 		return BuildResult{}, fmt.Errorf("rust driver: cargo build: %w", err)
 	}
 
@@ -719,15 +730,17 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 		args = append(args, opts.Entrypoint)
 	}
 
-	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = dir
-	cmd.Env = Env(platform.GoCrossCompileEnv()...)
-	cmd.Env = append(cmd.Env, opts.Env...)
+	env := append(Env(platform.GoCrossCompileEnv()...), opts.Env...)
+	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Writable: goDirs(ctx, dir, env), Network: true, Env: env}, "go", args...)
+	if err != nil {
+		return BuildResult{}, fmt.Errorf("go build: %w", err)
+	}
 	w := opts.buildOutput()
 	cmd.Stdout = w
 	cmd.Stderr = w
-
-	if err := cmd.Run(); err != nil {
+	err = cmd.Run()
+	done()
+	if err != nil {
 		return BuildResult{}, fmt.Errorf("go build: %w", err)
 	}
 

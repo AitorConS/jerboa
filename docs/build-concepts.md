@@ -342,6 +342,8 @@ include = ["server.js", "lib", "node_modules"]  # optional allowlist of project 
                          # (node/python/raw); `jerboa build --size-report` shows what is left
 dirs = ["/data"]         # empty directories to create (mount points, scratch paths)
 install_scripts = false  # let npm run dependencies' install scripts (off by default)
+sandbox = true           # confine build steps on the build machine (default true)
+network = false          # let `run` commands reach the network (off by default)
 
 [program]                # raw builds only
 path = "/usr/local/pgsql/bin/postgres"  # full in-image path of the program

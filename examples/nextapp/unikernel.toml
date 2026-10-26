@@ -1,6 +1,8 @@
 [build]
 lang = "node"
 run = ["npm install", "npm run build"]
+# npm install fetches packages: build commands get the network only on request.
+network = true
 entrypoint = ".next/standalone/server.js"
 # The standalone output is self-contained: server.js, the traced subset of
 # node_modules it needs, and (copied by scripts/postbuild.js) .next/static and

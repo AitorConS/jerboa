@@ -55,6 +55,21 @@ type BuildConfig struct {
 	// InstallScripts lets npm run dependencies' install scripts (preinstall,
 	// install, postinstall). Off by default: they run on the build machine.
 	InstallScripts bool `toml:"install_scripts"`
+	// Sandbox, true when unset, confines the build steps that run on the
+	// build machine ([build] run and the language tools; see Sandbox).
+	// false runs them directly.
+	Sandbox *bool `toml:"sandbox"`
+	// Network lets [build] run commands reach the network. Off by default;
+	// the language tools always may, to fetch dependencies.
+	Network bool `toml:"network"`
+}
+
+// BuildSandbox returns the sandbox the build steps run in.
+func (c *Config) BuildSandbox() Sandbox {
+	if c == nil || c.Build.Sandbox == nil {
+		return Sandbox{}
+	}
+	return Sandbox{Off: !*c.Build.Sandbox}
 }
 
 type RunConfig struct {
