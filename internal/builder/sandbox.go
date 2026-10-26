@@ -14,9 +14,10 @@ import (
 // Sandbox confines the build steps that run project code on the host: the
 // [build] run commands and the language tools (npm, pip, cargo, go build),
 // whose build scripts and plugins run arbitrary code. Confined, a step can
-// read the host but write only to the project directory, the tools' caches
+// read the host but write only to the project directory, caches of its own
 // and a temporary directory, cannot read the usual credential directories,
-// and, unless allowed, cannot reach the network.
+// cannot connect to the Jerboa daemon or its VMs' control sockets, and,
+// unless allowed, cannot reach the network.
 //
 // The mechanism is bubblewrap (bwrap) on Linux and sandbox-exec on macOS.
 // Where neither is available the step runs directly, with Jerboa's
@@ -25,14 +26,17 @@ import (
 type Sandbox struct {
 	// Off runs build steps directly on the host ([build] sandbox = false).
 	Off bool
+	// Sockets lists further Unix sockets, or directories of them, a step
+	// may not connect to: the endpoint the CLI reaches the daemon at.
+	Sockets []string
 }
 
 // Step is one build step to confine.
 type Step struct {
 	// Dir is the step's working directory, the project; it stays writable.
 	Dir string
-	// Writable lists further directories the step writes to (tool caches).
-	// They are created when missing.
+	// Writable lists further directories the step writes to. They are
+	// created when missing.
 	Writable []string
 	// Network lets the step reach the network.
 	Network bool
@@ -57,14 +61,19 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 			return nil, nil, fmt.Errorf("sandbox: %w", err)
 		}
 	}
-	st.Writable = append(existingDirs(defaultWritable()), st.Writable...)
-
 	if s.Off {
 		cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // the build tool the project asks for
 		cmd.Dir = st.Dir
 		cmd.Env = env
 		return cmd, func() {}, nil
 	}
+
+	caches, cacheEnv, err := toolCaches()
+	if err != nil {
+		return nil, nil, fmt.Errorf("sandbox: %w", err)
+	}
+	st.Writable = append(caches, st.Writable...)
+	env = append(env, cacheEnv...)
 
 	// Resolve the tool here: inside the launcher a missing tool would only
 	// show up as the launcher's own failure.
@@ -83,7 +92,7 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 	}
 	done := func() { _ = os.RemoveAll(tmp) }
 	env = append(env, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
-	argv, ok := confine(st, tmp, name, args)
+	argv, ok := confine(st, tmp, controlSockets(s.Sockets), name, args)
 	if !ok {
 		warnUnconfined.Do(func() {
 			slog.Warn("no build sandbox is available on this host (bubblewrap on Linux, sandbox-exec on macOS); build steps run directly, without Jerboa's credentials in their environment")
@@ -152,39 +161,76 @@ func within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// defaultWritable lists the caches any build step may write to: the user
-// cache directory and the language tools' homes.
-func defaultWritable() []string {
-	var out []string
-	if d, err := os.UserCacheDir(); err == nil {
-		out = append(out, d)
+// toolCaches returns the cache directories confined steps write to, and the
+// environment that points the language tools at them. They are Jerboa's
+// own: the tools' usual homes hold what later runs outside the sandbox
+// (~/.cargo/bin and the sources of downloaded crates, toolchains, the Go
+// build cache, wheels pip installs from), so a step that could write there
+// could leave code behind for the user's next build. The user's cargo
+// configuration and registry credentials are copied in, so cargo still sees
+// them.
+func toolCaches() ([]string, []string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return nil, nil, fmt.Errorf("cache directory: %w", err)
 	}
-	home, _ := os.UserHomeDir()
-	for _, kv := range []struct{ env, def string }{
-		{"npm_config_cache", ".npm"},
-		{"CARGO_HOME", ".cargo"},
-		{"RUSTUP_HOME", ".rustup"},
-		{"GOPATH", "go"},
-		{"GOCACHE", ""},
-		{"GOMODCACHE", ""},
-		{"PIP_CACHE_DIR", ""},
-		{"CARGO_TARGET_DIR", ""},
-	} {
-		switch v := os.Getenv(kv.env); {
-		case v != "":
-			out = append(out, filepath.SplitList(v)...)
-		case kv.def != "" && home != "":
-			out = append(out, filepath.Join(home, kv.def))
+	base = filepath.Join(base, "jerboa", "build-sandbox")
+	vars := []struct{ name, dir string }{
+		{"npm_config_cache", "npm"},
+		{"npm_config_devdir", "node-gyp"},
+		{"PIP_CACHE_DIR", "pip"},
+		{"GOCACHE", "go-build"},
+		{"GOMODCACHE", "go-mod"},
+		{"CARGO_HOME", "cargo"},
+		{"XDG_CACHE_HOME", "xdg"},
+	}
+	var dirs, env []string
+	for _, v := range vars {
+		d := filepath.Join(base, v.dir)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return nil, nil, fmt.Errorf("cache directory: %w", err)
 		}
+		dirs = append(dirs, d)
+		env = append(env, v.name+"="+d)
 	}
-	return out
+	copyCargoConfig(filepath.Join(base, "cargo"))
+	return dirs, env, nil
 }
 
-func existingDirs(dirs []string) []string {
-	var out []string
-	for _, d := range dirs {
-		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			out = append(out, d)
+// copyCargoConfig copies the user's cargo configuration and registry
+// credentials into the confined steps' cargo home, replacing what an earlier
+// step may have left there.
+func copyCargoConfig(dst string) {
+	src := os.Getenv("CARGO_HOME")
+	if src == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return
+		}
+		src = filepath.Join(home, ".cargo")
+	}
+	for _, name := range []string{"config.toml", "config", "credentials.toml", "credentials"} {
+		_ = os.Remove(filepath.Join(dst, name))
+		data, err := os.ReadFile(filepath.Join(src, name)) //nolint:gosec // the user's own cargo home
+		if err == nil {
+			_ = os.WriteFile(filepath.Join(dst, name), data, 0o600)
+		}
+	}
+}
+
+// controlSockets returns the Unix sockets, and directories of them, a
+// confined step may not connect to: the daemon's API at its default
+// locations and extra, and the control sockets of the VMs it runs, any of
+// which would let a step act outside the sandbox through the daemon.
+func controlSockets(extra []string) []string {
+	out := []string{"/var/run/jerboad.sock", "/run/jerboad.sock",
+		filepath.Join(os.TempDir(), fmt.Sprintf("jerboa-run-%d", os.Getuid()))}
+	if home, err := os.UserHomeDir(); err == nil {
+		out = append(out, filepath.Join(home, ".jerboa"))
+	}
+	for _, p := range extra {
+		if abs, err := filepath.Abs(p); err == nil && p != "" {
+			out = append(out, abs)
 		}
 	}
 	return out
@@ -193,8 +239,9 @@ func existingDirs(dirs []string) []string {
 // bwrapArgs returns the bubblewrap command line that runs name with args as
 // st: the host root read-only, fresh /dev and /proc, the project, the
 // writable directories and the step's temporary directory bound read-write,
-// the hidden paths masked, and no network unless allowed.
-func bwrapArgs(bwrap string, st Step, hidden, tmp []string, name string, args []string) []string {
+// the hidden paths and the control sockets masked, and no network unless
+// allowed.
+func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string, args []string) []string {
 	argv := []string{bwrap,
 		"--ro-bind", "/", "/",
 		"--dev", "/dev",
@@ -217,15 +264,27 @@ func bwrapArgs(bwrap string, st Step, hidden, tmp []string, name string, args []
 	for _, w := range append(append(append([]string{}, tmp...), st.Writable...), st.Dir) {
 		argv = append(argv, "--bind", w, w)
 	}
+	// Mount over the control sockets last, so no bind above uncovers them.
+	for _, p := range sockets {
+		fi, err := os.Stat(p)
+		switch {
+		case err != nil:
+		case fi.IsDir():
+			argv = append(argv, "--tmpfs", realPath(p))
+		default:
+			argv = append(argv, "--ro-bind", "/dev/null", realPath(p))
+		}
+	}
 	argv = append(argv, "--chdir", st.Dir, "--", name)
 	return append(argv, args...)
 }
 
 // seatbeltProfile returns the sandbox-exec profile that confines st: every
 // write outside the project, the writable directories, /dev and the
-// temporary directories is denied, so are reads of the hidden paths, and
-// so is the network unless allowed (local connections stay open).
-func seatbeltProfile(st Step, hidden, tmp []string) string {
+// temporary directories is denied, so are reads of the hidden paths and
+// connections to the control sockets, and so is the network unless allowed
+// (other local connections stay open).
+func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
 	var b strings.Builder
 	b.WriteString("(version 1)\n(allow default)\n(deny file-write*)\n")
 	b.WriteString("(allow file-write* (subpath \"/dev\")")
@@ -243,6 +302,10 @@ func seatbeltProfile(st Step, hidden, tmp []string) string {
 		b.WriteString("(allow network* (remote ip \"localhost:*\"))\n")
 		b.WriteString("(allow network* (remote unix-socket))\n")
 	}
+	// Last, so they win over the allows above.
+	for _, p := range sockets {
+		fmt.Fprintf(&b, "(deny network-outbound (remote unix-socket (subpath %s)))\n", sbplString(realPath(p)))
+	}
 	return b.String()
 }
 
@@ -258,42 +321,4 @@ func realPath(p string) string {
 		return r
 	}
 	return p
-}
-
-// npmCache returns npm's cache directory.
-func npmCache() string {
-	if d := os.Getenv("npm_config_cache"); d != "" {
-		return d
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".npm")
-}
-
-// cargoDirs returns the directories cargo writes to outside the project.
-func cargoDirs() []string {
-	if d := os.Getenv("CARGO_HOME"); d != "" {
-		return []string{d}
-	}
-	home, _ := os.UserHomeDir()
-	return []string{filepath.Join(home, ".cargo")}
-}
-
-// goDirs returns the build and module caches go writes to, as go reports
-// them for dir and env. go itself may download a toolchain into the module
-// cache, so it must be writable.
-func goDirs(ctx context.Context, dir string, env []string) []string {
-	cmd := exec.CommandContext(ctx, "go", "env", "GOCACHE", "GOMODCACHE")
-	cmd.Dir = dir
-	cmd.Env = env
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-	var dirs []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if d := strings.TrimSpace(line); filepath.IsAbs(d) {
-			dirs = append(dirs, d)
-		}
-	}
-	return dirs
 }

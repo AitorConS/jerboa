@@ -25,7 +25,7 @@ func seatbeltAvailable() bool {
 // confine runs the step under sandbox-exec. It may write to its private
 // temporary directory and to the per-user cache directory under
 // /var/folders that Apple's developer tools use (DARWIN_USER_CACHE_DIR).
-func confine(st Step, tmp string, name string, args []string) ([]string, bool) {
+func confine(st Step, tmp string, sockets []string, name string, args []string) ([]string, bool) {
 	if !seatbeltAvailable() {
 		return nil, false
 	}
@@ -36,7 +36,7 @@ func confine(st Step, tmp string, name string, args []string) ([]string, bool) {
 			scratch = append(scratch, d)
 		}
 	}
-	profile := seatbeltProfile(st, hiddenPaths(home, st), scratch)
+	profile := seatbeltProfile(st, hiddenPaths(home, st), scratch, sockets)
 	return append([]string{sandboxExec, "-p", profile, name}, args...), true
 }
 

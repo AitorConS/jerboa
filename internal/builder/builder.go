@@ -254,7 +254,7 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 			// machine; [build] install_scripts = true opts back in.
 			args = append(args, "--ignore-scripts")
 		}
-		installCmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Writable: []string{npmCache()}, Network: true}, "npm", args...)
+		installCmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Network: true}, "npm", args...)
 		if err != nil {
 			return BuildResult{}, fmt.Errorf("node driver: %w", err)
 		}
@@ -601,7 +601,7 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 		// unikernel never reads them.
 		env = append(env, "CARGO_PROFILE_RELEASE_STRIP=symbols")
 	}
-	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Writable: cargoDirs(), Network: true, Env: env}, "cargo", args...)
+	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Network: true, Env: env}, "cargo", args...)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("rust driver: %w", err)
 	}
@@ -731,7 +731,7 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 	}
 
 	env := append(Env(platform.GoCrossCompileEnv()...), opts.Env...)
-	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Writable: goDirs(ctx, dir, env), Network: true, Env: env}, "go", args...)
+	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Network: true, Env: env}, "go", args...)
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("go build: %w", err)
 	}

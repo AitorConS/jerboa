@@ -25,8 +25,12 @@ func TestSandboxHelper(t *testing.T) {
 		if _, err := os.ReadFile(os.Getenv("TARGET")); err != nil {
 			t.Fatal(err)
 		}
-	case "dial":
-		c, err := net.DialTimeout("tcp", os.Getenv("TARGET"), 3*time.Second)
+	case "dial", "unix":
+		network := "tcp"
+		if os.Getenv("JERBOA_SANDBOX_HELPER") == "unix" {
+			network = "unix"
+		}
+		c, err := net.DialTimeout(network, os.Getenv("TARGET"), 3*time.Second)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -55,10 +59,31 @@ func TestSandboxConfinesSteps(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = local.Close() }()
 
+	// A daemon socket: Unix socket paths are short, so not under t.TempDir.
+	sockDir, err := os.MkdirTemp("/tmp", "jsb")
+	require.NoError(t, err)
+	defer func() { _ = os.RemoveAll(sockDir) }()
+	daemon, err := net.Listen("unix", filepath.Join(sockDir, "d.sock"))
+	require.NoError(t, err)
+	defer func() { _ = daemon.Close() }()
+	other, err := net.Listen("unix", filepath.Join(sockDir, "o.sock"))
+	require.NoError(t, err)
+	defer func() { _ = other.Close() }()
+	go func() {
+		for {
+			c, err := other.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+
 	// run reports whether the confined helper succeeded, and how long it took.
 	run := func(action, target string) (bool, time.Duration) {
 		st := Step{Dir: work, Env: append(os.Environ(), "JERBOA_SANDBOX_HELPER="+action, "TARGET="+target)}
-		cmd, done, err := Sandbox{}.Command(context.Background(), st, os.Args[0], "-test.run=^TestSandboxHelper$", "-test.count=1")
+		sb := Sandbox{Sockets: []string{filepath.Join(sockDir, "d.sock")}}
+		cmd, done, err := sb.Command(context.Background(), st, os.Args[0], "-test.run=^TestSandboxHelper$", "-test.count=1")
 		require.NoError(t, err)
 		defer done()
 		start := time.Now()
@@ -76,6 +101,22 @@ func TestSandboxConfinesSteps(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(outside, "no"))
 	ok, _ = run("read", secret)
 	require.False(t, ok, "reading a credential store")
+
+	// The user's tool homes hold programs that run outside the sandbox.
+	cargoBin := filepath.Join(home, ".cargo", "bin")
+	require.NoError(t, os.MkdirAll(cargoBin, 0o755))
+	ok, _ = run("write", filepath.Join(cargoBin, "cargo-x"))
+	require.False(t, ok, "writing to the user's cargo home")
+	ok, _ = run("write", filepath.Join(os.Getenv("HOME"), "go", "bin", "x"))
+	require.False(t, ok, "writing to the user's Go bin")
+
+	ok, _ = run("unix", filepath.Join(sockDir, "d.sock"))
+	require.False(t, ok, "connecting to the daemon's socket")
+	if sandboxName() == "sandbox-exec" {
+		// bubblewrap masks the socket path itself; other sockets stay reachable.
+		ok, _ = run("unix", filepath.Join(sockDir, "o.sock"))
+		require.True(t, ok, "connecting to another local socket")
+	}
 
 	// A documentation address: without the sandbox the dial would wait for
 	// its timeout; confined it is refused at once.
