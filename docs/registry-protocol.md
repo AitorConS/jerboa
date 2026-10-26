@@ -94,6 +94,7 @@ provider.
 ### Login (`jerboa login`)
 
 1. The client runs the [GitHub device flow](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#device-flow) with `github_client_id` from discovery and the `read:org` scope. The user approves in a browser.
+   - A registry accepts any GitHub token issued to its app. So the client refuses to log in to another registry that advertises the default registry's `github_client_id`, and refuses when it cannot check. Such a registry can still be used with `--token`.
 2. `POST /auth/github` with `{"access_token": "<github token>"}`.
    - The registry reads the user and their organizations from GitHub and does not keep the GitHub token.
    - It answers `{"token": "jrt_…", "login": "aitorcons"}`.

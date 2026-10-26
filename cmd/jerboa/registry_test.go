@@ -1,9 +1,13 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/AitorConS/jerboa/internal/naming"
+	"github.com/AitorConS/jerboa/internal/registry/client"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,4 +41,27 @@ func TestSplitImageArgKeepsRegistryReferences(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, img)
 	require.Equal(t, "./disk.img", path)
+}
+
+func TestGitHubClientIDKeepsTheDefaultRegistrysApp(t *testing.T) {
+	ctx := context.Background()
+	official := func(context.Context) (string, error) { return "official", nil }
+	unreachable := func(context.Context) (string, error) { return "", errors.New("offline") }
+
+	id, err := githubClientID(ctx, naming.DefaultRegistry, client.Discovery{GitHubClientID: "official"}, unreachable)
+	require.NoError(t, err)
+	require.Equal(t, "official", id)
+
+	id, err = githubClientID(ctx, "registry.example.com", client.Discovery{GitHubClientID: "own"}, official)
+	require.NoError(t, err)
+	require.Equal(t, "own", id)
+
+	// Another registry may not obtain a token for the default registry's app.
+	_, err = githubClientID(ctx, "registry.example.com", client.Discovery{GitHubClientID: "official"}, official)
+	require.ErrorContains(t, err, "use --token")
+	// Nor log in when that cannot be checked.
+	_, err = githubClientID(ctx, "registry.example.com", client.Discovery{GitHubClientID: "own"}, unreachable)
+	require.ErrorContains(t, err, "offline")
+	_, err = githubClientID(ctx, "registry.example.com", client.Discovery{}, official)
+	require.ErrorContains(t, err, "does not offer GitHub login")
 }

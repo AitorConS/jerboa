@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -43,13 +44,17 @@ stores a personal access token, as CI does.`,
 			}
 			entry := credentials.Entry{Token: token}
 			if entry.Token == "" {
+				clientID, err := githubClientID(cmd.Context(), registry, d, defaultClientID)
+				if err != nil {
+					return fmt.Errorf("login: %w", err)
+				}
 				flow := client.DeviceFlow{GitHub: os.Getenv("JERBOA_GITHUB_URL")}
-				dc, err := flow.Start(cmd.Context(), d.GitHubClientID)
+				dc, err := flow.Start(cmd.Context(), clientID)
 				if err != nil {
 					return fmt.Errorf("login: %w", err)
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "Open %s and enter the code %s\n", dc.VerificationURI, dc.UserCode)
-				gh, err := flow.Wait(cmd.Context(), d.GitHubClientID, dc)
+				gh, err := flow.Wait(cmd.Context(), clientID, dc)
 				if err != nil {
 					return fmt.Errorf("login: %w", err)
 				}
@@ -75,6 +80,34 @@ stores a personal access token, as CI does.`,
 	}
 	cmd.Flags().StringVar(&token, "token", "", "store this personal access token instead of logging in with GitHub")
 	return cmd
+}
+
+// githubClientID returns the GitHub app to log in to registry with. The
+// default registry accepts any token GitHub issues for its app, so such a
+// token must not be handed to another registry: one that names the default
+// registry's app is refused. official returns the default registry's app.
+func githubClientID(ctx context.Context, registry string, d client.Discovery, official func(context.Context) (string, error)) (string, error) {
+	if d.GitHubClientID == "" {
+		return "", fmt.Errorf("%s does not offer GitHub login; use --token", registry)
+	}
+	if registry == naming.DefaultRegistry {
+		return d.GitHubClientID, nil
+	}
+	id, err := official(ctx)
+	if err != nil {
+		return "", fmt.Errorf("checking %s's GitHub app against %s: %w; use --token", registry, naming.DefaultRegistry, err)
+	}
+	if d.GitHubClientID == id {
+		return "", fmt.Errorf("%s offers %s's GitHub app, and a token for it would let %s act as you on %s; use --token",
+			registry, naming.DefaultRegistry, registry, naming.DefaultRegistry)
+	}
+	return d.GitHubClientID, nil
+}
+
+// defaultClientID returns the GitHub app of the default registry.
+func defaultClientID(ctx context.Context) (string, error) {
+	d, err := client.New(naming.DefaultRegistry).Discover(ctx)
+	return d.GitHubClientID, err
 }
 
 func newLogoutCmd() *cobra.Command {
