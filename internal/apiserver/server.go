@@ -73,8 +73,12 @@ type Server struct {
 	volSeedResol func(context.Context) (volume.Seeder, error)
 	volSeedCache volume.Seeder
 	authToken    string
-	// handshakes bounds the connections that have not authenticated yet.
+	// handshakes bounds the connections that have not authenticated yet, and
+	// pending counts them per peer (handshakePeer) so no single peer can hold
+	// every slot.
 	handshakes chan struct{}
+	pendingMu  sync.Mutex
+	pending    map[string]int
 	// handshakeTimeout and authFailureDelay default to the constants above.
 	handshakeTimeout time.Duration
 	authFailureDelay time.Duration
@@ -181,7 +185,8 @@ const (
 	preAuthReadLimit    = 64 << 10
 	requestReadLimit    = 64 << 20
 	maxPendingHandshake = 64
-	handshakeTimeout    = 10 * time.Second
+	maxPendingPerPeer   = 8
+	handshakeTimeout    = 5 * time.Second
 	// authFailureDelay slows down token guessing: every failed handshake costs
 	// the peer this long before the connection is closed.
 	authFailureDelay = 500 * time.Millisecond
@@ -231,19 +236,17 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		}
 	}()
 	if s.authToken != "" {
-		if s.handshakes != nil {
-			select {
-			case s.handshakes <- struct{}{}:
-			default:
-				slog.Warn("api server: too many pending handshakes; dropping connection", "remote", conn.RemoteAddr().String())
-				return
-			}
+		peer := handshakePeer(conn)
+		if !s.claimHandshake(peer) {
+			slog.Warn("api server: too many pending handshakes; dropping connection", "remote", conn.RemoteAddr().String(), "peer", peer)
+			_ = enc.Encode(api.Response{JSONRPC: "2.0", Error: &api.RPCError{Code: api.ErrCodeBusy, Message: "daemon busy: too many connections waiting to authenticate; retry shortly"}})
+			return
 		}
-		released := s.handshakes == nil
+		released := false
 		release := func() {
 			if !released {
 				released = true
-				<-s.handshakes
+				s.releaseHandshake(peer)
 			}
 		}
 		defer release()
@@ -285,6 +288,39 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			slog.Warn("api server encode response", "err", err)
 			return
 		}
+	}
+}
+
+// claimHandshake takes a pending-handshake slot for peer, unless the daemon
+// or that peer already holds as many as allowed.
+func (s *Server) claimHandshake(peer string) bool {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if s.pending == nil {
+		s.pending = map[string]int{}
+	}
+	if peer != "" && s.pending[peer] >= maxPendingPerPeer {
+		return false
+	}
+	if s.handshakes != nil {
+		select {
+		case s.handshakes <- struct{}{}:
+		default:
+			return false
+		}
+	}
+	s.pending[peer]++
+	return true
+}
+
+func (s *Server) releaseHandshake(peer string) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	if s.pending[peer]--; s.pending[peer] <= 0 {
+		delete(s.pending, peer)
+	}
+	if s.handshakes != nil {
+		<-s.handshakes
 	}
 }
 

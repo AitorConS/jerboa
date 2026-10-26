@@ -228,6 +228,10 @@ type AuthParams struct {
 	ClientNonce []byte `json:"client_nonce,omitempty"`
 }
 
+// ErrCodeBusy is the RPC error a daemon sends, before closing the connection,
+// when it has too many connections waiting to authenticate.
+const ErrCodeBusy = -32003
+
 // ChallengeResult is the daemon's reply to Auth.Challenge: a fresh nonce the
 // client must answer with an HMAC proof in Auth.Hello.
 type ChallengeResult struct {

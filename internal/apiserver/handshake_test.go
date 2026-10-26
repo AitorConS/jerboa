@@ -133,3 +133,37 @@ func TestHandshake_NoProofForAPeerWithoutTheToken(t *testing.T) {
 	require.NotNil(t, resp.Error)
 	require.Empty(t, resp.Result)
 }
+
+func TestHandshake_SlotsAreSharedOutPerPeer(t *testing.T) {
+	srv := &Server{handshakes: make(chan struct{}, maxPendingHandshake)}
+	for range maxPendingPerPeer {
+		require.True(t, srv.claimHandshake("uid:1000"))
+	}
+	require.False(t, srv.claimHandshake("uid:1000"), "one peer must not take more than its share")
+	require.True(t, srv.claimHandshake("uid:1001"), "another peer still gets a slot")
+	srv.releaseHandshake("uid:1000")
+	require.True(t, srv.claimHandshake("uid:1000"))
+	// A peer that cannot be told apart from others is bound only by the
+	// overall limit.
+	for range maxPendingHandshake - maxPendingPerPeer - 1 {
+		require.True(t, srv.claimHandshake(""))
+	}
+	require.False(t, srv.claimHandshake(""))
+	require.False(t, srv.claimHandshake("uid:1002"))
+}
+
+func TestHandshake_BusyDaemonSaysSo(t *testing.T) {
+	addr := startHandshakeServer(t, "s3cret-token")
+	// Hold every slot the way idle unauthenticated peers would.
+	for range maxPendingHandshake {
+		conn, err := net.Dial("tcp", addr)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+	}
+	require.Eventually(t, func() bool {
+		_, err := api.DialWithToken("tcp://"+addr, "s3cret-token")
+		return err != nil && strings.Contains(err.Error(), "daemon busy")
+	}, 5*time.Second, 50*time.Millisecond)
+	_, err := api.DialWithToken("tcp://"+addr, "s3cret-token")
+	require.NotContains(t, err.Error(), "update jerboad")
+}
