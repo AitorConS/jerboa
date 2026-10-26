@@ -312,8 +312,15 @@ func newRepoCmd(registry *string) *cobra.Command {
 
 // readFileOrStdin reads a file, or standard input for "-".
 func readFileOrStdin(cmd *cobra.Command, path string) ([]byte, error) {
+	var data []byte
+	var err error
 	if path == "-" {
-		return io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
+		data, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), 1<<20))
+	} else {
+		data, err = os.ReadFile(path) //nolint:gosec // a file the user names
 	}
-	return os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	return data, nil
 }
