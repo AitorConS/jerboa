@@ -36,17 +36,24 @@ type Service struct {
 	Restart     string   `yaml:"restart,omitempty"`
 }
 
-// Network describes a logical network.
+// Network describes a logical network. Unless External is set, it belongs to
+// the compose project: compose up creates it under a name scoped to the
+// project. An external network is one that already exists under its own name.
 type Network struct {
-	Driver string `yaml:"driver"`
-	Subnet string `yaml:"subnet,omitempty"`
+	Driver   string `yaml:"driver"`
+	Subnet   string `yaml:"subnet,omitempty"`
+	External bool   `yaml:"external,omitempty"`
 }
 
 // VolumeConfig describes a named volume defined at the top level of a compose file.
+// Unless External is set, the volume belongs to the compose project and is
+// created under a name scoped to the project; an external volume already
+// exists under its own name.
 type VolumeConfig struct {
 	// Size is the volume size as a human-readable string (e.g. "512M", "1G").
 	// Defaults to "1G" if empty.
-	Size string `yaml:"size"`
+	Size     string `yaml:"size"`
+	External bool   `yaml:"external,omitempty"`
 }
 
 // DefaultSize returns the volume size, falling back to "1G".

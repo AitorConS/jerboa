@@ -214,7 +214,7 @@ func TestParse_VolumeDefaultSize(t *testing.T) {
 	require.Equal(t, "512M", vc.DefaultSize())
 }
 
-func TestParse_VolumesWithoutTopLevelAllowed(t *testing.T) {
+func TestParse_UndeclaredVolumeRejected(t *testing.T) {
 	data := []byte(`
 version: "1"
 services:
@@ -223,9 +223,34 @@ services:
     volumes:
       - "data:/data"
 `)
-	f, err := compose.Parse(data)
+	_, err := compose.Parse(data)
+	require.ErrorContains(t, err, "undeclared volume")
+}
+
+func TestParse_ExternalResources(t *testing.T) {
+	f, err := compose.Parse([]byte(`
+services:
+  db:
+    image: redis:latest
+    networks: [shared]
+    volumes: ["pgdata:/data"]
+networks:
+  shared:
+    external: true
+volumes:
+  pgdata:
+    external: true
+`))
 	require.NoError(t, err)
-	require.Empty(t, f.Volumes)
+	require.True(t, f.Networks["shared"].External)
+	require.True(t, f.Volumes["pgdata"].External)
+
+	_, err = compose.Parse([]byte("services:\n  db:\n    image: x\n    volumes: [\"v:/d\"]\nvolumes:\n  v:\n    external: true\n    size: 1G\n"))
+	require.ErrorContains(t, err, "cannot set a size")
+	_, err = compose.Parse([]byte("services:\n  db:\n    image: x\n    networks: [n]\nnetworks:\n  n:\n    external: true\n    subnet: 10.1.0.0/24\n"))
+	require.ErrorContains(t, err, "cannot set a subnet")
+	_, err = compose.Parse([]byte("services:\n  db:\n    image: x\n    networks: [../n]\nnetworks:\n  ../n: {}\n"))
+	require.Error(t, err)
 }
 
 func TestParse_UnknownVolume(t *testing.T) {
@@ -241,7 +266,7 @@ volumes:
     size: 512M
 `)
 	_, err := compose.Parse(data)
-	require.ErrorContains(t, err, "unknown volume")
+	require.ErrorContains(t, err, "undeclared volume")
 }
 
 func TestParse_InvalidVolumeSize(t *testing.T) {
