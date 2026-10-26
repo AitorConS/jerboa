@@ -26,13 +26,14 @@ type Server struct {
 	objects   map[string][]byte
 	locations map[string]pack.Location
 	repos     map[string]map[string]string
+	pulls     map[string]int
 	// Requests counts requests by "METHOD /first/segments".
 	Requests map[string]int
 }
 
 // New starts a fake registry.
 func New() *Server {
-	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, Requests: map[string]int{}}
+	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, pulls: map[string]int{}, Requests: map[string]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -53,6 +54,13 @@ func (s *Server) Repo(namespace, repository string) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.repos[namespace+"/"+repository]
+}
+
+// Pulls returns how many pulls clients reported for a repository.
+func (s *Server) Pulls(namespace, repository string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pulls[namespace+"/"+repository]
 }
 
 // Corrupt flips one byte of a stored object.
@@ -103,6 +111,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]string{"namespace": parts[1], "name": parts[2]})
+	case parts[0] == "v2" && len(parts) == 4 && parts[3] == "pulls" && r.Method == http.MethodPost:
+		s.mu.Lock()
+		s.pulls[parts[1]+"/"+parts[2]]++
+		s.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
 	case parts[0] == "v2" && len(parts) >= 4:
 		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			fail(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing token")

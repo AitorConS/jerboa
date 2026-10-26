@@ -143,6 +143,9 @@ func TestPushPullRoundTripAndDeduplication(t *testing.T) {
 	byDigest.Digest = v1
 	_, err = Pull(ctx, PullOptions{Client: e.cl, Ref: byDigest, Store: remote, Mkfs: e.mkfsFor, Out: out})
 	require.NoError(t, err)
+
+	// Every successful pull reports itself to the hub's counter.
+	require.Equal(t, 3, e.reg.Pulls(byDigest.Namespace, byDigest.Repository))
 }
 
 func TestPullRejectsCorruptPack(t *testing.T) {
@@ -167,6 +170,7 @@ func TestPullRejectsCorruptPack(t *testing.T) {
 		}
 	}
 	require.Less(t, stored, len(r.Blobs), "corrupt blobs must not be stored")
+	require.Zero(t, e.reg.Pulls("alice", "web"), "a failed pull is not counted")
 }
 
 func TestPushRefusesRecipeThatDoesNotRebuild(t *testing.T) {
