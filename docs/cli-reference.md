@@ -728,7 +728,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--vm-log-max-bytes` | Max in-memory serial log bytes retained per VM (`0` = 4 MiB default) |
 | `--log-format` | Log format: `text` (default) or `json` |
 | `--metrics-addr` | HTTP address for Prometheus metrics (e.g. `127.0.0.1:9090`); empty disables metrics. Off loopback it needs an observability token |
-| `--ui-addr` | HTTP address for the web dashboard (e.g. `127.0.0.1:8080`); empty disables it. Off loopback it needs an observability token |
+| `--ui-addr` | HTTP address for the web dashboard (e.g. `127.0.0.1:8080`); empty disables it. It needs an observability token, on loopback too |
 | `--observability-token-file` | File (mode `0600`) with the read-only token for metrics and the dashboard (env: `JERBOA_OBSERVABILITY_TOKEN`) |
 | `--trace-addr` | OTLP gRPC address for trace export (e.g. `localhost:4317`); empty disables tracing |
 | `--cluster-addr` | HTTP address for the cluster gossip endpoint (e.g. `:7946`); empty disables cluster. Requires a cluster token |

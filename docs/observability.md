@@ -26,11 +26,11 @@ Enable with:
 jerboad --metrics-addr 127.0.0.1:9090
 ```
 
-On loopback no token is needed, and requests must name `localhost` or a
+On loopback metrics need no token, and requests must name `localhost` or a
 loopback address in `Host`, so a web page cannot read the endpoint through DNS
-rebinding. To serve metrics or the dashboard on another address, give the daemon
-a read-only token with `--observability-token-file` (a `0600` file) or
-`JERBOA_OBSERVABILITY_TOKEN`; without one the daemon refuses to start, unless
+rebinding. To serve metrics on another address, or the dashboard at all, give
+the daemon a read-only token with `--observability-token-file` (a `0600` file)
+or `JERBOA_OBSERVABILITY_TOKEN`; without one the daemon refuses to start, unless
 you pass `--insecure`. Scrapers send it as `Authorization: Bearer <token>`.
 `jerboa daemon start --metrics-addr ... --ui-addr ...` generates the token and
 stores it as `observability_token` in `~/.jerboa/config.toml`.
@@ -77,10 +77,12 @@ The daemon defaults to text logs.
 Enable with:
 
 ```bash
-jerboad --ui-addr 127.0.0.1:8080
+jerboad --ui-addr 127.0.0.1:8080 --observability-token-file /etc/jerboa/observability-token
 ```
 
-With a token configured, a browser is sent to `/ui/login`, which stores the
+The dashboard needs the token even on loopback, since every local user can
+reach `127.0.0.1` and it shows VM names, addresses and serial logs. A browser
+is sent to `/ui/login`, which stores the
 token in an HttpOnly cookie. The dashboard lists which environment variables a
 VM has, not their values.
 
