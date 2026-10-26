@@ -38,6 +38,9 @@ RELEASE_BASE="${RELEASE_BASE:-https://releases.jerboa.dev}"
 RELEASE_BASE="${RELEASE_BASE%/}"
 VERSION=latest
 PUBLIC_KEY="RWQUeMEQrLXFcshAMUevjf6nlhsSB1PuZYt5dFhb0za9aypwSAUMorsH"
+# The release that publishes this script sets this to its manifest's
+# generation time: no older stable manifest is accepted.
+MIN_GENERATED=""
 
 PREFIX=/usr/local/bin
 JERBOA_USER=jerboa
@@ -48,6 +51,37 @@ UNIT=/etc/systemd/system/jerboad.service
 
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "==> $*"; }
+
+# check_fresh refuses a signed manifest for another channel, or one generated
+# before this script's release or before the newest one already accepted from
+# this origin (recorded in the state file), so a superseded signed manifest
+# cannot be served in place of the current one.
+check_fresh() {
+	local manifest="$1" state="$2" generated last
+	[ "$(jq -r '.channel // empty' "${manifest}")" = stable ] \
+		|| die "the release manifest is not signed for the stable channel"
+	generated="$(jq -r '.generated // empty' "${manifest}")"
+	[[ "${generated}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+		|| die "the release manifest has no valid generation time"
+	[[ ! "${generated}" < "${MIN_GENERATED}" ]] \
+		|| die "the release manifest (${generated}) is older than this installer (${MIN_GENERATED})"
+	last="$(jq -r --arg k "${RELEASE_BASE} stable" '.[$k] // empty' "${state}" 2>/dev/null || true)"
+	[ -z "${last}" ] || [[ ! "${generated}" < "${last}" ]] \
+		|| die "the release manifest (${generated}) is older than one already installed (${last})"
+	FRESH_GENERATED="${generated}"
+}
+
+# record_fresh stores the accepted manifest's generation time in the state
+# file, in the format the jerboa CLI uses for its own updates.
+record_fresh() {
+	local state="$1" seen='{}'
+	mkdir -p "$(dirname "${state}")"
+	if jq -e 'type == "object"' "${state}" >/dev/null 2>&1; then
+		seen="$(cat "${state}")"
+	fi
+	jq --arg k "${RELEASE_BASE} stable" --arg v "${FRESH_GENERATED}" '.[$k] = $v' <<<"${seen}" > "${state}.tmp"
+	mv -f "${state}.tmp" "${state}"
+}
 
 usage() {
 	cat <<'HELP'
@@ -108,6 +142,8 @@ install_macos() {
 	fetch "${manifest}.minisig" "${tmp}/manifest.json.minisig"
 	minisign -Vm "${tmp}/manifest.json" -x "${tmp}/manifest.json.minisig" -P "${PUBLIC_KEY}" >/dev/null \
 		|| die "release manifest signature verification failed"
+	state="${HOME}/.jerboa/release-state.json"
+	[ "${VERSION}" != latest ] || check_fresh "${tmp}/manifest.json" "${state}"
 	resolved="$(jq -er '.components.macos.version' "${tmp}/manifest.json")" \
 		|| die "this release does not include the native macOS package"
 	[[ "${resolved}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid macOS release version"
@@ -136,6 +172,7 @@ install_macos() {
 	done
 	/usr/local/libexec/jerboa/bin/jerboa config set hypervisor firecracker
 	/usr/local/libexec/jerboa/bin/jerboa daemon start --hypervisor firecracker
+	[ -z "${FRESH_GENERATED:-}" ] || record_fresh "${state}"
 	log "done. Jerboa ${VERSION} with native Firecracker is installed"
 	echo "    verify: /usr/local/bin/jerboa status"
 }
@@ -191,6 +228,7 @@ fetch "${RELEASE_BASE}/channels/stable.json" "${tmp}/stable.json"
 fetch "${RELEASE_BASE}/channels/stable.json.minisig" "${tmp}/stable.json.minisig"
 minisign -Vm "${tmp}/stable.json" -x "${tmp}/stable.json.minisig" -P "${PUBLIC_KEY}" >/dev/null \
 	|| die "release manifest signature verification failed"
+check_fresh "${tmp}/stable.json" "${ENV_DIR}/release-state.json"
 if [ "${VERSION}" = latest ]; then
 	VERSION="$(jq -er '.components.cli.version' "${tmp}/stable.json")"
 	[ "${VERSION}" = "$(jq -er '.components.daemon.version' "${tmp}/stable.json")" ] \
@@ -343,6 +381,7 @@ systemctl daemon-reload
 systemctl enable jerboad.service
 systemctl restart jerboad.service
 systemctl is-active --quiet jerboad.service || die "jerboad failed to start; inspect journalctl -u jerboad"
+record_fresh "${ENV_DIR}/release-state.json"
 
 # Point the invoking user's CLI at the daemon with the shared token. SUDO_USER
 # is the human who ran sudo; fall back to root when invoked as root directly.

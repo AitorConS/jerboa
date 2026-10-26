@@ -370,7 +370,7 @@ def assemble():
     components['distro'] = {'version': v, 'kernel': spec['kernel_version'], **stage('distro/jerboa-rootfs-amd64.tar.gz', f'distro/{v}/jerboa-rootfs-amd64.tar.gz')}
     # Keep bootstrap bytes in the signed candidate inventory; promotion must
     # never read an installer from a newer checkout.
-    stage('scripts/install.sh', f'releases/{v}/install.sh')
+    stage(pin_installer(Path('scripts/install.sh'), root / 'install.sh', manifest['generated']), f'releases/{v}/install.sh')
     installer = f'jerboa-desktop-setup-{n}.exe'
     stage(Path('desktop-windows') / (installer + '.blockmap'), 'desktop/' + installer + '.blockmap')
     # Generate the updater feed ourselves from the staged final installer bytes.
@@ -389,6 +389,16 @@ def assemble():
     write_json(root / 'inventory.json', record)
     sign(root / 'manifest.json', f'release:{v}')
     sign(root / 'inventory.json', f'candidate:{spec["run_id"]} version:{v}')
+
+
+def pin_installer(source, target, generated):
+    """Copy the installer, refusing stable manifests generated before this one."""
+    text = Path(source).read_text()
+    line = 'MIN_GENERATED=""\n'
+    if text.count(line) != 1:
+        raise ValueError('Installer has no MIN_GENERATED line to pin')
+    Path(target).write_text(text.replace(line, f'MIN_GENERATED="{generated}"\n'))
+    return target
 
 
 def generated_now():

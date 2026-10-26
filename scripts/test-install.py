@@ -73,7 +73,7 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     (root/'run/systemd/system').mkdir(parents=True)
     runner=root/'install.sh'; runner.write_text(script)
     digest=hashlib.sha256(b'binary').hexdigest()
-    manifest={'components':{key:{'version':'v0.51.2','platforms':{'linux-amd64':{'sha256':digest,'size':len(b'binary')}}} for key in ['cli','daemon']}}
+    manifest={'channel':'stable','generated':'2026-10-20T10:00:00Z','components':{key:{'version':'v0.51.2','platforms':{'linux-amd64':{'sha256':digest,'size':len(b'binary')}}} for key in ['cli','daemon']}}
     (root/'manifest').write_text(json.dumps(manifest))
     env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'FIXTURE':str(root),'HYPERVISOR':'qemu','SUDO_USER':'tester'}
     for key in ['RELEASE_BASE','JERBOA_PORT','FC_ARCH','FIRECRACKER_VERSION','FIRECRACKER_SHA256']: env.pop(key,None)
@@ -141,12 +141,38 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run(ok=False,HYPERVISOR='firecracker',FIRECRACKER_VERSION='v1.18.0')
     run(HYPERVISOR='firecracker',FIRECRACKER_SHA256=digest)
     assert (root/'usr/local/bin/firecracker').read_bytes()==b'firecracker'
-    print('PASS: version parsing, latest/pinned URLs, signed historical manifests, zstd variants with fallback, platform checks, QEMU without KVM, upgrades, token preservation, signature/checksum/download failures, firecracker checksum.')
+    # The stable manifest must be signed for the stable channel, and no older
+    # than the newest one already installed from this origin.
+    state=root/'etc/jerboa/release-state.json'
+    assert json.loads(state.read_text())=={'https://releases.jerboa.dev stable':'2026-10-20T10:00:00Z'}
+    def serve(**fields):
+        (root/'manifest').write_text(json.dumps({**manifest,**fields}))
+    for fields in [dict(channel='beta'),dict(channel=None),dict(generated=None),dict(generated='yesterday'),
+                   dict(generated='2026-10-19T10:00:00Z')]:
+        serve(**fields)
+        (root/'calls').write_text('')
+        result=run(ok=False)
+        assert 'linux-amd64' not in (root/'calls').read_text(),result.stderr
+    serve(generated='2026-10-22T10:00:00Z')
+    run()
+    assert json.loads(state.read_text())=={'https://releases.jerboa.dev stable':'2026-10-22T10:00:00Z'}
+    serve(generated='2026-10-20T10:00:00Z')
+    run(ok=False)
+    # A released installer refuses manifests older than its own release.
+    state.unlink()
+    released=root/'released.sh'
+    released.write_text(runner.read_text().replace('MIN_GENERATED=""','MIN_GENERATED="2026-10-21T00:00:00Z"'))
+    result=subprocess.run(['bash',str(released)],env=env,capture_output=True,text=True)
+    assert result.returncode!=0 and 'older than this installer' in result.stderr,result.stderr
+    serve(generated='2026-10-22T10:00:00Z')
+    result=subprocess.run(['bash',str(released)],env=env,capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    print('PASS: version parsing, latest/pinned URLs, signed historical manifests, zstd variants with fallback, platform checks, QEMU without KVM, upgrades, token preservation, signature/checksum/download failures, firecracker checksum, channel and freshness.')
 
     manifest['components']['macos']={'version':'v0.51.2','platforms':{'darwin-arm64':{
         'sha256':digest,'url':'https://releases.jerboa.dev/macos/v0.51.2/jerboa-0.51.2-macos-arm64.pkg'}}}
     (root/'manifest').write_text(json.dumps(manifest))
-    env.update(OS='Darwin', ARCH='arm64', UID_MOCK='501', HYPERVISOR='firecracker')
+    env.update(OS='Darwin', ARCH='arm64', UID_MOCK='501', HYPERVISOR='firecracker', HOME=str(root/'home'))
     (root/'calls').write_text('')
     run()
     run('--version','0.51.2')
@@ -163,6 +189,17 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
         run(ok=False,**overrides)
         assert 'sudo installer' not in (root/'calls').read_text()
     run('--version','0.51.1',ok=False)
+    # Latest is checked for channel and freshness; the state is shared with the CLI.
+    mac_state=root/'home/.jerboa/release-state.json'
+    assert json.loads(mac_state.read_text())=={'https://releases.jerboa.dev stable':'2026-10-20T10:00:00Z'}
+    for fields in [dict(channel='beta'),dict(generated='2026-10-19T10:00:00Z')]:
+        serve(**fields)
+        (root/'calls').write_text('')
+        run(ok=False)
+        assert 'sudo installer' not in (root/'calls').read_text()
+    # A pinned version is checked against its own release manifest instead.
+    run('--version','0.51.2')
+    serve()
     manifest['components'].pop('macos')
     (root/'manifest').write_text(json.dumps(manifest))
     run(ok=False)

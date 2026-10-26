@@ -25,7 +25,7 @@ class KernelCandidateTests(unittest.TestCase):
                      'run_id': '123', 'repository': 'AitorConS/jerboa'}
         c.write_json('release-lock.json', self.spec)
         Path('scripts').mkdir()
-        Path('scripts/install.sh').write_text('#!/bin/sh\n# tested bootstrap\n')
+        Path('scripts/install.sh').write_text('#!/bin/sh\n# tested bootstrap\nMIN_GENERATED=""\n')
         Path('kernel').mkdir()
         Path('kernel/VERSION').write_text('0.2.1\n')
         for name in ['tools/bin/mkfs', 'tools/bin/dump', 'platform/pc/boot/boot.img',
@@ -182,6 +182,10 @@ class KernelCandidateTests(unittest.TestCase):
         self.assertIn('kernel/v0.2.1/mkfs-darwin-arm64', inv['assets'])
         self.assertEqual(inv['kernel_toolset'], self.record)
         self.assertEqual(manifest['components']['distro']['kernel'], 'v0.2.1')
+        # The released installer refuses stable manifests older than this one.
+        installer = Path('candidate/payload/releases/v1.0.0/install.sh').read_text()
+        self.assertIn(f'MIN_GENERATED="{manifest["generated"]}"\n', installer)
+        self.assertIn('releases/v1.0.0/install.sh', inv['assets'])
         for name, filename in c.KERNEL_FILES.items():
             self.assertEqual(manifest['components']['kernel']['files'][name]['sha256'], self.record['files'][filename]['sha256'])
         # CLI and daemon binaries ship a zstd variant beside them, covered by
