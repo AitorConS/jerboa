@@ -128,4 +128,12 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn(f'{version}-{arch}) fc_digest={digest} ;;',(ROOT/'scripts/install.sh').read_text())
   self.assertIn('"${FIRECRACKER_SHA256}  /tmp/fc.tgz" | sha256sum -c -',text)
   self.assertLess(text.index('sha256sum -c'),text.index('tar -xzf /tmp/fc.tgz'))
+ def test_signing_secrets_only_reach_packaging(self):
+  text=(ROOT/'.github/workflows/release.yml').read_text()
+  for secret in ['secrets.CSC_LINK','secrets.CSC_KEY_PASSWORD']:
+   self.assertEqual(text.count(secret),1)
+  step=text[text.rindex('    - name:',0,text.index('secrets.CSC_LINK')):text.index('secrets.CSC_LINK')]
+  self.assertIn('electron-builder --win',step)
+  for command in ['npm ci','npm install','npm run','node ']:
+   self.assertNotIn(command,step)
 if __name__=='__main__':unittest.main()
