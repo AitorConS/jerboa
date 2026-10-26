@@ -35,3 +35,19 @@ func TestSaveLoadAndPrecedence(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "jpat_ci", got)
 }
+
+func TestEnvTokenGoesOnlyToItsRegistry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(EnvToken, "jpat_ci")
+	t.Setenv(EnvHost, "")
+
+	_, err := For("evil.example")
+	require.ErrorContains(t, err, EnvHost+"=evil.example")
+
+	t.Setenv(EnvHost, "staging.registry.jerboa.dev")
+	got, err := For("staging.registry.jerboa.dev")
+	require.NoError(t, err)
+	require.Equal(t, "jpat_ci", got)
+	_, err = For("registry.jerboa.dev")
+	require.Error(t, err)
+}
