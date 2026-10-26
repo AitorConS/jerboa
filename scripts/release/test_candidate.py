@@ -67,6 +67,16 @@ class ProtocolTests(unittest.TestCase):
         m['components']['kernel']={'version':'v0.2.0','files':{'kernel':asset}}
         return m
 
+    def test_installer_is_pinned_to_its_release_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            source=Path(td)/'install.sh'; target=Path(td)/'pinned.sh'
+            source.write_text('#!/bin/sh\nMIN_GENERATED=""\necho\n')
+            c.pin_installer(source,target,'2026-10-26T10:00:00Z')
+            self.assertEqual(target.read_text(),'#!/bin/sh\nMIN_GENERATED="2026-10-26T10:00:00Z"\necho\n')
+            source.write_text('#!/bin/sh\n')
+            with self.assertRaisesRegex(ValueError,'MIN_GENERATED'):
+                c.pin_installer(source,target,'2026-10-26T10:00:00Z')
+
     def test_incomplete_platform_blocks_promotion(self):
         m=self.manifest();c.assert_manifest(m,'v1.0.0')
         del m['components']['desktop']['platforms']['windows-amd64']
