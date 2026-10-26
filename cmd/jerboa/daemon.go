@@ -185,7 +185,7 @@ func newDaemonInstallCmd() *cobra.Command {
 					return ferr
 				}
 				tarPath = p
-				defer func() { _ = os.Remove(p) }()
+				defer func() { _ = os.RemoveAll(filepath.Dir(p)) }()
 			}
 
 			if err := validateRootfs(tarPath); err != nil {
@@ -263,7 +263,7 @@ func newDaemonReinstallCmd() *cobra.Command {
 					return ferr
 				}
 				tarPath = p
-				defer func() { _ = os.Remove(p) }()
+				defer func() { _ = os.RemoveAll(filepath.Dir(p)) }()
 			}
 
 			if err := validateRootfs(tarPath); err != nil {
@@ -587,24 +587,23 @@ func newDaemonLogsCmd() *cobra.Command {
 }
 
 // fetchRootfs downloads the dedicated-distro rootfs named by the signed release
-// manifest (SHA-256 verified) into a temp file and returns its path. The caller
-// removes it after import. R2 is the single source of truth — there is no
+// manifest (SHA-256 verified) into a fresh private temp directory and returns
+// the file's path. The caller removes that directory after import. R2 is the single source of truth — there is no
 // GitHub fallback.
 func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
-	tmp, err := os.CreateTemp("", "jerboa-rootfs-*.tar.gz")
+	// DownloadArtifact writes dest.partial and renames it to dest, so both
+	// names live in a directory only this user can write to.
+	tmpDir, err := os.MkdirTemp("", "jerboa-rootfs-")
 	if err != nil {
-		return "", fmt.Errorf("daemon install: temp file: %w", err)
+		return "", fmt.Errorf("daemon install: temp dir: %w", err)
 	}
-	tmpPath := tmp.Name()
-	// DownloadArtifact installs via rename(dest.tmp -> dest), which fails on
-	// Windows when dest already exists, so remove the placeholder now.
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("daemon install: close temp: %w", err)
-	}
-	if err := os.Remove(tmpPath); err != nil {
-		return "", fmt.Errorf("daemon install: remove temp placeholder: %w", err)
-	}
+	tmpPath := filepath.Join(tmpDir, "rootfs.tar.gz")
+	done := false
+	defer func() {
+		if !done {
+			_ = os.RemoveAll(tmpDir)
+		}
+	}()
 
 	cl, err := release.Default()
 	if err != nil {
@@ -628,6 +627,7 @@ func fetchRootfs(ctx context.Context, cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("daemon install: download rootfs: %w "+
 			"(if no release is published, build it with distro/build.sh and pass --rootfs)", err)
 	}
+	done = true
 	return tmpPath, nil
 }
 

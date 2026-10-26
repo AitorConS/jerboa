@@ -148,6 +148,9 @@ func (s *Store) Download(pkg Package) error {
 		slog.Info("package already downloaded", "name", pkg.Name, "version", pkg.Version)
 		return nil
 	}
+	if err := pkg.checkSource(); err != nil {
+		return err
+	}
 
 	slog.Info("downloading package", "name", pkg.Name, "version", pkg.Version)
 
@@ -162,17 +165,14 @@ func (s *Store) Download(pkg Package) error {
 		return fmt.Errorf("package download %s: %w", pkg.Name, err)
 	}
 
-	if pkg.Size > 0 && size != pkg.Size {
+	if size != pkg.Size {
 		httpclient.DiscardPartial(partial)
 		return fmt.Errorf("package download: %w (got %d, want %d)", ErrSizeMismatch, size, pkg.Size)
 	}
 
-	if pkg.SHA256 != "" {
-		got := hex.EncodeToString(sum)
-		if !strings.EqualFold(got, pkg.SHA256) {
-			httpclient.DiscardPartial(partial)
-			return fmt.Errorf("package download: %w (got %s, want %s)", ErrChecksumMismatch, got, pkg.SHA256)
-		}
+	if got := hex.EncodeToString(sum); !strings.EqualFold(got, pkg.SHA256) {
+		httpclient.DiscardPartial(partial)
+		return fmt.Errorf("package download: %w (got %s, want %s)", ErrChecksumMismatch, got, pkg.SHA256)
 	}
 
 	if err := httpclient.CommitPartial(partial, archivePath); err != nil {
@@ -523,14 +523,20 @@ func fetchIndexRaw() (*Index, []byte, error) {
 		return nil, nil, fmt.Errorf("package index: HTTP %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxIndexSize+1))
 	if err != nil {
 		return nil, nil, fmt.Errorf("package index read: %w", err)
+	}
+	if len(data) > maxIndexSize {
+		return nil, nil, fmt.Errorf("package index is larger than %d bytes", maxIndexSize)
 	}
 
 	var idx Index
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, nil, fmt.Errorf("package index parse: %w", err)
+	}
+	if err := checkIndex(&idx); err != nil {
+		return nil, nil, err
 	}
 	return &idx, data, nil
 }

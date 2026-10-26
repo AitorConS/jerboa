@@ -35,7 +35,6 @@ jobs:
     uses: ./.github/workflows/validate.yml
     with:
       full: ${{ needs.changes.outputs.full == 'true' }}
-    secrets: inherit
     needs:
     - changes
     if: needs.changes.outputs.enabled == 'true'

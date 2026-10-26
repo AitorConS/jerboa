@@ -253,6 +253,7 @@ jobs:
         severity: HIGH,CRITICAL
         exit-code: 1
         skip-dirs: examples
+        version: v0.75.0
     if: inputs.suite != 'kernel'
   report:
     name: Nightly report

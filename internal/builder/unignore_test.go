@@ -49,6 +49,11 @@ func TestDefaultIgnorePatterns(t *testing.T) {
 	require.True(t, m.Match("dist", true))
 	require.False(t, m.Match("main.go", false))
 	require.False(t, m.Match("src/app.go", false))
+	for _, p := range []string{".env", ".env.local", "config/.npmrc", ".pypirc", ".ssh", ".aws", "id_ed25519", "tls/server.key", "cert.pem"} {
+		require.True(t, m.Match(p, p == ".ssh" || p == ".aws"), p)
+	}
+	require.False(t, m.Match("id_generator.js", false))
+	require.False(t, m.Match("environment.js", false))
 }
 
 func TestMatchIgnorePatternGlob(t *testing.T) {

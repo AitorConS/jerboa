@@ -361,30 +361,6 @@ func TestStore_Download_SHA256Mismatch(t *testing.T) {
 	_, statErr := os.Stat(archivePath)
 	require.True(t, os.IsNotExist(statErr), "archive should be removed on sha256 mismatch")
 }
-
-func TestStore_Download_SkipsSHA256WhenEmpty(t *testing.T) {
-	content := []byte("content without hash check")
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(content)
-	}))
-	t.Cleanup(ts.Close)
-
-	dir := t.TempDir()
-	store, err := NewStore(dir)
-	require.NoError(t, err)
-
-	pkg := Package{
-		Name:    "nohash",
-		Version: "1.0.0",
-		Size:    int64(len(content)),
-		SHA256:  "",
-		URL:     ts.URL + "/nohash-1.0.0.tar.gz",
-	}
-	require.NoError(t, store.Download(pkg))
-	require.True(t, store.IsDownloaded("nohash", "1.0.0"))
-}
-
 func TestStore_Create(t *testing.T) {
 	dir := t.TempDir()
 	store, err := NewStore(dir)
@@ -629,6 +605,7 @@ func TestStore_Download_SizeMismatch(t *testing.T) {
 		Name:    "bigpkg",
 		Version: "1.0.0",
 		Size:    999999,
+		SHA256:  strings.Repeat("0", 64),
 		URL:     ts.URL + "/bigpkg-1.0.0.tar.gz",
 	}
 	err = store.Download(pkg)
@@ -652,6 +629,8 @@ func TestStore_Download_HTTPError(t *testing.T) {
 	pkg := Package{
 		Name:    "failpkg",
 		Version: "1.0.0",
+		Size:    1,
+		SHA256:  strings.Repeat("0", 64),
 		URL:     ts.URL + "/failpkg-1.0.0.tar.gz",
 	}
 	err = store.Download(pkg)

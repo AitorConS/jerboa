@@ -52,6 +52,9 @@ type BuildConfig struct {
 	// TFS volume can only be mounted onto a directory that already exists in the
 	// root image) and for scratch paths the program writes to at runtime.
 	Dirs []string `toml:"dirs"`
+	// InstallScripts lets npm run dependencies' install scripts (preinstall,
+	// install, postinstall). Off by default: they run on the build machine.
+	InstallScripts bool `toml:"install_scripts"`
 }
 
 type RunConfig struct {

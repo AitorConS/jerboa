@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -117,6 +118,8 @@ type Options struct {
 	// Output is where subprocess output (compiler, package manager, etc.) is written.
 	// If nil, defaults to os.Stderr.
 	Output io.Writer
+	// InstallScripts lets npm run the install scripts of dependencies.
+	InstallScripts bool
 }
 
 // buildOutput returns the writer for subprocess output, falling back to os.Stderr.
@@ -223,7 +226,7 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	}
 
 	nodeHash := sha256.New()
-	_, _ = nodeHash.Write([]byte(nodeVersion + "\n" + runtime.GOOS + "/" + runtime.GOARCH))
+	_, _ = nodeHash.Write([]byte(nodeVersion + "\n" + runtime.GOOS + "/" + runtime.GOARCH + "\n" + strconv.FormatBool(opts.InstallScripts)))
 	for _, name := range []string{"package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc"} {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil && !os.IsNotExist(err) {
@@ -243,8 +246,15 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 		if _, err := os.Stat(filepath.Join(dir, "package-lock.json")); err == nil {
 			sub = "ci"
 		}
-		installCmd := exec.CommandContext(ctx, "npm", sub, "--omit=dev", "--no-audit", "--no-fund")
+		args := []string{sub, "--omit=dev", "--no-audit", "--no-fund"}
+		if !opts.InstallScripts {
+			// Dependencies' install scripts run arbitrary code on the build
+			// machine; [build] install_scripts = true opts back in.
+			args = append(args, "--ignore-scripts")
+		}
+		installCmd := exec.CommandContext(ctx, "npm", args...)
 		installCmd.Dir = dir
+		installCmd.Env = Env()
 		w := opts.buildOutput()
 		installCmd.Stdout = w
 		installCmd.Stderr = w
@@ -404,6 +414,7 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 				"--only-binary", ":all:",
 			)
 			pipCmd.Dir = dir
+			pipCmd.Env = Env()
 			w := opts.buildOutput()
 			pipCmd.Stdout = w
 			pipCmd.Stderr = w
@@ -581,7 +592,7 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	w := opts.buildOutput()
 	cmd.Stdout = w
 	cmd.Stderr = w
-	cmd.Env = append(os.Environ(), "CARGO_BUILD_TARGET="+target)
+	cmd.Env = Env("CARGO_BUILD_TARGET=" + target)
 	if !rustStripConfigured(dir) {
 		// Symbols and debug info are a large share of a release binary and a
 		// unikernel never reads them.
@@ -710,7 +721,7 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), platform.GoCrossCompileEnv()...)
+	cmd.Env = Env(platform.GoCrossCompileEnv()...)
 	cmd.Env = append(cmd.Env, opts.Env...)
 	w := opts.buildOutput()
 	cmd.Stdout = w

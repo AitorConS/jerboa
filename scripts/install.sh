@@ -22,6 +22,8 @@
 #
 # Environment overrides:
 #   FIRECRACKER_VERSION   firecracker release tag       (default v1.17.0)
+#   FIRECRACKER_SHA256    sha256 of the firecracker archive; required when
+#                         FIRECRACKER_VERSION or FC_ARCH is not a default pin
 #   FC_ARCH               firecracker arch              (default x86_64)
 #   JERBOA_PORT           daemon loopback TCP port      (default 7890)
 #   HYPERVISOR            qemu or firecracker           (default firecracker)
@@ -196,35 +198,56 @@ if [ "${VERSION}" = latest ]; then
 fi
 [[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid release manifest version"
 
+# A version other than the current stable one is checked against the signed
+# manifest published with that release.
+manifest="${tmp}/stable.json"
+if [ "${VERSION}" != "$(jq -er '.components.cli.version' "${tmp}/stable.json")" ]; then
+	fetch "${RELEASE_BASE}/releases/${VERSION}/manifest.json" "${tmp}/release.json" \
+		|| die "${VERSION} has no signed release manifest; install a newer version"
+	fetch "${RELEASE_BASE}/releases/${VERSION}/manifest.json.minisig" "${tmp}/release.json.minisig" \
+		|| die "${VERSION} has no signed release manifest; install a newer version"
+	minisign -Vm "${tmp}/release.json" -x "${tmp}/release.json.minisig" -P "${PUBLIC_KEY}" >/dev/null \
+		|| die "release manifest signature verification failed"
+	manifest="${tmp}/release.json"
+fi
+
 for component in cli daemon; do
 	binary=jerboa
 	[ "${component}" != daemon ] || binary=jerboad
 	url="${RELEASE_BASE}/${component}/${VERSION}/${binary}-linux-amd64"
 	log "downloading ${binary} ${VERSION}"
-	if [ "${VERSION}" = "$(jq -er --arg c "${component}" '.components[$c].version' "${tmp}/stable.json")" ]; then
-		digest="$(jq -er --arg c "${component}" '.components[$c].platforms["linux-amd64"].sha256' "${tmp}/stable.json")"
-		size="$(jq -r --arg c "${component}" '.components[$c].platforms["linux-amd64"].size // empty' "${tmp}/stable.json")"
-		[[ "${digest}" =~ ^[0-9a-fA-F]{64}$ ]] || die "invalid ${component} checksum in manifest"
-		# The zstd variant is a third of the size. Its output is capped at the
-		# signed size and checked against the signed checksum like the plain
-		# binary; any failure falls back to the plain download.
-		if ! [[ "${size}" =~ ^[0-9]+$ ]] || ! command -v zstd >/dev/null 2>&1 \
-			|| ! fetch "${url}.zst" "${tmp}/${binary}.zst" \
-			|| ! zstd -dcq "${tmp}/${binary}.zst" | head -c "$((size + 1))" > "${tmp}/${binary}" \
-			|| ! printf '%s  %s\n' "${digest}" "${tmp}/${binary}" | sha256sum -c --status -; then
-			fetch "${url}" "${tmp}/${binary}"
-		fi
-		printf '%s  %s\n' "${digest}" "${tmp}/${binary}" | sha256sum -c - \
-			|| die "${binary} checksum verification failed"
-	else
+	[ "${VERSION}" = "$(jq -er --arg c "${component}" '.components[$c].version' "${manifest}")" ] \
+		|| die "the signed manifest does not list ${component} ${VERSION}"
+	digest="$(jq -er --arg c "${component}" '.components[$c].platforms["linux-amd64"].sha256' "${manifest}")"
+	size="$(jq -r --arg c "${component}" '.components[$c].platforms["linux-amd64"].size // empty' "${manifest}")"
+	[[ "${digest}" =~ ^[0-9a-fA-F]{64}$ ]] || die "invalid ${component} checksum in manifest"
+	# The zstd variant is a third of the size. Its output is capped at the
+	# signed size and checked against the signed checksum like the plain
+	# binary; any failure falls back to the plain download.
+	if ! [[ "${size}" =~ ^[0-9]+$ ]] || ! command -v zstd >/dev/null 2>&1 \
+		|| ! fetch "${url}.zst" "${tmp}/${binary}.zst" \
+		|| ! zstd -dcq "${tmp}/${binary}.zst" | head -c "$((size + 1))" > "${tmp}/${binary}" \
+		|| ! printf '%s  %s\n' "${digest}" "${tmp}/${binary}" | sha256sum -c --status -; then
 		fetch "${url}" "${tmp}/${binary}"
-		log "${VERSION} is not in the signed stable manifest; historical download uses HTTPS without a signed checksum"
 	fi
+	printf '%s  %s\n' "${digest}" "${tmp}/${binary}" | sha256sum -c - \
+		|| die "${binary} checksum verification failed"
 done
 
 if [ "${HYPERVISOR}" = firecracker ]; then
 	log "downloading firecracker ${FIRECRACKER_VERSION}"
 	fetch "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/firecracker-${FIRECRACKER_VERSION}-${FC_ARCH}.tgz" "${tmp}/fc.tgz"
+	fc_digest="${FIRECRACKER_SHA256:-}"
+	if [ -z "${fc_digest}" ]; then
+		case "${FIRECRACKER_VERSION}-${FC_ARCH}" in
+			v1.17.0-x86_64) fc_digest=06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558 ;;
+			v1.17.0-aarch64) fc_digest=e351ebe4f7a16b5873bbd51005d2e6767103cff4d5ebc829df2d3f95a93e2256 ;;
+			*) die "set FIRECRACKER_SHA256 to the checksum of firecracker ${FIRECRACKER_VERSION} ${FC_ARCH}" ;;
+		esac
+	fi
+	[[ "${fc_digest}" =~ ^[0-9a-fA-F]{64}$ ]] || die "invalid FIRECRACKER_SHA256"
+	printf '%s  %s\n' "${fc_digest}" "${tmp}/fc.tgz" | sha256sum -c - \
+		|| die "firecracker checksum verification failed"
 	tar -xzf "${tmp}/fc.tgz" -C "${tmp}"
 	[ -f "${tmp}/release-${FIRECRACKER_VERSION}-${FC_ARCH}/firecracker-${FIRECRACKER_VERSION}-${FC_ARCH}" ] || die "firecracker archive does not contain the expected binary"
 fi

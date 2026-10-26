@@ -205,6 +205,29 @@ func TestFetchManifestVerifiesSignature(t *testing.T) {
 	assert.Equal(t, "stable", m.Channel)
 }
 
+func TestFetchManifestRejectsOtherChannel(t *testing.T) {
+	s := newTestSigner(t)
+	manifest := []byte(`{"channel":"beta","components":{"cli":{"version":"v0.5.0-rc1","url":"https://x","sha256":"ab"}}}`)
+	sig := s.sign(manifest, "timestamp:1")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/channels/stable.json":
+			_, _ = w.Write(manifest)
+		case "/channels/stable.json.minisig":
+			_, _ = w.Write(sig)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL, s.publicKey())
+	require.NoError(t, err)
+	_, err = c.FetchManifest(context.Background(), ChannelStable)
+	require.ErrorContains(t, err, `signed for channel "beta"`)
+}
+
 func TestFetchManifestRejectsBadSignature(t *testing.T) {
 	s := newTestSigner(t)
 	attacker := newTestSigner(t)

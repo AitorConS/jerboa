@@ -104,7 +104,7 @@ func TestResolvePackages_DownloadExtractListFiles(t *testing.T) {
 				"myruntime": {
 					{
 						Name: "myruntime", Version: "1.0.0",
-						Size: int64(len(archiveData)), URL: tsURL + "/myruntime-1.0.0.tar.gz",
+						Size: int64(len(archiveData)), SHA256: testSHA256(archiveData), URL: tsURL + "/myruntime-1.0.0.tar.gz",
 					},
 				},
 			},
@@ -142,11 +142,11 @@ func TestResolvePackages_SpecificVersion(t *testing.T) {
 				"myrt": {
 					{
 						Name: "myrt", Version: "2.0.0", Runtime: "test",
-						Size: int64(len(archiveV2)), URL: tsURL + "/v2.tar.gz",
+						Size: int64(len(archiveV2)), SHA256: testSHA256(archiveV2), URL: tsURL + "/v2.tar.gz",
 					},
 					{
 						Name: "myrt", Version: "1.0.0", Runtime: "test",
-						Size: int64(len(archiveV1)), URL: tsURL + "/v1.tar.gz",
+						Size: int64(len(archiveV1)), SHA256: testSHA256(archiveV1), URL: tsURL + "/v1.tar.gz",
 					},
 				},
 			},
@@ -185,13 +185,13 @@ func TestResolvePackages_MultiplePackages(t *testing.T) {
 				"pkga": {
 					{
 						Name: "pkga", Version: "1.0.0",
-						Size: int64(len(archiveA)), URL: tsURL + "/pkga.tar.gz",
+						Size: int64(len(archiveA)), SHA256: testSHA256(archiveA), URL: tsURL + "/pkga.tar.gz",
 					},
 				},
 				"pkgb": {
 					{
 						Name: "pkgb", Version: "2.0.0",
-						Size: int64(len(archiveB)), URL: tsURL + "/pkgb.tar.gz",
+						Size: int64(len(archiveB)), SHA256: testSHA256(archiveB), URL: tsURL + "/pkgb.tar.gz",
 					},
 				},
 			},
@@ -365,4 +365,9 @@ func TestResolvedReferencesOnlyContributingFiles(t *testing.T) {
 	ctx := context.WithValue(context.Background(), packagePlatformKey{}, "arm64")
 	require.Equal(t, "arm64", packageArchFor(ctx))
 	require.Equal(t, pkg.ArchSlug(), packageArchFor(context.Background()))
+}
+
+func testSHA256(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

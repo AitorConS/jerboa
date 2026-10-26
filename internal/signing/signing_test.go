@@ -2,8 +2,10 @@ package signing
 
 import (
 	"crypto/ed25519"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -185,4 +187,38 @@ func TestStoreSignDigestAutoGenerateKey(t *testing.T) {
 	_, err = s.SignDigest("sha256:autodigest1234567890abcdef1234567890abcdef1234567890abcdef12")
 	require.NoError(t, err)
 	require.True(t, s.HasKeyPair())
+}
+
+func TestSignatureIsBoundToItsContext(t *testing.T) {
+	kp, err := GenerateKeyPair()
+	require.NoError(t, err)
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	// A signature over the bare digest, as the legacy format made, is refused.
+	bare := &Signature{Type: legacySignatureType, KeyID: kp.KeyID, Digest: digest,
+		Signature: fmt.Sprintf("%x", ed25519.Sign(kp.PrivateKey, []byte(digest)))}
+	require.ErrorContains(t, Verify(kp.PublicKey, bare), "legacy")
+	bare.Type = signatureType
+	require.Error(t, Verify(kp.PublicKey, bare))
+
+	sig, err := Sign(kp, digest)
+	require.NoError(t, err)
+	require.NoError(t, Verify(kp.PublicKey, sig))
+}
+
+func TestKeysAreChecked(t *testing.T) {
+	_, err := Sign(&KeyPair{PrivateKey: make([]byte, 10)}, "d")
+	require.Error(t, err)
+	require.Error(t, Verify(make([]byte, 10), &Signature{Type: signatureType}))
+
+	root := t.TempDir()
+	store, err := NewStore(root)
+	require.NoError(t, err)
+	a, err := GenerateKeyPair()
+	require.NoError(t, err)
+	b, err := GenerateKeyPair()
+	require.NoError(t, err)
+	require.NoError(t, store.SaveKeyPair(&KeyPair{PrivateKey: a.PrivateKey, PublicKey: b.PublicKey}))
+	_, err = store.LoadKeyPair()
+	require.ErrorContains(t, err, "does not belong")
 }

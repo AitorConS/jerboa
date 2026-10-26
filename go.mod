@@ -2,6 +2,8 @@ module github.com/AitorConS/jerboa
 
 go 1.26.0
 
+toolchain go1.27.3
+
 require (
 	github.com/containers/gvisor-tap-vsock v0.8.9
 	github.com/klauspost/compress v1.19.1

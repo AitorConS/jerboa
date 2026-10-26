@@ -376,6 +376,7 @@ func runBuildCommand(ctx context.Context, dir, command string, w io.Writer) erro
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 	}
 	cmd.Dir = dir
+	cmd.Env = builder.Env()
 	cmd.Stdout = w
 	cmd.Stderr = w
 	if err := cmd.Run(); err != nil {
@@ -431,7 +432,9 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	var buildArgs []string
 	var buildRun []string
 	var includePatterns []string
+	var installScripts bool
 	if cfg != nil {
+		installScripts = cfg.Build.InstallScripts
 		cfgEntrypoint = cfg.Build.Entrypoint
 		buildArgs = cfg.Build.Args
 		buildRun = cfg.Build.Run
@@ -452,10 +455,11 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 	}
 
 	result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
-		Entrypoint: cfgEntrypoint,
-		BuildArgs:  buildArgs,
-		Platform:   buildPlatform,
-		Output:     subW,
+		Entrypoint:     cfgEntrypoint,
+		BuildArgs:      buildArgs,
+		Platform:       buildPlatform,
+		Output:         subW,
+		InstallScripts: installScripts,
 	})
 	if err != nil {
 		return "", "", "", nil, nil, false, fmt.Errorf("build %s: %w", detected, err)
@@ -630,11 +634,12 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 		}
 
 		result, err := driver.Build(cmd.Context(), srcPath, builder.Options{
-			Entrypoint: stage.Entrypoint,
-			BuildArgs:  stage.Args,
-			PkgFiles:   driverPkgPaths,
-			Platform:   buildPlatform,
-			Output:     subW,
+			Entrypoint:     stage.Entrypoint,
+			BuildArgs:      stage.Args,
+			PkgFiles:       driverPkgPaths,
+			Platform:       buildPlatform,
+			Output:         subW,
+			InstallScripts: cfg.Build.InstallScripts,
 		})
 		if err != nil {
 			return "", "", nil, false, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)

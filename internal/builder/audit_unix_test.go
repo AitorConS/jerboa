@@ -56,3 +56,21 @@ func TestAuditNodeInvalidatesOnManifestChange(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "install\ninstall\n", string(calls))
 }
+
+func TestNodeInstallSkipsScriptsAndCredentials(t *testing.T) {
+	tools := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tools, "npm"), []byte("#!/bin/sh\necho \"$* token=${JERBOA_REGISTRY_TOKEN}\" >> calls\nmkdir -p node_modules\n"), 0o755))
+	t.Setenv("PATH", tools+":"+os.Getenv("PATH"))
+	t.Setenv("JERBOA_REGISTRY_TOKEN", "secret")
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0o600))
+	driver := &NodeDriver{}
+	_, err := driver.Build(context.Background(), dir, Options{})
+	require.NoError(t, err)
+	_, err = driver.Build(context.Background(), dir, Options{InstallScripts: true})
+	require.NoError(t, err)
+	calls, err := os.ReadFile(filepath.Join(dir, "calls"))
+	require.NoError(t, err)
+	require.Equal(t, "install --omit=dev --no-audit --no-fund --ignore-scripts token=\n"+
+		"install --omit=dev --no-audit --no-fund token=\n", string(calls))
+}
