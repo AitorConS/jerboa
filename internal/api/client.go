@@ -77,7 +77,14 @@ func DialWithToken(endpoint, token string) (*Client, error) {
 func sendAuth(enc *json.Encoder, dec *json.Decoder, token string) error {
 	var challenge ChallengeResult
 	if err := authCall(enc, dec, 1, "Auth.Challenge", struct{}{}, &challenge); err != nil {
-		return fmt.Errorf("%w (a daemon this old does not support challenge authentication; update jerboad)", err)
+		// A daemon from before challenge authentication answers the
+		// challenge like any unauthenticated call; anything else (busy,
+		// a dropped connection) is reported as it is.
+		var rpcErr *authError
+		if errors.As(err, &rpcErr) && rpcErr.code == authRequiredCode {
+			return fmt.Errorf("%w (a daemon this old does not support challenge authentication; update jerboad)", err)
+		}
+		return err
 	}
 	if len(challenge.Nonce) < 16 {
 		return fmt.Errorf("authentication failed: daemon sent an invalid challenge")
@@ -117,12 +124,29 @@ func authCall(enc *json.Encoder, dec *json.Decoder, id int64, method string, par
 		return fmt.Errorf("auth response: %w", err)
 	}
 	if resp.Error != nil {
-		return fmt.Errorf("authentication failed: %s", resp.Error.Message)
+		return &authError{code: resp.Error.Code, message: resp.Error.Message}
 	}
 	if len(resp.Result) > 0 {
 		_ = json.Unmarshal(resp.Result, out)
 	}
 	return nil
+}
+
+// authRequiredCode is the daemon's answer to a call made before
+// authentication, or to a failed proof.
+const authRequiredCode = -32001
+
+// authError is the daemon's refusal of a handshake call.
+type authError struct {
+	code    int
+	message string
+}
+
+func (e *authError) Error() string {
+	if e.code == ErrCodeBusy {
+		return e.message
+	}
+	return "authentication failed: " + e.message
 }
 
 // Close closes the underlying connection.
