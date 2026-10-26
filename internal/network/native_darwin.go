@@ -74,7 +74,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 	s.SetRouteTable([]tcpip.Route{{Destination: sn, NIC: 1}})
 	var natMu sync.Mutex
 	nat := map[tcpip.Address]tcpip.Address{tcpip.AddrFrom4Slice(net.ParseIP(gateway).To4()): tcpip.AddrFrom4Slice(net.IPv4(127, 0, 0, 1).To4())}
-	tf := forwarder.TCP(s, nat, &natMu, false)
+	tf := forwarder.TCP(s, nat, &natMu, false, 0, 0)
 	uf := forwarder.UDP(s, nat, &natMu, false)
 	permitted := func(id stack.TransportEndpointID, udp bool) bool {
 		if allow == nil {
