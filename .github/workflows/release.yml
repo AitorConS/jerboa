@@ -222,6 +222,14 @@ jobs:
       with:
         name: validated-kernel
         path: kernel-candidate
+    # The KVM runner only adds its boot report: everything else must match
+    # the toolset selected on a GitHub-hosted runner.
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: selected-kernel
+        path: kernel-selected
+    - name: Check the boot-validated kernel is the selected one
+      run: python3 scripts/release/candidate.py selected
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-linux-amd64
@@ -511,6 +519,12 @@ jobs:
       with:
         name: validated-kernel
         path: kernel-candidate
+    # The KVM runner only adds its boot report: everything else must match
+    # the toolset selected on a GitHub-hosted runner.
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: selected-kernel
+        path: kernel-selected
     - name: Build release utilities
       run: |-
         go build -o bin/jerboa-manifest ./cmd/jerboa-manifest
