@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"math/rand/v2"
+	"runtime"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -159,4 +160,61 @@ func TestPlanRangesMergesNearbyFrames(t *testing.T) {
 	require.Len(t, ranges[0].Entries, 2)
 	require.Equal(t, int64(10_000), ranges[1].Offset)
 	require.Equal(t, "p2", ranges[2].Pack)
+}
+
+// A frame that inflates to far more than it weighs is decoded without
+// buffering the blob: memory stays near the decoder's window, not the size
+// the index states.
+func TestCopyBlobStreamsLargeBlobs(t *testing.T) {
+	const size = 256 << 20
+	h := sha256.New()
+	var frame bytes.Buffer
+	enc, err := zstd.NewWriter(&frame, zstd.WithEncoderConcurrency(1))
+	require.NoError(t, err)
+	chunk := make([]byte, 1<<20)
+	for i := 0; i < size/len(chunk); i++ {
+		_, _ = h.Write(chunk)
+		_, err := enc.Write(chunk)
+		require.NoError(t, err)
+	}
+	require.NoError(t, enc.Close())
+	e := Entry{Digest: "sha256:" + hex.EncodeToString(h.Sum(nil)), Size: size, Length: int64(frame.Len())}
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	require.NoError(t, CopyBlob(io.Discard, frame.Bytes(), e))
+	runtime.ReadMemStats(&after)
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(64<<20))
+}
+
+// A single-segment frame states its content size as its window; one larger
+// than maxWindow (but under the library's own 512 MiB default) is refused
+// before anything is decoded.
+func TestCopyBlobRefusesHugeSingleSegmentFrames(t *testing.T) {
+	const size = 256 << 20
+	frame := binary.LittleEndian.AppendUint32(nil, 0xFD2FB528)
+	frame = append(frame, 0xE0) // single segment, 8-byte content size
+	frame = binary.LittleEndian.AppendUint64(frame, size)
+	// One last RLE block repeating a zero byte 128 KiB times.
+	hdr := uint32(1) | 1<<1 | (128<<10)<<3
+	frame = append(frame, byte(hdr), byte(hdr>>8), byte(hdr>>16), 0)
+	e := Entry{Digest: "sha256:" + hex.EncodeToString(make([]byte, 32)), Size: size, Length: int64(len(frame))}
+	err := CopyBlob(io.Discard, frame, e)
+	require.ErrorIs(t, err, zstd.ErrDecoderSizeExceeded)
+}
+
+// Writer's frames decode under the same limits, also for blobs larger than
+// the decoder's window.
+func TestWriterFramesDecodeUnderTheLimits(t *testing.T) {
+	data := bytes.Repeat([]byte("jerboa "), (maxWindow+(8<<20))/7)
+	w, err := NewWriter(zstd.SpeedDefault)
+	require.NoError(t, err)
+	require.NoError(t, w.Add(blob(data)))
+	packs := w.Close()
+	require.Len(t, packs, 1)
+	e := packs[0].Entries[0]
+	got, err := ReadBlob(packs[0].Data[e.Offset:e.Offset+e.Length], e)
+	require.NoError(t, err)
+	require.Equal(t, data, got)
 }

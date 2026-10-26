@@ -197,7 +197,7 @@ func Verify(p Pack) error {
 			return fmt.Errorf("pack: blob %s listed twice", e.Digest)
 		}
 		seen[e.Digest] = true
-		if _, err := ReadBlob(p.Data[e.Offset:e.Offset+e.Length], e); err != nil {
+		if err := CopyBlob(io.Discard, p.Data[e.Offset:e.Offset+e.Length], e); err != nil {
 			return err
 		}
 		next = e.Offset + e.Length
@@ -209,30 +209,52 @@ func Verify(p Pack) error {
 }
 
 // ReadBlob decompresses one blob's frame and verifies its size and digest.
-// It never produces more than e.Size bytes, whatever the frame claims.
+// It never produces more than e.Size bytes, whatever the frame claims, and
+// allocates only for the bytes the frame really holds.
 func ReadBlob(frame []byte, e Entry) ([]byte, error) {
-	if e.Size < 0 || e.Size > 1<<31 {
-		return nil, fmt.Errorf("pack: blob %s size %d out of range", e.Digest, e.Size)
-	}
-	r, err := zstd.NewReader(bytes.NewReader(frame), zstd.WithDecoderConcurrency(1))
-	if err != nil {
-		return nil, fmt.Errorf("pack: blob %s: %w", e.Digest, err)
-	}
-	defer r.Close()
-	out := make([]byte, 0, e.Size)
-	buf := bytes.NewBuffer(out)
-	n, err := io.Copy(buf, io.LimitReader(r, e.Size+1))
-	if err != nil {
-		return nil, fmt.Errorf("pack: blob %s: %w", e.Digest, err)
-	}
-	if n != e.Size {
-		return nil, fmt.Errorf("pack: blob %s is %d bytes, index says %d", e.Digest, n, e.Size)
-	}
-	sum := sha256.Sum256(buf.Bytes())
-	if "sha256:"+hex.EncodeToString(sum[:]) != e.Digest {
-		return nil, fmt.Errorf("pack: blob %s does not match its digest", e.Digest)
+	var buf bytes.Buffer
+	if err := CopyBlob(&buf, frame, e); err != nil {
+		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// maxWindow bounds the zstd window a frame may ask the decoder for, and so
+// the memory decoding one blob takes; the library's default allows 512 MiB.
+// The decoder's memory limit is set to the same value, which also bounds a
+// single-segment frame, whose window is the content size it states. Writer
+// streams every blob, so its frames use the encoder's default window, far
+// below it.
+const maxWindow = MaxSize
+
+// CopyBlob decompresses one blob's frame into w and verifies its size and
+// digest. It writes at most e.Size+1 bytes, whatever the frame claims, and
+// holds no more than the decoder's window in memory, so a caller streaming to
+// a file does not trust the size the index states. On error, w may hold a
+// partial or wrong blob: the caller discards it.
+func CopyBlob(w io.Writer, frame []byte, e Entry) error {
+	if e.Size < 0 || e.Size > 1<<31 {
+		return fmt.Errorf("pack: blob %s size %d out of range", e.Digest, e.Size)
+	}
+	r, err := zstd.NewReader(bytes.NewReader(frame),
+		zstd.WithDecoderConcurrency(1), zstd.WithDecoderLowmem(true),
+		zstd.WithDecoderMaxWindow(maxWindow), zstd.WithDecoderMaxMemory(maxWindow))
+	if err != nil {
+		return fmt.Errorf("pack: blob %s: %w", e.Digest, err)
+	}
+	defer r.Close()
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(r, e.Size+1))
+	if err != nil {
+		return fmt.Errorf("pack: blob %s: %w", e.Digest, err)
+	}
+	if n != e.Size {
+		return fmt.Errorf("pack: blob %s is %d bytes, index says %d", e.Digest, n, e.Size)
+	}
+	if "sha256:"+hex.EncodeToString(h.Sum(nil)) != e.Digest {
+		return fmt.Errorf("pack: blob %s does not match its digest", e.Digest)
+	}
+	return nil
 }
 
 // Range is one HTTP range request covering consecutive frames of a pack.

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -113,6 +114,38 @@ func (s *Store) PutBytes(data []byte) (string, error) {
 	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("cas: write: %w", err)
+	}
+	return s.commit(tmp, digest)
+}
+
+// PutStream adds the blob write produces, which the caller expects to be
+// digest. The bytes go straight to a file, so a large blob never sits in
+// memory; they are hashed again before the blob is stored, so a wrong or
+// partial write is never kept.
+func (s *Store) PutStream(digest string, write func(io.Writer) error) (string, error) {
+	if _, err := s.Path(digest); err != nil {
+		return "", err
+	}
+	if s.Has(digest) {
+		s.touch(digest)
+		return digest, nil
+	}
+	tmp, err := s.tempPath()
+	if err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_TRUNC, 0o600) //nolint:gosec // a temp file this store created
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", fmt.Errorf("cas: open: %w", err)
+	}
+	err = write(f)
+	if cerr := f.Close(); err == nil && cerr != nil {
+		err = fmt.Errorf("cas: write: %w", cerr)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return "", err
 	}
 	return s.commit(tmp, digest)
 }
