@@ -3,6 +3,8 @@ package cas
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -98,4 +100,36 @@ func TestPruneKeepsReferencedAndRecent(t *testing.T) {
 	removed, err = s.Prune(func(string) bool { return false }, time.Hour)
 	require.NoError(t, err)
 	require.Equal(t, []string{keep}, removed)
+}
+
+func TestPutStreamKeepsOnlyWhatMatches(t *testing.T) {
+	s, err := New(t.TempDir())
+	require.NoError(t, err)
+	data := []byte("a streamed blob")
+	d := digestOf(data)
+	write := func(b []byte) func(io.Writer) error {
+		return func(w io.Writer) error { _, err := w.Write(b); return err }
+	}
+
+	_, err = s.PutStream(d, write([]byte("something else")))
+	require.Error(t, err)
+	require.False(t, s.Has(d))
+
+	_, err = s.PutStream(d, func(io.Writer) error { return errors.New("decoder failed") })
+	require.ErrorContains(t, err, "decoder failed")
+	require.False(t, s.Has(d))
+
+	got, err := s.PutStream(d, write(data))
+	require.NoError(t, err)
+	require.Equal(t, d, got)
+	stored, err := s.ReadBytes(d)
+	require.NoError(t, err)
+	require.Equal(t, data, stored)
+
+	_, err = s.PutStream("sha256:nothex", write(data))
+	require.Error(t, err)
+
+	left, err := filepath.Glob(filepath.Join(s.Root(), ".tmp-*"))
+	require.NoError(t, err)
+	require.Empty(t, left)
 }

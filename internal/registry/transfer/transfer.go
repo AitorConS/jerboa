@@ -287,12 +287,10 @@ func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []str
 					fail(fmt.Errorf("pull: blob %s is outside the range read", e.Digest))
 					return
 				}
-				blob, err := pack.ReadBlob(data[start:start+e.Length], e)
-				if err != nil {
-					fail(fmt.Errorf("pull: %w", err))
-					return
-				}
-				got, err := o.Store.PutBytes(blob)
+				// Decompress straight into the store: a blob's size comes
+				// from the recipe, so it is never held in memory.
+				frame := data[start : start+e.Length]
+				got, err := o.Store.PutStream(e.Digest, func(w io.Writer) error { return pack.CopyBlob(w, frame, e) })
 				if err != nil {
 					fail(fmt.Errorf("pull: store blob %s: %w", e.Digest, err))
 					return
