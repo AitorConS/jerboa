@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -63,5 +65,37 @@ func TestGitHubClientIDKeepsTheDefaultRegistrysApp(t *testing.T) {
 	_, err = githubClientID(ctx, "registry.example.com", client.Discovery{GitHubClientID: "own"}, unreachable)
 	require.ErrorContains(t, err, "offline")
 	_, err = githubClientID(ctx, "registry.example.com", client.Discovery{}, official)
+	require.ErrorContains(t, err, "does not offer GitHub login")
+}
+
+func TestGitHubLoginUsesTheRegistrysFlowWhenOffered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/auth/device":
+			_, _ = w.Write([]byte(`{"login_id":"jdl_x","user_code":"ABCD-1234","verification_uri":"https://github.com/login/device","expires_in":900,"interval":1}`))
+		case "/auth/device/token":
+			_, _ = w.Write([]byte(`{"token":"jrt_token","login":"alice"}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, http.StatusTeapot)
+		}
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	unreachable := func(context.Context) (string, error) { return "", errors.New("offline") }
+
+	// The registry runs the flow: no GitHub app is checked, and none is used
+	// even if one is advertised too.
+	var out strings.Builder
+	token, login, err := githubLogin(ctx, &out, "registry.example.com", &client.Client{Base: srv.URL},
+		client.Discovery{Login: client.LoginDevice, GitHubClientID: "official"}, unreachable)
+	require.NoError(t, err)
+	require.Equal(t, [2]string{"jrt_token", "alice"}, [2]string{token, login})
+	require.Equal(t, "Open https://github.com/login/device and enter the code ABCD-1234 to log in to registry.example.com\n", out.String())
+
+	// Older registries still go through githubClientID's checks.
+	official := func(context.Context) (string, error) { return "official", nil }
+	_, _, err = githubLogin(ctx, &out, "registry.example.com", &client.Client{Base: srv.URL}, client.Discovery{GitHubClientID: "official"}, official)
+	require.ErrorContains(t, err, "use --token")
+	_, _, err = githubLogin(ctx, &out, "registry.example.com", &client.Client{Base: srv.URL}, client.Discovery{}, official)
 	require.ErrorContains(t, err, "does not offer GitHub login")
 }

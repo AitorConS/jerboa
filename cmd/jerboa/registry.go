@@ -44,21 +44,8 @@ stores a personal access token, as CI does.`,
 			}
 			entry := credentials.Entry{Token: token}
 			if entry.Token == "" {
-				clientID, err := githubClientID(cmd.Context(), registry, d, defaultClientID)
+				entry.Token, entry.Login, err = githubLogin(cmd.Context(), cmd.OutOrStdout(), registry, cl, d, defaultClientID)
 				if err != nil {
-					return fmt.Errorf("login: %w", err)
-				}
-				flow := client.DeviceFlow{GitHub: os.Getenv("JERBOA_GITHUB_URL")}
-				dc, err := flow.Start(cmd.Context(), clientID)
-				if err != nil {
-					return fmt.Errorf("login: %w", err)
-				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Open %s and enter the code %s\n", dc.VerificationURI, dc.UserCode)
-				gh, err := flow.Wait(cmd.Context(), clientID, dc)
-				if err != nil {
-					return fmt.Errorf("login: %w", err)
-				}
-				if entry.Token, entry.Login, err = cl.LoginWithGitHub(cmd.Context(), gh); err != nil {
 					return fmt.Errorf("login: %w", err)
 				}
 			}
@@ -80,6 +67,37 @@ stores a personal access token, as CI does.`,
 	}
 	cmd.Flags().StringVar(&token, "token", "", "store this personal access token instead of logging in with GitHub")
 	return cmd
+}
+
+// githubLogin signs in to registry with GitHub and returns its refresh token
+// and the account's login. A registry whose discovery names
+// client.LoginDevice runs the device flow itself, and the GitHub token never
+// reaches this client; with an older one, the client runs the flow with the
+// app it advertises (githubClientID) and hands the registry the token.
+func githubLogin(ctx context.Context, w io.Writer, registry string, cl *client.Client, d client.Discovery, official func(context.Context) (string, error)) (token, login string, err error) {
+	if d.Login == client.LoginDevice {
+		l, err := cl.StartLogin(ctx)
+		if err != nil {
+			return "", "", err
+		}
+		fmt.Fprintf(w, "Open %s and enter the code %s to log in to %s\n", l.VerificationURI, l.UserCode, registry)
+		return cl.WaitLogin(ctx, l)
+	}
+	clientID, err := githubClientID(ctx, registry, d, official)
+	if err != nil {
+		return "", "", err
+	}
+	flow := client.DeviceFlow{GitHub: os.Getenv("JERBOA_GITHUB_URL")}
+	dc, err := flow.Start(ctx, clientID)
+	if err != nil {
+		return "", "", err
+	}
+	fmt.Fprintf(w, "Open %s and enter the code %s\n", dc.VerificationURI, dc.UserCode)
+	gh, err := flow.Wait(ctx, clientID, dc)
+	if err != nil {
+		return "", "", err
+	}
+	return cl.LoginWithGitHub(ctx, gh)
 }
 
 // githubClientID returns the GitHub app to log in to registry with. The
