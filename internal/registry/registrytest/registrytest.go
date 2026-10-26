@@ -111,6 +111,27 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]string{"namespace": parts[1], "name": parts[2]})
+	case parts[0] == "v2" && len(parts) == 3 && r.Method == http.MethodDelete:
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			fail(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing token")
+			return
+		}
+		s.mu.Lock()
+		prefix := "tags/" + parts[1] + "/" + parts[2] + "/"
+		found := s.repos[parts[1]+"/"+parts[2]] != nil
+		delete(s.repos, parts[1]+"/"+parts[2])
+		for key := range s.objects {
+			if strings.HasPrefix(key, prefix) {
+				delete(s.objects, key)
+				found = true
+			}
+		}
+		s.mu.Unlock()
+		if !found {
+			fail(w, http.StatusNotFound, "NOT_FOUND", "no such repository")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case parts[0] == "v2" && len(parts) == 4 && parts[3] == "pulls" && r.Method == http.MethodPost:
 		s.mu.Lock()
 		s.pulls[parts[1]+"/"+parts[2]]++
