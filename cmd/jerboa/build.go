@@ -172,7 +172,7 @@ project markers (go.mod, package.json, etc.).`,
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
 					var cleanupBinary bool
-					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
+					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, buildSandbox(cfg, *endpoint), srcPath, pkgFiles, platform, pkgSource, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -186,7 +186,7 @@ project markers (go.mod, package.json, etc.).`,
 					var buildEntrypoint string
 					var driverEnv map[string]string
 					var cleanupBinary bool
-					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
+					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, buildSandbox(cfg, *endpoint), lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -397,7 +397,7 @@ func runBuildCommand(ctx context.Context, sb builder.Sandbox, network bool, dir,
 // cleanupBinary is true only when binaryPath is a temporary build artifact the
 // caller owns and must delete; it is false when binaryPath points into the
 // package store (raw/interpreted runtimes), which must never be removed.
-func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, string, []string, map[string]string, bool, error) {
+func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, sandbox builder.Sandbox, langFlag string, platformFlag string, pkgFiles *[]pkg.File, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, string, []string, map[string]string, bool, error) {
 	var langHint builder.Lang
 	var err error
 	switch {
@@ -446,7 +446,6 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, langFl
 		return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 	}
 
-	sandbox := cfg.BuildSandbox()
 	fmt.Fprintln(infoW, sandbox.Describe())
 
 	// Execute user-defined build commands (unikernel.toml [build] run = [...]).
@@ -577,13 +576,24 @@ func copyFromGuestPath(cf builder.CopyFromConfig, prevBinary string) string {
 	return strings.TrimPrefix(filepath.ToSlash(dst), "/")
 }
 
+// buildSandbox returns the confinement for build steps, keeping them away
+// from the daemon socket this command was pointed at.
+func buildSandbox(cfg *builder.Config, endpoint string) builder.Sandbox {
+	sandbox := cfg.BuildSandbox()
+	path, ok := strings.CutPrefix(endpoint, "unix://")
+	if (ok || !strings.Contains(endpoint, "://")) && path != "" {
+		sandbox.Sockets = []string{path}
+	}
+	return sandbox
+}
+
 // buildStages processes multi-stage builds from unikernel.toml.
 // Each stage is built independently. CopyFrom directives copy artifacts
 // from previous stages. The final stage's output is used as the image binary.
 // It returns (binaryPath, programPath, pkgFiles, cleanupBinary, error), where
 // programPath is the runtime's package path for an interpreted final stage and
 // empty for a compiled one.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, string, []pkg.File, bool, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, sandbox builder.Sandbox, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, string, []pkg.File, bool, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -649,7 +659,7 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, srcPath string, pkgFil
 			Platform:       buildPlatform,
 			Output:         subW,
 			InstallScripts: cfg.Build.InstallScripts,
-			Sandbox:        cfg.BuildSandbox(),
+			Sandbox:        sandbox,
 		})
 		if err != nil {
 			return "", "", nil, false, fmt.Errorf("build stage %q (%s): %w", stage.Name, stage.Lang, err)

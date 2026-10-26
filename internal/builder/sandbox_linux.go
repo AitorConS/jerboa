@@ -28,13 +28,13 @@ func bwrapPath() string {
 
 // confine runs the step under bubblewrap. Of the temporary directories it
 // may write only to its own.
-func confine(st Step, tmp string, name string, args []string) ([]string, bool) {
+func confine(st Step, tmp string, sockets []string, name string, args []string) ([]string, bool) {
 	bwrap := bwrapPath()
 	if bwrap == "" {
 		return nil, false
 	}
 	home, _ := os.UserHomeDir()
-	return bwrapArgs(bwrap, st, hiddenPaths(home, st), []string{tmp}, name, args), true
+	return bwrapArgs(bwrap, st, hiddenPaths(home, st), []string{tmp}, sockets, name, args), true
 }
 
 func sandboxName() string {

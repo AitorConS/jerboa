@@ -182,3 +182,17 @@ func TestSourceFilesShadowPackageFilesAtSamePath(t *testing.T) {
 	}
 	require.NoError(t, pkg.ValidateFiles(resolved, "linux/amd64"))
 }
+
+func TestBuildSandboxHidesTheDaemonSocket(t *testing.T) {
+	for endpoint, want := range map[string][]string{
+		"unix:///srv/jerboad.sock": {"/srv/jerboad.sock"},
+		"/srv/jerboad.sock":        {"/srv/jerboad.sock"},
+		"tcp://127.0.0.1:7000":     nil,
+		"":                         nil,
+	} {
+		require.Equal(t, want, buildSandbox(nil, endpoint).Sockets, endpoint)
+	}
+	off := false
+	cfg := &builder.Config{Build: builder.BuildConfig{Sandbox: &off}}
+	require.True(t, buildSandbox(cfg, "/srv/jerboad.sock").Off)
+}
