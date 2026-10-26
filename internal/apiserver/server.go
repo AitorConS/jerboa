@@ -642,15 +642,7 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 		// Baked ports only publish when the VM joins a network; without one
 		// there is nothing to forward through, so leave them inert.
 		if len(portMaps) == 0 && (p.NetworkName != "" || runtime.GOOS == "darwin") && len(m.Config.Ports) > 0 {
-			if specs, perr := api.ParsePortMaps(m.Config.Ports); perr == nil {
-				// An image's baked ports publish on localhost unless the
-				// manifest names a bind address: the image author, not the
-				// user running it, chose them.
-				for i := range specs {
-					if specs[i].BindAddr == "" {
-						specs[i].BindAddr = "127.0.0.1"
-					}
-				}
+			if specs, perr := bakedPortMaps(m.Config.Ports); perr == nil {
 				portMaps = portMapsFromSpec(specs)
 			}
 		}
@@ -1107,6 +1099,20 @@ func toDetail(v *vm.VM) api.VMDetail {
 }
 
 // portMapsFromSpec converts API wire types to vm domain types.
+// bakedPortMaps parses an image's default ports. They always publish on
+// localhost, whatever bind address the manifest names: the image author, not
+// the user running it, chose them. Publishing elsewhere takes the user's -p.
+func bakedPortMaps(ports []string) ([]api.PortMapSpec, error) {
+	specs, err := api.ParsePortMaps(ports)
+	if err != nil {
+		return nil, fmt.Errorf("image ports: %w", err)
+	}
+	for i := range specs {
+		specs[i].BindAddr = "127.0.0.1"
+	}
+	return specs, nil
+}
+
 func portMapsFromSpec(specs []api.PortMapSpec) []vm.PortMap {
 	out := make([]vm.PortMap, len(specs))
 	for i, s := range specs {

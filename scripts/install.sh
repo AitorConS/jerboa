@@ -319,6 +319,7 @@ ${kvm_unit}
 Environment=HOME=${JERBOA_HOME}
 WorkingDirectory=${JERBOA_HOME}
 # Networking: TAP/routing, raw sockets, and the service-discovery DNS port.
+# jerboad drops these before it starts QEMU or Firecracker.
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 # The daemon and its VMMs never gain privileges, keep /tmp to themselves and

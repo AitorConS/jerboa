@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/netconst"
+	"golang.org/x/sys/unix"
 )
 
 // BridgeConfig holds the parameters for a Linux bridge interface.
@@ -181,10 +182,38 @@ func addrAlreadyAssigned(out string) bool {
 // CreateTAPDevice creates a persistent TAP device by name. It is idempotent: a
 // device that already exists is treated as success. Firecracker requires the tap
 // to exist before it opens it; unlike QEMU it does not create taps itself.
+//
+// The tap is owned by the daemon's user, so the VMM, which runs as that user
+// without the daemon's capabilities, can still open it.
 func CreateTAPDevice(name string) error {
 	out, err := exec.Command("ip", "tuntap", "add", "dev", name, "mode", "tap").CombinedOutput()
 	if err != nil && !strings.Contains(string(out), "File exists") {
 		return fmt.Errorf("create tap %s: %w (output: %s)", name, err, strings.TrimSpace(string(out)))
+	}
+	if err := setTAPOwner(name, os.Geteuid()); err != nil {
+		return fmt.Errorf("create tap %s: %w", name, err)
+	}
+	return nil
+}
+
+// setTAPOwner makes uid the owner of a persistent tap. Opening a tap by name
+// otherwise needs CAP_NET_ADMIN.
+func setTAPOwner(name string, uid int) error {
+	fd, err := unix.Open("/dev/net/tun", unix.O_RDWR|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return fmt.Errorf("open /dev/net/tun: %w", err)
+	}
+	defer func() { _ = unix.Close(fd) }()
+	ifr, err := unix.NewIfreq(name)
+	if err != nil {
+		return fmt.Errorf("tap name: %w", err)
+	}
+	ifr.SetUint16(unix.IFF_TAP | unix.IFF_NO_PI)
+	if err := unix.IoctlIfreq(fd, unix.TUNSETIFF, ifr); err != nil {
+		return fmt.Errorf("attach tap: %w", err)
+	}
+	if err := unix.IoctlSetInt(fd, unix.TUNSETOWNER, uid); err != nil {
+		return fmt.Errorf("set tap owner: %w", err)
 	}
 	return nil
 }

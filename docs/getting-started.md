@@ -302,8 +302,8 @@ jerboa run myapp:latest --network app -p 127.0.0.1:8080:80   # localhost only
 jerboa run myapp:latest --network app -p 8080:80             # all interfaces
 ```
 
-Ports baked into an image (`[run] ports` in `unikernel.toml`) publish on
-`127.0.0.1` unless the manifest gives a bind address; pass `-p` to publish them
+Ports baked into an image (`[run] ports` in `unikernel.toml`) always publish on
+`127.0.0.1`, whatever bind address the manifest gives; pass `-p` to publish them
 elsewhere.
 
 ### Network isolation (Linux)

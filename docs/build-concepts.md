@@ -358,8 +358,8 @@ KEY = "value"
 memory = "512M"
 cpus = 1
 ports = ["5432:5432"]    # applied when the VM joins a --network and no -p is given;
-                         # published on 127.0.0.1 unless a bind address is given
-                         # ("0.0.0.0:5432:5432"); `-p` overrides them
+                         # always published on 127.0.0.1 (a bind address here is
+                         # ignored); `-p` overrides them
 
 [[stages]]               # optional multi-stage builds
 name = "frontend"
