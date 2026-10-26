@@ -522,7 +522,7 @@ jobs:
         ROLE_ARN: ${{ vars.WINDOWS_RUNNER_ROLE_ARN }}
         AWS_REGION: ${{ vars.WINDOWS_RUNNER_REGION }}
         LAUNCH_TEMPLATE_ID: ${{ vars.WINDOWS_RUNNER_LAUNCH_TEMPLATE_ID }}
-        RUNNER_NAME: ${{ steps.names.outputs.name }}
+        JIT_RUNNER_NAME: ${{ steps.names.outputs.name }}
         RUNNER_LABEL: ${{ steps.names.outputs.label }}
   windows-smoke:
     name: Validate Windows candidate
@@ -633,7 +633,7 @@ jobs:
       run: bash scripts/release/windows-runner.sh deregister
       env:
         GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        RUNNER_NAME: ${{ needs.windows-runner-up.outputs.name }}
+        JIT_RUNNER_NAME: ${{ needs.windows-runner-up.outputs.name }}
   assemble:
     name: Assemble verified candidate
     environment: release

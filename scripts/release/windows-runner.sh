@@ -10,11 +10,11 @@
 #   windows-runner.sh launch      register the JIT runner, start the instance, wait
 #                                 for the runner to come online
 #   windows-runner.sh terminate   terminate INSTANCE_ID
-#   windows-runner.sh deregister  remove RUNNER_NAME's registration if it remains
+#   windows-runner.sh deregister  remove JIT_RUNNER_NAME's registration if it remains
 #
 # Environment: check reads the WINDOWS_RUNNER_* variables and HAS_APP_KEY;
 # the others take ROLE_ARN, AWS_REGION, LAUNCH_TEMPLATE_ID (AWS); GH_TOKEN, a GitHub
-# App installation token allowed to manage this repository's runners; RUNNER_NAME
+# App installation token allowed to manage this repository's runners; JIT_RUNNER_NAME
 # and RUNNER_LABEL; INSTANCE_ID for terminate. Tokens, credentials and the runner
 # configuration are masked and never printed.
 set -euo pipefail
@@ -59,13 +59,13 @@ cmd_check() {
 }
 
 cmd_launch() {
-  : "${ROLE_ARN:?}" "${AWS_REGION:?}" "${LAUNCH_TEMPLATE_ID:?}" "${GH_TOKEN:?}" "${RUNNER_NAME:?}" "${RUNNER_LABEL:?}"
+  : "${ROLE_ARN:?}" "${AWS_REGION:?}" "${LAUNCH_TEMPLATE_ID:?}" "${GH_TOKEN:?}" "${JIT_RUNNER_NAME:?}" "${RUNNER_LABEL:?}"
   local out="${GITHUB_OUTPUT:?}" userdata="${RUNNER_TEMP:?}/windows-runner-user-data.txt" jit image instance
   trap 'rm -f "$userdata"' EXIT
 
   # Single-use registration: the runner takes exactly one job, then deregisters.
   jit=$(gh api -X POST "repos/${repo}/actions/runners/generate-jitconfig" \
-    -f name="$RUNNER_NAME" -F runner_group_id=1 \
+    -f name="$JIT_RUNNER_NAME" -F runner_group_id=1 \
     -f 'labels[]=self-hosted' -f 'labels[]=windows' -f 'labels[]=x64' -f "labels[]=${RUNNER_LABEL}" \
     -f work_folder=_work --jq .encoded_jit_config)
   if [ -z "$jit" ] || [ "$jit" = null ]; then err "GitHub did not return a runner configuration"; fi
@@ -87,7 +87,7 @@ cmd_launch() {
   instance=$(aws ec2 run-instances --region "$AWS_REGION" \
     --launch-template "LaunchTemplateId=${LAUNCH_TEMPLATE_ID},Version=\$Default" \
     --image-id "$image" --user-data "file://${userdata}" \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=jerboa:role,Value=ci-windows-runner},{Key=jerboa:run,Value=${run_tag}},{Key=Name,Value=${RUNNER_NAME}}]" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=jerboa:role,Value=ci-windows-runner},{Key=jerboa:run,Value=${run_tag}},{Key=Name,Value=${JIT_RUNNER_NAME}}]" \
     --query 'Instances[0].InstanceId' --output text)
   case "$instance" in
     i-*) echo "instance_id=$instance" >>"$out"; echo "instance: $instance" ;;
@@ -100,11 +100,11 @@ cmd_launch() {
   # after boot and windows-runner-down terminates it in any case.
   local status deadline=$((SECONDS + ${RUNNER_BOOT_TIMEOUT:-1200}))
   while [ "$SECONDS" -lt "$deadline" ]; do
-    status=$(gh api "repos/${repo}/actions/runners?name=${RUNNER_NAME}" --jq '.runners[0].status // ""')
-    if [ "$status" = online ]; then echo "runner $RUNNER_NAME is online"; return 0; fi
+    status=$(gh api -X GET "repos/${repo}/actions/runners" -f name="${JIT_RUNNER_NAME}" --jq '.runners[0].status // ""')
+    if [ "$status" = online ]; then echo "runner $JIT_RUNNER_NAME is online"; return 0; fi
     sleep 15
   done
-  err "runner $RUNNER_NAME did not come online within $(( ${RUNNER_BOOT_TIMEOUT:-1200} / 60 )) minutes (instance $instance); check its console output in EC2"
+  err "runner $JIT_RUNNER_NAME did not come online within $(( ${RUNNER_BOOT_TIMEOUT:-1200} / 60 )) minutes (instance $instance); check its console output in EC2"
 }
 
 cmd_terminate() {
@@ -116,11 +116,11 @@ cmd_terminate() {
 }
 
 cmd_deregister() {
-  : "${GH_TOKEN:?}" "${RUNNER_NAME:?}"
+  : "${GH_TOKEN:?}" "${JIT_RUNNER_NAME:?}"
   local id
   # The runner removes itself after its one job; it remains if it never got one.
-  for id in $(gh api "repos/${repo}/actions/runners?name=${RUNNER_NAME}" --jq '.runners[].id'); do
-    echo "removing runner registration $id ($RUNNER_NAME)"
+  for id in $(gh api -X GET "repos/${repo}/actions/runners" -f name="${JIT_RUNNER_NAME}" --jq '.runners[].id'); do
+    echo "removing runner registration $id ($JIT_RUNNER_NAME)"
     gh api -X DELETE "repos/${repo}/actions/runners/${id}" --silent
   done
 }
