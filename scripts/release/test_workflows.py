@@ -79,6 +79,10 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('environment: release',publish)
   self.assertIn('bin/jerboa-sign -in dist/publish/packages.json',publish)
   self.assertIn('packages.json.minisig',publish)
+  # The existing index is verified before it is extended and signed again.
+  verify=publish.index('bin/jerboa-verify dist/publish/packages.json')
+  self.assertLess(publish.index('--pattern packages.json.minisig'),verify)
+  self.assertLess(verify,publish.index('scripts/package-index.py'))
  def test_package_index_is_immutable(self):
   script=ROOT/'scripts/package-index.py'
   def stage(root,data,content):
@@ -100,4 +104,17 @@ class WorkflowContracts(unittest.TestCase):
    stage(c,b'changed','sha256:'+'2'*64)
    r=publish(c,dst);self.assertNotEqual(r.returncode,0);self.assertIn('Refusing to republish',r.stderr)
    self.assertEqual((Path(dst)/'packages.json').read_text(),before)
+ def test_package_index_refuses_foreign_urls(self):
+  script=ROOT/'scripts/package-index.py'
+  with tempfile.TemporaryDirectory() as src,tempfile.TemporaryDirectory() as dst:
+   d=Path(src)/'pkg'/'linux-amd64';d.mkdir(parents=True)
+   (d/'files.tar.gz').write_bytes(b'new')
+   (d/'meta.json').write_text(json.dumps({'name':'pkg','version':'2.0.0','platform':'linux/amd64','sha256':hashlib.sha256(b'new').hexdigest(),'size':3}))
+   good='https://github.com/o/r/releases/download/pkg-index/old-1.0.0-linux-amd64.tar.gz'
+   for url,ok in [(good,True),('https://example.com/old.tar.gz',False),(good.replace('o/r','x/r'),False),(good.replace('old-1.0.0','other'),False)]:
+    with self.subTest(url=url):
+     (Path(dst)/'packages.json').write_text(json.dumps({'packages':{'old':[{'version':'1.0.0','platform':'linux/amd64','sha256':'0'*64,'size':1,'url':url}]}}))
+     r=subprocess.run([sys.executable,str(script),src,dst,'o/r'],capture_output=True,text=True)
+     self.assertEqual(r.returncode==0,ok,r.stderr)
+     if not ok:self.assertIn('points outside the package index',r.stderr)
 if __name__=='__main__':unittest.main()
