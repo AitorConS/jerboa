@@ -448,7 +448,14 @@ jobs:
         npm run typecheck
         node --test scripts/desktop-version.test.mjs scripts/stage-candidate.test.mjs
         npm run build
-        npx electron-builder --win --publish never
+      env:
+        VERSION: ${{ needs.inputs.outputs.version }}
+    # Only packaging sees the code-signing certificate: dependency install
+    # scripts and the build above run without it (npmRebuild is off in
+    # electron-builder.yml, so packaging runs no install scripts).
+    - name: Package and sign the Windows installer
+      working-directory: desktop
+      run: npx --no-install electron-builder --win --publish never
       env:
         VERSION: ${{ needs.inputs.outputs.version }}
         CSC_LINK: ${{ secrets.CSC_LINK }}
