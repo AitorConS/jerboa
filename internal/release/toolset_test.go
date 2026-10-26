@@ -87,3 +87,11 @@ func TestNormalizeToolsetVersion(t *testing.T) {
 		assert.Error(t, err, bad)
 	}
 }
+
+func TestCheckToolsetVersionRefusesRevoked(t *testing.T) {
+	revoked := map[string]string{"v0.1.0": "mkfs parser flaw"}
+	require.ErrorContains(t, checkToolsetVersion("0.1.0", revoked), "revoked")
+	require.NoError(t, checkToolsetVersion("v0.2.0", revoked))
+	require.Error(t, checkToolsetVersion("latest", revoked))
+	require.NoError(t, CheckToolsetVersion("v0.2.2"))
+}
