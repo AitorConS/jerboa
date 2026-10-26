@@ -2,10 +2,15 @@
 # environment with jerboad, qemu, firecracker, and the kernel build toolchain.
 # distro/build.sh exports this image's filesystem to a tarball that the client
 # imports with `wsl --import`, the way Docker Desktop ships its own distro.
-FROM ubuntu:24.04
+# Pinned by digest (the ubuntu:24.04 multi-arch index, as in packages.yml):
+# this filesystem is signed into releases, so its base must not change under
+# a tag.
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 
+# The archive's SHA-256 is pinned with its version, as in scripts/install.sh.
 ARG FIRECRACKER_VERSION=v1.17.0
 ARG FC_ARCH=x86_64
+ARG FIRECRACKER_SHA256=06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558
 
 # Runtime deps: qemu, networking for the firecracker tap device, e2fsprogs for
 # the image build toolchain, and certs/curl for runtime downloads.
@@ -26,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Firecracker binary.
 RUN curl -fsSL "https://github.com/firecracker-microvm/firecracker/releases/download/${FIRECRACKER_VERSION}/firecracker-${FIRECRACKER_VERSION}-${FC_ARCH}.tgz" \
         -o /tmp/fc.tgz \
+    && echo "${FIRECRACKER_SHA256}  /tmp/fc.tgz" | sha256sum -c - \
     && tar -xzf /tmp/fc.tgz -C /tmp \
     && install -m 0755 "/tmp/release-${FIRECRACKER_VERSION}-${FC_ARCH}/firecracker-${FIRECRACKER_VERSION}-${FC_ARCH}" \
         /usr/local/bin/firecracker \
