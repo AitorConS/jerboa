@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -113,6 +114,12 @@ func (s *OpsStore) IsExtracted(namespace, name, version string) bool {
 	return true
 }
 
+// isSHA256Hex reports whether s is a hex-encoded SHA-256.
+func isSHA256Hex(s string) bool {
+	b, err := hex.DecodeString(s)
+	return err == nil && len(b) == sha256.Size
+}
+
 // Download fetches an ops package from repo.ops.city and stores it locally.
 // The URL is constructed from OpsPackageBaseURL + /<namespace>/<name>/<version>.tar.gz.
 func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 string) error {
@@ -140,6 +147,12 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 		downloadURL = strings.ReplaceAll(downloadURL, ".tar.gz", "/arm64.tar.gz")
 	}
 
+	// The ops manifest is not signed, so its SHA-256 is the only check on
+	// the archive: an entry without one is refused rather than trusted.
+	if !isSHA256Hex(expectedSHA256) {
+		return fmt.Errorf("ops download %s/%s %s: %w", namespace, name, version, ErrChecksumMissing)
+	}
+
 	slog.Info("downloading ops package", "namespace", namespace, "name", name, "version", version)
 
 	// Ops runtime packages are large (a Node.js runtime is ~190 MiB), so the body
@@ -152,12 +165,9 @@ func (s *OpsStore) Download(namespace, name, version string, expectedSHA256 stri
 		return fmt.Errorf("ops download %s/%s: %w", namespace, name, err)
 	}
 
-	if expectedSHA256 != "" {
-		got := hex.EncodeToString(sum)
-		if !strings.EqualFold(got, expectedSHA256) {
-			httpclient.DiscardPartial(partial)
-			return fmt.Errorf("ops download: %w (got %s, want %s)", ErrChecksumMismatch, got, expectedSHA256)
-		}
+	if got := hex.EncodeToString(sum); !strings.EqualFold(got, expectedSHA256) {
+		httpclient.DiscardPartial(partial)
+		return fmt.Errorf("ops download: %w (got %s, want %s)", ErrChecksumMismatch, got, expectedSHA256)
 	}
 
 	if err := httpclient.CommitPartial(partial, archivePath); err != nil {
@@ -448,11 +458,42 @@ func resolveLinkname(dir, target, linkname string) (string, bool) {
 	if filepath.IsAbs(src) || filepath.VolumeName(src) != "" {
 		return "", false
 	}
+	if !physicallyWithin(dir, filepath.Dir(target), src) {
+		return "", false
+	}
 	src = filepath.Join(filepath.Dir(target), src)
 	if !withinDir(dir, src) {
 		return "", false
 	}
 	return src, true
+}
+
+// physicallyWithin walks linkname from base one component at a time and
+// reports whether every step stays inside dir. filepath.Join resolves ".."
+// lexically, but the kernel resolves it from wherever a symlink on the way
+// actually led: after a link such as "s -> .", "s/.." climbs out of base
+// while its lexical form stays put. A ".." that follows a component that is a
+// symlink on disk is therefore refused, so the lexical result the callers
+// check is the one the kernel will follow.
+func physicallyWithin(dir, base, linkname string) bool {
+	cur := base
+	for _, c := range strings.Split(filepath.ToSlash(linkname), "/") {
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			if info, err := os.Lstat(cur); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				return false
+			}
+			cur = filepath.Dir(cur)
+		default:
+			cur = filepath.Join(cur, c)
+		}
+		if !withinDir(dir, cur) {
+			return false
+		}
+	}
+	return true
 }
 
 // resolvesWithinDir reports whether path, with every symbolic link that already
@@ -606,9 +647,13 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		return nil, err
 	}
 	dir := s.PackageDir(namespace, name, version)
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, fmt.Errorf("ops list files %s/%s %s: %w", namespace, name, version, err)
+	}
 	var files []File
 
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -659,8 +704,22 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 			guestPath = filepath.Base(rel)
 		}
 
+		hostPath := path
+		if d.Type()&fs.ModeSymlink != 0 {
+			// The image build opens HostPath, following links, so a link is
+			// listed by what it resolves to, and only if that is a regular
+			// file inside the package: extraction refuses links leading out,
+			// and this keeps one that slipped through from packing a host file.
+			resolved, ok := linkedFileWithin(realDir, path)
+			if !ok {
+				slog.Warn("ops list files: skipping symlink that is not a file in the package", "path", rel)
+				return nil
+			}
+			hostPath = resolved
+		}
+
 		files = append(files, File{
-			HostPath:  path,
+			HostPath:  hostPath,
 			GuestPath: guestPath,
 		})
 		return nil
@@ -669,6 +728,20 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		return nil, fmt.Errorf("ops list files %s/%s %s: %w", namespace, name, version, err)
 	}
 	return files, nil
+}
+
+// linkedFileWithin resolves the symlink at path and reports whether it leads
+// to a regular file inside realDir.
+func linkedFileWithin(realDir, path string) (string, bool) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || !withinDir(realDir, resolved) {
+		return "", false
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	return resolved, true
 }
 
 // List returns all locally cached ops packages.
@@ -797,9 +870,9 @@ func (s *OpsStore) FetchManifestCached() (*OpsPackageList, error) {
 		return nil, fmt.Errorf("ops manifest: HTTP %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readOpsManifest(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ops manifest read: %w", err)
+		return nil, err
 	}
 
 	// Parse before caching: a broken response must not replace a good copy.

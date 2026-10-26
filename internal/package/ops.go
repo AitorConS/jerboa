@@ -92,9 +92,9 @@ func FetchOpsManifest() (*OpsPackageList, error) {
 		return nil, fmt.Errorf("ops manifest: HTTP %d", resp.StatusCode)
 	}
 
-	data, err := io.ReadAll(resp.Body)
+	data, err := readOpsManifest(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ops manifest read: %w", err)
+		return nil, err
 	}
 
 	var list OpsPackageList
@@ -102,6 +102,19 @@ func FetchOpsManifest() (*OpsPackageList, error) {
 		return nil, fmt.Errorf("ops manifest parse: %w", err)
 	}
 	return &list, nil
+}
+
+// readOpsManifest reads an ops manifest body, refusing one larger than
+// maxIndexSize instead of reading it all into memory.
+func readOpsManifest(body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxIndexSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("ops manifest read: %w", err)
+	}
+	if len(data) > maxIndexSize {
+		return nil, fmt.Errorf("ops manifest is larger than %d bytes", maxIndexSize)
+	}
+	return data, nil
 }
 
 // Search returns packages from the manifest matching the query.

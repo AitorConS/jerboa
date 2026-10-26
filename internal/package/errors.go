@@ -13,4 +13,8 @@ var (
 	// ErrSizeMismatch is returned when a downloaded artifact's byte count does
 	// not match the size advertised in the index.
 	ErrSizeMismatch = errors.New("size mismatch")
+	// ErrChecksumMissing is returned when the manifest gives no SHA-256 for an
+	// artifact that is about to be downloaded: without one the download could
+	// not be checked, so it is not made.
+	ErrChecksumMissing = errors.New("no sha256 to check the download against")
 )
