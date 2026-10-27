@@ -1,6 +1,13 @@
 # Jerboa v0.56.0
 
-Release notes. Validation evidence for the candidate is added once the candidate has been built and tested.
+Release notes and validation evidence.
+
+Candidate: [40483960462](https://github.com/AitorConS/jerboa/actions/runs/40483960462).
+
+- Engine: `fb7ebe23a4adfd13065fe2277852e93ccee1e2ac`
+- Desktop: `ac39d202a62f9f0a6ea60c2c4d18cf13c796edab`
+- Firecracker macOS: `d1fe2641a391e43672e9fa6c07b335f5a5eee07c`
+- Product: `v0.56.0`; source-built Linux kernel toolset: `v0.2.3`.
 
 ## What changes
 
@@ -44,3 +51,27 @@ These changes can affect existing setups:
 - **Image signatures.** Signatures made by earlier versions no longer verify. Run `jerboa sign` again.
 - **Volumes.** Legacy client-side volumes must be moved with `jerboa volume migrate`.
 - **Installing older versions.** `install.sh --version` needs that version's signed release manifest.
+
+## Native Mac
+
+The actual candidate app ZIP passed `scripts/release/native-macos.sh` on a physical Apple Silicon Mac running macOS 26.6.2. The checkout matched the candidate engine commit. The test used an isolated daemon and temporary VM state.
+
+App: `jerboa-desktop-0.56.0-macos-arm64.zip`.
+
+SHA-256: `cd48a3111e2af8a6bc98a5b29ec73147fd515c196eb41ed43e20f2748c4eefae` (matches `native_macos_app.sha256` in the candidate's signed inventory).
+
+[Machine-readable result](native-macos.json) and [test output](native-macos.log).
+
+Checks passed: app code-signature integrity, CLI/daemon versions, VM boot with 1 and 4 vCPUs, HTTP/UDP port forwarding with an omitted, loopback and wildcard bind, environment variables, persistent-volume contents across boots, port conflicts, daemon recovery, guest exit, restart after guest failure, and forced stop. These are functional checks, not throughput benchmarks.
+
+## Linux kernel
+
+The candidate's exact staged toolset passed the QEMU/KVM 8.2.2 and Firecracker 1.16.0 boot checks. The [kernel report](kernel-boot.json) is the candidate inventory's `kernel_boot` record, binding both results to the engine commit, candidate run and SHA-256 of each toolset file. The same files are embedded in the WSL rootfs and staged for release downloads.
+
+## Windows
+
+The candidate's signed Windows installer passed the full installer smoke on a Windows machine started for this run only: silent install, WSL2 distro provisioning from the run's rootfs, and the example unikernels.
+
+## Publication gate
+
+This directory records validation, not proof of publication. Promotion additionally requires the complete candidate workflow to succeed and the signed inventory to match this native app hash. Published versions are determined by the signed stable manifest at `https://releases.jerboa.dev/channels/stable.json`.
