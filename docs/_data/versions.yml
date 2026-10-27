@@ -1,5 +1,5 @@
 # Legacy Jekyll version data; no longer generated or deployed by engine CI.
 # These committed values are only a fallback for local `jekyll build`; the
 # published site regenerates them from the source files on every docs deploy.
-cli: 0.55.1
-kernel: 0.2.2
+cli: 0.56.0
+kernel: 0.2.3
