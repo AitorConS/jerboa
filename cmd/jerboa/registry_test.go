@@ -3,13 +3,16 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/client"
+	"github.com/AitorConS/jerboa/internal/registry/credentials"
 	"github.com/stretchr/testify/require"
 )
 
@@ -98,4 +101,76 @@ func TestGitHubLoginUsesTheRegistrysFlowWhenOffered(t *testing.T) {
 	require.ErrorContains(t, err, "use --token")
 	_, _, err = githubLogin(ctx, &out, "registry.example.com", &client.Client{Base: srv.URL}, client.Discovery{}, official)
 	require.ErrorContains(t, err, "does not offer GitHub login")
+}
+
+func TestRepoRmDeletesATagOrTheRepository(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/auth/token":
+			require.Equal(t, "Bearer jpat_ci", r.Header.Get("Authorization"))
+			body, _ := io.ReadAll(r.Body)
+			require.JSONEq(t, `{"scopes":["repository:acme/web:push,delete"]}`, string(body))
+			_, _ = w.Write([]byte(`{"token":"jwt_delete"}`))
+		case r.Method == http.MethodDelete:
+			require.Equal(t, "Bearer jwt_delete", r.Header.Get("Authorization"))
+			calls = append(calls, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected "+r.Method+" "+r.URL.Path, http.StatusTeapot)
+		}
+	}))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	t.Setenv(credentials.EnvToken, "jpat_ci")
+	t.Setenv(credentials.EnvHost, host)
+	orig := os.Stdin
+	t.Cleanup(func() { os.Stdin = orig })
+	answer := func(text string) {
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		_, err = w.WriteString(text)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		os.Stdin = r
+	}
+	run := func(args ...string) (string, error) {
+		cmd := newRegistryCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs(append([]string{"repo", "rm"}, args...))
+		err := cmd.Execute()
+		return out.String(), err
+	}
+
+	out, err := run(host + "/acme/web:v1")
+	require.NoError(t, err)
+	require.Equal(t, "Deleted acme/web:v1\n", out)
+	require.Equal(t, []string{"/v2/acme/web/tags/v1"}, calls)
+
+	// A whole repository needs a yes, typed or given with --yes; anything
+	// else, including no answer at all, deletes nothing.
+	calls = nil
+	for _, text := range []string{"", "n\n"} {
+		answer(text)
+		out, err = run(host + "/acme/web")
+		require.NoError(t, err)
+		require.Equal(t, "Aborted.\n", out)
+		require.Empty(t, calls)
+	}
+	answer("y\n")
+	out, err = run(host + "/acme/web")
+	require.NoError(t, err)
+	require.Equal(t, "Deleted acme/web\n", out)
+	require.Equal(t, []string{"/v2/acme/web"}, calls)
+
+	calls = nil
+	out, err = run(host+"/acme/web", "--yes")
+	require.NoError(t, err)
+	require.Equal(t, "Deleted acme/web\n", out)
+	require.Equal(t, []string{"/v2/acme/web"}, calls)
+
+	_, err = run(host + "/acme/web@sha256:" + strings.Repeat("a", 64))
+	require.ErrorContains(t, err, "not a digest")
 }

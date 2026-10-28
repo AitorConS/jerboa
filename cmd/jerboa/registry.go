@@ -390,8 +390,65 @@ func newRepoCmd(registry *string) *cobra.Command {
 	}
 	edit.Flags().StringVar(&description, "description", "", "one-line description, at most 200 characters")
 	edit.Flags().StringVar(&readme, "readme", "", "Markdown file to show as the README, or - for stdin (at most 64 KiB)")
-	repo.AddCommand(edit)
+	repo.AddCommand(edit, newRepoRmCmd(registry))
 	return repo
+}
+
+func newRepoRmCmd(registry *string) *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "rm <[registry/]namespace/repository[:tag]>",
+		Short: "Delete a tag, or a repository with all its tags",
+		Long: `Deletes a tag from a registry, or, without a tag, the repository with all its
+tags, description and README. It needs the namespace's owner, an organization
+admin, or a personal access token created with --delete.`,
+		Example: `  jerboa registry repo rm aitorcons/web:v1
+  jerboa registry repo rm aitorcons/web --yes`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, err := naming.ParseImageReference(args[0])
+			if err != nil {
+				return fmt.Errorf("repo rm: %w", err)
+			}
+			if ref.Digest != "" {
+				return fmt.Errorf("repo rm: name a tag or a repository, not a digest")
+			}
+			// ParseImageReference defaults the tag to latest; only a tag the
+			// user wrote selects a tag.
+			tagged := strings.Contains(args[0][strings.LastIndex(args[0], "/")+1:], ":")
+			if ref.Registry == naming.DefaultRegistry {
+				ref.Registry = *registry
+			}
+			name := ref.Namespace + "/" + ref.Repository
+			if !tagged && !yes && !confirmPrompt(fmt.Sprintf("Delete %s with all its tags from %s? [y/N] ", name, ref.Registry)) {
+				fmt.Fprintln(cmd.OutOrStdout(), "Aborted.")
+				return nil
+			}
+			cred, err := credentials.For(ref.Registry)
+			if err != nil {
+				return fmt.Errorf("repo rm: %w", err)
+			}
+			c := client.New(ref.Registry)
+			token, err := c.DeleteToken(cmd.Context(), cred, ref.Namespace, ref.Repository)
+			if err != nil {
+				return fmt.Errorf("repo rm: %w", err)
+			}
+			if tagged {
+				if err := c.DeleteTag(cmd.Context(), token, ref.Namespace, ref.Repository, ref.Tag); err != nil {
+					return fmt.Errorf("repo rm: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s:%s\n", name, ref.Tag)
+				return nil
+			}
+			if err := c.DeleteRepo(cmd.Context(), token, ref.Namespace, ref.Repository); err != nil {
+				return fmt.Errorf("repo rm: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Deleted %s\n", name)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "delete a whole repository without asking")
+	return cmd
 }
 
 // readFileOrStdin reads a file, or standard input for "-".
