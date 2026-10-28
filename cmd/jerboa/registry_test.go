@@ -104,16 +104,23 @@ func TestGitHubLoginUsesTheRegistrysFlowWhenOffered(t *testing.T) {
 }
 
 func TestRepoRmDeletesATagOrTheRepository(t *testing.T) {
+	// The fake registry refuses anything but a delete-scoped token from the
+	// PAT, so a wrong request fails the command.
 	var calls []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/auth/token":
-			require.Equal(t, "Bearer jpat_ci", r.Header.Get("Authorization"))
 			body, _ := io.ReadAll(r.Body)
-			require.JSONEq(t, `{"scopes":["repository:acme/web:push,delete"]}`, string(body))
+			if r.Header.Get("Authorization") != "Bearer jpat_ci" || string(body) != `{"scopes":["repository:acme/web:push,delete"]}` {
+				http.Error(w, "unexpected token request "+string(body), http.StatusUnauthorized)
+				return
+			}
 			_, _ = w.Write([]byte(`{"token":"jwt_delete"}`))
 		case r.Method == http.MethodDelete:
-			require.Equal(t, "Bearer jwt_delete", r.Header.Get("Authorization"))
+			if r.Header.Get("Authorization") != "Bearer jwt_delete" {
+				http.Error(w, "not the delete token", http.StatusUnauthorized)
+				return
+			}
 			calls = append(calls, r.URL.Path)
 			w.WriteHeader(http.StatusNoContent)
 		default:
