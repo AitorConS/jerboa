@@ -104,6 +104,17 @@ jerboa registry repo edit aitorcons/web --description "Static web server" --read
 
 Either flag can be used alone. `--readme -` reads the README from standard input.
 
+## Deleting
+
+Delete a tag, or a repository with all its tags, description and README:
+
+```sh
+jerboa registry repo rm aitorcons/web:v1
+jerboa registry repo rm aitorcons/web
+```
+
+Deleting a whole repository asks first; `--yes` skips the question, for scripts. Deleting needs the namespace's owner, an organization admin, or a token created with `--delete`. The hub's repository settings can delete too.
+
 ## Limits
 
 | Limit | Value |
