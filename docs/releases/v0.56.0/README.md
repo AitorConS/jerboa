@@ -11,7 +11,7 @@ Candidate: [40483960462](https://github.com/AitorConS/jerboa/actions/runs/404839
 
 ## What changes
 
-**Registry.** `jerboa login`, `logout`, `tag`, `push` and `pull` work against the Jerboa registry (`registry.jerboa.dev`) and its hub. `jerboa login` signs in with GitHub through the registry, which runs the device flow itself. `jerboa registry pat` manages personal access tokens, with an expiry, namespaces and an optional delete permission. `jerboa registry repo` edits and deletes repositories.
+**Registry.** `jerboa login`, `logout`, `tag`, `push` and `pull` work against the Jerboa registry (`registry.jerboa.dev`) and its hub. `jerboa login` signs in with GitHub through the registry, which runs the device flow itself. `jerboa registry pat` manages personal access tokens, with an expiry, namespaces and an optional delete permission. `jerboa registry repo edit` sets a repository's description and README; tags and repositories are deleted on the hub.
 
 **Images and packages.**
 - Images are reproducible and host-independent, and are built compact by default. `disk_size` is applied when the VM starts.
