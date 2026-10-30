@@ -361,7 +361,7 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 | `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to |
 | `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store |
 | `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host; `create` takes `--expires-in <days>`, `--namespace` and `--delete`) |
-| `registry repo edit\|rm` | Set a repository's description or README (`edit --description`, `--readme`); delete a tag (`rm ns/repo:tag`) or a repository with all its tags (`rm ns/repo`, which asks unless `--yes`) |
+| `registry repo edit\|rm` | Set a repository's description or README (`edit --description`, `--readme`); delete a tag (`rm ns/repo:tag`) or a repository with all its tags (`rm ns/repo`, which asks unless `--yes`; newer than v0.56.0) |
 
 ```sh
 jerboa build . --name web
