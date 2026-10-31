@@ -1,0 +1,38 @@
+name: Set up Jerboa
+description: >-
+  Installs a Jerboa release on a Linux x86_64 runner: the CLI and the daemon
+  as a systemd service, verified against the release's minisign-signed
+  manifest by scripts/install.sh from this action's own ref. Pushing with
+  the job's OIDC token needs `permissions: id-token: write` and a trusted
+  publisher of the namespace on the hub.
+inputs:
+  version:
+    description: Release to install, e.g. 0.57.0. Pin one; `latest` follows every release.
+    required: true
+  hypervisor:
+    description: firecracker (needs /dev/kvm) or qemu (software emulation when the runner has no KVM).
+    default: firecracker
+outputs:
+  version:
+    description: The version installed, as `jerboa version` prints it.
+    value: ${{ steps.install.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        HYPERVISOR: ${{ inputs.hypervisor }}
+        INSTALLER: ${{ github.action_path }}/../../../scripts/install.sh
+      run: |
+        set -euo pipefail
+        [ "${RUNNER_OS}" = Linux ] && [ "${RUNNER_ARCH}" = X64 ] \
+          || { echo "::error::setup-jerboa supports Linux x86_64 runners (this is ${RUNNER_OS} ${RUNNER_ARCH})"; exit 1; }
+        [ -n "${VERSION}" ] || { echo "::error::set the version input"; exit 1; }
+        if [ "${HYPERVISOR}" = firecracker ] && [ ! -e /dev/kvm ]; then
+          echo "::error::this runner has no /dev/kvm; use hypervisor: qemu"
+          exit 1
+        fi
+        sudo --preserve-env=HYPERVISOR bash "${INSTALLER}" --version "${VERSION}"
+        echo "version=$(jerboa version | head -n 1 | awk '{print $NF}')" >> "${GITHUB_OUTPUT}"

@@ -1,0 +1,31 @@
+name: setup-jerboa
+# Installs a published release with the setup-jerboa action, as a workflow
+# that publishes images would, and checks the CLI reaches the daemon.
+'on':
+  pull_request:
+    paths:
+      - .github/actions/setup-jerboa/**
+      - .github/workflows/setup-jerboa.yml
+      - scripts/install.sh
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - id: setup
+      uses: ./.github/actions/setup-jerboa
+      with:
+        version: 0.56.0
+        hypervisor: qemu
+    - name: The CLI reaches the daemon
+      env:
+        INSTALLED: ${{ steps.setup.outputs.version }}
+      run: |
+        [ "${INSTALLED#v}" = 0.56.0 ] || { echo "installed ${INSTALLED}"; exit 1; }
+        jerboa images
