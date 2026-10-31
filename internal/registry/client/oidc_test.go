@@ -27,14 +27,13 @@ func TestGitHubActionsOIDCExchange(t *testing.T) {
 	t.Setenv(credentials.EnvActionsTokenURL, actions.URL+"/token?api-version=2.0")
 	t.Setenv(credentials.EnvActionsToken, "request-token")
 
-	var got []map[string]any
+	// What the registry received: path, Authorization header and body.
+	var got []any
 	status := http.StatusOK
 	registry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/auth/oidc", r.URL.Path)
-		require.Empty(t, r.Header.Get("Authorization"))
 		var body map[string]any
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		got = append(got, body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		got = append(got, r.URL.Path, r.Header.Get("Authorization"), body)
 		if status != http.StatusOK {
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(`{"error":{"code":"DENIED","message":"no trusted publisher"}}`))
@@ -50,7 +49,7 @@ func TestGitHubActionsOIDCExchange(t *testing.T) {
 	token, err := c.PushToken(ctx, credentials.GitHubActions, "acme", "web")
 	require.NoError(t, err)
 	require.Equal(t, "push-token", token)
-	require.Equal(t, []map[string]any{{"token": "oidc-for-" + host.Host, "scopes": []any{"repository:acme/web:push"}}}, got)
+	require.Equal(t, []any{"/auth/oidc", "", map[string]any{"token": "oidc-for-" + host.Host, "scopes": []any{"repository:acme/web:push"}}}, got)
 
 	status = http.StatusForbidden
 	_, err = c.DeleteToken(ctx, credentials.GitHubActions, "acme", "web")

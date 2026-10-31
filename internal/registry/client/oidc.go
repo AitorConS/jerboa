@@ -36,14 +36,14 @@ func (c *Client) actionsToken(ctx context.Context, audience string) (string, err
 	u.RawQuery = q.Encode()
 	ctx, cancel := context.WithTimeout(ctx, actionsTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil) //nolint:gosec // G704: GitHub Actions sets the URL for the job
 	if err != nil {
 		return "", fmt.Errorf("github actions: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+os.Getenv(credentials.EnvActionsToken))
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.UserAgent)
-	resp, err := c.http().Do(req)
+	resp, err := c.http().Do(req) //nolint:gosec // G704: as above
 	if err != nil {
 		return "", fmt.Errorf("github actions: request an OIDC token: %w", err)
 	}
