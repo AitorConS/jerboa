@@ -511,3 +511,26 @@ func TestStoreTagAddsNameForSameDisk(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, orig, disk)
 }
+
+func TestStore_SBOM(t *testing.T) {
+	s := makeStore(t)
+	disk := makeDiskFile(t)
+	m, err := s.PutMove("hello", "latest", validManifest(), disk)
+	require.NoError(t, err)
+
+	_, err = s.SBOM("hello:latest")
+	require.ErrorIs(t, err, ErrNoSBOM)
+	require.NoError(t, s.SetSBOM(m.DiskDigest, []byte(`{"bomFormat":"CycloneDX"}`)))
+	require.ErrorContains(t, s.SetSBOM("sha256:"+strings.Repeat("0", 64), []byte(`{}`)), "set sbom")
+
+	// Every tag of the disk shares it.
+	_, err = s.Tag("hello:latest", "hello", "v1")
+	require.NoError(t, err)
+	for _, ref := range []string{"hello:latest", "hello:v1", m.DiskDigest} {
+		data, err := s.SBOM(ref)
+		require.NoError(t, err, ref)
+		require.JSONEq(t, `{"bomFormat":"CycloneDX"}`, string(data))
+	}
+	_, err = s.SBOM("missing:latest")
+	require.ErrorContains(t, err, "not found")
+}

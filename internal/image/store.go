@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -22,6 +23,7 @@ import (
 //	  <sha256>/
 //	    disk.img
 //	    manifest.json      (latest manifest stored for this disk)
+//	    sbom.cdx.json      (what the disk contains, when built here)
 //	    tags/<ref>.json    (manifest per name:tag)
 //	  refs.json            (name:tag → sha256)
 //
@@ -405,6 +407,49 @@ func (s *Store) SetRecipe(ref, digest string) error {
 		return fmt.Errorf("image store set recipe: %w", err)
 	}
 	return nil
+}
+
+// ErrNoSBOM reports that an image has no stored SBOM: it was pulled, or
+// built before images recorded one.
+var ErrNoSBOM = errors.New("image has no SBOM")
+
+const sbomFile = "sbom.cdx.json"
+
+// SetSBOM stores the software bill of materials of the disk with digest.
+// It describes the disk's contents, so every tag of the disk shares it.
+func (s *Store) SetSBOM(digest string, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	imgDir := filepath.Join(s.root, stripPrefix(digest))
+	if !isSHA256Hex(stripPrefix(digest)) {
+		return fmt.Errorf("image store set sbom: invalid digest %q", digest)
+	}
+	if _, err := os.Stat(imgDir); err != nil {
+		return fmt.Errorf("image store set sbom: %w", err)
+	}
+	if err := writeFileAtomic(filepath.Join(imgDir, sbomFile), data); err != nil {
+		return fmt.Errorf("image store set sbom: %w", err)
+	}
+	return nil
+}
+
+// SBOM returns the software bill of materials of the image ref names, or
+// ErrNoSBOM.
+func (s *Store) SBOM(ref string) ([]byte, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sha, _, err := s.resolveRefName(ref)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(filepath.Join(s.root, sha, sbomFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNoSBOM
+	}
+	if err != nil {
+		return nil, fmt.Errorf("image store sbom: %w", err)
+	}
+	return data, nil
 }
 
 // tagManifestPath is where the manifest of ref is kept inside an image dir.

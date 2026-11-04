@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"text/tabwriter"
@@ -68,6 +69,27 @@ func newImagesCmd(endpoint *string, outputFmt *string) *cobra.Command {
 			return fmt.Errorf("images recipe: %w", err)
 		}
 		return printJSON(cmd.OutOrStdout(), v)
+	}})
+	cmd.AddCommand(&cobra.Command{Use: "sbom <ref>", Short: "Show the CycloneDX SBOM of what an image contains", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		client, err := api.Dial(*endpoint)
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+		raw, err := client.ImageSBOM(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		// Indented in the document's own field order.
+		var out bytes.Buffer
+		if err := json.Indent(&out, raw, "", "  "); err != nil {
+			return fmt.Errorf("images sbom: %w", err)
+		}
+		out.WriteByte('\n')
+		if _, err := cmd.OutOrStdout().Write(out.Bytes()); err != nil {
+			return fmt.Errorf("images sbom: %w", err)
+		}
+		return nil
 	}})
 	return cmd
 

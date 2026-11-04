@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"debug/elf"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +20,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/preflight"
+	"github.com/AitorConS/jerboa/internal/sbom"
 	"github.com/spf13/cobra"
 )
 
@@ -52,6 +55,7 @@ func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 		smoke       bool
 		layout      string
 		sizeReportF string
+		sbomOut     string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -292,6 +296,34 @@ project markers (go.mod, package.json, etc.).`,
 				}
 			}
 
+			sourceDir := ""
+			if info.IsDir() {
+				sourceDir = srcPath
+			}
+			bom, err := sbom.Generate(sbom.Input{
+				Platform:    "linux/" + packageArchFor(cmd.Context()),
+				Program:     binaryPath,
+				ProgramPath: programPath,
+				Files:       pkgFiles,
+				Packages:    pkgRefs,
+				SourceDir:   sourceDir,
+				Tool:        version,
+				Created:     sourceDateEpoch(),
+			})
+			if err != nil {
+				return fmt.Errorf("build: %w", err)
+			}
+			if sbomOut != "" {
+				if err := writeSBOM(sbomOut, bom); err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+			}
+			if err := sbom.Check(bom); err != nil {
+				// Too large to keep with the image; the build goes on without it.
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: the image's SBOM is not stored with it: %v\n", err)
+				bom = nil
+			}
+
 			sp.Start("Assembling image on daemon")
 			client, err := api.Dial(*endpoint)
 			if err != nil {
@@ -318,6 +350,7 @@ project markers (go.mod, package.json, etc.).`,
 				DiskSize:    diskSize,
 				Layout:      imageLayout,
 				Created:     sourceDateEpoch(),
+				SBOM:        bom,
 			}, pr)
 			if err != nil {
 				sp.Fail("Image assembly failed")
@@ -357,12 +390,26 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform for cross-compilation (e.g. linux/amd64, linux/arm64)")
 	cmd.Flags().StringVar(&sizeReportF, "size-report", "", "print what the image contains, grouped by program, package, npm module, Python distribution and top-level path: text or json")
 	cmd.Flags().Lookup("size-report").NoOptDefVal = "text"
+	cmd.Flags().StringVar(&sbomOut, "sbom", "", "also write the image's CycloneDX SBOM to this file (it is always stored with the image: see jerboa images sbom)")
 	cmd.Flags().StringVar(&layout, "layout", "", "disk image layout: compact (no boot code; the hypervisor loads the kernel) or standard (BIOS boot code, for x86 emulation and QEMU without KVM); default compact, standard for x86 images built on macOS")
 	cmd.Flags().IntVar(&port, "port", 0, "declared service port; enables network in the image manifest (required for HTTP servers)")
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
 	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip optional CLI preflight diagnostics (ELF/platform and final guest validation remain mandatory)")
 	cmd.Flags().BoolVar(&smoke, "smoke", false, "boot the image once after building to verify it starts (stops and removes the test VM afterwards)")
 	return cmd
+}
+
+// writeSBOM writes an SBOM to file, indented for reading.
+func writeSBOM(file string, bom []byte) error {
+	var out bytes.Buffer
+	if err := json.Indent(&out, bom, "", "  "); err != nil {
+		return fmt.Errorf("write sbom: %w", err)
+	}
+	out.WriteByte('\n')
+	if err := os.WriteFile(file, out.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("write sbom: %w", err)
+	}
+	return nil
 }
 
 // runBuildCommand executes a single shell command string in dir, writing output to w.
