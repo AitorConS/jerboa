@@ -54,8 +54,6 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) mkfsFor(context.Context, string) (string, error) { return e.mkfs, nil }
 
-func staticELF() []byte { return staticELFFor(elf.EM_X86_64) }
-
 func staticELFFor(machine elf.Machine) []byte {
 	b := make([]byte, 512)
 	copy(b, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})

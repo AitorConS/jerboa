@@ -86,7 +86,11 @@ func (ix *Index) Validate() error {
 
 // Encode returns the canonical encoding: compact JSON, fields in order.
 func (ix *Index) Encode() ([]byte, error) {
-	return json.Marshal(ix)
+	data, err := json.Marshal(ix)
+	if err != nil {
+		return nil, fmt.Errorf("index: encode: %w", err)
+	}
+	return data, nil
 }
 
 // Digest returns the sha256 digest of the canonical encoding, and the encoding.
