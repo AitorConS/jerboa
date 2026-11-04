@@ -321,7 +321,7 @@ func (c *collector) npm(hostPath string) error {
 	}
 	if json.Unmarshal(data, &p) != nil || p.Name == "" || p.Version == "" {
 		// Not a module manifest (some modules ship other package.json files).
-		return nil
+		return nil //nolint:nilerr // skipped, not an error
 	}
 	comp := Component{Type: "library", Name: p.Name, Version: p.Version, PURL: purl("npm", p.Name, p.Version)}
 	var license string
