@@ -28,11 +28,12 @@ A pull reads only from the CDN. `GET https://registry.jerboa.dev/v2/`
 returns the discovery document (cacheable for 5 minutes):
 
 ```json
-{"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "login": "device", "features": ["oidc"]}
+{"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "login": "device", "features": ["oidc", "index"]}
 ```
 
-`features` lists optional parts of the protocol the registry supports;
-`"oidc"` is [GitHub Actions OIDC](#github-actions-oidc-trusted-publishers).
+`features` lists optional parts of the protocol the registry supports:
+- `"oidc"` is [GitHub Actions OIDC](#github-actions-oidc-trusted-publishers);
+- `"index"` is [image indexes](#image-indexes).
 
 `"login": "device"` means the registry runs the GitHub sign-in itself (see
 [Login](#login-jerboa-login)). Older registries advertise
@@ -64,7 +65,14 @@ Every digest is `sha256:<64 lowercase hex>`.
   {"blobs": {"sha256:…": {"pack": "sha256:…", "offset": 0, "length": 1234}}}
   ```
   Locations are a performance hint, not trusted: the client verifies every blob.
-- **Tag document:** `{"recipe": "sha256:…"}`.
+- **Index:** canonical JSON (`application/vnd.jerboa.image.index.v1+json`, see
+  `imageindex.Index`) listing one recipe per platform:
+  ```json
+  {"schemaVersion":1,"mediaType":"application/vnd.jerboa.image.index.v1+json","manifests":[{"digest":"sha256:…","platform":"linux/amd64"},{"digest":"sha256:…","platform":"linux/arm64"}]}
+  ```
+  Compact, fields in this order, 1 to 8 entries sorted by platform and one per
+  platform, so one set of recipes has one digest.
+- **Tag document:** `{"recipe": "sha256:…"}`, or `{"recipe": "sha256:…", "index": "sha256:…"}` for a tag naming an index; `recipe` is then the index's default recipe.
 
 ## Static layout (CDN)
 
@@ -73,13 +81,14 @@ Every digest is `sha256:<64 lowercase hex>`.
 | `packs/<hex>` | Pack bytes; served with range support | `public, max-age=31536000, immutable` |
 | `recipes/<hex>.json` | Recipe bytes | `public, max-age=31536000, immutable` |
 | `locations/<hex>.json` | Locations of that recipe | `public, max-age=31536000, immutable` |
+| `indexes/<hex>.json` | Index bytes | `public, max-age=31536000, immutable` |
 | `tags/<ns>/<repo>/<tag>` | Tag document | `public, max-age=60` |
 
 `<hex>` is the digest without its `sha256:` prefix. A deleted tag answers 404.
 
 ## Pull
 
-1. `GET {cdn}/tags/<ns>/<repo>/<tag>`. A reference by digest skips this step.
+1. `GET {cdn}/tags/<ns>/<repo>/<tag>`. A reference by digest skips this step. If the tag document names an `index`: `GET {cdn}/indexes/<hex>.json`, verify its SHA-256, parse it (`imageindex.Parse`), and pull the recipe of the platform asked for (`--platform`), or of the host's (`linux/<arch>`); a client that does not know indexes pulls `recipe`.
 2. `GET {cdn}/recipes/<hex>.json`. Verify the SHA-256 of the bytes against the digest, then parse it (`recipe.Parse`, which rejects non-canonical encodings).
 3. Drop the blobs already in the local store. If none are missing, go to step 6.
 4. `GET {cdn}/locations/<hex>.json`. Group the missing blobs by pack and merge frames less than 64 KiB apart (`pack.PlanRanges`).
@@ -162,7 +171,24 @@ A namespace is granted only if it is the account's login, or an organization the
 
 Other tag operations:
 - `DELETE /v2/<ns>/<repo>/tags/<tag>` removes a tag.
-- `GET /v2/<ns>/<repo>/tags` → `{"tags": [{"tag","recipe","updated"}]}`.
+- `GET /v2/<ns>/<repo>/tags` → `{"tags": [{"tag","recipe","index","updated"}]}`; `index` is null for a tag naming one recipe.
+
+### Image indexes
+
+A registry that advertises `"index"` stores indexes, so one tag serves every
+platform an image is built for:
+
+1. Push each platform's image as usual, under a tag or by its recipe.
+2. `PUT /v2/<ns>/<repo>/indexes/<hex>` with the index bytes (`Content-Type: application/vnd.jerboa.image.index.v1+json`, at most 16 KiB).
+   - The server checks the SHA-256 against the URL and the canonical form (`INDEX_INVALID`), and that every recipe is registered (`RECIPE_UNKNOWN`) and is for the platform it is listed under (`INDEX_INVALID`).
+   - It publishes `indexes/<hex>.json`. Idempotent.
+3. `PUT /v2/<ns>/<repo>/tags/<tag>` with `{"index": "sha256:…"}` (`INDEX_UNKNOWN` if it is not registered).
+   - The tag's `recipe` becomes the index's default: the `linux/amd64` one, or the first. Clients that know nothing of indexes pull it.
+   - The repository holds every recipe of the index, so each can be pulled by digest.
+
+`jerboa push --index <target> <image>…` does steps 2 and 3 from images
+already pushed, reading each one's platform from its recipe. Indexes are
+pulled by tag; a reference by digest names a recipe.
 
 Before uploading anything, the client assembles the image from the recipe and its local blob store and checks the disk digest, so it never publishes a recipe that does not rebuild its disk.
 
@@ -190,8 +216,10 @@ Errors are JSON with an HTTP status:
 | `PACK_INVALID` | 400 | Pack digest, size or index is wrong |
 | `BLOB_INVALID` | 400 | A blob does not decompress to its declared size or digest |
 | `RECIPE_INVALID` | 400 | Recipe digest, schema or limits are wrong |
+| `INDEX_INVALID` | 400 | Index digest, schema, form or platforms are wrong |
 | `BLOB_UNKNOWN` | 409 | A recipe names a blob the registry does not have |
-| `RECIPE_UNKNOWN` | 409 | A tag points at a recipe the registry does not have |
+| `RECIPE_UNKNOWN` | 409 | A tag or index points at a recipe the registry does not have |
+| `INDEX_UNKNOWN` | 409 | A tag points at an index the registry does not have |
 | `TOO_LARGE` | 413 | Over a size limit |
 | `QUOTA` | 403 | The namespace's storage quota is used up |
 | `RATE_LIMITED` | 429 | Too many requests; honor `Retry-After` |
@@ -203,14 +231,17 @@ Errors are JSON with an HTTP status:
 | Pack size, and largest compressed blob | 64 MiB |
 | Blobs per recipe | 100 000 |
 | Recipe size | 16 MiB |
+| Index size, and platforms per index | 16 KiB, 8 |
 | Digests per `blobs/missing` call | 10 000 |
 | Tags per repository | 10 000 |
 | Storage per namespace | 10 GiB (counts the packs the namespace uploaded first) |
 
 ## Garbage collection
 
-Recipes that no tag has referenced for 7 days are deleted, with their
-locations, and so are packs that no remaining recipe uses. A blob whose pack
+Indexes and recipes that no tag has referenced for 7 days are deleted (a tag
+naming an index references all its recipes, and an index keeps its recipes
+while it lasts), recipes with their locations, and so are packs that no
+remaining recipe uses. A blob whose pack
 was deleted is reported missing again, so the next push that needs it uploads
 it afresh.
 

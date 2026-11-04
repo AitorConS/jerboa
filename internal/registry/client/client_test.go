@@ -57,17 +57,32 @@ func TestMissingRecipeAndTagSayNotFound(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("0", 64)
 	_, err := c.Recipe(ctx, cdn, digest)
 	require.EqualError(t, err, "recipe "+digest+" not found in the registry")
-	_, err = c.TagRecipe(ctx, cdn, "aitorcons", "web", "nope")
+	_, err = c.Tag(ctx, cdn, "aitorcons", "web", "nope")
 	require.EqualError(t, err, "aitorcons/web:nope not found in the registry")
 }
 
-func TestTagRecipeRejectsInvalidDigest(t *testing.T) {
+func TestTagRejectsInvalidDigests(t *testing.T) {
 	srv := registrytest.New()
 	defer srv.Close()
 	srv.SetObject("tags/alice/web/v1", []byte(`{"recipe":"../../etc"}`))
+	srv.SetObject("tags/alice/web/v2", []byte(`{"recipe":"sha256:`+strings.Repeat("0", 64)+`","index":"../../etc"}`))
 	c := client.New(srv.Host())
-	_, err := c.TagRecipe(context.Background(), srv.URL+"/cdn", "alice", "web", "v1")
+	_, err := c.Tag(context.Background(), srv.URL+"/cdn", "alice", "web", "v1")
 	require.ErrorContains(t, err, "invalid recipe")
+	_, err = c.Tag(context.Background(), srv.URL+"/cdn", "alice", "web", "v2")
+	require.ErrorContains(t, err, "invalid index")
+}
+
+func TestIndexChecksItsDigest(t *testing.T) {
+	srv := registrytest.New()
+	defer srv.Close()
+	digest := "sha256:" + strings.Repeat("1", 64)
+	srv.SetObject("indexes/"+strings.Repeat("1", 64)+".json", []byte("{}"))
+	c := client.New(srv.Host())
+	_, err := c.Index(context.Background(), srv.URL+"/cdn", digest)
+	require.ErrorContains(t, err, "does not match its digest")
+	_, err = c.Index(context.Background(), srv.URL+"/cdn", "sha256:"+strings.Repeat("2", 64))
+	require.ErrorContains(t, err, "not found in the registry")
 }
 
 func TestReadRangeRefusesOutOfBoundsRanges(t *testing.T) {

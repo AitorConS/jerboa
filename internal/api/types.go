@@ -462,14 +462,19 @@ type ImagePullParams struct {
 	Reference string `json:"reference"`
 	// NoCount skips reporting the pull to the hub's counter.
 	NoCount bool `json:"no_count,omitempty"`
+	// Platform picks the platform's image from a tag naming an image index
+	// (the host's when empty), and fails any other pull of another platform.
+	Platform string `json:"platform,omitempty"`
 }
 
 // ImagePullResult reports a pull and the image it stored.
 type ImagePullResult struct {
-	Image        ImageManifestResult `json:"image"`
-	Recipe       string              `json:"recipe"`
-	Blobs        int                 `json:"blobs"`
-	BlobsFetched int                 `json:"blobs_fetched"`
-	Requests     int                 `json:"requests"`
-	BytesFetched int64               `json:"bytes_fetched"`
+	Image  ImageManifestResult `json:"image"`
+	Recipe string              `json:"recipe"`
+	// Index is the image index the recipe was chosen from, if any.
+	Index        string `json:"index,omitempty"`
+	Blobs        int    `json:"blobs"`
+	BlobsFetched int    `json:"blobs_fetched"`
+	Requests     int    `json:"requests"`
+	BytesFetched int64  `json:"bytes_fetched"`
 }

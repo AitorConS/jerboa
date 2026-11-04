@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -88,6 +89,17 @@ type Discovery struct {
 	// GitHubClientID is the GitHub app older registries have clients run the
 	// device flow with, then exchange the token (LoginWithGitHub).
 	GitHubClientID string `json:"github_client_id"`
+	// Features lists the optional parts of the protocol the registry
+	// supports, such as FeatureIndex.
+	Features []string `json:"features"`
+}
+
+// FeatureIndex is the feature of registries that store image indexes.
+const FeatureIndex = "index"
+
+// Supports reports whether the registry advertises feature.
+func (d Discovery) Supports(feature string) bool {
+	return slices.Contains(d.Features, feature)
 }
 
 // Discover reads GET /v2/ and checks the protocol version.
@@ -253,6 +265,18 @@ func (c *Client) PutTag(ctx context.Context, token, namespace, repository, tag, 
 	return c.do(ctx, http.MethodPut, url, token, jsonBody(map[string]string{"recipe": recipe}), "application/json", nil)
 }
 
+// PutIndex uploads an image index, whose recipes must be uploaded already.
+func (c *Client) PutIndex(ctx context.Context, token, namespace, repository, digest string, data []byte) error {
+	url := c.repo(namespace, repository) + "/indexes/" + strings.TrimPrefix(digest, "sha256:")
+	return c.do(ctx, http.MethodPut, url, token, data, "application/vnd.jerboa.image.index.v1+json", nil)
+}
+
+// PutTagIndex points a tag at an image index.
+func (c *Client) PutTagIndex(ctx context.Context, token, namespace, repository, tag, index string) error {
+	url := c.repo(namespace, repository) + "/tags/" + tag
+	return c.do(ctx, http.MethodPut, url, token, jsonBody(map[string]string{"index": index}), "application/json", nil)
+}
+
 // DeleteTag removes a tag; its recipe and blobs are collected a week later
 // unless another tag uses them.
 func (c *Client) DeleteTag(ctx context.Context, token, namespace, repository, tag string) error {
@@ -299,22 +323,46 @@ func (c *Client) HasRecipe(ctx context.Context, cdn, namespace, repository, dige
 	return err
 }
 
-// TagRecipe reads the recipe digest a tag points to, from the CDN.
-func (c *Client) TagRecipe(ctx context.Context, cdn, namespace, repository, tag string) (string, error) {
-	var out struct {
-		Recipe string `json:"recipe"`
-	}
+// TagRef is what a tag names: a recipe, and the image index it is the
+// default recipe of, if any.
+type TagRef struct {
+	Recipe string `json:"recipe"`
+	Index  string `json:"index,omitempty"`
+}
+
+// Tag reads what a tag names from the CDN.
+func (c *Client) Tag(ctx context.Context, cdn, namespace, repository, tag string) (TagRef, error) {
+	var out TagRef
 	if err := c.do(ctx, http.MethodGet, cdn+"/tags/"+namespace+"/"+repository+"/"+tag, "", nil, "", &out); err != nil {
 		var re *Error
 		if errors.As(err, &re) && re.Status == http.StatusNotFound {
-			return "", fmt.Errorf("%s/%s:%s not found in the registry", namespace, repository, tag)
+			return out, fmt.Errorf("%s/%s:%s not found in the registry", namespace, repository, tag)
 		}
-		return "", err
+		return out, err
 	}
 	if !recipeDigestRE.MatchString(out.Recipe) {
-		return "", fmt.Errorf("registry: tag %s/%s:%s names an invalid recipe %q", namespace, repository, tag, out.Recipe)
+		return out, fmt.Errorf("registry: tag %s/%s:%s names an invalid recipe %q", namespace, repository, tag, out.Recipe)
 	}
-	return out.Recipe, nil
+	if out.Index != "" && !recipeDigestRE.MatchString(out.Index) {
+		return out, fmt.Errorf("registry: tag %s/%s:%s names an invalid index %q", namespace, repository, tag, out.Index)
+	}
+	return out, nil
+}
+
+// Index reads image index bytes from the CDN and checks them against digest.
+func (c *Client) Index(ctx context.Context, cdn, digest string) ([]byte, error) {
+	var data []byte
+	if err := c.do(ctx, http.MethodGet, cdn+"/indexes/"+strings.TrimPrefix(digest, "sha256:")+".json", "", nil, "", &data); err != nil {
+		if IsStatus(err, http.StatusNotFound) {
+			return nil, fmt.Errorf("index %s not found in the registry", digest)
+		}
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if "sha256:"+hex.EncodeToString(sum[:]) != digest {
+		return nil, fmt.Errorf("registry: index %s does not match its digest", digest)
+	}
+	return data, nil
 }
 
 var recipeDigestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

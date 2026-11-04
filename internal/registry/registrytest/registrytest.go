@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AitorConS/jerboa/internal/registry/imageindex"
 	"github.com/AitorConS/jerboa/internal/registry/pack"
 )
 
@@ -95,7 +96,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.URL.Path == "/v2/" && r.Method == http.MethodGet:
-		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": s.URL + "/cdn", "github_client_id": "test"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": s.URL + "/cdn", "github_client_id": "test", "features": []string{"index"}})
 	case parts[0] == "cdn":
 		s.serveCDN(w, r, strings.Join(parts[1:], "/"))
 	case parts[0] == "v2" && len(parts) == 3 && r.Method == http.MethodPatch:
@@ -236,18 +237,52 @@ func (s *Server) serveWrite(w http.ResponseWriter, r *http.Request, ns, repo, ki
 		s.objects["recipes/"+arg+".json"] = body
 		s.objects["locations/"+arg+".json"] = doc
 		w.WriteHeader(http.StatusCreated)
+	case kind == "indexes" && r.Method == http.MethodPut:
+		sum := sha256.Sum256(body)
+		ix, err := imageindex.Parse(body)
+		if hex.EncodeToString(sum[:]) != arg || err != nil {
+			fail(w, http.StatusBadRequest, "INDEX_INVALID", fmt.Sprint(err))
+			return
+		}
+		for _, e := range ix.Manifests {
+			if _, ok := s.objects["recipes/"+strings.TrimPrefix(e.Digest, "sha256:")+".json"]; !ok {
+				fail(w, http.StatusConflict, "RECIPE_UNKNOWN", e.Digest)
+				return
+			}
+		}
+		s.objects["indexes/"+arg+".json"] = body
+		w.WriteHeader(http.StatusCreated)
 	case kind == "tags" && r.Method == http.MethodPut:
 		var req struct {
 			Recipe string `json:"recipe"`
+			Index  string `json:"index"`
 		}
 		_ = json.Unmarshal(body, &req)
+		recipes := []string{req.Recipe}
+		if req.Index != "" {
+			data, ok := s.objects["indexes/"+strings.TrimPrefix(req.Index, "sha256:")+".json"]
+			if !ok {
+				fail(w, http.StatusConflict, "INDEX_UNKNOWN", req.Index)
+				return
+			}
+			ix, _ := imageindex.Parse(data)
+			req.Recipe, recipes = ix.Default(), nil
+			for _, e := range ix.Manifests {
+				recipes = append(recipes, e.Digest)
+			}
+		}
 		if _, ok := s.objects["recipes/"+strings.TrimPrefix(req.Recipe, "sha256:")+".json"]; !ok {
 			fail(w, http.StatusConflict, "RECIPE_UNKNOWN", req.Recipe)
 			return
 		}
-		doc, _ := json.Marshal(map[string]string{"recipe": req.Recipe})
+		doc, _ := json.Marshal(req)
+		if req.Index == "" {
+			doc, _ = json.Marshal(map[string]string{"recipe": req.Recipe})
+		}
 		s.objects["tags/"+ns+"/"+repo+"/"+arg] = doc
-		s.objects["refs/"+ns+"/"+repo+"/"+strings.TrimPrefix(req.Recipe, "sha256:")] = []byte("{}")
+		for _, d := range recipes {
+			s.objects["refs/"+ns+"/"+repo+"/"+strings.TrimPrefix(d, "sha256:")] = []byte("{}")
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag": arg, "recipe": req.Recipe})
 	default:
 		fail(w, http.StatusNotFound, "NOT_FOUND", r.URL.Path)
