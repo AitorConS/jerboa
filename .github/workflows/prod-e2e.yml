@@ -1,0 +1,67 @@
+name: Production end to end
+# Every hour, pushes, pulls and deletes an image on registry.jerboa.dev with
+# the Go client (tests/registry), as a trusted publisher of the jerboa-e2e
+# namespace: the job's OIDC token stands in for a stored credential. Telegram
+# hears when it starts failing and when it recovers.
+'on':
+  schedule:
+  - cron: '23 * * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: prod-e2e
+  cancel-in-progress: false
+jobs:
+  e2e:
+    name: Push, pull and delete on registry.jerboa.dev
+    if: github.repository == 'AitorConS/jerboa' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # The OIDC token the registry exchanges for a push token.
+      id-token: write
+      # Reading the previous run's result.
+      actions: read
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.3
+        cache: true
+    - name: End to end
+      id: e2e
+      env:
+        JERBOA_REGISTRY_E2E_HOST: registry.jerboa.dev
+        JERBOA_REGISTRY_E2E_NAMESPACE: jerboa-e2e
+      run: go test -tags registry_e2e -count=1 -v -timeout 10m ./tests/registry/...
+    - name: Tell Telegram when the result changes
+      if: always()
+      env:
+        GH_TOKEN: ${{ github.token }}
+        OUTCOME: ${{ steps.e2e.outcome }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        previous=$(gh run list -R "$GITHUB_REPOSITORY" --workflow prod-e2e.yml --branch main --status completed --limit 10 \
+          --json databaseId,conclusion -q "[.[] | select(.databaseId != ${GITHUB_RUN_ID} and (.conclusion == \"success\" or .conclusion == \"failure\"))][0].conclusion // \"\"")
+        if [ "${OUTCOME}" != success ] && [ "${previous}" != failure ]; then
+          text="🔴 registry.jerboa.dev: production end to end failing
+        ${RUN_URL}"
+        elif [ "${OUTCOME}" = success ] && [ "${previous}" = failure ]; then
+          text="✅ registry.jerboa.dev: production end to end recovered
+        ${RUN_URL}"
+        else
+          echo "result ${OUTCOME}, previous ${previous:-none}: nothing to tell"
+          exit 0
+        fi
+        if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+          echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set: ${text}"
+          exit 0
+        fi
+        curl -fsS --retry 3 -o /dev/null "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${text}"

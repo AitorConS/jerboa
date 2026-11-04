@@ -11,9 +11,12 @@
 //	(cd <worker> && pnpm install)
 //	JERBOA_REGISTRY_WORKER=<worker> go test -tags registry_e2e ./tests/registry/...
 //
-// Against a deployed registry (staging), it uses a test account's personal
-// access token instead of the device flow, pushes to a repository unique to
-// the run, checks the CDN caches packs, and deletes its tags afterwards:
+// Against a deployed registry (staging, and production every hour from
+// .github/workflows/prod-e2e.yml), it uses a test account's personal access
+// token instead of the device flow, or in GitHub Actions without one, the
+// job's OIDC token, as a trusted publisher of the namespace. It pushes to a
+// repository unique to the run, tags a recipe many times at once, checks the
+// CDN caches packs, and deletes the repository afterwards:
 //
 //	JERBOA_REGISTRY_E2E_HOST=staging.registry.jerboa.dev \
 //	JERBOA_REGISTRY_E2E_TOKEN=jpat_... JERBOA_REGISTRY_E2E_NAMESPACE=jerboa-e2e \
@@ -46,6 +49,7 @@ import (
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/registry/client"
+	"github.com/AitorConS/jerboa/internal/registry/credentials"
 	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/AitorConS/jerboa/internal/registry/transfer"
 	"github.com/stretchr/testify/require"
@@ -269,7 +273,10 @@ func TestWorkerEndToEnd(t *testing.T) {
 	ctx := context.Background()
 	if host := os.Getenv("JERBOA_REGISTRY_E2E_HOST"); host != "" {
 		token, ns := os.Getenv("JERBOA_REGISTRY_E2E_TOKEN"), os.Getenv("JERBOA_REGISTRY_E2E_NAMESPACE")
-		require.NotEmpty(t, token, "JERBOA_REGISTRY_E2E_TOKEN")
+		if token == "" && credentials.InGitHubActions() {
+			token = credentials.GitHubActions
+		}
+		require.NotEmpty(t, token, "JERBOA_REGISTRY_E2E_TOKEN, or permissions: id-token: write in GitHub Actions")
 		require.NotEmpty(t, ns, "JERBOA_REGISTRY_E2E_NAMESPACE")
 		repo := fmt.Sprintf("e2e-%d", time.Now().UnixNano())
 		runFlow(t, ctx, client.New(host), token, ns, repo, true)
@@ -410,6 +417,16 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 	res, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v2"), Store: builder, Recipe: v2, Mkfs: mkfsFor})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.BlobsUploaded)
+
+	// Tags written at once all land: they share objects on R2, which takes
+	// one write a second to each.
+	burst := make(chan error, 8)
+	for i := range cap(burst) {
+		go func() { burst <- cl.PutTag(ctx, token, ns, repo, fmt.Sprintf("burst-%d", i), v2) }()
+	}
+	for range cap(burst) {
+		require.NoError(t, <-burst)
+	}
 
 	// Another machine pulls both, anonymously, through the CDN layout.
 	machine := newStore(t)
