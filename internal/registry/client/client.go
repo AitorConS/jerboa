@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
+	"github.com/AitorConS/jerboa/internal/registry/credentials"
 	"github.com/AitorConS/jerboa/internal/registry/pack"
 )
 
@@ -138,6 +139,9 @@ func (c *Client) token(ctx context.Context, credential, namespace, repository, a
 		Token string `json:"token"`
 	}
 	scope := fmt.Sprintf("repository:%s/%s:%s", namespace, repository, actions)
+	if credential == credentials.GitHubActions {
+		return c.oidcToken(ctx, scope)
+	}
 	err := c.do(ctx, http.MethodPost, c.Base+"/auth/token", credential, jsonBody(map[string][]string{"scopes": {scope}}), "application/json", &out)
 	return out.Token, err
 }
@@ -161,6 +165,9 @@ type PATOptions struct {
 // CreatePAT creates a personal access token. Only a login credential can
 // create one, not another personal access token.
 func (c *Client) CreatePAT(ctx context.Context, credential string, opts PATOptions) (id, token string, err error) {
+	if credential == credentials.GitHubActions {
+		return "", "", errLoginOnly
+	}
 	var out struct {
 		ID    string `json:"id"`
 		Token string `json:"token"`
@@ -182,6 +189,9 @@ type PAT struct {
 
 // ListPATs lists the account's personal access tokens.
 func (c *Client) ListPATs(ctx context.Context, credential string) ([]PAT, error) {
+	if credential == credentials.GitHubActions {
+		return nil, errLoginOnly
+	}
 	var out struct {
 		PATs []PAT `json:"pats"`
 	}
@@ -191,6 +201,9 @@ func (c *Client) ListPATs(ctx context.Context, credential string) ([]PAT, error)
 
 // RevokePAT revokes one personal access token.
 func (c *Client) RevokePAT(ctx context.Context, credential, id string) error {
+	if credential == credentials.GitHubActions {
+		return errLoginOnly
+	}
 	return c.do(ctx, http.MethodDelete, c.Base+"/auth/pats/"+id, credential, nil, "", nil)
 }
 

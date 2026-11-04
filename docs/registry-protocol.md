@@ -28,8 +28,11 @@ A pull reads only from the CDN. `GET https://registry.jerboa.dev/v2/`
 returns the discovery document (cacheable for 5 minutes):
 
 ```json
-{"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "login": "device"}
+{"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "login": "device", "features": ["oidc"]}
 ```
+
+`features` lists optional parts of the protocol the registry supports;
+`"oidc"` is [GitHub Actions OIDC](#github-actions-oidc-trusted-publishers).
 
 `"login": "device"` means the registry runs the GitHub sign-in itself (see
 [Login](#login-jerboa-login)). Older registries advertise
@@ -123,6 +126,17 @@ Authenticated with a refresh token or a PAT:
 
 `POST /auth/token` with `Authorization: Bearer <jrt_ or jpat_>` and a body such as
 `{"scopes": ["repository:aitorcons/web:push"]}` returns `{"token": "<token>", "expires_in": 900}`. Clients treat the token as opaque.
+
+### GitHub Actions OIDC (trusted publishers)
+
+`POST /auth/oidc` with no `Authorization` and a body
+`{"token": "<GitHub Actions OIDC token>", "scopes": ["repository:aitorcons/web:push"]}`
+returns `{"token": "<token>", "expires_in": 900}`, as `/auth/token` does.
+
+- The client requests the token from GitHub Actions (`ACTIONS_ID_TOKEN_REQUEST_URL` with `audience=<registry host>`, authorized by `ACTIONS_ID_TOKEN_REQUEST_TOKEN`; the job needs `permissions: id-token: write`).
+- The registry verifies GitHub's signature, the issuer, the audience (its own host) and the token's times. It grants the scopes only if one trusted publisher of the namespace allows them all: the GitHub repository and owner by id, the workflow file, and optionally the ref, the environment, the event, one repository, and `delete`.
+- `403`: no trusted publisher matches, or the run was triggered by a pull request. `401`: the token is invalid, expired, or for another audience.
+- Removing the trusted publisher ends the tokens issued for it at once.
 
 A namespace is granted only if it is the account's login, or an organization the account belonged to the last time it logged in. Every write below needs `Authorization: Bearer <token>` with the matching `push` scope.
 

@@ -74,7 +74,38 @@ A tag is only as trustworthy as the registry that serves it: the registry decide
 
 ## CI
 
-Create a personal access token once, on a machine where you are logged in:
+### GitHub Actions, without a token
+
+A GitHub Actions workflow can push without any secret, as a **trusted publisher** of the namespace:
+
+1. On the hub, an admin of the namespace opens *Settings → Trusted publishers* and adds the GitHub repository and workflow file, optionally limited to a branch, a GitHub environment, some events, or one repository of the namespace.
+2. The job grants itself `id-token: write`:
+
+```yaml
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: AitorConS/jerboa/.github/actions/setup-jerboa@main
+        with:
+          version: 0.57.0
+      - run: jerboa build -t aitorcons/web:${{ github.sha }} .
+      - run: jerboa push aitorcons/web:${{ github.sha }}
+```
+
+When `JERBOA_REGISTRY_TOKEN` is not set and the job may request OIDC tokens, `jerboa push` asks GitHub for one, for the registry's host as audience, and exchanges it for a push token. The registry checks GitHub's signature and that a trusted publisher matches the repository (by id), the workflow, and the branch, environment and event it names. Workflows triggered by pull requests never can push.
+
+On the hub, the tag's page then shows the repository, commit, workflow and run it was pushed from. `jerboa registry pat` commands need a login: OIDC only pushes.
+
+`setup-jerboa` installs the given release with [`install.sh`](../scripts/install.sh), verifying its signed manifest, on Linux x86_64 runners. Use `hypervisor: qemu` on runners without `/dev/kvm`.
+
+### Personal access tokens
+
+Elsewhere, create a personal access token once, on a machine where you are logged in:
 
 ```sh
 jerboa registry pat create github-actions --namespace aitorcons --expires-in 90

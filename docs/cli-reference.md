@@ -273,7 +273,8 @@ Build driver behavior to know:
   `[build] install_scripts = true` for dependencies that need their install scripts.
 - Build steps (`[build] run`, `npm`, `pip`, `cargo`, `go build`) run without
   Jerboa's own credentials in their environment (`JERBOA_REGISTRY_TOKEN`,
-  `JERBOA_AUTH_TOKEN` and the other `JERBOA_*` tokens).
+  `JERBOA_AUTH_TOKEN` and the other `JERBOA_*` tokens), nor GitHub Actions'
+  `ACTIONS_ID_TOKEN_REQUEST_*`, with which a job requests OIDC tokens.
 - Build steps run in a sandbox: bubblewrap (`bwrap`) on Linux, `sandbox-exec`
   on macOS. A confined step reads the host but writes only to the project
   directory, the tools' caches (the user cache directory, `~/.npm`,
