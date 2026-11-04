@@ -353,6 +353,9 @@ type BuildParams struct {
 	// Created is the image creation time (RFC 3339). Empty means the time of
 	// the build; the CLI sets it from SOURCE_DATE_EPOCH for reproducible builds.
 	Created string `json:"created,omitempty"`
+	// SBOM is the CycloneDX software bill of materials of the image's
+	// contents, which the daemon stores with the image.
+	SBOM json.RawMessage `json:"sbom,omitempty"`
 }
 
 // VolumeSeedParams seeds an existing volume's disk with an initialized

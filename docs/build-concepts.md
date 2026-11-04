@@ -83,6 +83,31 @@ The result is stored in the daemon's image store under `name:tag`, and
 `jerboa run name:tag` boots it as a VM. Metadata like default memory, CPUs,
 and port publishes ride along in the image manifest.
 
+### Software bill of materials
+
+Every build also writes a **software bill of materials** (SBOM): a
+[CycloneDX 1.6](https://cyclonedx.org/) document listing what the image
+contains. The daemon stores it with the disk, `jerboa images sbom <ref>`
+prints it, and `jerboa build --sbom <file>` also writes it to a file. It lists:
+
+| Source | Components | Package URL |
+|---|---|---|
+| Packages from `--pkg`, `[build] pkgs` or a language driver | name, version, platform, archive SHA-256 | `pkg:generic/eyberg/python@3.12.0?platform=linux%2Famd64` |
+| Go binaries: the program and any ELF from your project or a stage | the Go toolchain and every module compiled in, from the binary's build info | `pkg:golang/github.com/spf13/cobra@v1.10.2`, `pkg:golang/stdlib@1.24.0` |
+| npm modules: each `node_modules/<module>/package.json` | name, version, declared license | `pkg:npm/express@4.19.2` |
+| Python distributions: each `*.dist-info/METADATA` or `*.egg-info/PKG-INFO` | name, version, declared license | `pkg:pypi/flask@3.0.3` |
+| Rust: `Cargo.lock` of the project | every crate from a registry or git, with its checksum | `pkg:cargo/serde@1.0.200` |
+
+The document's subject (`metadata.component`) is the program the image runs,
+with its SHA-256, and the image's platform is the `jerboa:platform` property.
+Scanners that read CycloneDX, such as osv-scanner, can check it for
+known vulnerabilities.
+
+The same inputs give the same document: components are sorted, the serial
+number is derived from the content, and the timestamp is `SOURCE_DATE_EPOCH`
+(left out when it is unset). A `Cargo.lock` also pins crates used only to
+build or test, so a Rust image's list can be longer than what it links.
+
 ### What kind of binary can boot?
 
 The program must be a **Linux ELF binary for x86_64** (or arm64). It can be:
