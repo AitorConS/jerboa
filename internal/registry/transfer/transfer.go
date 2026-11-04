@@ -15,6 +15,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/registry/client"
+	"github.com/AitorConS/jerboa/internal/registry/imageindex"
 	"github.com/AitorConS/jerboa/internal/registry/pack"
 	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/klauspost/compress/zstd"
@@ -144,11 +145,17 @@ type PullOptions struct {
 	Parallel int
 	// NoCount skips reporting the pull to the hub's counter.
 	NoCount bool
+	// Platform is the platform to pull, such as linux/arm64: a tag naming an
+	// image index pulls that platform's recipe, and any other pull fails
+	// unless its recipe is for it. Empty means the host's, for an index.
+	Platform string
 }
 
 // PullResult reports what a pull fetched.
 type PullResult struct {
-	Recipe        string         `json:"recipe"`
+	Recipe string `json:"recipe"`
+	// Index is the image index the recipe was chosen from, if the tag named one.
+	Index         string         `json:"index,omitempty"`
 	Parsed        *recipe.Recipe `json:"-"`
 	Blobs         int            `json:"blobs"`
 	BlobsFetched  int            `json:"blobs_fetched"`
@@ -170,8 +177,16 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 	}
 	digest := o.Ref.Digest
 	if digest == "" {
-		if digest, err = o.Client.TagRecipe(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag); err != nil {
+		tag, err := o.Client.Tag(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag)
+		if err != nil {
 			return res, fmt.Errorf("pull: %w", err)
+		}
+		digest = tag.Recipe
+		if tag.Index != "" {
+			if digest, err = chooseFromIndex(ctx, o, d.CDN, tag.Index); err != nil {
+				return res, fmt.Errorf("pull: %s: %w", o.Ref, err)
+			}
+			res.Index = tag.Index
 		}
 	} else if err := o.Client.HasRecipe(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, digest); err != nil {
 		return res, fmt.Errorf("pull: %w", err)
@@ -183,6 +198,9 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 	r, err := recipe.Parse(data)
 	if err != nil {
 		return res, fmt.Errorf("pull: %w", err)
+	}
+	if o.Platform != "" && r.Platform != o.Platform {
+		return res, fmt.Errorf("pull: %s is an image for %s, not %s", o.Ref, r.Platform, o.Platform)
 	}
 	res.Recipe, res.Parsed, res.Blobs = digest, r, len(r.Blobs)
 	if _, err := o.Store.PutBytes(data); err != nil {
@@ -216,6 +234,101 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		cancel()
 	}
 	return res, nil
+}
+
+// chooseFromIndex reads and checks an image index, and returns the recipe
+// for the platform asked for, or the host's.
+func chooseFromIndex(ctx context.Context, o PullOptions, cdn, digest string) (string, error) {
+	data, err := o.Client.Index(ctx, cdn, digest)
+	if err != nil {
+		return "", err
+	}
+	ix, err := imageindex.Parse(data)
+	if err != nil {
+		return "", err
+	}
+	recipeDigest, _, err := ix.Choose(o.Platform)
+	return recipeDigest, err
+}
+
+// IndexOptions describe composing an image index from images already pushed.
+type IndexOptions struct {
+	Client *client.Client
+	// Token is a push token for Ref's repository.
+	Token string
+	// Ref is the tag the index is pushed as.
+	Ref naming.ImageReference
+	// Sources are the images it lists, by tag or digest, on Ref's registry:
+	// one per platform.
+	Sources []naming.ImageReference
+}
+
+// IndexResult reports a composed index.
+type IndexResult struct {
+	Index     string             `json:"index"`
+	Manifests []imageindex.Entry `json:"manifests"`
+}
+
+// PushIndex composes an image index of the sources' recipes, each one's
+// platform read from its recipe, uploads it to Ref's repository and tags it.
+// The registry must support indexes (client.FeatureIndex).
+func PushIndex(ctx context.Context, o IndexOptions) (IndexResult, error) {
+	var res IndexResult
+	d, err := o.Client.Discover(ctx)
+	if err != nil {
+		return res, fmt.Errorf("push: %w", err)
+	}
+	if !d.Supports(client.FeatureIndex) {
+		return res, fmt.Errorf("push: %s does not support image indexes", o.Ref.Registry)
+	}
+	seen := map[string]naming.ImageReference{}
+	entries := make([]imageindex.Entry, 0, len(o.Sources))
+	for _, src := range o.Sources {
+		if src.Registry != o.Ref.Registry {
+			return res, fmt.Errorf("push: %s is on another registry than %s", src, o.Ref)
+		}
+		digest := src.Digest
+		if digest == "" {
+			tag, err := o.Client.Tag(ctx, d.CDN, src.Namespace, src.Repository, src.Tag)
+			if err != nil {
+				return res, fmt.Errorf("push: %w", err)
+			}
+			if tag.Index != "" {
+				return res, fmt.Errorf("push: %s is an image index; name each platform's image", src)
+			}
+			digest = tag.Recipe
+		} else if err := o.Client.HasRecipe(ctx, d.CDN, src.Namespace, src.Repository, digest); err != nil {
+			return res, fmt.Errorf("push: %w", err)
+		}
+		data, err := o.Client.Recipe(ctx, d.CDN, digest)
+		if err != nil {
+			return res, fmt.Errorf("push: %w", err)
+		}
+		r, err := recipe.Parse(data)
+		if err != nil {
+			return res, fmt.Errorf("push: %s: %w", src, err)
+		}
+		if prev, ok := seen[r.Platform]; ok {
+			return res, fmt.Errorf("push: %s and %s are both images for %s", prev, src, r.Platform)
+		}
+		seen[r.Platform] = src
+		entries = append(entries, imageindex.Entry{Digest: digest, Platform: r.Platform})
+	}
+	ix, err := imageindex.New(entries)
+	if err != nil {
+		return res, fmt.Errorf("push: %w", err)
+	}
+	digest, data, err := ix.Digest()
+	if err != nil {
+		return res, fmt.Errorf("push: %w", err)
+	}
+	if err := o.Client.PutIndex(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, digest, data); err != nil {
+		return res, fmt.Errorf("push: index: %w", err)
+	}
+	if err := o.Client.PutTagIndex(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag, digest); err != nil {
+		return res, fmt.Errorf("push: tag: %w", err)
+	}
+	return IndexResult{Index: digest, Manifests: ix.Manifests}, nil
 }
 
 // DoNotTrack reports whether the environment asks not to report pulls, by the

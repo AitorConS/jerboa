@@ -11,6 +11,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/naming"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/registry/client"
 	"github.com/AitorConS/jerboa/internal/registry/transfer"
 )
@@ -94,6 +95,11 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 	if err != nil {
 		return nil, rpcErr(err)
 	}
+	if p.Platform != "" {
+		if err := pkg.ValidatePlatform(p.Platform); err != nil {
+			return nil, rpcErr(err)
+		}
+	}
 	out, err := s.imgStore.TempFile(".pull-*.img")
 	if err != nil {
 		return nil, rpcErr(err)
@@ -101,7 +107,7 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 	defer func() { _ = os.Remove(out) }()
 	res, err := transfer.Pull(ctx, transfer.PullOptions{
 		Client: client.New(ref.Registry), Ref: ref, Store: s.recipes, Mkfs: s.registryMkfs, Out: out,
-		NoCount: p.NoCount || transfer.DoNotTrack(),
+		NoCount: p.NoCount || transfer.DoNotTrack(), Platform: p.Platform,
 	})
 	if err != nil {
 		return nil, rpcErr(err)
@@ -129,7 +135,7 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 		return nil, rpcErr(fmt.Errorf("stored disk %s differs from the recipe's %s", m.DiskDigest, r.DiskDigest))
 	}
 	return api.ImagePullResult{
-		Image: imageManifestResult(m), Recipe: res.Recipe, Blobs: res.Blobs,
+		Image: imageManifestResult(m), Recipe: res.Recipe, Index: res.Index, Blobs: res.Blobs,
 		BlobsFetched: res.BlobsFetched, Requests: res.Requests, BytesFetched: res.BytesFetched,
 	}, nil
 }

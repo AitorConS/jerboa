@@ -48,6 +48,24 @@ jerboa push aitorcons/web:v1
 
 Before uploading, the push rebuilds the disk from the recipe on your machine. That way it never publishes an image that others couldn't rebuild.
 
+### Several platforms under one tag
+
+Build and push the image once per platform, then tag an image index of them:
+
+```sh
+jerboa build . --name web --platform linux/amd64 && jerboa tag web:latest aitorcons/web:v1-amd64
+jerboa push aitorcons/web:v1-amd64
+jerboa build . --name web --platform linux/arm64 && jerboa tag web:latest aitorcons/web:v1-arm64
+jerboa push aitorcons/web:v1-arm64
+jerboa push --index aitorcons/web:v1 aitorcons/web:v1-amd64 aitorcons/web:v1-arm64
+```
+
+`jerboa pull aitorcons/web:v1` then pulls the image for the machine it runs on
+(`linux/arm64` on Apple silicon), and `--platform` picks another. Clients up to
+v0.56.0 pull the `linux/amd64` image. In CI, a matrix job per platform pushes
+`v1-<arch>`, and a last job composes the index; the images it lists can live in
+other repositories of the same registry, named by tag or digest.
+
 Images built before Jerboa recorded recipes have none and must be rebuilt before they can be pushed. `jerboa images inspect <image>` shows the recipe digest, and `jerboa images recipe <image>` prints the recipe itself.
 
 ## Pull and run
