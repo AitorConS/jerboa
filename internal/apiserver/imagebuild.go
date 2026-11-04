@@ -24,6 +24,7 @@ import (
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/registry/recipe"
+	"github.com/AitorConS/jerboa/internal/sbom"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/AitorConS/jerboa/internal/volume"
 )
@@ -411,6 +412,13 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: err.Error()})
 		return
 	}
+	if len(p.SBOM) > 0 {
+		if err := sbom.Check(p.SBOM); err != nil {
+			drain(stream)
+			s.writeError(conn, reqID, &api.RPCError{Code: -32602, Message: err.Error()})
+			return
+		}
+	}
 	var created time.Time
 	if p.Created != "" {
 		created, err = time.Parse(time.RFC3339, p.Created)
@@ -458,6 +466,13 @@ func (s *Server) handleBuild(ctx context.Context, params json.RawMessage, stream
 		drain(stream)
 		s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
 		return
+	}
+	if len(p.SBOM) > 0 {
+		if err := s.imgStore.SetSBOM(m.DiskDigest, p.SBOM); err != nil {
+			drain(stream)
+			s.writeError(conn, reqID, &api.RPCError{Code: -32000, Message: err.Error()})
+			return
+		}
 	}
 
 	// extractBuildContext stopped at the tar's EOF, but the client's frame
@@ -563,6 +578,27 @@ func (s *Server) handleImageRecipe(params json.RawMessage) (any, *api.RPCError) 
 		return nil, &api.RPCError{Code: -32000, Message: p.Ref + " has no recipe; rebuild it with this daemon"}
 	}
 	data, err := s.recipes.ReadBytes(m.Recipe)
+	if err != nil {
+		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
+	}
+	return json.RawMessage(data), nil
+}
+
+// handleImageSBOM returns the software bill of materials stored with an image.
+func (s *Server) handleImageSBOM(params json.RawMessage) (any, *api.RPCError) {
+	if s.imgStore == nil {
+		return nil, &api.RPCError{Code: -32601, Message: "method not found: Image.SBOM (image store disabled)"}
+	}
+	var p struct {
+		Ref string `json:"ref"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
+	}
+	data, err := s.imgStore.SBOM(p.Ref)
+	if errors.Is(err, image.ErrNoSBOM) {
+		return nil, &api.RPCError{Code: -32000, Message: p.Ref + " has no SBOM: it was pulled, or built before images recorded one; rebuild it with this daemon"}
+	}
 	if err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}

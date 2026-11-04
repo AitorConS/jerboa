@@ -609,6 +609,18 @@ func (c *Client) ImageRecipe(_ context.Context, ref string) (json.RawMessage, er
 	return out, nil
 }
 
+// ImageSBOM returns the software bill of materials stored with an image.
+func (c *Client) ImageSBOM(_ context.Context, ref string) (json.RawMessage, error) {
+	var out json.RawMessage
+	p := struct {
+		Ref string `json:"ref"`
+	}{Ref: ref}
+	if err := c.call("Image.SBOM", p, &out); err != nil {
+		return nil, fmt.Errorf("client image sbom: %w", err)
+	}
+	return out, nil
+}
+
 // ImageRemove deletes a name:tag (or sha) reference from the daemon's store.
 func (c *Client) ImageRemove(_ context.Context, ref string) error {
 	p := struct {
