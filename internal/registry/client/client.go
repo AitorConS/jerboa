@@ -97,6 +97,10 @@ type Discovery struct {
 // FeatureIndex is the feature of registries that store image indexes.
 const FeatureIndex = "index"
 
+// FeatureAttestations is the feature of registries that store signed
+// attestations of images.
+const FeatureAttestations = "attestations"
+
 // Supports reports whether the registry advertises feature.
 func (d Discovery) Supports(feature string) bool {
 	return slices.Contains(d.Features, feature)
@@ -275,6 +279,74 @@ func (c *Client) PutIndex(ctx context.Context, token, namespace, repository, dig
 func (c *Client) PutTagIndex(ctx context.Context, token, namespace, repository, tag, index string) error {
 	url := c.repo(namespace, repository) + "/tags/" + tag
 	return c.do(ctx, http.MethodPut, url, token, jsonBody(map[string]string{"index": index}), "application/json", nil)
+}
+
+// AttestationMediaType is the media type of an attestation: a Sigstore bundle.
+const AttestationMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
+
+// PutAttestation uploads a signed attestation of subject, a recipe or image
+// index of the repository, and returns the attestation's digest.
+func (c *Client) PutAttestation(ctx context.Context, token, namespace, repository, subject string, bundle []byte) (string, error) {
+	if !recipeDigestRE.MatchString(subject) {
+		return "", fmt.Errorf("registry: invalid subject digest %q", subject)
+	}
+	var out struct {
+		Attestation string `json:"attestation"`
+	}
+	url := c.repo(namespace, repository) + "/attestations/" + strings.TrimPrefix(subject, "sha256:")
+	if err := c.do(ctx, http.MethodPut, url, token, bundle, AttestationMediaType, &out); err != nil {
+		return "", err
+	}
+	return out.Attestation, nil
+}
+
+// AttestationRef is one attestation of a subject, as the CDN lists it.
+type AttestationRef struct {
+	Digest        string `json:"digest"`
+	PredicateType string `json:"predicateType"`
+	Size          int64  `json:"size"`
+}
+
+// Attestations lists the attestations of subject in a repository, from the
+// CDN; a subject with none has an empty list.
+func (c *Client) Attestations(ctx context.Context, cdn, namespace, repository, subject string) ([]AttestationRef, error) {
+	if !recipeDigestRE.MatchString(subject) {
+		return nil, fmt.Errorf("registry: invalid subject digest %q", subject)
+	}
+	var out struct {
+		Attestations []AttestationRef `json:"attestations"`
+	}
+	url := cdn + "/attestations/" + namespace + "/" + repository + "/" + strings.TrimPrefix(subject, "sha256:") + "/index.json"
+	err := c.do(ctx, http.MethodGet, url, "", nil, "", &out)
+	if IsStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range out.Attestations {
+		if !recipeDigestRE.MatchString(a.Digest) {
+			return nil, fmt.Errorf("registry: invalid attestation digest %q", a.Digest)
+		}
+	}
+	return out.Attestations, nil
+}
+
+// Attestation reads one attestation from the CDN and checks it against its digest.
+func (c *Client) Attestation(ctx context.Context, cdn, namespace, repository, subject, digest string) ([]byte, error) {
+	if !recipeDigestRE.MatchString(subject) || !recipeDigestRE.MatchString(digest) {
+		return nil, fmt.Errorf("registry: invalid attestation %q of %q", digest, subject)
+	}
+	var data []byte
+	url := cdn + "/attestations/" + namespace + "/" + repository + "/" + strings.TrimPrefix(subject, "sha256:") + "/" + strings.TrimPrefix(digest, "sha256:") + ".json"
+	if err := c.do(ctx, http.MethodGet, url, "", nil, "", &data); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if "sha256:"+hex.EncodeToString(sum[:]) != digest {
+		return nil, fmt.Errorf("registry: attestation %s does not match its digest", digest)
+	}
+	return data, nil
 }
 
 // DeleteTag removes a tag; its recipe and blobs are collected a week later

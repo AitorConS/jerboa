@@ -33,7 +33,8 @@ returns the discovery document (cacheable for 5 minutes):
 
 `features` lists optional parts of the protocol the registry supports:
 - `"oidc"` is [GitHub Actions OIDC](#github-actions-oidc-trusted-publishers);
-- `"index"` is [image indexes](#image-indexes).
+- `"index"` is [image indexes](#image-indexes);
+- `"attestations"` is [attestations](#attestations), signed statements about images.
 
 `"login": "device"` means the registry runs the GitHub sign-in itself (see
 [Login](#login-jerboa-login)). Older registries advertise
@@ -83,6 +84,8 @@ Every digest is `sha256:<64 lowercase hex>`.
 | `locations/<hex>.json` | Locations of that recipe | `public, max-age=31536000, immutable` |
 | `indexes/<hex>.json` | Index bytes | `public, max-age=31536000, immutable` |
 | `tags/<ns>/<repo>/<tag>` | Tag document | `public, max-age=60` |
+| `attestations/<ns>/<repo>/<subject-hex>/index.json` | The attestations of a recipe or index in the repository | `public, max-age=60` |
+| `attestations/<ns>/<repo>/<subject-hex>/<hex>.json` | One attestation (a Sigstore bundle) | `public, max-age=31536000, immutable` |
 
 `<hex>` is the digest without its `sha256:` prefix. A deleted tag answers 404.
 
@@ -190,6 +193,45 @@ platform an image is built for:
 already pushed, reading each one's platform from its recipe. Indexes are
 pulled by tag; a reference by digest names a recipe.
 
+### Attestations
+
+A registry that advertises `"attestations"` stores signed statements about
+the recipes and indexes of a repository: who published an image and how,
+and what it contains. Each one is a [Sigstore bundle](https://docs.sigstore.dev/about/bundle/)
+(`application/vnd.dev.sigstore.bundle.v0.3+json`) of a DSSE envelope whose
+payload is an [in-toto statement](https://github.com/in-toto/attestation/blob/main/spec/v1/statement.md):
+
+```json
+{"_type": "https://in-toto.io/Statement/v1",
+ "subject": [{"name": "registry.jerboa.dev/<ns>/<repo>", "digest": {"sha256": "<subject-hex>"}}],
+ "predicateType": "https://slsa.dev/provenance/v1",
+ "predicate": {…}}
+```
+
+`jerboa push` in a GitHub Actions job signs two of them keyless, with a
+certificate Fulcio issues for the job's workflow and an entry in the Rekor
+log:
+- SLSA v1 provenance (`https://slsa.dev/provenance/v1`, build type
+  `https://actions.github.io/buildtypes/workflow/v1`): repository, commit,
+  workflow and run;
+- the image's CycloneDX SBOM (`https://cyclonedx.org/bom`), the one `jerboa
+  build` recorded.
+
+Upload, after the push:
+- `PUT /v2/<ns>/<repo>/attestations/<subject-hex>` with the bundle (at most 256 KiB), and a push token for the repository.
+  - The subject must be a recipe or index of the repository (`SUBJECT_UNKNOWN`), and the statement's only subject (`ATTESTATION_INVALID`).
+  - The server checks the bundle's form, not its signature; clients verify signatures.
+  - It answers `{"attestation": "sha256:…"}`, the SHA-256 of the bundle: 201 when it is new, 200 when it was stored already.
+  - It publishes the bundle and adds it to `attestations/<ns>/<repo>/<subject-hex>/index.json`: `{"attestations": [{"digest": "sha256:…", "predicateType": "…", "size": 1234}]}`, oldest first.
+
+Verification (`jerboa registry verify`, and pulls a policy covers):
+1. Read the index of the subject's attestations, then each bundle, checked against its SHA-256; at most the 32 newest.
+2. Verify each bundle against the Sigstore trusted root (from its TUF repository): the certificate chains to Fulcio and has a certificate transparency entry, the signature has a Rekor entry and a trusted time, and the statement's subject is the digest.
+3. Check the certificate's identity: issuer `https://token.actions.githubusercontent.com` and a SAN of `https://github.com/<owner>/<repo>/<workflow>@<ref>` matching what the puller expects.
+
+At least one attestation must verify. Anyone who can push to a repository can
+upload attestations to it, so the others count for nothing.
+
 Before uploading anything, the client assembles the image from the recipe and its local blob store and checks the disk digest, so it never publishes a recipe that does not rebuild its disk.
 
 ## Repository details
@@ -220,6 +262,8 @@ Errors are JSON with an HTTP status:
 | `BLOB_UNKNOWN` | 409 | A recipe names a blob the registry does not have |
 | `RECIPE_UNKNOWN` | 409 | A tag or index points at a recipe the registry does not have |
 | `INDEX_UNKNOWN` | 409 | A tag points at an index the registry does not have |
+| `ATTESTATION_INVALID` | 400 | An attestation is not a bundle of a statement about its subject |
+| `SUBJECT_UNKNOWN` | 404 | An attestation is about a digest that is not a recipe or index of the repository |
 | `TOO_LARGE` | 413 | Over a size limit |
 | `QUOTA` | 403 | The namespace's storage quota is used up |
 | `RATE_LIMITED` | 429 | Too many requests; honor `Retry-After` |
@@ -232,6 +276,7 @@ Errors are JSON with an HTTP status:
 | Blobs per recipe | 100 000 |
 | Recipe size | 16 MiB |
 | Index size, and platforms per index | 16 KiB, 8 |
+| Attestation size | 256 KiB |
 | Digests per `blobs/missing` call | 10 000 |
 | Tags per repository | 10 000 |
 | Storage per namespace | 10 GiB (counts the packs the namespace uploaded first) |

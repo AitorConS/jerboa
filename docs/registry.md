@@ -84,11 +84,36 @@ A reference is `[registry/]namespace/repository[:tag|@sha256:<digest>]`:
 - The tag defaults to `latest`.
 - A digest names an exact recipe and never changes.
 
+### Signed images
+
+A push from a GitHub Actions job that may request OIDC tokens (`permissions: id-token: write`) is also **signed** with [Sigstore](https://www.sigstore.dev/), keyless: GitHub vouches for the job's repository, workflow and ref, Fulcio certifies a one-time key for them, and the signature goes into the public Rekor log. Two attestations are stored with the image:
+- its **provenance**: the repository, commit, workflow and run that pushed it (SLSA v1);
+- its **SBOM**: the CycloneDX document `jerboa build` recorded (see [What a build produces]({% link build-concepts.md %}#software-bill-of-materials)).
+
+`--sign=false` pushes unsigned, and `--sign` fails outside such a job. `push --index` signs the index's provenance.
+
+Check who published an image:
+
+```sh
+jerboa registry verify aitorcons/web:v1 --identity aitorcons/web/.github/workflows/release.yml@refs/heads/main
+```
+
+The identity is a GitHub repository (`owner/repo`), optionally narrowed to a workflow (`owner/repo/.github/workflows/release.yml`) and a ref (`…@refs/heads/main`). A pull checks it too with `--identity`, or for every namespace a rule of `~/.jerboa/policy.json` covers:
+
+```json
+{"require": [
+  {"namespace": "aitorcons", "identity": "aitorcons/web/.github/workflows/release.yml@refs/heads/main"},
+  {"registry": "registry.example.com", "namespace": "acme", "identity": "acme/images"}
+]}
+```
+
+A pull that fails the check removes the image it pulled. The official images under `jerboa/` are always checked: they must be signed by `AitorConS/jerboa-images/.github/workflows/publish.yml@refs/heads/main`, whatever the policy file says. The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`.
+
 ### What a pull checks
 
 Every file, pack and recipe a pull downloads is checked against its SHA-256 digest, and the assembled disk is checked against the recipe's digest. Before assembling, the daemon also checks that the recipe's manifest reads only the recipe's own files, so a recipe cannot make `mkfs` read anything else on your machine.
 
-A tag is only as trustworthy as the registry that serves it: the registry decides which recipe a tag points to. To run exactly the image you reviewed, pull it by digest (`jerboa images inspect` shows it) and pin that digest in scripts and compose files.
+A tag is only as trustworthy as the registry that serves it: the registry decides which recipe a tag points to, unless the pull checks its signature (see [Signed images](#signed-images)). To run exactly the image you reviewed, pull it by digest (`jerboa images inspect` shows it) and pin that digest in scripts and compose files.
 
 ## CI
 
@@ -117,7 +142,7 @@ jobs:
 
 When `JERBOA_REGISTRY_TOKEN` is not set and the job may request OIDC tokens, `jerboa push` asks GitHub for one, for the registry's host as audience, and exchanges it for a push token. The registry checks GitHub's signature and that a trusted publisher matches the repository (by id), the workflow, and the branch, environment and event it names. Workflows triggered by pull requests never can push.
 
-On the hub, the tag's page then shows the repository, commit, workflow and run it was pushed from. `jerboa registry pat` commands need a login: OIDC only pushes.
+On the hub, the tag's page then shows the repository, commit, workflow and run it was pushed from, and the push is [signed](#signed-images). `jerboa registry pat` commands need a login: OIDC only pushes.
 
 `setup-jerboa` installs the given release with [`install.sh`](../scripts/install.sh), verifying its signed manifest, on Linux x86_64 runners. Use `hypervisor: qemu` on runners without `/dev/kvm`.
 
