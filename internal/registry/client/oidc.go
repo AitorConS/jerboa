@@ -64,6 +64,12 @@ func (c *Client) actionsToken(ctx context.Context, audience string) (string, err
 	return out.Value, nil
 }
 
+// ActionsIDToken requests the job's OIDC token for audience, such as
+// Sigstore's, in a GitHub Actions job allowed to (credentials.InGitHubActions).
+func (c *Client) ActionsIDToken(ctx context.Context, audience string) (string, error) {
+	return c.actionsToken(ctx, audience)
+}
+
 // oidcToken exchanges the job's OIDC token for a push token for scope.
 func (c *Client) oidcToken(ctx context.Context, scope string) (string, error) {
 	base, err := url.Parse(c.Base)

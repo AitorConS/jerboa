@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AitorConS/jerboa/internal/registry/imageindex"
 	"github.com/AitorConS/jerboa/internal/registry/pack"
 )
 
@@ -29,11 +30,13 @@ type Server struct {
 	pulls     map[string]int
 	// Requests counts requests by "METHOD /first/segments".
 	Requests map[string]int
+	// Features is what GET /v2/ advertises; New sets every feature.
+	Features []string
 }
 
 // New starts a fake registry.
 func New() *Server {
-	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, pulls: map[string]int{}, Requests: map[string]int{}}
+	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, pulls: map[string]int{}, Requests: map[string]int{}, Features: []string{"index", "attestations"}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -95,7 +98,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.URL.Path == "/v2/" && r.Method == http.MethodGet:
-		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": s.URL + "/cdn", "github_client_id": "test"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": s.URL + "/cdn", "github_client_id": "test", "features": s.Features})
 	case parts[0] == "cdn":
 		s.serveCDN(w, r, strings.Join(parts[1:], "/"))
 	case parts[0] == "v2" && len(parts) == 3 && r.Method == http.MethodPatch:
@@ -236,22 +239,108 @@ func (s *Server) serveWrite(w http.ResponseWriter, r *http.Request, ns, repo, ki
 		s.objects["recipes/"+arg+".json"] = body
 		s.objects["locations/"+arg+".json"] = doc
 		w.WriteHeader(http.StatusCreated)
+	case kind == "indexes" && r.Method == http.MethodPut:
+		sum := sha256.Sum256(body)
+		ix, err := imageindex.Parse(body)
+		if hex.EncodeToString(sum[:]) != arg || err != nil {
+			fail(w, http.StatusBadRequest, "INDEX_INVALID", fmt.Sprint(err))
+			return
+		}
+		for _, e := range ix.Manifests {
+			if _, ok := s.objects["recipes/"+strings.TrimPrefix(e.Digest, "sha256:")+".json"]; !ok {
+				fail(w, http.StatusConflict, "RECIPE_UNKNOWN", e.Digest)
+				return
+			}
+		}
+		s.objects["indexes/"+arg+".json"] = body
+		w.WriteHeader(http.StatusCreated)
 	case kind == "tags" && r.Method == http.MethodPut:
 		var req struct {
 			Recipe string `json:"recipe"`
+			Index  string `json:"index"`
 		}
 		_ = json.Unmarshal(body, &req)
+		recipes := []string{req.Recipe}
+		if req.Index != "" {
+			data, ok := s.objects["indexes/"+strings.TrimPrefix(req.Index, "sha256:")+".json"]
+			if !ok {
+				fail(w, http.StatusConflict, "INDEX_UNKNOWN", req.Index)
+				return
+			}
+			ix, _ := imageindex.Parse(data)
+			req.Recipe, recipes = ix.Default(), nil
+			for _, e := range ix.Manifests {
+				recipes = append(recipes, e.Digest)
+			}
+		}
 		if _, ok := s.objects["recipes/"+strings.TrimPrefix(req.Recipe, "sha256:")+".json"]; !ok {
 			fail(w, http.StatusConflict, "RECIPE_UNKNOWN", req.Recipe)
 			return
 		}
-		doc, _ := json.Marshal(map[string]string{"recipe": req.Recipe})
+		doc, _ := json.Marshal(req)
+		if req.Index == "" {
+			doc, _ = json.Marshal(map[string]string{"recipe": req.Recipe})
+		}
 		s.objects["tags/"+ns+"/"+repo+"/"+arg] = doc
-		s.objects["refs/"+ns+"/"+repo+"/"+strings.TrimPrefix(req.Recipe, "sha256:")] = []byte("{}")
+		for _, d := range recipes {
+			s.objects["refs/"+ns+"/"+repo+"/"+strings.TrimPrefix(d, "sha256:")] = []byte("{}")
+		}
 		_ = json.NewEncoder(w).Encode(map[string]string{"tag": arg, "recipe": req.Recipe})
+	case kind == "attestations" && r.Method == http.MethodPut:
+		s.putAttestation(w, ns, repo, arg, body)
 	default:
 		fail(w, http.StatusNotFound, "NOT_FOUND", r.URL.Path)
 	}
+}
+
+// putAttestation stores a Sigstore bundle of subjectHex, which must be a
+// recipe or index of the repository and the subject of the bundle's
+// statement, and lists it in the CDN's index of the subject's attestations.
+func (s *Server) putAttestation(w http.ResponseWriter, ns, repo, subjectHex string, body []byte) {
+	_, recipe := s.objects["refs/"+ns+"/"+repo+"/"+subjectHex]
+	_, index := s.objects["indexes/"+subjectHex+".json"]
+	if !recipe && !index {
+		fail(w, http.StatusNotFound, "SUBJECT_UNKNOWN", "no such recipe or index in the repository")
+		return
+	}
+	var b struct {
+		DSSEEnvelope struct {
+			Payload []byte `json:"payload"`
+		} `json:"dsseEnvelope"`
+	}
+	var st struct {
+		Subject []struct {
+			Digest map[string]string `json:"digest"`
+		} `json:"subject"`
+		PredicateType string `json:"predicateType"`
+	}
+	if len(body) > 256<<10 || json.Unmarshal(body, &b) != nil || json.Unmarshal(b.DSSEEnvelope.Payload, &st) != nil ||
+		len(st.Subject) != 1 || st.Subject[0].Digest["sha256"] != subjectHex || st.PredicateType == "" {
+		fail(w, http.StatusBadRequest, "ATTESTATION_INVALID", "not a bundle of a statement about the subject")
+		return
+	}
+	sum := sha256.Sum256(body)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	prefix := "attestations/" + ns + "/" + repo + "/" + subjectHex + "/"
+	type entry struct {
+		Digest        string `json:"digest"`
+		PredicateType string `json:"predicateType"`
+		Size          int    `json:"size"`
+	}
+	var list struct {
+		Attestations []entry `json:"attestations"`
+	}
+	_ = json.Unmarshal(s.objects[prefix+"index.json"], &list)
+	status := http.StatusOK
+	if _, ok := s.objects[prefix+hex.EncodeToString(sum[:])+".json"]; !ok {
+		status = http.StatusCreated
+		s.objects[prefix+hex.EncodeToString(sum[:])+".json"] = body
+		list.Attestations = append(list.Attestations, entry{Digest: digest, PredicateType: st.PredicateType, Size: len(body)})
+		s.objects[prefix+"index.json"], _ = json.Marshal(list)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"attestation": digest})
 }
 
 // Packs lists the stored pack keys, sorted.

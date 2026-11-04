@@ -207,6 +207,7 @@ Key flags:
 | `-f, --file` | Path to the `unikernel.toml` to use (default: `<path>/unikernel.toml`) |
 | `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
 | `--size-report[=text\|json]` | Before assembling, print what the image will contain grouped by program, runtime package, npm module, Python distribution and top-level project path. `json` prints every group to stdout (the build summary then goes to stderr) |
+| `--sbom <file>` | Also write the image's CycloneDX SBOM to `<file>`. Every build stores one with the image; `jerboa images sbom <ref>` prints it |
 | `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 
@@ -359,9 +360,10 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 | `login [registry]` | Log in with GitHub (device flow: approve the code shown in a browser). `--token <pat>`, or `JERBOA_REGISTRY_TOKEN`, uses a personal access token instead, as CI does |
 | `logout [registry]` | Forget the stored credential |
 | `tag <image> <target>` | Give a stored image another name, e.g. the reference to push it as |
-| `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to |
-| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store |
+| `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to. `push --index <target> <image>…` tags an image index of images already pushed, one per platform. In GitHub Actions jobs that may request OIDC tokens the push is signed with Sigstore (provenance and SBOM attestations); `--sign=false` skips it (newer than v0.56.0) |
+| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store; for a tag published for several platforms, this host's, or `--platform linux/amd64\|linux/arm64`. Images a rule of `~/.jerboa/policy.json` covers, and `jerboa/` ones, are kept only if signed by its identity; `--identity <owner/repo[/workflow[@ref]]>` checks another, `--verify` requires a rule (newer than v0.56.0) |
 | `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host; `create` takes `--expires-in <days>`, `--namespace` and `--delete`) |
+| `registry verify <ref>` | Check that an image is signed by `--identity`, or by the policy's identity for its namespace, and show its attestations (`--platform` for a tag of several platforms; newer than v0.56.0) |
 | `registry repo edit\|rm` | Set a repository's description or README (`edit --description`, `--readme`); delete a tag (`rm ns/repo:tag`) or a repository with all its tags (`rm ns/repo`, which asks unless `--yes`; newer than v0.56.0) |
 
 ```sh
@@ -450,6 +452,10 @@ digest. The files themselves are kept once each in the daemon's blob store
 (`~/.jerboa/blobs`). A recipe rebuilds the same disk byte-for-byte on any host, which
 is how registry pushes and pulls will transfer images. `jerboa images inspect`
 shows the recipe digest and `jerboa images recipe <ref>` prints the recipe.
+`jerboa images sbom <ref>` prints the image's software bill of materials, a
+CycloneDX 1.6 document the build stores with the disk (see
+[What a build produces]({% link build-concepts.md %}#software-bill-of-materials)).
+Pulled images have none yet.
 Images whose toolset has no version marker are built without one.
 
 `pkg load` uses the root command's endpoint and authentication configuration,

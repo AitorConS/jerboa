@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -53,11 +54,11 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) mkfsFor(context.Context, string) (string, error) { return e.mkfs, nil }
 
-func staticELF() []byte {
+func staticELFFor(machine elf.Machine) []byte {
 	b := make([]byte, 512)
 	copy(b, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
 	binary.LittleEndian.PutUint16(b[16:], uint16(elf.ET_EXEC))
-	binary.LittleEndian.PutUint16(b[18:], uint16(elf.EM_X86_64))
+	binary.LittleEndian.PutUint16(b[18:], uint16(machine))
 	binary.LittleEndian.PutUint32(b[20:], 1)
 	binary.LittleEndian.PutUint16(b[52:], 64)
 	return b
@@ -66,7 +67,17 @@ func staticELF() []byte {
 // build builds an image whose lib file holds lib, recording its recipe in store.
 func (e *env) build(t *testing.T, store *cas.Store, lib string) string {
 	t.Helper()
-	in := filepath.Join(e.dir, "in-"+strings.ReplaceAll(lib, " ", "_"))
+	return e.buildFor(t, store, lib, "linux/amd64")
+}
+
+// buildFor builds the image for a platform.
+func (e *env) buildFor(t *testing.T, store *cas.Store, lib, platform string) string {
+	t.Helper()
+	machine := elf.EM_X86_64
+	if platform == "linux/arm64" {
+		machine = elf.EM_AARCH64
+	}
+	in := filepath.Join(e.dir, "in-"+strings.ReplaceAll(lib, " ", "_")+"-"+strings.ReplaceAll(platform, "/", "_"))
 	write := func(name string, data []byte) string {
 		p := filepath.Join(in, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
@@ -82,8 +93,8 @@ func (e *env) build(t *testing.T, store *cas.Store, lib string) string {
 	img, err := image.NewStore(filepath.Join(e.dir, "images"))
 	require.NoError(t, err)
 	m, err := image.NewBuilder(img).WithRecorder(recipe.Recorder{Store: store}).Build(context.Background(), image.BuildConfig{
-		Name: "web", Tag: "local", Platform: "linux/amd64", Layout: image.LayoutStandard,
-		BinaryPath: write("program", staticELF()),
+		Name: "web", Tag: "local", Platform: platform, Layout: image.LayoutStandard,
+		BinaryPath: write("program", staticELFFor(machine)),
 		PkgFiles: []pkg.File{
 			{HostPath: write("lib.js", []byte(lib)), GuestPath: "app/lib.js"},
 			{HostPath: write("runtime", big), GuestPath: "usr/bin/runtime"},
@@ -285,4 +296,75 @@ func TestDoNotTrack(t *testing.T) {
 		t.Setenv("DO_NOT_TRACK", v)
 		require.Equal(t, want, DoNotTrack(), v)
 	}
+}
+
+func TestIndexPullsEachPlatform(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	local := newStore(t)
+	amd := e.buildFor(t, local, "lib", "linux/amd64")
+	arm := e.buildFor(t, local, "lib", "linux/arm64")
+	for tag, r := range map[string]string{"v1-amd64": amd, "v1-arm64": arm} {
+		_, err := Push(ctx, PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, tag), Store: local, Recipe: r, Mkfs: e.mkfsFor, WorkDir: e.dir})
+		require.NoError(t, err)
+	}
+	armDigest, err := naming.ParseImageReference(e.reg.Host() + "/alice/web@" + arm)
+	require.NoError(t, err)
+	res, err := PushIndex(ctx, IndexOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Sources: []naming.ImageReference{armDigest, e.ref(t, "v1-amd64")}})
+	require.NoError(t, err)
+	require.Equal(t, []string{amd, arm}, []string{res.Manifests[0].Digest, res.Manifests[1].Digest})
+	tag, ok := e.reg.Object("tags/alice/web/v1")
+	require.True(t, ok)
+	require.JSONEq(t, `{"recipe":"`+amd+`","index":"`+res.Index+`"}`, string(tag))
+
+	pull := func(platform string) (PullResult, error) {
+		return Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "disk"), NoCount: true, Platform: platform})
+	}
+	for platform, want := range map[string]string{"linux/amd64": amd, "linux/arm64": arm} {
+		got, err := pull(platform)
+		require.NoError(t, err)
+		require.Equal(t, want, got.Recipe)
+		require.Equal(t, res.Index, got.Index)
+		require.Equal(t, platform, got.Parsed.Platform)
+	}
+	// Without --platform, the host's.
+	got, err := pull("")
+	require.NoError(t, err)
+	require.Equal(t, "linux/"+runtime.GOARCH, got.Parsed.Platform)
+
+	// A tag of one recipe pulls only for its platform.
+	_, err = Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1-amd64"), Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "disk"), NoCount: true, Platform: "linux/arm64"})
+	require.ErrorContains(t, err, "is an image for linux/amd64, not linux/arm64")
+}
+
+func TestPushIndexRefusesWhatCannotBeIndexed(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	local := newStore(t)
+	amd := e.buildFor(t, local, "lib", "linux/amd64")
+	other := e.buildFor(t, local, "other", "linux/amd64")
+	for tag, r := range map[string]string{"a": amd, "b": other} {
+		_, err := Push(ctx, PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, tag), Store: local, Recipe: r, Mkfs: e.mkfsFor, WorkDir: e.dir})
+		require.NoError(t, err)
+	}
+	index := func(sources ...naming.ImageReference) error {
+		_, err := PushIndex(ctx, IndexOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "multi"), Sources: sources})
+		return err
+	}
+	require.ErrorContains(t, index(e.ref(t, "a"), e.ref(t, "b")), "are both images for linux/amd64")
+	require.NoError(t, index(e.ref(t, "a")))
+	require.ErrorContains(t, index(e.ref(t, "multi")), "is an image index")
+	elsewhere, err := naming.ParseImageReference("registry.example/alice/web:a")
+	require.NoError(t, err)
+	require.ErrorContains(t, index(elsewhere), "another registry")
+
+	// A registry that does not advertise indexes.
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": "http://cdn.invalid"})
+	}))
+	defer old.Close()
+	ref, err := naming.ParseImageReference(strings.TrimPrefix(old.URL, "http://") + "/alice/web:multi")
+	require.NoError(t, err)
+	_, err = PushIndex(ctx, IndexOptions{Client: client.New(ref.Registry), Token: "t", Ref: ref, Sources: []naming.ImageReference{ref}})
+	require.ErrorContains(t, err, "does not support image indexes")
 }

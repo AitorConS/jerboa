@@ -442,6 +442,8 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleImageRemove(req.Params)
 	case "Image.Recipe":
 		return s.handleImageRecipe(req.Params)
+	case "Image.SBOM":
+		return s.handleImageSBOM(req.Params)
 	case "Image.Tag":
 		return s.handleImageTag(req.Params)
 	case "Image.Push":

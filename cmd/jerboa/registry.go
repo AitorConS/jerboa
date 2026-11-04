@@ -10,6 +10,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/naming"
+	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/registry/client"
 	"github.com/AitorConS/jerboa/internal/registry/credentials"
 	"github.com/AitorConS/jerboa/internal/registry/transfer"
@@ -196,22 +197,61 @@ func newTagCmd(endpoint *string) *cobra.Command {
 }
 
 func newPushCmd(endpoint *string) *cobra.Command {
-	return &cobra.Command{
+	var index, sign bool
+	cmd := &cobra.Command{
 		Use:   "push <[registry/]namespace/repository[:tag]>",
 		Short: "Push an image to a registry as its recipe and the files the registry lacks",
-		Args:  cobra.ExactArgs(1),
+		Long: `Push an image to a registry as its recipe and the files the registry lacks.
+
+With --index, push no image: tag an image index of images already pushed,
+one per platform, so the tag pulls the image built for each host.
+
+In a GitHub Actions job that may request OIDC tokens (permissions:
+id-token: write), the push is also signed with Sigstore: attestations of
+the image's provenance (the repository, commit, workflow and run) and of its
+SBOM are stored with it, for pulls to verify. --sign=false pushes unsigned.`,
+		Example: `  jerboa push aitorcons/web:v1
+  jerboa push --index aitorcons/web:v1 aitorcons/web:v1-amd64 aitorcons/web:v1-arm64`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if index {
+				return cobra.MinimumNArgs(2)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := naming.ParseImageReference(args[0])
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
+			if ref.Digest != "" {
+				return fmt.Errorf("push: %s: push to a tag, not a digest", args[0])
+			}
 			cred, err := credentials.For(ref.Registry)
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
-			token, err := client.New(ref.Registry).PushToken(cmd.Context(), cred, ref.Namespace, ref.Repository)
+			cl := client.New(ref.Registry)
+			token, err := cl.PushToken(cmd.Context(), cred, ref.Namespace, ref.Repository)
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
+			}
+			d, err := cl.Discover(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("push: %w", err)
+			}
+			signed, err := shouldSign(cmd, sign, d, ref.Registry)
+			if err != nil {
+				return fmt.Errorf("push: %w", err)
+			}
+			if index {
+				subject, err := pushIndex(cmd, cl, token, ref, args[1:])
+				if err != nil || !signed {
+					return err
+				}
+				if err := signPushed(cmd.Context(), cmd.OutOrStdout(), cl, token, ref, subject, nil); err != nil {
+					return fmt.Errorf("push: sign: %w", err)
+				}
+				return nil
 			}
 			c, err := api.Dial(*endpoint)
 			if err != nil {
@@ -224,31 +264,105 @@ func newPushCmd(endpoint *string) *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: uploaded %d of %d files (%s) in %d packs\n%s\n",
 				res.Reference, res.BlobsUploaded, res.Blobs, humanBytes(res.BytesUploaded), res.PacksUploaded, res.Recipe)
+			if !signed {
+				return nil
+			}
+			sbom, err := c.ImageSBOM(cmd.Context(), ref.Name()+":"+ref.Tag)
+			if err != nil {
+				fmt.Fprintf(cmd.ErrOrStderr(), "note: signing without an SBOM: %v\n", err)
+			}
+			if err := signPushed(cmd.Context(), cmd.OutOrStdout(), cl, token, ref, res.Recipe, sbom); err != nil {
+				return fmt.Errorf("push: sign: %w", err)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&index, "index", false, "tag an image index of the images named after the target, one per platform")
+	cmd.Flags().BoolVar(&sign, "sign", false, "sign the push with Sigstore (default: in GitHub Actions jobs that may request OIDC tokens)")
+	return cmd
+}
+
+// pushIndex tags ref as an image index of the images sources name, and
+// returns the index's digest.
+func pushIndex(cmd *cobra.Command, cl *client.Client, token string, ref naming.ImageReference, sources []string) (string, error) {
+	refs := make([]naming.ImageReference, len(sources))
+	for i, s := range sources {
+		r, err := naming.ParseImageReference(s)
+		if err != nil {
+			return "", fmt.Errorf("push: %w", err)
+		}
+		refs[i] = r
+	}
+	res, err := transfer.PushIndex(cmd.Context(), transfer.IndexOptions{Client: cl, Token: token, Ref: ref, Sources: refs})
+	if err != nil {
+		return "", err
+	}
+	platforms := make([]string, len(res.Manifests))
+	for i, e := range res.Manifests {
+		platforms[i] = e.Platform
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: an index for %s\n%s\n", ref, strings.Join(platforms, ", "), res.Index)
+	return res.Index, nil
 }
 
 func newPullCmd(endpoint *string) *cobra.Command {
-	return &cobra.Command{
+	var platform, identity string
+	var verify bool
+	cmd := &cobra.Command{
 		Use:   "pull <[registry/]namespace/repository[:tag|@digest]>",
 		Short: "Pull an image: fetch the files the daemon lacks and assemble its disk locally",
-		Args:  cobra.ExactArgs(1),
+		Long: `Pull an image: fetch the files the daemon lacks and assemble its disk locally.
+
+A tag published for several platforms pulls the image for this host, or the
+one --platform names.
+
+An image whose namespace has a rule in the policy file (~/.jerboa/policy.json),
+or the official images under jerboa/, is kept only if it is signed by the
+identity the rule names; --identity checks against another one. A pull that
+fails the check removes what it pulled. See jerboa registry verify.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if platform != "" {
+				if err := pkg.ValidatePlatform(platform); err != nil {
+					return fmt.Errorf("pull: %w", err)
+				}
+			}
+			ref, err := naming.ParseImageReference(args[0])
+			if err != nil {
+				return fmt.Errorf("pull: %w", err)
+			}
+			id, check, err := requiredIdentity(ref, identity, verify)
+			if err != nil {
+				return fmt.Errorf("pull: %w", err)
+			}
 			c, err := api.Dial(*endpoint)
 			if err != nil {
 				return fmt.Errorf("pull: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
-			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack()})
+			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack(), Platform: platform})
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s: fetched %d of %d files (%s) in %d requests\n%s\n",
-				res.Image.Name, res.Image.Tag, res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, res.Image.DiskDigest)
+			if check {
+				results, err := verifySubject(cmd.Context(), ref, res.Recipe, id)
+				if err != nil {
+					if rmErr := c.ImageRemove(cmd.Context(), res.Image.Name+":"+res.Image.Tag); rmErr != nil {
+						return fmt.Errorf("pull: %w (and removing the pulled image failed: %w)", err, rmErr)
+					}
+					return fmt.Errorf("pull: %w; the pulled image was removed", err)
+				}
+				printVerified(cmd.OutOrStdout(), res.Recipe, results)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s (%s): fetched %d of %d files (%s) in %d requests\n%s\n",
+				res.Image.Name, res.Image.Tag, res.Image.Platform, res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, res.Image.DiskDigest)
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&platform, "platform", "", "the platform to pull, linux/amd64 or linux/arm64 (default: this host's)")
+	cmd.Flags().BoolVar(&verify, "verify", false, "keep the image only if it is signed by the identity the policy file names for its namespace")
+	cmd.Flags().StringVar(&identity, "identity", "", "keep the image only if it is signed from this GitHub repository[/workflow[@ref]] (implies --verify)")
+	return cmd
 }
 
 func newRegistryCmd() *cobra.Command {
@@ -333,7 +447,7 @@ func newRegistryCmd() *cobra.Command {
 			return nil
 		},
 	})
-	cmd.AddCommand(pat, newRepoCmd(&registry))
+	cmd.AddCommand(pat, newRepoCmd(&registry), newRegistryVerifyCmd())
 	return cmd
 }
 

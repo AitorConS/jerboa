@@ -6,6 +6,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -456,4 +457,28 @@ func TestImageBuild_RebuildPrunesReplacedImage(t *testing.T) {
 	settles(2, "the VM's image is kept after the rebuild")
 	build("three")
 	settles(2, "the unused image from build two is removed")
+}
+
+// The SBOM a build sends is stored with the image and returned by Image.SBOM.
+func TestImageBuild_SBOM(t *testing.T) {
+	store, err := image.NewStore(t.TempDir())
+	require.NoError(t, err)
+	client := startBuildServer(t, store)
+	ctx := context.Background()
+
+	_, err = client.ImageBuild(ctx, api.BuildParams{Name: "demo", Tag: "v1", Program: "app", SBOM: json.RawMessage(`{"bomFormat":"SPDX"}`)},
+		buildContextTar(t, map[string][]byte{"app": validBuildELF()}))
+	require.ErrorContains(t, err, "not a CycloneDX document")
+
+	buildImage(t, client, "plain", "v1")
+	_, err = client.ImageSBOM(ctx, "plain:v1")
+	require.ErrorContains(t, err, "has no SBOM")
+
+	bom := `{"bomFormat":"CycloneDX","specVersion":"1.6","components":[]}`
+	_, err = client.ImageBuild(ctx, api.BuildParams{Name: "demo", Tag: "v1", Program: "app", SBOM: json.RawMessage(bom)},
+		buildContextTar(t, map[string][]byte{"app": validBuildELF()}))
+	require.NoError(t, err)
+	raw, err := client.ImageSBOM(ctx, "demo:v1")
+	require.NoError(t, err)
+	require.JSONEq(t, bom, string(raw))
 }
