@@ -20,8 +20,8 @@ jobs:
   build-and-validate:
     name: Build and validate kernel artifacts
     # Pinned: users run the mkfs and dump this job publishes, and mkfs built
-    # on ubuntu-26.04 dies with an illegal instruction on the self-hosted KVM
-    # runner; users' machines may be no newer. Keep ubuntu-24.04 until mkfs
+    # on ubuntu-26.04 dies with an illegal instruction on the KVM runner;
+    # users' machines may be no newer. Keep ubuntu-24.04 until mkfs
     # built on a newer image is shown to run there.
     runs-on: ubuntu-24.04
     steps:
