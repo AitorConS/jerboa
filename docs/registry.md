@@ -201,7 +201,7 @@ jerboa registry repo rm aitorcons/web:v1
 jerboa registry repo rm aitorcons/web
 ```
 
-Deleting a whole repository asks first; `--yes` skips the question, for scripts. Deleting needs the namespace's owner, an organization admin, or a token created with `--delete`. The hub's repository settings can delete too. `repo rm` is newer than v0.56.0; with that release, delete on the hub.
+Deleting a whole repository asks first; `--yes` skips the question, for scripts. Deleting needs the namespace's owner, an organization admin, or a token created with `--delete`. The hub's repository settings can delete too. `repo rm` needs v0.57.0 or later; with earlier versions, delete on the hub.
 
 ## Limits
 
