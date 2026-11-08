@@ -58,23 +58,23 @@
   },
   {
     "package": "nginx",
-    "version": "1.24.0",
-    "source_url": "https://nginx.org/download/nginx-1.24.0.tar.gz",
-    "sha256": "77a2541637b92a621e3ee76776c8b7b40cf6d707e69ba53a940283e30ff2f55d",
+    "version": "1.30.6",
+    "source_url": "https://nginx.org/download/nginx-1.30.6.tar.gz",
+    "sha256": "3cf46f5ed7504d460125866b7bea99fb357f31d887e2e63b35503310e9b8b6c8",
     "build_script": "scripts/build-nginx.sh"
   },
   {
     "package": "caddy",
-    "version": "2.7.6",
-    "source_url": "https://github.com/caddyserver/caddy/archive/refs/tags/v2.7.6.tar.gz",
-    "sha256": "e1c524fc4f4bd2b0d39df51679d9d065bb811e381b7e4e51466ba39a0083e3ed",
+    "version": "2.11.7",
+    "source_url": "https://github.com/caddyserver/caddy/archive/refs/tags/v2.11.7.tar.gz",
+    "sha256": "86e39de5fa0bc433a9cd574a00e7751059903401f3389c61f8937fd0ad0180f5",
     "build_script": "scripts/build-caddy.sh"
   },
   {
     "package": "redis",
-    "version": "7.2.4",
-    "source_url": "https://github.com/redis/redis/archive/refs/tags/7.2.4.tar.gz",
-    "sha256": "0a62b9ae89b4be4e8d40c0035c83a72cb6776f4b62fe53553981a57f0f4ff73d",
+    "version": "7.2.16",
+    "source_url": "https://github.com/redis/redis/archive/refs/tags/7.2.16.tar.gz",
+    "sha256": "65fa69e66187cb5a4cf625bd587c743507e518749c5a0eec29c4f086495c8a7e",
     "build_script": "scripts/build-redis.sh"
   },
   {
