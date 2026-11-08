@@ -90,7 +90,7 @@ A push by a [trusted publisher](#github-actions-without-a-token) (a GitHub Actio
 - its **provenance**: the repository, commit, workflow and run that pushed it (SLSA v1);
 - its **SBOM**: the CycloneDX document `jerboa build` recorded (see [What a build produces]({% link build-concepts.md %}#software-bill-of-materials)).
 
-The registry takes attestations from trusted publishers only, and records the workflow whose OIDC token uploaded them. Pushes with a personal access token, or from a laptop, are not signed. `--sign=false` pushes unsigned, and `--sign` fails where it cannot sign. `push --index` signs the index's provenance.
+The registry takes attestations from trusted publishers only, and records the workflow whose OIDC token uploaded them. Pushes with a personal access token, or from a laptop, are not signed. `--sign=false` pushes unsigned, and `--sign` fails where it cannot sign. `push --index` signs the index's provenance. A push signs only what the workflow has not signed yet: pushing the same image or index under another tag (a version and `latest`) adds no attestations.
 
 **Pulls verify signed images on their own.** A pull of an image that has attestations keeps it only if one verifies against the Sigstore trusted root and its certificate names the expected workflow:
 1. `--identity <owner/repo[/workflow[@ref]]>`, if given;
