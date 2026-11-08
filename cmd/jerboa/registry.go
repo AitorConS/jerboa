@@ -249,7 +249,7 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 				if err != nil || !signed {
 					return err
 				}
-				if err := signPushed(cmd.Context(), cmd.OutOrStdout(), cl, token, ref, subject, nil); err != nil {
+				if err := signPushed(cmd.Context(), cmd.OutOrStdout(), cl, token, d.CDN, ref, subject, nil); err != nil {
 					return fmt.Errorf("push: sign: %w", err)
 				}
 				return nil
@@ -272,7 +272,7 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 			if err != nil {
 				fmt.Fprintf(cmd.ErrOrStderr(), "note: signing without an SBOM: %v\n", err)
 			}
-			if err := signPushed(cmd.Context(), cmd.OutOrStdout(), cl, token, ref, res.Recipe, sbom); err != nil {
+			if err := signPushed(cmd.Context(), cmd.OutOrStdout(), cl, token, d.CDN, ref, res.Recipe, sbom); err != nil {
 				return fmt.Errorf("push: sign: %w", err)
 			}
 			return nil

@@ -125,3 +125,19 @@ func TestVerificationFor(t *testing.T) {
 	require.Equal(t, "the policy", v.source)
 	require.Equal(t, "acme/infra/.github/workflows/publish.yml@refs/heads/main", v.id.String())
 }
+
+func TestUnsigned(t *testing.T) {
+	const wf = "acme/images/.github/workflows/publish.yml"
+	provenance := attest.Predicate{Type: attest.ProvenanceType}
+	sbom := attest.Predicate{Type: attest.SBOMType}
+	both := []attest.Predicate{provenance, sbom}
+
+	require.Equal(t, both, unsigned(both, nil, wf))
+	require.Equal(t, []attest.Predicate{sbom}, unsigned(both, []client.AttestationRef{{PredicateType: attest.ProvenanceType, Identity: wf}}, wf))
+	require.Empty(t, unsigned(both, []client.AttestationRef{
+		{PredicateType: attest.SBOMType, Identity: wf},
+		{PredicateType: attest.ProvenanceType, Identity: wf},
+	}, wf))
+	// Another workflow's attestation does not count.
+	require.Equal(t, both, unsigned(both, []client.AttestationRef{{PredicateType: attest.ProvenanceType, Identity: "acme/other/.github/workflows/x.yml"}}, wf))
+}
