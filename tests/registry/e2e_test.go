@@ -468,6 +468,12 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 		t.Logf("%s does not store image indexes: skipping them", cl.Base)
 	}
 
+	if d.Supports(client.FeatureAttestations) {
+		checkAttestations(t, ctx, cl, d, token, ref("v2"), v2)
+	} else {
+		t.Logf("%s does not store attestations: skipping them", cl.Base)
+	}
+
 	_, err = cl.PushToken(ctx, credential, "jerboa-e2e-forbidden", repo)
 	require.True(t, client.IsCode(err, "DENIED"), "got %v", err)
 
