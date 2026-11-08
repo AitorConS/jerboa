@@ -4,7 +4,7 @@
 set -euo pipefail
 
 NAME="${PACKAGE_NAME:-nginx}"
-VERSION="${PACKAGE_VERSION:-1.24.0}"
+VERSION="${PACKAGE_VERSION:-1.30.6}"
 SOURCE_URL="${SOURCE_URL:-https://nginx.org/download/nginx-${VERSION}.tar.gz}"
 
 PACKAGE_ROOT="$(pwd)"

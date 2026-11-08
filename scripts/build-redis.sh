@@ -4,7 +4,7 @@
 set -euo pipefail
 
 NAME="${PACKAGE_NAME:-redis}"
-VERSION="${PACKAGE_VERSION:-7.2.4}"
+VERSION="${PACKAGE_VERSION:-7.2.16}"
 SOURCE_URL="${SOURCE_URL:-https://github.com/redis/redis/archive/refs/tags/v${VERSION}.tar.gz}"
 
 PACKAGE_ROOT="$(pwd)"
