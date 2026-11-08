@@ -2,6 +2,9 @@
 
 Release notes and validation evidence.
 
+Candidate: [42520305129](https://github.com/AitorConS/jerboa/actions/runs/42520305129).
+
+- Engine: `d4303bc756e01d0eba49bf3809679db9c9348f66`
 - Desktop: `ac39d202a62f9f0a6ea60c2c4d18cf13c796edab` (unchanged since v0.56.0)
 - Firecracker macOS: `d1fe2641a391e43672e9fa6c07b335f5a5eee07c` (unchanged since v0.56.0)
 - Product: `v0.57.0`; Linux kernel toolset: `v0.2.3`, the published one, reused.
@@ -36,3 +39,27 @@ Packages are published separately from releases. The package index now has caddy
 - **`jerboa/` images must be signed by the official workflow.** An unsigned image, or one signed by anyone else, under `jerboa/` is refused.
 - **Pushes from GitHub Actions sign by default** when they push with the job's OIDC token. `--sign=false` skips signing.
 - **Clients up to v0.56.0** pulling a tag published for several platforms get the `linux/amd64` image.
+
+## Native Mac
+
+The actual candidate app ZIP passed `scripts/release/native-macos.sh` on a physical Apple Silicon Mac running macOS 26.6.2. The checkout matched the candidate engine commit. The test used an isolated daemon and temporary VM state.
+
+App: `jerboa-desktop-0.57.0-macos-arm64.zip`.
+
+SHA-256: `1aa67a97b3cac40880b6b43147051a8c1ae915d142ed7bec0213a3517ef1b69b` (matches `native_macos_app.sha256` in the candidate's signed inventory).
+
+[Machine-readable result](native-macos.json) and [test output](native-macos.log).
+
+Checks passed: app code-signature integrity, CLI/daemon versions, VM boot with 1 and 4 vCPUs, HTTP/UDP port forwarding with an omitted, loopback and wildcard bind, environment variables, persistent-volume contents across boots, port conflicts, daemon recovery, guest exit, restart after guest failure, and forced stop. These are functional checks, not throughput benchmarks.
+
+## Linux kernel
+
+The candidate reuses the published toolset v0.2.3. Its files were verified against the signed stable manifest, and they passed the QEMU/KVM 8.2.2 and Firecracker 1.16.0 boot checks again for this candidate. The [kernel report](kernel-boot.json) is the candidate inventory's `kernel_boot` record, binding both results to the engine commit, candidate run and SHA-256 of each toolset file.
+
+## Windows
+
+The candidate's signed Windows installer passed the full installer smoke on a Windows machine started for this run only: silent install, WSL2 distro provisioning from the run's rootfs, and the example unikernels.
+
+## Publication gate
+
+This directory records validation, not proof of publication. Promotion additionally requires the complete candidate workflow to succeed and the signed inventory to match this native app hash. Published versions are determined by the signed stable manifest at `https://releases.jerboa.dev/channels/stable.json`.
