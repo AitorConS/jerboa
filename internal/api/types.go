@@ -353,6 +353,9 @@ type BuildParams struct {
 	// Created is the image creation time (RFC 3339). Empty means the time of
 	// the build; the CLI sets it from SOURCE_DATE_EPOCH for reproducible builds.
 	Created string `json:"created,omitempty"`
+	// SBOM is the CycloneDX software bill of materials of the image's
+	// contents, which the daemon stores with the image.
+	SBOM json.RawMessage `json:"sbom,omitempty"`
 }
 
 // VolumeSeedParams seeds an existing volume's disk with an initialized
@@ -462,14 +465,19 @@ type ImagePullParams struct {
 	Reference string `json:"reference"`
 	// NoCount skips reporting the pull to the hub's counter.
 	NoCount bool `json:"no_count,omitempty"`
+	// Platform picks the platform's image from a tag naming an image index
+	// (the host's when empty), and fails any other pull of another platform.
+	Platform string `json:"platform,omitempty"`
 }
 
 // ImagePullResult reports a pull and the image it stored.
 type ImagePullResult struct {
-	Image        ImageManifestResult `json:"image"`
-	Recipe       string              `json:"recipe"`
-	Blobs        int                 `json:"blobs"`
-	BlobsFetched int                 `json:"blobs_fetched"`
-	Requests     int                 `json:"requests"`
-	BytesFetched int64               `json:"bytes_fetched"`
+	Image  ImageManifestResult `json:"image"`
+	Recipe string              `json:"recipe"`
+	// Index is the image index the recipe was chosen from, if any.
+	Index        string `json:"index,omitempty"`
+	Blobs        int    `json:"blobs"`
+	BlobsFetched int    `json:"blobs_fetched"`
+	Requests     int    `json:"requests"`
+	BytesFetched int64  `json:"bytes_fetched"`
 }

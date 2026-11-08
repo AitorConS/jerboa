@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -88,6 +89,21 @@ type Discovery struct {
 	// GitHubClientID is the GitHub app older registries have clients run the
 	// device flow with, then exchange the token (LoginWithGitHub).
 	GitHubClientID string `json:"github_client_id"`
+	// Features lists the optional parts of the protocol the registry
+	// supports, such as FeatureIndex.
+	Features []string `json:"features"`
+}
+
+// FeatureIndex is the feature of registries that store image indexes.
+const FeatureIndex = "index"
+
+// FeatureAttestations is the feature of registries that store signed
+// attestations of images.
+const FeatureAttestations = "attestations"
+
+// Supports reports whether the registry advertises feature.
+func (d Discovery) Supports(feature string) bool {
+	return slices.Contains(d.Features, feature)
 }
 
 // Discover reads GET /v2/ and checks the protocol version.
@@ -253,6 +269,89 @@ func (c *Client) PutTag(ctx context.Context, token, namespace, repository, tag, 
 	return c.do(ctx, http.MethodPut, url, token, jsonBody(map[string]string{"recipe": recipe}), "application/json", nil)
 }
 
+// PutIndex uploads an image index, whose recipes must be uploaded already.
+func (c *Client) PutIndex(ctx context.Context, token, namespace, repository, digest string, data []byte) error {
+	url := c.repo(namespace, repository) + "/indexes/" + strings.TrimPrefix(digest, "sha256:")
+	return c.do(ctx, http.MethodPut, url, token, data, "application/vnd.jerboa.image.index.v1+json", nil)
+}
+
+// PutTagIndex points a tag at an image index.
+func (c *Client) PutTagIndex(ctx context.Context, token, namespace, repository, tag, index string) error {
+	url := c.repo(namespace, repository) + "/tags/" + tag
+	return c.do(ctx, http.MethodPut, url, token, jsonBody(map[string]string{"index": index}), "application/json", nil)
+}
+
+// AttestationMediaType is the media type of an attestation: a Sigstore bundle.
+const AttestationMediaType = "application/vnd.dev.sigstore.bundle.v0.3+json"
+
+// PutAttestation uploads a signed attestation of subject, a recipe or image
+// index of the repository, and returns the attestation's digest.
+func (c *Client) PutAttestation(ctx context.Context, token, namespace, repository, subject string, bundle []byte) (string, error) {
+	if !recipeDigestRE.MatchString(subject) {
+		return "", fmt.Errorf("registry: invalid subject digest %q", subject)
+	}
+	var out struct {
+		Attestation string `json:"attestation"`
+	}
+	url := c.repo(namespace, repository) + "/attestations/" + strings.TrimPrefix(subject, "sha256:")
+	if err := c.do(ctx, http.MethodPut, url, token, bundle, AttestationMediaType, &out); err != nil {
+		return "", err
+	}
+	return out.Attestation, nil
+}
+
+// AttestationRef is one attestation of a subject, as the CDN lists it.
+type AttestationRef struct {
+	Digest        string `json:"digest"`
+	PredicateType string `json:"predicateType"`
+	Size          int64  `json:"size"`
+	// Identity is the workflow that uploaded it, as the registry verified
+	// from the trusted publisher's OIDC token: owner/repo/<workflow path>.
+	Identity string `json:"identity"`
+}
+
+// Attestations lists the attestations of subject in a repository, from the
+// CDN; a subject with none has an empty list.
+func (c *Client) Attestations(ctx context.Context, cdn, namespace, repository, subject string) ([]AttestationRef, error) {
+	if !recipeDigestRE.MatchString(subject) {
+		return nil, fmt.Errorf("registry: invalid subject digest %q", subject)
+	}
+	var out struct {
+		Attestations []AttestationRef `json:"attestations"`
+	}
+	url := cdn + "/attestations/" + namespace + "/" + repository + "/" + strings.TrimPrefix(subject, "sha256:") + "/index.json"
+	err := c.do(ctx, http.MethodGet, url, "", nil, "", &out)
+	if IsStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range out.Attestations {
+		if !recipeDigestRE.MatchString(a.Digest) {
+			return nil, fmt.Errorf("registry: invalid attestation digest %q", a.Digest)
+		}
+	}
+	return out.Attestations, nil
+}
+
+// Attestation reads one attestation from the CDN and checks it against its digest.
+func (c *Client) Attestation(ctx context.Context, cdn, namespace, repository, subject, digest string) ([]byte, error) {
+	if !recipeDigestRE.MatchString(subject) || !recipeDigestRE.MatchString(digest) {
+		return nil, fmt.Errorf("registry: invalid attestation %q of %q", digest, subject)
+	}
+	var data []byte
+	url := cdn + "/attestations/" + namespace + "/" + repository + "/" + strings.TrimPrefix(subject, "sha256:") + "/" + strings.TrimPrefix(digest, "sha256:") + ".json"
+	if err := c.do(ctx, http.MethodGet, url, "", nil, "", &data); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if "sha256:"+hex.EncodeToString(sum[:]) != digest {
+		return nil, fmt.Errorf("registry: attestation %s does not match its digest", digest)
+	}
+	return data, nil
+}
+
 // DeleteTag removes a tag; its recipe and blobs are collected a week later
 // unless another tag uses them.
 func (c *Client) DeleteTag(ctx context.Context, token, namespace, repository, tag string) error {
@@ -299,22 +398,46 @@ func (c *Client) HasRecipe(ctx context.Context, cdn, namespace, repository, dige
 	return err
 }
 
-// TagRecipe reads the recipe digest a tag points to, from the CDN.
-func (c *Client) TagRecipe(ctx context.Context, cdn, namespace, repository, tag string) (string, error) {
-	var out struct {
-		Recipe string `json:"recipe"`
-	}
+// TagRef is what a tag names: a recipe, and the image index it is the
+// default recipe of, if any.
+type TagRef struct {
+	Recipe string `json:"recipe"`
+	Index  string `json:"index,omitempty"`
+}
+
+// Tag reads what a tag names from the CDN.
+func (c *Client) Tag(ctx context.Context, cdn, namespace, repository, tag string) (TagRef, error) {
+	var out TagRef
 	if err := c.do(ctx, http.MethodGet, cdn+"/tags/"+namespace+"/"+repository+"/"+tag, "", nil, "", &out); err != nil {
 		var re *Error
 		if errors.As(err, &re) && re.Status == http.StatusNotFound {
-			return "", fmt.Errorf("%s/%s:%s not found in the registry", namespace, repository, tag)
+			return out, fmt.Errorf("%s/%s:%s not found in the registry", namespace, repository, tag)
 		}
-		return "", err
+		return out, err
 	}
 	if !recipeDigestRE.MatchString(out.Recipe) {
-		return "", fmt.Errorf("registry: tag %s/%s:%s names an invalid recipe %q", namespace, repository, tag, out.Recipe)
+		return out, fmt.Errorf("registry: tag %s/%s:%s names an invalid recipe %q", namespace, repository, tag, out.Recipe)
 	}
-	return out.Recipe, nil
+	if out.Index != "" && !recipeDigestRE.MatchString(out.Index) {
+		return out, fmt.Errorf("registry: tag %s/%s:%s names an invalid index %q", namespace, repository, tag, out.Index)
+	}
+	return out, nil
+}
+
+// Index reads image index bytes from the CDN and checks them against digest.
+func (c *Client) Index(ctx context.Context, cdn, digest string) ([]byte, error) {
+	var data []byte
+	if err := c.do(ctx, http.MethodGet, cdn+"/indexes/"+strings.TrimPrefix(digest, "sha256:")+".json", "", nil, "", &data); err != nil {
+		if IsStatus(err, http.StatusNotFound) {
+			return nil, fmt.Errorf("index %s not found in the registry", digest)
+		}
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if "sha256:"+hex.EncodeToString(sum[:]) != digest {
+		return nil, fmt.Errorf("registry: index %s does not match its digest", digest)
+	}
+	return data, nil
 }
 
 var recipeDigestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)

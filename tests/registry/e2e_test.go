@@ -223,20 +223,30 @@ cat "$2" "$4" >> "$last"
 printf '%s' "$manifest" | grep -o 'host:"[^"]*"' | sed 's/^host:"//; s/"$//' | while IFS= read -r p; do cat "$p" >> "$last"; done
 `
 
-func staticELF() []byte {
+func staticELF(machine elf.Machine) []byte {
 	b := make([]byte, 512)
 	copy(b, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
 	binary.LittleEndian.PutUint16(b[16:], uint16(elf.ET_EXEC))
-	binary.LittleEndian.PutUint16(b[18:], uint16(elf.EM_X86_64))
+	binary.LittleEndian.PutUint16(b[18:], uint16(machine))
 	binary.LittleEndian.PutUint32(b[20:], 1)
 	binary.LittleEndian.PutUint16(b[52:], 64)
 	return b
 }
 
-// buildApp builds an image of a runtime (2 MiB, shared between versions) and
-// an app file, recording its recipe in store.
+// buildApp builds a linux/amd64 image of a runtime (2 MiB, shared between
+// versions) and an app file, recording its recipe in store.
 func buildApp(t *testing.T, mkfs string, store *cas.Store, app string) string {
 	t.Helper()
+	return buildAppFor(t, mkfs, store, app, "linux/amd64")
+}
+
+// buildAppFor builds the image for a platform.
+func buildAppFor(t *testing.T, mkfs string, store *cas.Store, app, platform string) string {
+	t.Helper()
+	machine := elf.EM_X86_64
+	if platform == "linux/arm64" {
+		machine = elf.EM_AARCH64
+	}
 	in := t.TempDir()
 	write := func(name string, data []byte) string {
 		p := filepath.Join(in, name)
@@ -252,8 +262,8 @@ func buildApp(t *testing.T, mkfs string, store *cas.Store, app string) string {
 	img, err := image.NewStore(t.TempDir())
 	require.NoError(t, err)
 	m, err := image.NewBuilder(img).WithRecorder(recipe.Recorder{Store: store}).Build(context.Background(), image.BuildConfig{
-		Name: "web", Tag: "build", Platform: "linux/amd64", Layout: image.LayoutStandard,
-		BinaryPath: write("program", staticELF()),
+		Name: "web", Tag: "build", Platform: platform, Layout: image.LayoutStandard,
+		BinaryPath: write("program", staticELF(machine)),
 		PkgFiles: []pkg.File{
 			{HostPath: write("runtime", runtimeBytes), GuestPath: "usr/bin/runtime"},
 			{HostPath: write("server.js", []byte(app)), GuestPath: "app/server.js"},
@@ -400,7 +410,7 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 				del = token
 			}
 			if err := cl.DeleteRepo(context.Background(), del, ns, repo); err != nil {
-				for _, tag := range []string{"v1", "v2"} {
+				for _, tag := range []string{"v1", "v2", "v2-arm64", "multi"} {
 					_ = cl.DeleteTag(context.Background(), del, ns, repo, tag)
 				}
 			}
@@ -438,6 +448,31 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 	got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v2"), Store: machine, Mkfs: mkfsFor, Out: out})
 	require.NoError(t, err)
 	require.Equal(t, 1, got.BlobsFetched)
+
+	// One tag for both platforms, on registries that store image indexes.
+	d, err := cl.Discover(ctx)
+	require.NoError(t, err)
+	if d.Supports(client.FeatureIndex) {
+		arm := buildAppFor(t, mkfs, builder, fmt.Sprintf("console.log('v2 %s')", repo), "linux/arm64")
+		_, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v2-arm64"), Store: builder, Recipe: arm, Mkfs: mkfsFor})
+		require.NoError(t, err)
+		ix, err := transfer.PushIndex(ctx, transfer.IndexOptions{Client: cl, Token: token, Ref: ref("multi"), Sources: []naming.ImageReference{ref("v2-arm64"), ref("v2")}})
+		require.NoError(t, err)
+		for platform, want := range map[string]string{"linux/amd64": v2, "linux/arm64": arm} {
+			got, err := transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("multi"), Store: machine, Mkfs: mkfsFor, Out: out, Platform: platform})
+			require.NoError(t, err)
+			require.Equal(t, want, got.Recipe)
+			require.Equal(t, ix.Index, got.Index)
+		}
+	} else {
+		t.Logf("%s does not store image indexes: skipping them", cl.Base)
+	}
+
+	if d.Supports(client.FeatureAttestations) {
+		checkAttestations(t, ctx, cl, d, credential, token, ref("v2"), v2)
+	} else {
+		t.Logf("%s does not store attestations: skipping them", cl.Base)
+	}
 
 	_, err = cl.PushToken(ctx, credential, "jerboa-e2e-forbidden", repo)
 	require.True(t, client.IsCode(err, "DENIED"), "got %v", err)
