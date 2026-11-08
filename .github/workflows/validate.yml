@@ -115,7 +115,10 @@ jobs:
         govulncheck ./...
   kernel-build:
     name: Kernel Build
-    runs-on: ubuntu-latest
+    # Pinned: the E2E job runs this build's mkfs on the KVM runner, and
+    # mkfs built on ubuntu-26.04 dies there with an illegal instruction.
+    # Move it only together with that runner.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
