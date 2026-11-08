@@ -4,7 +4,7 @@
 set -euo pipefail
 
 NAME="${PACKAGE_NAME:-caddy}"
-VERSION="${PACKAGE_VERSION:-2.7.6}"
+VERSION="${PACKAGE_VERSION:-2.11.7}"
 SOURCE_URL="${SOURCE_URL:-https://github.com/caddyserver/caddy/archive/refs/tags/v${VERSION}.tar.gz}"
 
 PACKAGE_ROOT="$(pwd)"
