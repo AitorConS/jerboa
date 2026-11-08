@@ -75,8 +75,10 @@ func shouldSign(cmd *cobra.Command, sign bool, d client.Discovery, host, cred st
 }
 
 // signPushed signs the provenance of subject, and sbom when there is one,
-// and uploads both attestations.
-func signPushed(ctx context.Context, out io.Writer, cl *client.Client, token string, ref naming.ImageReference, subject string, sbom []byte) error {
+// and uploads both attestations. A predicate this workflow already signed for
+// subject is not signed again: pushing the same image or index under another
+// tag (a version and latest) would otherwise pile up duplicate attestations.
+func signPushed(ctx context.Context, out io.Writer, cl *client.Client, token, cdn string, ref naming.ImageReference, subject string, sbom []byte) error {
 	gh, err := attest.GitHubFromEnv()
 	if err != nil {
 		return err
@@ -88,6 +90,16 @@ func signPushed(ctx context.Context, out io.Writer, cl *client.Client, token str
 	predicates := []attest.Predicate{{Type: attest.ProvenanceType, Body: provenance}}
 	if len(sbom) > 0 {
 		predicates = append(predicates, attest.Predicate{Type: attest.SBOMType, Body: sbom})
+	}
+	workflow, _, _ := strings.Cut(gh.WorkflowRef, "@")
+	listed, err := cl.Attestations(ctx, cdn, ref.Namespace, ref.Repository, subject)
+	if err != nil {
+		fmt.Fprintf(out, "note: could not list the attestations %s already has, signing anyway: %v\n", subject, err)
+	}
+	predicates = unsigned(predicates, listed, workflow)
+	if len(predicates) == 0 {
+		fmt.Fprintf(out, "Already signed %s by %s\n", subject, workflow)
+		return nil
 	}
 	trust, err := attest.LoadTrust(ctx, sigstoreCacheDir())
 	if err != nil {
@@ -106,6 +118,25 @@ func signPushed(ctx context.Context, out io.Writer, cl *client.Client, token str
 	}
 	fmt.Fprintf(out, "Signed %s: %s, as %s\n", subject, strings.Join(names, " and "), gh.ServerURL+"/"+gh.WorkflowRef)
 	return nil
+}
+
+// unsigned returns the predicates that have no attestation listed from
+// workflow, the identity the registry records for a trusted publisher.
+func unsigned(predicates []attest.Predicate, listed []client.AttestationRef, workflow string) []attest.Predicate {
+	var out []attest.Predicate
+	for _, p := range predicates {
+		signed := false
+		for _, a := range listed {
+			if a.PredicateType == p.Type && a.Identity == workflow {
+				signed = true
+				break
+			}
+		}
+		if !signed {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // verification is how a pull or verify checks an image's signatures.
