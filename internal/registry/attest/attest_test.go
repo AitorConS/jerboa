@@ -2,12 +2,12 @@ package attest
 
 import (
 	"encoding/json"
-	"github.com/AitorConS/jerboa/internal/naming"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/sigstore/sigstore-go/pkg/testing/ca"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/stretchr/testify/require"
