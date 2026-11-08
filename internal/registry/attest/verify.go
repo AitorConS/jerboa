@@ -107,9 +107,14 @@ var verifierOptions = []verify.VerifierOption{
 	verify.WithSignedCertificateTimestamps(1), verify.WithTransparencyLog(1), verify.WithObserverTimestamps(1),
 }
 
+// ErrUnsigned is the error of a subject without attestations.
+var ErrUnsigned = errors.New("has no attestations")
+
 // Result is one attestation that verified.
 type Result struct {
 	PredicateType string
+	// Identity is the identity it verified against.
+	Identity Identity
 	// Signer is the workflow the certificate names (its SAN).
 	Signer string
 	// Commit, Ref and Run describe the job, from the certificate.
@@ -159,11 +164,12 @@ func Verify(trusted root.TrustedMaterial, subject string, id Identity, entities 
 			c := res.Signature.Certificate
 			r.Signer, r.Commit, r.Ref, r.Run = c.SubjectAlternativeName, c.SourceRepositoryDigest, c.SourceRepositoryRef, c.RunInvocationURI
 		}
+		r.Identity = id
 		out = append(out, r)
 	}
 	if len(out) == 0 {
 		if len(entities) == 0 {
-			return nil, fmt.Errorf("%s has no attestations", subject)
+			return nil, fmt.Errorf("%s %w", subject, ErrUnsigned)
 		}
 		return nil, fmt.Errorf("no attestation of %s is signed by %s: %w", subject, id, errors.Join(errs...))
 	}

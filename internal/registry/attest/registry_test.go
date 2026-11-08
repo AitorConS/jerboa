@@ -51,6 +51,7 @@ func TestPublishAndCheck(t *testing.T) {
 	require.Len(t, list, 2)
 	require.Equal(t, published[1].Digest, list[1].Digest)
 	require.Equal(t, SBOMType, list[1].PredicateType)
+	require.Equal(t, registrytest.DefaultPublisher, list[1].Identity)
 	data, err := cl.Attestation(ctx, d.CDN, "acme", "app", subject, list[0].Digest)
 	require.NoError(t, err)
 	require.Contains(t, string(data), "dsseEnvelope")
@@ -70,11 +71,20 @@ func TestPublishAndCheck(t *testing.T) {
 	require.NoError(t, err)
 	id, _ := ParseIdentity("acme/app")
 	// Unsigned bundles vouch for nothing.
-	_, err = Check(ctx, cl, d.CDN, ref, other, id, vs)
+	_, err = Check(ctx, cl, d.CDN, ref, other, &id, vs)
 	require.ErrorContains(t, err, "has no attestations")
 	reg.SetObject("refs/acme/app/"+strings.TrimPrefix(other, "sha256:"), []byte("{}"))
 	_, err = Publish(ctx, cl, "token", ref, other, predicates[1:], signer)
 	require.NoError(t, err)
-	_, err = Check(ctx, cl, d.CDN, ref, other, id, vs)
+	_, err = Check(ctx, cl, d.CDN, ref, other, &id, vs)
 	require.ErrorContains(t, err, "has no attestations")
+	_, err = Check(ctx, cl, d.CDN, ref, other, nil, vs)
+	require.ErrorContains(t, err, "has no attestations")
+	_, err = Check(ctx, cl, d.CDN, naming.ImageReference{Registry: reg.Host(), Namespace: "acme", Repository: "none"}, other, nil, vs)
+	require.ErrorIs(t, err, ErrUnsigned)
+
+	// Without a trusted publisher, the registry takes no attestations.
+	reg.Publisher = ""
+	_, err = Publish(ctx, cl, "token", ref, other, predicates[:1], signer)
+	require.ErrorContains(t, err, "DENIED")
 }

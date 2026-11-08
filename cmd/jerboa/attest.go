@@ -7,6 +7,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/attest"
@@ -16,13 +17,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Images pushed from GitHub Actions are signed with Sigstore (attestations
-// of their provenance and SBOM); pulls verify the images a policy rule, or
-// --identity, names a signer for. See internal/registry/attest.
+// Images trusted publishers push from GitHub Actions are signed with
+// Sigstore (attestations of their provenance and SBOM). Pulls verify every
+// image that has attestations: against the policy's rule for its namespace,
+// else the signer remembered for its repository, else the workflow the
+// registry recorded as their uploader, which is then remembered. See
+// internal/registry/attest.
 
 func sigstoreCacheDir() string { return filepath.Join(signingStorePath(), "sigstore") }
 
 func policyPath() string { return filepath.Join(signingStorePath(), "policy.json") }
+
+func signersPath() string { return filepath.Join(signingStorePath(), "signers.json") }
 
 // predicateNames are the short names of the predicates jerboa signs.
 var predicateNames = map[string]string{attest.ProvenanceType: "provenance", attest.SBOMType: "sbom"}
@@ -35,9 +41,11 @@ func predicateName(t string) string {
 }
 
 // shouldSign decides whether a push signs: --sign when given, otherwise
-// whenever the push runs in a GitHub Actions job that may request OIDC
-// tokens and the registry stores attestations.
-func shouldSign(cmd *cobra.Command, sign bool, d client.Discovery, host string) (bool, error) {
+// whenever a trusted publisher pushes (cred is the GitHub Actions OIDC
+// token) to a registry that stores attestations. Registries take
+// attestations from trusted publishers only: the workflow their OIDC token
+// names is the identity pulls expect the signatures to have.
+func shouldSign(cmd *cobra.Command, sign bool, d client.Discovery, host, cred string) (bool, error) {
 	explicit := cmd.Flags().Changed("sign")
 	if explicit && !sign {
 		return false, nil
@@ -46,6 +54,14 @@ func shouldSign(cmd *cobra.Command, sign bool, d client.Discovery, host string) 
 		if explicit {
 			return false, errors.New("--sign signs with the OIDC token of a GitHub Actions job: run it in a job with permissions: id-token: write")
 		}
+		return false, nil
+	}
+	if cred != credentials.GitHubActions {
+		const why = "only trusted publishers sign: push with the job's OIDC token (no " + credentials.EnvToken + ") from a workflow the namespace trusts"
+		if explicit {
+			return false, errors.New(why)
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "note: pushing without signing; %s\n", why)
 		return false, nil
 	}
 	if !d.Supports(client.FeatureAttestations) {
@@ -92,46 +108,103 @@ func signPushed(ctx context.Context, out io.Writer, cl *client.Client, token str
 	return nil
 }
 
-// requiredIdentity returns who must have signed ref: --identity, or the
-// policy's rule for its namespace. verify asks for a check even without one,
-// which is then an error.
-func requiredIdentity(ref naming.ImageReference, identity string, verify bool) (attest.Identity, bool, error) {
+// verification is how a pull or verify checks an image's signatures.
+type verification struct {
+	// id is who must have signed; nil means the workflow the registry
+	// recorded for each attestation.
+	id *attest.Identity
+	// source says where id comes from, for messages.
+	source string
+	// required fails an image without signatures.
+	required bool
+	// remember records the signer once it verifies.
+	remember bool
+}
+
+// verificationFor returns how ref is checked: against --identity, the
+// policy's rule for its namespace (official images always have one), or the
+// signer remembered for its repository, all required; otherwise against the
+// registry's record, required only with verify, and remembered.
+func verificationFor(ref naming.ImageReference, identity string, verify bool) (verification, error) {
 	if identity != "" {
 		id, err := attest.ParseIdentity(identity)
-		return id, err == nil, err
+		if err != nil {
+			return verification{}, err
+		}
+		return verification{id: &id, source: "--identity", required: true}, nil
 	}
 	policy, err := attest.LoadPolicy(policyPath())
 	if err != nil {
-		return attest.Identity{}, false, err
+		return verification{}, err
 	}
 	id, ok, err := policy.For(ref.Registry, ref.Namespace)
 	if err != nil {
-		return attest.Identity{}, false, err
+		return verification{}, err
 	}
-	if !ok && verify {
-		return attest.Identity{}, false, fmt.Errorf("no identity to verify %s/%s against: pass --identity, or add a rule to %s", ref.Registry, ref.Namespace, policyPath())
+	if ok {
+		return verification{id: &id, source: "the policy", required: true}, nil
 	}
-	return id, ok, nil
+	signers, err := attest.LoadSigners(signersPath())
+	if err != nil {
+		return verification{}, err
+	}
+	if id, ok := signers.Get(ref); ok {
+		return verification{id: &id, source: "remembered", required: true}, nil
+	}
+	return verification{required: verify, remember: true}, nil
 }
 
-// verifySubject checks that subject, a recipe or index of the repository ref
-// names, has an attestation signed by id.
-func verifySubject(ctx context.Context, ref naming.ImageReference, subject string, id attest.Identity) ([]attest.Result, error) {
+// verifySubject checks the signatures of subject, a recipe or index of the
+// repository ref names, as v says. It returns nil results for an unsigned
+// image v does not require signed.
+func verifySubject(ctx context.Context, out io.Writer, ref naming.ImageReference, subject string, v verification) ([]attest.Result, error) {
 	cl := client.New(ref.Registry)
 	d, err := cl.Discover(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !d.Supports(client.FeatureAttestations) {
-		return nil, fmt.Errorf("%s does not store attestations, so %s cannot be verified", ref.Registry, ref)
+		if v.required {
+			return nil, fmt.Errorf("%s does not store attestations, so %s cannot be verified", ref.Registry, ref)
+		}
+		return nil, nil
+	}
+	repo := ref.Registry + "/" + ref.Namespace + "/" + ref.Repository
+	// Unsigned and not required: nothing to verify, so no trusted root needed.
+	if !v.required {
+		list, err := cl.Attestations(ctx, d.CDN, ref.Namespace, ref.Repository, subject)
+		if err != nil {
+			return nil, err
+		}
+		if len(list) == 0 {
+			return nil, nil
+		}
 	}
 	trust, err := attest.LoadTrust(ctx, sigstoreCacheDir())
 	if err != nil {
 		return nil, err
 	}
-	results, err := attest.Check(ctx, cl, d.CDN, ref, subject, id, trust.Root)
-	if err != nil {
-		return nil, fmt.Errorf("%s is not signed by %s: %w", ref, id, err)
+	results, err := attest.Check(ctx, cl, d.CDN, ref, subject, v.id, trust.Root)
+	switch {
+	case err == nil:
+	case v.source == "remembered":
+		return nil, fmt.Errorf("%s was signed by %s before, and %s is not: %w\nIf its publisher changed on purpose, run: jerboa registry signers forget %s", repo, v.id, ref, err, repo)
+	case v.id != nil:
+		return nil, fmt.Errorf("%s is not signed by %s (%s): %w", ref, v.id, v.source, err)
+	default:
+		return nil, fmt.Errorf("%s fails its signature check: %w", ref, err)
+	}
+	if v.remember {
+		signer := results[len(results)-1].Identity
+		signers, err := attest.LoadSigners(signersPath())
+		if err != nil {
+			return nil, err
+		}
+		if err := signers.Remember(ref, signer); err != nil {
+			return nil, err
+		}
+		signer.Ref = ""
+		fmt.Fprintf(out, "Remembering %s as the signer of %s: later pulls require it\n", signer, repo)
 	}
 	return results, nil
 }
@@ -151,12 +224,15 @@ func newRegistryVerifyCmd() *cobra.Command {
 	var identity, platform string
 	cmd := &cobra.Command{
 		Use:   "verify <[registry/]namespace/repository[:tag|@digest]>",
-		Short: "Check that an image in a registry is signed by the identity it should be",
-		Long: `Check that an image in a registry is signed by the identity it should be.
+		Short: "Check an image's Sigstore signatures, as a pull does",
+		Long: `Check an image's Sigstore signatures, as a pull does, without pulling it.
 
-The identity is --identity, or the rule of the policy file
-(~/.jerboa/policy.json) for the image's namespace. It is a GitHub
-repository, optionally narrowed to one workflow and one ref:
+The signer it must have is --identity, else the rule of the policy file
+(~/.jerboa/policy.json) for the image's namespace, else the signer a pull
+remembered for the repository (~/.jerboa/signers.json), else the workflow the
+registry recorded as the uploader of each signature: a trusted publisher of
+the namespace. An identity is a GitHub repository, optionally narrowed to one
+workflow and one ref:
 
   owner/repo
   owner/repo/.github/workflows/publish.yml
@@ -164,23 +240,25 @@ repository, optionally narrowed to one workflow and one ref:
 
 A tag published for several platforms is checked for this host's platform,
 or the one --platform names.`,
-		Example: `  jerboa registry verify acme/web:v1 --identity acme/web/.github/workflows/release.yml@refs/heads/main
-  jerboa registry verify jerboa/postgresql:16`,
+		Example: `  jerboa registry verify acme/web:v1
+  jerboa registry verify acme/web:v1 --identity acme/web/.github/workflows/release.yml@refs/heads/main`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := naming.ParseImageReference(args[0])
 			if err != nil {
 				return fmt.Errorf("verify: %w", err)
 			}
-			id, _, err := requiredIdentity(ref, identity, true)
+			v, err := verificationFor(ref, identity, true)
 			if err != nil {
 				return fmt.Errorf("verify: %w", err)
 			}
+			// Checking remembers nothing: only pulls do.
+			v.remember = false
 			subject, err := resolveSubject(cmd.Context(), ref, platform)
 			if err != nil {
 				return fmt.Errorf("verify: %w", err)
 			}
-			results, err := verifySubject(cmd.Context(), ref, subject, id)
+			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, subject, v)
 			if err != nil {
 				return fmt.Errorf("verify: %w", err)
 			}
@@ -190,6 +268,62 @@ or the one --platform names.`,
 	}
 	cmd.Flags().StringVar(&identity, "identity", "", "the GitHub repository, workflow and ref the image must be signed from")
 	cmd.Flags().StringVar(&platform, "platform", "", "the platform to check, for a tag published for several (default: this host's)")
+	return cmd
+}
+
+func newRegistrySignersCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "signers",
+		Short: "List the signers pulls remember for repositories",
+		Long: `List the signers pulls remember for repositories.
+
+The first pull of a signed image remembers the workflow that signed it, and
+later pulls of the repository require that workflow, so a change of
+publisher, or an unsigned image, is refused (~/.jerboa/signers.json).`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			signers, err := attest.LoadSigners(signersPath())
+			if err != nil {
+				return err
+			}
+			list := signers.List()
+			if len(list) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "No signers remembered yet.")
+				return nil
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			fmt.Fprintln(w, "REPOSITORY\tSIGNER")
+			for _, e := range list {
+				fmt.Fprintf(w, "%s\t%s\n", e[0], e[1])
+			}
+			return w.Flush()
+		},
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "forget <[registry/]namespace/repository>",
+		Short: "Forget a repository's signer, so the next pull trusts whoever signs it",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ref, err := naming.ParseImageReference(args[0])
+			if err != nil {
+				return fmt.Errorf("signers forget: %w", err)
+			}
+			signers, err := attest.LoadSigners(signersPath())
+			if err != nil {
+				return err
+			}
+			key := attest.SignerKey(ref)
+			ok, err := signers.Forget(key)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return fmt.Errorf("signers forget: no signer remembered for %s", key)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Forgot the signer of %s\n", key)
+			return nil
+		},
+	})
 	return cmd
 }
 

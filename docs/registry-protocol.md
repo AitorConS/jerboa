@@ -208,7 +208,7 @@ payload is an [in-toto statement](https://github.com/in-toto/attestation/blob/ma
  "predicate": {…}}
 ```
 
-`jerboa push` in a GitHub Actions job signs two of them keyless, with a
+`jerboa push` by a trusted publisher signs two of them keyless, with a
 certificate Fulcio issues for the job's workflow and an entry in the Rekor
 log:
 - SLSA v1 provenance (`https://slsa.dev/provenance/v1`, build type
@@ -218,19 +218,23 @@ log:
   build` recorded.
 
 Upload, after the push:
-- `PUT /v2/<ns>/<repo>/attestations/<subject-hex>` with the bundle (at most 256 KiB), and a push token for the repository.
+- `PUT /v2/<ns>/<repo>/attestations/<subject-hex>` with the bundle (at most 256 KiB), and a push token for the repository issued to a trusted publisher (`POST /auth/oidc`); other push tokens get `403 DENIED`.
+  - The registry records the workflow the OIDC token named, `owner/repo/<workflow path>`, as the attestation's identity.
   - The subject must be a recipe or index of the repository (`SUBJECT_UNKNOWN`), and the statement's only subject (`ATTESTATION_INVALID`).
   - The server checks the bundle's form, not its signature; clients verify signatures.
   - It answers `{"attestation": "sha256:…"}`, the SHA-256 of the bundle: 201 when it is new, 200 when it was stored already.
-  - It publishes the bundle and adds it to `attestations/<ns>/<repo>/<subject-hex>/index.json`: `{"attestations": [{"digest": "sha256:…", "predicateType": "…", "size": 1234}]}`, oldest first.
+  - It publishes the bundle and adds it to `attestations/<ns>/<repo>/<subject-hex>/index.json`: `{"attestations": [{"digest": "sha256:…", "predicateType": "…", "size": 1234, "identity": "owner/repo/.github/workflows/publish.yml"}]}`, oldest first. A subject keeps its 32 newest attestations per repository.
 
-Verification (`jerboa registry verify`, and pulls a policy covers):
+Verification (`jerboa registry verify`, and every pull of an image that has attestations):
 1. Read the index of the subject's attestations, then each bundle, checked against its SHA-256; at most the 32 newest.
 2. Verify each bundle against the Sigstore trusted root (from its TUF repository): the certificate chains to Fulcio and has a certificate transparency entry, the signature has a Rekor entry and a trusted time, and the statement's subject is the digest.
-3. Check the certificate's identity: issuer `https://token.actions.githubusercontent.com` and a SAN of `https://github.com/<owner>/<repo>/<workflow>@<ref>` matching what the puller expects.
+3. Check the certificate's identity: issuer `https://token.actions.githubusercontent.com` and a SAN of `https://github.com/<owner>/<repo>/<workflow>@<ref>` matching the expected identity: the puller's (`--identity`, a policy rule, or the signer remembered for the repository), else the identity the registry listed for that attestation.
 
-At least one attestation must verify. Anyone who can push to a repository can
-upload attestations to it, so the others count for nothing.
+At least one attestation must verify; the others count for nothing. The
+registry's record and the certificate are independent: the first comes from
+the OIDC token the registry verified at upload, the second from the token
+Fulcio verified at signing, so a bundle verifies against its record only if
+both name the same workflow.
 
 Before uploading anything, the client assembles the image from the recipe and its local blob store and checks the disk digest, so it never publishes a recipe that does not rebuild its disk.
 

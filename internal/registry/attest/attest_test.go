@@ -2,6 +2,7 @@ package attest
 
 import (
 	"encoding/json"
+	"github.com/AitorConS/jerboa/internal/naming"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,4 +189,82 @@ func TestPolicy(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`{"rules":[]}`), 0o600))
 	_, err = LoadPolicy(path)
 	require.ErrorContains(t, err, "unknown field")
+}
+
+func TestVerifyListed(t *testing.T) {
+	saved := verifierOptions
+	verifierOptions = []verify.VerifierOption{verify.WithTransparencyLog(1), verify.WithObserverTimestamps(1)}
+	t.Cleanup(func() { verifierOptions = saved })
+	vs, err := ca.NewVirtualSigstore()
+	require.NoError(t, err)
+	signed, err := vs.Attest(workflow, GitHubIssuer, statement(t, subject))
+	require.NoError(t, err)
+	const recorded = "acme/app/.github/workflows/publish.yml"
+
+	// Each against the workflow the registry recorded for it.
+	got, err := VerifyListed(vs, subject, nil, []Listed{{Identity: recorded, Entity: signed}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, recorded, got[0].Identity.String())
+
+	// A certificate for another workflow than the one that uploaded it fails,
+	// as does a record that names no workflow.
+	for _, r := range []string{"acme/app/.github/workflows/other.yml", "evil/app/.github/workflows/publish.yml", "acme/app", "", "nonsense"} {
+		_, err = VerifyListed(vs, subject, nil, []Listed{{Identity: r, Entity: signed}})
+		require.ErrorContains(t, err, "signed by the workflow that uploaded it", r)
+	}
+	// One that verifies among others is enough.
+	got, err = VerifyListed(vs, subject, nil, []Listed{{Identity: "evil/app/.github/workflows/x.yml", Entity: signed}, {Identity: recorded, Entity: signed}})
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+
+	// A wanted identity overrides the records.
+	want, _ := ParseIdentity("acme/app/.github/workflows/publish.yml@refs/heads/main")
+	got, err = VerifyListed(vs, subject, &want, []Listed{{Identity: "evil/app/.github/workflows/x.yml", Entity: signed}})
+	require.NoError(t, err)
+	require.Equal(t, want, got[0].Identity)
+	want, _ = ParseIdentity("acme/other")
+	_, err = VerifyListed(vs, subject, &want, []Listed{{Identity: recorded, Entity: signed}})
+	require.Error(t, err)
+
+	_, err = VerifyListed(vs, subject, nil, nil)
+	require.ErrorIs(t, err, ErrUnsigned)
+	_, err = VerifyListed(vs, subject, &want, nil)
+	require.ErrorIs(t, err, ErrUnsigned)
+}
+
+func TestSigners(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "jerboa", "signers.json")
+	s, err := LoadSigners(path)
+	require.NoError(t, err)
+	ref := naming.ImageReference{Registry: "registry.jerboa.dev", Namespace: "acme", Repository: "web", Tag: "v1"}
+	_, ok := s.Get(ref)
+	require.False(t, ok)
+
+	id, _ := ParseIdentity("acme/images/.github/workflows/publish.yml@refs/tags/v1")
+	require.NoError(t, s.Remember(ref, id))
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	s, err = LoadSigners(path)
+	require.NoError(t, err)
+	got, ok := s.Get(naming.ImageReference{Registry: "registry.jerboa.dev", Namespace: "acme", Repository: "web", Digest: subject})
+	require.True(t, ok)
+	require.Equal(t, "acme/images/.github/workflows/publish.yml", got.String(), "the ref is not remembered")
+	require.Equal(t, [][2]string{{"registry.jerboa.dev/acme/web", "acme/images/.github/workflows/publish.yml"}}, s.List())
+
+	ok, err = s.Forget("registry.jerboa.dev/acme/other")
+	require.NoError(t, err)
+	require.False(t, ok)
+	ok, err = s.Forget("registry.jerboa.dev/acme/web")
+	require.NoError(t, err)
+	require.True(t, ok)
+	s, err = LoadSigners(path)
+	require.NoError(t, err)
+	require.Empty(t, s.List())
+
+	require.NoError(t, os.WriteFile(path, []byte(`{"signers":{"x/a/b":"not an identity"}}`), 0o600))
+	_, err = LoadSigners(path)
+	require.Error(t, err)
 }

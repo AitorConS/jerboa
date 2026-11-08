@@ -32,11 +32,18 @@ type Server struct {
 	Requests map[string]int
 	// Features is what GET /v2/ advertises; New sets every feature.
 	Features []string
+	// Publisher is the workflow the registry records as the identity of the
+	// attestations it takes, as from a trusted publisher's OIDC token; empty
+	// refuses them, as for pushes with other credentials.
+	Publisher string
 }
+
+// DefaultPublisher is the Publisher New sets.
+const DefaultPublisher = "acme/images/.github/workflows/publish.yml"
 
 // New starts a fake registry.
 func New() *Server {
-	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, pulls: map[string]int{}, Requests: map[string]int{}, Features: []string{"index", "attestations"}}
+	s := &Server{objects: map[string][]byte{}, locations: map[string]pack.Location{}, repos: map[string]map[string]string{}, pulls: map[string]int{}, Requests: map[string]int{}, Features: []string{"index", "attestations"}, Publisher: DefaultPublisher}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -297,6 +304,10 @@ func (s *Server) serveWrite(w http.ResponseWriter, r *http.Request, ns, repo, ki
 // recipe or index of the repository and the subject of the bundle's
 // statement, and lists it in the CDN's index of the subject's attestations.
 func (s *Server) putAttestation(w http.ResponseWriter, ns, repo, subjectHex string, body []byte) {
+	if s.Publisher == "" {
+		fail(w, http.StatusForbidden, "DENIED", "attestations are uploaded by trusted publishers")
+		return
+	}
 	_, recipe := s.objects["refs/"+ns+"/"+repo+"/"+subjectHex]
 	_, index := s.objects["indexes/"+subjectHex+".json"]
 	if !recipe && !index {
@@ -326,6 +337,7 @@ func (s *Server) putAttestation(w http.ResponseWriter, ns, repo, subjectHex stri
 		Digest        string `json:"digest"`
 		PredicateType string `json:"predicateType"`
 		Size          int    `json:"size"`
+		Identity      string `json:"identity"`
 	}
 	var list struct {
 		Attestations []entry `json:"attestations"`
@@ -335,7 +347,7 @@ func (s *Server) putAttestation(w http.ResponseWriter, ns, repo, subjectHex stri
 	if _, ok := s.objects[prefix+hex.EncodeToString(sum[:])+".json"]; !ok {
 		status = http.StatusCreated
 		s.objects[prefix+hex.EncodeToString(sum[:])+".json"] = body
-		list.Attestations = append(list.Attestations, entry{Digest: digest, PredicateType: st.PredicateType, Size: len(body)})
+		list.Attestations = append(list.Attestations, entry{Digest: digest, PredicateType: st.PredicateType, Size: len(body), Identity: s.Publisher})
 		s.objects[prefix+"index.json"], _ = json.Marshal(list)
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -206,10 +206,11 @@ func newPushCmd(endpoint *string) *cobra.Command {
 With --index, push no image: tag an image index of images already pushed,
 one per platform, so the tag pulls the image built for each host.
 
-In a GitHub Actions job that may request OIDC tokens (permissions:
-id-token: write), the push is also signed with Sigstore: attestations of
-the image's provenance (the repository, commit, workflow and run) and of its
-SBOM are stored with it, for pulls to verify. --sign=false pushes unsigned.`,
+A trusted publisher's push (a GitHub Actions job with permissions:
+id-token: write, pushing with the job's OIDC token) is also signed with
+Sigstore: attestations of the image's provenance (the repository, commit,
+workflow and run) and of its SBOM are stored with it, for pulls to verify.
+--sign=false pushes unsigned.`,
 		Example: `  jerboa push aitorcons/web:v1
   jerboa push --index aitorcons/web:v1 aitorcons/web:v1-amd64 aitorcons/web:v1-arm64`,
 		Args: func(cmd *cobra.Command, args []string) error {
@@ -239,7 +240,7 @@ SBOM are stored with it, for pulls to verify. --sign=false pushes unsigned.`,
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
-			signed, err := shouldSign(cmd, sign, d, ref.Registry)
+			signed, err := shouldSign(cmd, sign, d, ref.Registry, cred)
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
@@ -316,10 +317,14 @@ func newPullCmd(endpoint *string) *cobra.Command {
 A tag published for several platforms pulls the image for this host, or the
 one --platform names.
 
-An image whose namespace has a rule in the policy file (~/.jerboa/policy.json),
-or the official images under jerboa/, is kept only if it is signed by the
-identity the rule names; --identity checks against another one. A pull that
-fails the check removes what it pulled. See jerboa registry verify.`,
+A signed image is kept only if its Sigstore signatures verify, signed by:
+--identity, else the rule of the policy file (~/.jerboa/policy.json) for its
+namespace (official images under jerboa/ always have one), else the signer
+remembered for its repository, else the workflow the registry recorded as
+their uploader. The first pull of a repository that verifies remembers its
+signer (~/.jerboa/signers.json): later pulls refuse another signer, or an
+unsigned image. --verify refuses unsigned images too. A pull that fails the
+check removes what it pulled. See jerboa registry verify and signers.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if platform != "" {
@@ -331,7 +336,7 @@ fails the check removes what it pulled. See jerboa registry verify.`,
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
-			id, check, err := requiredIdentity(ref, identity, verify)
+			v, err := verificationFor(ref, identity, verify)
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
@@ -344,14 +349,14 @@ fails the check removes what it pulled. See jerboa registry verify.`,
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
-			if check {
-				results, err := verifySubject(cmd.Context(), ref, res.Recipe, id)
-				if err != nil {
-					if rmErr := c.ImageRemove(cmd.Context(), res.Image.Name+":"+res.Image.Tag); rmErr != nil {
-						return fmt.Errorf("pull: %w (and removing the pulled image failed: %w)", err, rmErr)
-					}
-					return fmt.Errorf("pull: %w; the pulled image was removed", err)
+			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, res.Recipe, v)
+			if err != nil {
+				if rmErr := c.ImageRemove(cmd.Context(), res.Image.Name+":"+res.Image.Tag); rmErr != nil {
+					return fmt.Errorf("pull: %w (and removing the pulled image failed: %w)", err, rmErr)
 				}
+				return fmt.Errorf("pull: %w; the pulled image was removed", err)
+			}
+			if results != nil {
 				printVerified(cmd.OutOrStdout(), res.Recipe, results)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s (%s): fetched %d of %d files (%s) in %d requests\n%s\n",
@@ -360,7 +365,7 @@ fails the check removes what it pulled. See jerboa registry verify.`,
 		},
 	}
 	cmd.Flags().StringVar(&platform, "platform", "", "the platform to pull, linux/amd64 or linux/arm64 (default: this host's)")
-	cmd.Flags().BoolVar(&verify, "verify", false, "keep the image only if it is signed by the identity the policy file names for its namespace")
+	cmd.Flags().BoolVar(&verify, "verify", false, "keep the image only if it is signed, even the first pull of a repository")
 	cmd.Flags().StringVar(&identity, "identity", "", "keep the image only if it is signed from this GitHub repository[/workflow[@ref]] (implies --verify)")
 	return cmd
 }
@@ -447,7 +452,7 @@ func newRegistryCmd() *cobra.Command {
 			return nil
 		},
 	})
-	cmd.AddCommand(pat, newRepoCmd(&registry), newRegistryVerifyCmd())
+	cmd.AddCommand(pat, newRepoCmd(&registry), newRegistryVerifyCmd(), newRegistrySignersCmd())
 	return cmd
 }
 

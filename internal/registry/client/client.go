@@ -305,6 +305,9 @@ type AttestationRef struct {
 	Digest        string `json:"digest"`
 	PredicateType string `json:"predicateType"`
 	Size          int64  `json:"size"`
+	// Identity is the workflow that uploaded it, as the registry verified
+	// from the trusted publisher's OIDC token: owner/repo/<workflow path>.
+	Identity string `json:"identity"`
 }
 
 // Attestations lists the attestations of subject in a repository, from the

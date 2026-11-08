@@ -2,6 +2,7 @@ package attest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/AitorConS/jerboa/internal/naming"
@@ -52,9 +53,17 @@ func Publish(ctx context.Context, cl *client.Client, token string, ref naming.Im
 // maxChecked bounds the attestations read for one subject.
 const maxChecked = 32
 
-// Check verifies the attestations of subject in the repository ref names
-// against identity, and returns those signed by it.
-func Check(ctx context.Context, cl *client.Client, cdn string, ref naming.ImageReference, subject string, id Identity, trusted root.TrustedMaterial) ([]Result, error) {
+// Listed is an attestation as the registry lists it: the bundle, and the
+// workflow the registry recorded as its uploader (owner/repo/<workflow path>).
+type Listed struct {
+	Identity string
+	Entity   verify.SignedEntity
+}
+
+// Check verifies the attestations of subject in the repository ref names:
+// against want, or, when want is nil, each against the workflow the
+// registry recorded for it. It returns those that verified.
+func Check(ctx context.Context, cl *client.Client, cdn string, ref naming.ImageReference, subject string, want *Identity, trusted root.TrustedMaterial) ([]Result, error) {
 	refs, err := cl.Attestations(ctx, cdn, ref.Namespace, ref.Repository, subject)
 	if err != nil {
 		return nil, err
@@ -62,7 +71,7 @@ func Check(ctx context.Context, cl *client.Client, cdn string, ref naming.ImageR
 	if len(refs) > maxChecked {
 		refs = refs[len(refs)-maxChecked:]
 	}
-	var entities []verify.SignedEntity
+	listed := make([]Listed, 0, len(refs))
 	for _, a := range refs {
 		data, err := cl.Attestation(ctx, cdn, ref.Namespace, ref.Repository, subject, a.Digest)
 		if err != nil {
@@ -70,10 +79,52 @@ func Check(ctx context.Context, cl *client.Client, cdn string, ref naming.ImageR
 		}
 		b, err := ParseBundle(data)
 		if err != nil {
-			// Someone else's malformed upload; it cannot vouch for anything.
+			// A malformed upload cannot vouch for anything.
 			continue
 		}
-		entities = append(entities, b)
+		listed = append(listed, Listed{Identity: a.Identity, Entity: b})
 	}
-	return Verify(trusted, subject, id, entities)
+	return VerifyListed(trusted, subject, want, listed)
+}
+
+// VerifyListed verifies attestations of subject against want, or, when want
+// is nil, each against the workflow the registry recorded for it, so its
+// certificate must name the workflow whose OIDC token uploaded it. It fails
+// unless at least one verifies; results are in the order listed, oldest
+// first.
+func VerifyListed(trusted root.TrustedMaterial, subject string, want *Identity, listed []Listed) ([]Result, error) {
+	if want != nil {
+		entities := make([]verify.SignedEntity, len(listed))
+		for i, l := range listed {
+			entities[i] = l.Entity
+		}
+		return Verify(trusted, subject, *want, entities)
+	}
+	if len(listed) == 0 {
+		return nil, fmt.Errorf("%s %w", subject, ErrUnsigned)
+	}
+	var (
+		out  []Result
+		errs []error
+	)
+	for _, l := range listed {
+		id, err := ParseIdentity(l.Identity)
+		if err == nil && id.Workflow == "" {
+			err = fmt.Errorf("identity %q names no workflow", l.Identity)
+		}
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		res, err := Verify(trusted, subject, id, []verify.SignedEntity{l.Entity})
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		out = append(out, res...)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no attestation of %s is signed by the workflow that uploaded it: %w", subject, errors.Join(errs...))
+	}
+	return out, nil
 }

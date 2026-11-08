@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/naming"
+	"github.com/AitorConS/jerboa/internal/registry/attest"
 	"github.com/AitorConS/jerboa/internal/registry/client"
+	"github.com/AitorConS/jerboa/internal/registry/credentials"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -30,36 +33,46 @@ func TestShouldSign(t *testing.T) {
 
 	// Outside GitHub Actions: unsigned, unless asked, which fails.
 	cmd, sign, _ := signCmd(t)
-	ok, err := shouldSign(cmd, *sign, withAttestations, "r")
+	ok, err := shouldSign(cmd, *sign, withAttestations, "r", credentials.GitHubActions)
 	require.NoError(t, err)
 	require.False(t, ok)
 	cmd, sign, _ = signCmd(t, "--sign")
-	_, err = shouldSign(cmd, *sign, withAttestations, "r")
+	_, err = shouldSign(cmd, *sign, withAttestations, "r", credentials.GitHubActions)
 	require.ErrorContains(t, err, "id-token: write")
 
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://example.com/token")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "x")
 	cmd, sign, _ = signCmd(t)
-	ok, err = shouldSign(cmd, *sign, withAttestations, "r")
+	ok, err = shouldSign(cmd, *sign, withAttestations, "r", credentials.GitHubActions)
 	require.NoError(t, err)
 	require.True(t, ok)
 	cmd, sign, _ = signCmd(t, "--sign=false")
-	ok, err = shouldSign(cmd, *sign, withAttestations, "r")
+	ok, err = shouldSign(cmd, *sign, withAttestations, "r", credentials.GitHubActions)
 	require.NoError(t, err)
 	require.False(t, ok)
 
-	// A registry without attestations: a note by default, an error when asked.
+	// Another credential than the job's OIDC token is no trusted publisher.
 	cmd, sign, stderr := signCmd(t)
-	ok, err = shouldSign(cmd, *sign, client.Discovery{}, "old.example")
+	ok, err = shouldSign(cmd, *sign, withAttestations, "r", "jpat_x")
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Contains(t, stderr.String(), "only trusted publishers sign")
+	cmd, sign, _ = signCmd(t, "--sign")
+	_, err = shouldSign(cmd, *sign, withAttestations, "r", "jpat_x")
+	require.ErrorContains(t, err, "only trusted publishers sign")
+
+	// A registry without attestations: a note by default, an error when asked.
+	cmd, sign, stderr = signCmd(t)
+	ok, err = shouldSign(cmd, *sign, client.Discovery{}, "old.example", credentials.GitHubActions)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Contains(t, stderr.String(), "old.example does not store attestations")
 	cmd, sign, _ = signCmd(t, "--sign")
-	_, err = shouldSign(cmd, *sign, client.Discovery{}, "old.example")
+	_, err = shouldSign(cmd, *sign, client.Discovery{}, "old.example", credentials.GitHubActions)
 	require.ErrorContains(t, err, "cannot keep signatures")
 }
 
-func TestRequiredIdentity(t *testing.T) {
+func TestVerificationFor(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	ref := func(s string) naming.ImageReference {
@@ -68,29 +81,47 @@ func TestRequiredIdentity(t *testing.T) {
 		return r
 	}
 
-	id, ok, err := requiredIdentity(ref("jerboa/postgresql:16"), "", false)
+	v, err := verificationFor(ref("jerboa/postgresql:16"), "", false)
 	require.NoError(t, err)
-	require.True(t, ok, "official images are always checked")
-	require.Equal(t, "AitorConS/jerboa-images", id.Repository)
+	require.True(t, v.required, "official images are always checked")
+	require.Equal(t, "AitorConS/jerboa-images", v.id.Repository)
+	require.False(t, v.remember)
 
-	_, ok, err = requiredIdentity(ref("acme/web:v1"), "", false)
+	// Nobody named: the registry's record, required only with --verify, then remembered.
+	v, err = verificationFor(ref("acme/web:v1"), "", false)
 	require.NoError(t, err)
-	require.False(t, ok)
-	_, _, err = requiredIdentity(ref("acme/web:v1"), "", true)
-	require.ErrorContains(t, err, "pass --identity")
+	require.Equal(t, verification{remember: true}, v)
+	v, err = verificationFor(ref("acme/web:v1"), "", true)
+	require.NoError(t, err)
+	require.Equal(t, verification{required: true, remember: true}, v)
 
-	id, ok, err = requiredIdentity(ref("acme/web:v1"), "acme/web", false)
+	v, err = verificationFor(ref("acme/web:v1"), "acme/web", false)
 	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "acme/web", id.String())
-	_, _, err = requiredIdentity(ref("acme/web:v1"), "acme", false)
+	require.True(t, v.required)
+	require.Equal(t, "acme/web", v.id.String())
+	_, err = verificationFor(ref("acme/web:v1"), "acme", false)
 	require.Error(t, err)
 
-	require.NoError(t, os.MkdirAll(filepath.Join(home, ".jerboa"), 0o755))
+	// A remembered signer is required.
+	signers, err := attest.LoadSigners(signersPath())
+	require.NoError(t, err)
+	id, err := attest.ParseIdentity("acme/images/.github/workflows/publish.yml@refs/heads/main")
+	require.NoError(t, err)
+	require.NoError(t, signers.Remember(ref("acme/web:v1"), id))
+	v, err = verificationFor(ref("acme/web@sha256:"+strings.Repeat("ab", 32)), "", false)
+	require.NoError(t, err)
+	require.Equal(t, "remembered", v.source)
+	require.True(t, v.required)
+	require.Equal(t, "acme/images/.github/workflows/publish.yml", v.id.String())
+	v, err = verificationFor(ref("acme/other:v1"), "", false)
+	require.NoError(t, err)
+	require.Nil(t, v.id)
+
+	// The policy comes before what is remembered.
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".jerboa", "policy.json"),
 		[]byte(`{"require":[{"namespace":"acme","identity":"acme/infra/.github/workflows/publish.yml@refs/heads/main"}]}`), 0o600))
-	id, ok, err = requiredIdentity(ref("acme/web:v1"), "", false)
+	v, err = verificationFor(ref("acme/web:v1"), "", false)
 	require.NoError(t, err)
-	require.True(t, ok)
-	require.Equal(t, "acme/infra/.github/workflows/publish.yml@refs/heads/main", id.String())
+	require.Equal(t, "the policy", v.source)
+	require.Equal(t, "acme/infra/.github/workflows/publish.yml@refs/heads/main", v.id.String())
 }

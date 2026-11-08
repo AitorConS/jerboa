@@ -86,19 +86,33 @@ A reference is `[registry/]namespace/repository[:tag|@sha256:<digest>]`:
 
 ### Signed images
 
-A push from a GitHub Actions job that may request OIDC tokens (`permissions: id-token: write`) is also **signed** with [Sigstore](https://www.sigstore.dev/), keyless: GitHub vouches for the job's repository, workflow and ref, Fulcio certifies a one-time key for them, and the signature goes into the public Rekor log. Two attestations are stored with the image:
+A push by a [trusted publisher](#github-actions-without-a-token) (a GitHub Actions job with `permissions: id-token: write`, pushing with the job's OIDC token) is also **signed** with [Sigstore](https://www.sigstore.dev/), keyless: GitHub vouches for the job's repository, workflow and ref, Fulcio certifies a one-time key for them, and the signature goes into the public Rekor log. Two attestations are stored with the image:
 - its **provenance**: the repository, commit, workflow and run that pushed it (SLSA v1);
 - its **SBOM**: the CycloneDX document `jerboa build` recorded (see [What a build produces]({% link build-concepts.md %}#software-bill-of-materials)).
 
-`--sign=false` pushes unsigned, and `--sign` fails outside such a job. `push --index` signs the index's provenance.
+The registry takes attestations from trusted publishers only, and records the workflow whose OIDC token uploaded them. Pushes with a personal access token, or from a laptop, are not signed. `--sign=false` pushes unsigned, and `--sign` fails where it cannot sign. `push --index` signs the index's provenance.
 
-Check who published an image:
+**Pulls verify signed images on their own.** A pull of an image that has attestations keeps it only if one verifies against the Sigstore trusted root and its certificate names the expected workflow:
+1. `--identity <owner/repo[/workflow[@ref]]>`, if given;
+2. else the rule of `~/.jerboa/policy.json` for its namespace. The official images under `jerboa/` always have one: they must be signed by `AitorConS/jerboa-images/.github/workflows/publish.yml@refs/heads/main`, whatever the policy file says;
+3. else the signer remembered for the repository;
+4. else the workflow the registry recorded as their uploader.
+
+The first pull of a repository that verifies **remembers** its signer, as SSH remembers host keys (`~/.jerboa/signers.json`). Later pulls require that workflow: an image signed by another one, or unsigned, is refused, so neither a change of publisher nor stripping the signatures goes unnoticed. If the publisher changed on purpose, forget it and pull again:
 
 ```sh
+jerboa registry signers                         # what is remembered
+jerboa registry signers forget aitorcons/web
+```
+
+An unsigned image of a repository with nothing remembered pulls as before; `--verify` refuses it. A pull that fails the check removes the image it pulled. Check an image without pulling it:
+
+```sh
+jerboa registry verify aitorcons/web:v1
 jerboa registry verify aitorcons/web:v1 --identity aitorcons/web/.github/workflows/release.yml@refs/heads/main
 ```
 
-The identity is a GitHub repository (`owner/repo`), optionally narrowed to a workflow (`owner/repo/.github/workflows/release.yml`) and a ref (`…@refs/heads/main`). A pull checks it too with `--identity`, or for every namespace a rule of `~/.jerboa/policy.json` covers:
+The identity is a GitHub repository (`owner/repo`), optionally narrowed to a workflow (`owner/repo/.github/workflows/release.yml`) and a ref (`…@refs/heads/main`). To pin a namespace's signer up front, add a rule to `~/.jerboa/policy.json`:
 
 ```json
 {"require": [
@@ -107,7 +121,7 @@ The identity is a GitHub repository (`owner/repo`), optionally narrowed to a wor
 ]}
 ```
 
-A pull that fails the check removes the image it pulled. The official images under `jerboa/` are always checked: they must be signed by `AitorConS/jerboa-images/.github/workflows/publish.yml@refs/heads/main`, whatever the policy file says. The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`.
+The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`. A workflow that pushes through a reusable workflow is certified by Fulcio as the reusable one; such signatures do not match the recorded workflow, so pull them with `--identity` or a policy rule.
 
 ### What a pull checks
 
