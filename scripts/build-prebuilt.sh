@@ -36,6 +36,8 @@ if [ -n "$MEMBER" ]; then
 else
   binary="$src"
 fi
+# A link in the archive could point anywhere on the build machine.
+[ ! -L "$binary" ] || { echo "Error: ${MEMBER} is a symbolic link" >&2; exit 1; }
 [ -f "$binary" ] || { echo "Error: ${MEMBER} not found in the download" >&2; find "$TMPDIR/src" -maxdepth 3 | head -50 >&2; exit 1; }
 file "$binary"
 case "$(file -b "$binary")" in
