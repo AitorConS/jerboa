@@ -386,6 +386,11 @@ func newRegistryCmd() *cobra.Command {
   jerboa registry pat create release --namespace acme --expires-in 30`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// 0 would be dropped from the request and get the registry's
+			// default, not what was asked for.
+			if cmd.Flags().Changed("expires-in") && (patOpts.ExpiresInDays < 1 || patOpts.ExpiresInDays > 365) {
+				return fmt.Errorf("pat create: --expires-in must be from 1 to 365 days, got %d", patOpts.ExpiresInDays)
+			}
 			cred, err := credentials.For(registry)
 			if err != nil {
 				return err

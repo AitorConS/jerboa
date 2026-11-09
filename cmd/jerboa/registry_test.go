@@ -181,3 +181,14 @@ func TestRepoRmDeletesATagOrTheRepository(t *testing.T) {
 	_, err = run(host + "/acme/web@sha256:" + strings.Repeat("a", 64))
 	require.ErrorContains(t, err, "not a digest")
 }
+
+func TestPATCreateRejectsExpiryOutOfRange(t *testing.T) {
+	for _, days := range []string{"0", "-1", "366"} {
+		cmd := newRegistryCmd()
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"pat", "create", "ci", "--expires-in", days})
+		err := cmd.Execute()
+		require.ErrorContains(t, err, "--expires-in must be from 1 to 365 days", days)
+	}
+}
