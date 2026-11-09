@@ -40,7 +40,31 @@ result, and `scripts/package-index.py` publishes it.
 | `source_url`, `sha256` | The source the build starts from. The workflow downloads it and refuses to build if the SHA-256 differs. |
 | `build_script` | The script that builds it. |
 | `arches` | Optional. Architectures to build, default `["amd64", "arm64"]`. Use `["amd64"]` for a recipe whose upstream only ships an x86-64 binary. |
-| `amd64`, `arm64` | Optional. Per-architecture overrides of `source_url` and `sha256`, for recipes that download a prebuilt binary rather than compile one. |
+| `amd64`, `arm64` | Optional. Per-architecture overrides of `source_url`, `sha256` and `member`, for recipes that download a prebuilt binary rather than compile one. |
+| `member` | For `scripts/build-prebuilt.sh`: the program's path inside the downloaded archive, or empty when the download is the program. |
+
+### Upstream release binaries
+
+Many servers, most of them written in Go or Rust, publish their own build
+for each Linux architecture. `scripts/build-prebuilt.sh` packages one as it
+is: the recipe pins each architecture's download and its SHA-256, checked
+against the project's published checksums when the recipe is added, and
+`member` names the program inside the archive. The program is installed
+under the package's name.
+
+```json
+{
+  "package": "nats-server",
+  "version": "2.15.1",
+  "build_script": "scripts/build-prebuilt.sh",
+  "amd64": {
+    "source_url": "https://github.com/nats-io/nats-server/releases/download/v2.15.1/nats-server-v2.15.1-linux-amd64.tar.gz",
+    "sha256": "…",
+    "member": "nats-server-v2.15.1-linux-amd64/nats-server"
+  },
+  "arm64": { "…": "…" }
+}
+```
 
 Each architecture builds on a native runner (`ubuntu-24.04` or
 `ubuntu-24.04-arm`); nothing is cross-compiled.
@@ -121,7 +145,8 @@ real package size.
 
 Builds run on every push to `main` that touches a recipe, its entry,
 `archive-package.py` or the workflow. Publishing is manual: run the workflow
-with `publish` enabled and a package name (or `all`).
+with `publish` enabled and a package name, several separated by commas,
+`name@version` for one version of a recipe, or `all`.
 
 Published versions are immutable. `package-index.py` compares each built
 package with the index entry for the same version and platform:

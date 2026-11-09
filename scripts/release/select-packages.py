@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Select package recipes independently from product releases.
 
+PACKAGE names one recipe, several separated by commas, or all; name@version
+selects one version of a recipe.
+
 Each recipe builds for every architecture in its "arches" list (default: amd64
 and arm64). A recipe that downloads a prebuilt binary gives the other
 architecture's source in a key named after it, e.g. "arm64": {"source_url",
@@ -22,8 +25,13 @@ def main():
     recipes=json.loads(Path('scripts/release/packages.json').read_text())
     name=os.environ.get('PACKAGE','')
     if name:
-        if name!='all' and name not in {r['package'] for r in recipes}:raise SystemExit('Unknown package: '+name)
-        selected=[r for r in recipes if name=='all' or r['package']==name]
+        # A name, a comma-separated list of names, or all.
+        # name@version selects one version of a recipe.
+        names={n.strip() for n in name.split(',') if n.strip()}
+        known={r['package'] for r in recipes}|{r['package']+'@'+r['version'] for r in recipes}|{'all'}
+        unknown=names-known
+        if unknown:raise SystemExit('Unknown package: '+', '.join(sorted(unknown)))
+        selected=[r for r in recipes if 'all' in names or r['package'] in names or r['package']+'@'+r['version'] in names]
     else:
         before=os.environ.get('BEFORE','')
         if not before or set(before)=={'0'}:changed={'scripts/release/packages.json'}
