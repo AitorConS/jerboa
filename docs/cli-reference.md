@@ -167,6 +167,15 @@ Graceful stop by default. Idempotent: stopping a VM that is already stopped
 (for example a program that ran to completion and exited on its own) is a no-op
 that succeeds, matching `docker stop`.
 
+A graceful stop asks the guest to power down. Nanos sends `SIGTERM` to the
+program, waits up to 30 seconds for it to exit, and syncs its filesystems,
+including volumes, before powering off. The request reaches the guest as a
+power button press under QEMU and Firecracker on macOS, and over the VM's
+vsock device under Firecracker on Linux, where the daemon kills the VMM if the
+guest has not powered off within 40 seconds. A Linux Firecracker guest kernel
+without the vsock power-down handler cannot take the request; its VMM is
+terminated at once, without a guest-side sync.
+
 Flag:
 
 - `--force`: immediate kill
