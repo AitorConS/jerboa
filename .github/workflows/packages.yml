@@ -7,6 +7,8 @@ name: Package Build
     - scripts/build-*.sh
     - scripts/release/packages.json
     - scripts/release/archive-package.py
+    - scripts/release/build-go.py
+    - scripts/release/go-floor.txt
     - .github/workflows/packages.yml
   workflow_dispatch:
     inputs:
