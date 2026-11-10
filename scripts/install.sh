@@ -381,6 +381,14 @@ systemctl daemon-reload
 systemctl enable jerboad.service
 systemctl restart jerboad.service
 systemctl is-active --quiet jerboad.service || die "jerboad failed to start; inspect journalctl -u jerboad"
+# systemd reports the service active as soon as it starts; the API listens
+# a moment later. Wait for it, so a script that runs jerboa next finds it.
+for _ in $(seq 60); do
+	(exec 3<>"/dev/tcp/127.0.0.1/${JERBOA_PORT}") 2>/dev/null && break
+	systemctl is-active --quiet jerboad.service || die "jerboad stopped while starting; inspect journalctl -u jerboad"
+	sleep 0.5
+done
+(exec 3<>"/dev/tcp/127.0.0.1/${JERBOA_PORT}") 2>/dev/null || die "jerboad does not listen on ${endpoint} after 30 seconds; inspect journalctl -u jerboad"
 record_fresh "${ENV_DIR}/release-state.json"
 
 # Point the invoking user's CLI at the daemon with the shared token. SUDO_USER

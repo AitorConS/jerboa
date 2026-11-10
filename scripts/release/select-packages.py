@@ -37,6 +37,8 @@ def main():
         if not before or set(before)=={'0'}:changed={'scripts/release/packages.json'}
         else:changed=set(subprocess.check_output(['git','diff','--name-only',before,'HEAD'],text=True).splitlines())
         all_changed=bool(changed & {'scripts/release/packages.json','.github/workflows/packages.yml','scripts/release/archive-package.py'})
+        # build-go.sh reads these: a new floor rebuilds every Go recipe.
+        if changed & {'scripts/release/build-go.py','scripts/release/go-floor.txt'}:changed.add('scripts/build-go.sh')
         selected=[r for r in recipes if all_changed or r['build_script'] in changed]
     matrix=[item for r in selected for item in expand(r)]
     with open(os.environ['GITHUB_OUTPUT'],'a') as f:

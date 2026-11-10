@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 
@@ -12,6 +13,11 @@ MOCK = '''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, shutil, sys, subprocess
 name=pathlib.Path(sys.argv[0]).name; args=sys.argv[1:]; root=pathlib.Path(os.environ['FIXTURE'])
 with (root/'calls').open('a') as log: log.write(name+' '+ ' '.join(args)+'\\n')
+# systemctl is-active: with DAEMON_STOPS set, jerboad is active for its first
+# check only, as a daemon that exits while starting.
+if name=='systemctl' and args[:1]==['is-active'] and os.environ.get('DAEMON_STOPS'):
+    n=root/'is-active-calls'; c=int(n.read_text() or 0) if n.exists() else 0; n.write_text(str(c+1))
+    sys.exit(0 if c==0 else 3)
 if name=='uname': print(os.environ.get('OS','Linux') if args==['-s'] else os.environ.get('ARCH','x86_64'))
 elif name=='id':
     if args==['-u']: print(os.environ.get('UID_MOCK','0'))
@@ -77,6 +83,10 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     (root/'manifest').write_text(json.dumps(manifest))
     env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'FIXTURE':str(root),'HYPERVISOR':'qemu','SUDO_USER':'tester'}
     for key in ['RELEASE_BASE','JERBOA_PORT','FC_ARCH','FIRECRACKER_VERSION','FIRECRACKER_SHA256']: env.pop(key,None)
+    # The installer waits for jerboad to listen on its port: a listener
+    # stands in for it.
+    daemon=socket.socket(); daemon.bind(('127.0.0.1',0)); daemon.listen(64)
+    env['JERBOA_PORT']=str(daemon.getsockname()[1])
     def run(*args, ok=True, **overrides):
         result=subprocess.run(['bash',str(runner),*args],env={**env,**overrides},capture_output=True,text=True)
         assert (result.returncode==0)==ok,result.stdout+result.stderr
@@ -87,6 +97,11 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run(ok=False,JERBOA_PORT='99999')
     run(ok=False,HYPERVISOR='invalid')
     run(ok=False,HYPERVISOR='firecracker')
+    # A daemon that exits before it listens: nothing on its port.
+    closed=socket.socket(); closed.bind(('127.0.0.1',0)); closed_port=str(closed.getsockname()[1]); closed.close()
+    result=run(ok=False,DAEMON_STOPS='1',JERBOA_PORT=closed_port)
+    assert 'jerboad stopped while starting' in result.stderr+result.stdout
+    (root/'is-active-calls').unlink()
     run()
     unit=(root/'etc/systemd/system/jerboad.service').read_text()
     for key in ['AmbientCapabilities', 'CapabilityBoundingSet']:
