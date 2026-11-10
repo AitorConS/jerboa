@@ -100,5 +100,579 @@
     "source_url": "https://github.com/jqlang/jq/archive/refs/tags/jq-1.7.1.tar.gz",
     "sha256": "fc75b1824aba7a954ef0886371d951c3bf4b6e0a921d1aefc553f309702d6ed1",
     "build_script": "scripts/build-jq.sh"
+  },
+  {
+    "package": "traefik",
+    "version": "3.7.16",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/traefik/traefik/releases/download/v3.7.16/traefik_v3.7.16_linux_amd64.tar.gz",
+      "sha256": "759a7bc0d66b74c588255ed9e41c7f9d4aba60bdb7bce9dde551b1268a55eb07",
+      "member": "traefik"
+    },
+    "arm64": {
+      "source_url": "https://github.com/traefik/traefik/releases/download/v3.7.16/traefik_v3.7.16_linux_arm64.tar.gz",
+      "sha256": "8f9463a7dd3a618569aaa46e19500331d7374a2e6f6ee300a50df5bb49132e1a",
+      "member": "traefik"
+    }
+  },
+  {
+    "package": "traefik",
+    "version": "2.11.60",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/traefik/traefik/releases/download/v2.11.60/traefik_v2.11.60_linux_amd64.tar.gz",
+      "sha256": "dcfcd1c720db41a21b8ea4597ff8912bbc5f1f4e9cd21b3ee2cebd97bfb1a4d7",
+      "member": "traefik"
+    },
+    "arm64": {
+      "source_url": "https://github.com/traefik/traefik/releases/download/v2.11.60/traefik_v2.11.60_linux_arm64.tar.gz",
+      "sha256": "337618b36d96904446ba17390d00bacf46dc4f99f792ba9b0c9e0b2f1436c49a",
+      "member": "traefik"
+    }
+  },
+  {
+    "package": "prometheus",
+    "version": "3.15.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-amd64.tar.gz",
+      "sha256": "6a726885328ad9efebbf36e876ce2fb6225468a71fd1e7ce3ba666d5f4d97a84",
+      "member": "prometheus-3.15.1.linux-amd64/prometheus"
+    },
+    "arm64": {
+      "source_url": "https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-3.15.1.linux-arm64.tar.gz",
+      "sha256": "ceb6d21493c37ca0b4513b147642797c68cf39a0f50a444d50e1e80c74f21b26",
+      "member": "prometheus-3.15.1.linux-arm64/prometheus"
+    }
+  },
+  {
+    "package": "prometheus",
+    "version": "3.13.5",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/prometheus/prometheus/releases/download/v3.13.5/prometheus-3.13.5.linux-amd64.tar.gz",
+      "sha256": "0388822ace519c5a3a8ef556a541ce1b536e21d872f82deded465bd27a5a0699",
+      "member": "prometheus-3.13.5.linux-amd64/prometheus"
+    },
+    "arm64": {
+      "source_url": "https://github.com/prometheus/prometheus/releases/download/v3.13.5/prometheus-3.13.5.linux-arm64.tar.gz",
+      "sha256": "e705357ffa5b3189e98bf145d044364d75dd994470c706a07731292932b2ee0f",
+      "member": "prometheus-3.13.5.linux-arm64/prometheus"
+    }
+  },
+  {
+    "package": "alertmanager",
+    "version": "0.34.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/prometheus/alertmanager/releases/download/v0.34.1/alertmanager-0.34.1.linux-amd64.tar.gz",
+      "sha256": "265b9d1e55ef0d5306a436018af6d2b686c2ce051f03d968f7464ecb1372a7e8",
+      "member": "alertmanager-0.34.1.linux-amd64/alertmanager"
+    },
+    "arm64": {
+      "source_url": "https://github.com/prometheus/alertmanager/releases/download/v0.34.1/alertmanager-0.34.1.linux-arm64.tar.gz",
+      "sha256": "d98d6cbaf52151c7e76e24355fec88b11cebcb9875d4cdd8b76ddce7a7e5535c",
+      "member": "alertmanager-0.34.1.linux-arm64/alertmanager"
+    }
+  },
+  {
+    "package": "pushgateway",
+    "version": "1.11.4",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/prometheus/pushgateway/releases/download/v1.11.4/pushgateway-1.11.4.linux-amd64.tar.gz",
+      "sha256": "e6d631d1f511ce386de2dcbc3bd18a7165d8117588f2aefea15e89cf794751b3",
+      "member": "pushgateway-1.11.4.linux-amd64/pushgateway"
+    },
+    "arm64": {
+      "source_url": "https://github.com/prometheus/pushgateway/releases/download/v1.11.4/pushgateway-1.11.4.linux-arm64.tar.gz",
+      "sha256": "022adcb52b919a800a5deeefb19533d6f3a76decd86af424197ccd5f1448e81d",
+      "member": "pushgateway-1.11.4.linux-arm64/pushgateway"
+    }
+  },
+  {
+    "package": "blackbox-exporter",
+    "version": "0.29.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/prometheus/blackbox_exporter/releases/download/v0.29.1/blackbox_exporter-0.29.1.linux-amd64.tar.gz",
+      "sha256": "b82b81839e6317e84fdd367f46d7ddd3b773fa09cbe2e3d5633a59171d741e76",
+      "member": "blackbox_exporter-0.29.1.linux-amd64/blackbox_exporter"
+    },
+    "arm64": {
+      "source_url": "https://github.com/prometheus/blackbox_exporter/releases/download/v0.29.1/blackbox_exporter-0.29.1.linux-arm64.tar.gz",
+      "sha256": "c597b0d442c02c0f2c8f691cbc7784216c786fada28f300c7b914e1f94523834",
+      "member": "blackbox_exporter-0.29.1.linux-arm64/blackbox_exporter"
+    }
+  },
+  {
+    "package": "etcd",
+    "version": "3.7.3",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/etcd-io/etcd/releases/download/v3.7.3/etcd-v3.7.3-linux-amd64.tar.gz",
+      "sha256": "5dfa9cc3b3ce3b4b491fbcc2057d3daa166bcc6676f743fcd20f8e5760cb9775",
+      "member": "etcd-v3.7.3-linux-amd64/etcd"
+    },
+    "arm64": {
+      "source_url": "https://github.com/etcd-io/etcd/releases/download/v3.7.3/etcd-v3.7.3-linux-arm64.tar.gz",
+      "sha256": "ce4c08f5f43d99f0d1993552ce2906829c0366077a97e5e52529337f151a29fb",
+      "member": "etcd-v3.7.3-linux-arm64/etcd"
+    }
+  },
+  {
+    "package": "etcd",
+    "version": "3.6.16",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/etcd-io/etcd/releases/download/v3.6.16/etcd-v3.6.16-linux-amd64.tar.gz",
+      "sha256": "c8c0d96d8292ef085deabbf735e9561d3d396768e4d606df005aa25964f21911",
+      "member": "etcd-v3.6.16-linux-amd64/etcd"
+    },
+    "arm64": {
+      "source_url": "https://github.com/etcd-io/etcd/releases/download/v3.6.16/etcd-v3.6.16-linux-arm64.tar.gz",
+      "sha256": "ad756ff27ba21e3488cfb84d00f3f4ad8d9b60a93e20f5be5b230a4aab1dc053",
+      "member": "etcd-v3.6.16-linux-arm64/etcd"
+    }
+  },
+  {
+    "package": "etcd",
+    "version": "3.5.35",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/etcd-io/etcd/releases/download/v3.5.35/etcd-v3.5.35-linux-amd64.tar.gz",
+      "sha256": "ca9f94cdc80be66923ef571d82b128819d0f5f3aa9f01522bafd991618ee29d1",
+      "member": "etcd-v3.5.35-linux-amd64/etcd"
+    },
+    "arm64": {
+      "source_url": "https://github.com/etcd-io/etcd/releases/download/v3.5.35/etcd-v3.5.35-linux-arm64.tar.gz",
+      "sha256": "3abf150511a6f4c61996a77d32dfa0b47204c5e6b26c966af26d057116770ed7",
+      "member": "etcd-v3.5.35-linux-arm64/etcd"
+    }
+  },
+  {
+    "package": "coredns",
+    "version": "1.15.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/coredns/coredns/releases/download/v1.15.0/coredns_1.15.0_linux_amd64.tgz",
+      "sha256": "2495c5b8f3fab6d0a336c397f1227b75406d86e6ec7125744a29df9e936ab8cd",
+      "member": "coredns"
+    },
+    "arm64": {
+      "source_url": "https://github.com/coredns/coredns/releases/download/v1.15.0/coredns_1.15.0_linux_arm64.tgz",
+      "sha256": "73a5bf107c9791d57741ccd59ad138ab00bcd5bb3f62e2e28c999f5c047334a4",
+      "member": "coredns"
+    }
+  },
+  {
+    "package": "coredns",
+    "version": "1.14.7",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_linux_amd64.tgz",
+      "sha256": "9a09356438c6d9591cb80011a2a7a52f87fc3a113f6690e41f243f98b98faac9",
+      "member": "coredns"
+    },
+    "arm64": {
+      "source_url": "https://github.com/coredns/coredns/releases/download/v1.14.7/coredns_1.14.7_linux_arm64.tgz",
+      "sha256": "bf26782d19b5340e3e6cb50f1ed6df72f58e4a30932c79d167f0f0a8b1e92e16",
+      "member": "coredns"
+    }
+  },
+  {
+    "package": "nats-server",
+    "version": "2.15.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/nats-io/nats-server/releases/download/v2.15.1/nats-server-v2.15.1-linux-amd64.tar.gz",
+      "sha256": "bf5edc7b1ce98e885c368cb43a886eb148dc5d0551d99f3cf6141fb5e1954c70",
+      "member": "nats-server-v2.15.1-linux-amd64/nats-server"
+    },
+    "arm64": {
+      "source_url": "https://github.com/nats-io/nats-server/releases/download/v2.15.1/nats-server-v2.15.1-linux-arm64.tar.gz",
+      "sha256": "e2fbab4cad7d3c76e3052eb959570393c9d73ba756b70bf8e9eea61e9ae6d49c",
+      "member": "nats-server-v2.15.1-linux-arm64/nats-server"
+    }
+  },
+  {
+    "package": "nats-server",
+    "version": "2.14.8",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/nats-io/nats-server/releases/download/v2.14.8/nats-server-v2.14.8-linux-amd64.tar.gz",
+      "sha256": "c60504071c86bced5fc1d89410cee2b319a07e01ee64cb14f5934a2238022021",
+      "member": "nats-server-v2.14.8-linux-amd64/nats-server"
+    },
+    "arm64": {
+      "source_url": "https://github.com/nats-io/nats-server/releases/download/v2.14.8/nats-server-v2.14.8-linux-arm64.tar.gz",
+      "sha256": "0371fa0da81a3f5ea0d64914bb10dbf96c92fea071ff249ee5c1255997fe8be0",
+      "member": "nats-server-v2.14.8-linux-arm64/nats-server"
+    }
+  },
+  {
+    "package": "distribution-registry",
+    "version": "3.1.2",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/distribution/distribution/releases/download/v3.1.2/registry_3.1.2_linux_amd64.tar.gz",
+      "sha256": "40df2224d410f72ae425c3371873b078bbdbda3b8b612be9571f0e6751f3acc8",
+      "member": "registry"
+    },
+    "arm64": {
+      "source_url": "https://github.com/distribution/distribution/releases/download/v3.1.2/registry_3.1.2_linux_arm64.tar.gz",
+      "sha256": "09d26f88d2c0f161bd1b8bfc6c123571cc3d291dcca8af5477b3cacc4ec95e73",
+      "member": "registry"
+    }
+  },
+  {
+    "package": "mailpit",
+    "version": "1.32.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/axllent/mailpit/releases/download/v1.32.0/mailpit-linux-amd64.tar.gz",
+      "sha256": "4b5993c978e8604c70d43927e2ad103b311bba3b1822fa0cf1d4ee4ec890a93c",
+      "member": "mailpit"
+    },
+    "arm64": {
+      "source_url": "https://github.com/axllent/mailpit/releases/download/v1.32.0/mailpit-linux-arm64.tar.gz",
+      "sha256": "e1e45d1dc72bd497fb262a1e4100178eee057c42c5fc36d143eb8621769e1137",
+      "member": "mailpit"
+    }
+  },
+  {
+    "package": "victoria-metrics",
+    "version": "1.154.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v1.154.1/victoria-metrics-linux-amd64-v1.154.1.tar.gz",
+      "sha256": "8c40aec9f77be3a85fbe4b491238b80936af50497fef980b9434095d5076e424",
+      "member": "victoria-metrics-prod"
+    },
+    "arm64": {
+      "source_url": "https://github.com/VictoriaMetrics/VictoriaMetrics/releases/download/v1.154.1/victoria-metrics-linux-arm64-v1.154.1.tar.gz",
+      "sha256": "9bbc27a62e7f16fbe4bf995c5c4975fcbdd5e856e302e9ec833eb963ce097d11",
+      "member": "victoria-metrics-prod"
+    }
+  },
+  {
+    "package": "jaeger",
+    "version": "2.22.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/jaegertracing/jaeger/releases/download/v2.22.0/jaeger-2.22.0-linux-amd64.tar.gz",
+      "sha256": "cb0c0be9a4b8fba424bbbc6217b0feb0adeea3bca5b73a83db1af31bb7d34389",
+      "member": "jaeger-2.22.0-linux-amd64/jaeger"
+    },
+    "arm64": {
+      "source_url": "https://github.com/jaegertracing/jaeger/releases/download/v2.22.0/jaeger-2.22.0-linux-arm64.tar.gz",
+      "sha256": "c3dbcd54a8b16cdd277445923a7f79b1144cbdbbfd55e473dc0f32a45bd94e73",
+      "member": "jaeger-2.22.0-linux-arm64/jaeger"
+    }
+  },
+  {
+    "package": "meilisearch",
+    "version": "1.55.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/meilisearch/meilisearch/releases/download/v1.55.0/meilisearch-linux-amd64",
+      "sha256": "7e33f5889235f14290074a19a6d3574bd9b10fb2ee8731eabb7dafd0714b0513",
+      "member": ""
+    },
+    "arm64": {
+      "source_url": "https://github.com/meilisearch/meilisearch/releases/download/v1.55.0/meilisearch-linux-aarch64",
+      "sha256": "f268dde681f20f6fc393d053dab11909d059574e52916355ad1d10212ec8a2a7",
+      "member": ""
+    }
+  },
+  {
+    "package": "go-httpbin",
+    "version": "2.26.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/mccutchen/go-httpbin/releases/download/v2.26.0/go-httpbin-linux-amd64.tar.gz",
+      "sha256": "b5160d5ac6c873a859bcfe608d724acf000152dec2783ac0dfbdf655609327d4",
+      "member": "go-httpbin"
+    },
+    "arm64": {
+      "source_url": "https://github.com/mccutchen/go-httpbin/releases/download/v2.26.0/go-httpbin-linux-arm64.tar.gz",
+      "sha256": "27260ee3c2d39b50d7217abc6db420e167baeccd80d4c20146e53046e1b543c8",
+      "member": "go-httpbin"
+    }
+  },
+  {
+    "package": "seaweedfs",
+    "version": "4.51",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/seaweedfs/seaweedfs/releases/download/4.51/linux_amd64.tar.gz",
+      "sha256": "c03be37416a8ee672c77766e20b22a4e1430744c3af2668599a4b6eeaec14cee",
+      "member": "weed"
+    },
+    "arm64": {
+      "source_url": "https://github.com/seaweedfs/seaweedfs/releases/download/4.51/linux_arm64.tar.gz",
+      "sha256": "4772e7de6a3b8711eb53587a1c156aee67ebfc24536d15d85cd74a0d70ad53ec",
+      "member": "weed"
+    }
+  },
+  {
+    "package": "ntfy",
+    "version": "2.34.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/binwiederhier/ntfy/releases/download/v2.34.0/ntfy_2.34.0_linux_amd64.tar.gz",
+      "sha256": "f78e2645c6457363f37d5d1c4f7cddb7e9658abd197824a7387a1a38d92bb895",
+      "member": "ntfy_2.34.0_linux_amd64/ntfy"
+    },
+    "arm64": {
+      "source_url": "https://github.com/binwiederhier/ntfy/releases/download/v2.34.0/ntfy_2.34.0_linux_arm64.tar.gz",
+      "sha256": "d585fe48d1b2e80b1b1719977bb651cc7d9259bacb817aa8a8d5b4c8f0c9e946",
+      "member": "ntfy_2.34.0_linux_arm64/ntfy"
+    }
+  },
+  {
+    "package": "pocketbase",
+    "version": "0.40.6",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/pocketbase/pocketbase/releases/download/v0.40.6/pocketbase_0.40.6_linux_amd64.zip",
+      "sha256": "0e1f609158ed945f809f8a02ae012aa0427129c66ebb63c1aee76f2c0309373f",
+      "member": "pocketbase"
+    },
+    "arm64": {
+      "source_url": "https://github.com/pocketbase/pocketbase/releases/download/v0.40.6/pocketbase_0.40.6_linux_arm64.zip",
+      "sha256": "d22c66ceb67ca92b7d767f36d826e848a276bcfa3c197ead20bf87c42208984f",
+      "member": "pocketbase"
+    }
+  },
+  {
+    "package": "adguardhome",
+    "version": "0.107.79",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_amd64.tar.gz",
+      "sha256": "c48f4a43000665484c5ec28177de11a004759b620dae8f77b2aabefc9ef3687f",
+      "member": "AdGuardHome/AdGuardHome"
+    },
+    "arm64": {
+      "source_url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_arm64.tar.gz",
+      "sha256": "3f7893c18e8aaadc456d0452839190561c306ca95175a2254958be80a769c1ae",
+      "member": "AdGuardHome/AdGuardHome"
+    }
+  },
+  {
+    "package": "zot",
+    "version": "2.1.22",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/project-zot/zot/releases/download/v2.1.22/zot-linux-amd64",
+      "sha256": "33b9b5bfe05d6788c076de951a01920477dbd6395c330146e23cc2340073e52e",
+      "member": ""
+    },
+    "arm64": {
+      "source_url": "https://github.com/project-zot/zot/releases/download/v2.1.22/zot-linux-arm64",
+      "sha256": "abc9bab13c144a4ee2f9067a6bbbe70ca1c018c49dbf521db28975514ea705da",
+      "member": ""
+    }
+  },
+  {
+    "package": "loki",
+    "version": "3.7.9",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/grafana/loki/releases/download/v3.7.9/loki-linux-amd64.zip",
+      "sha256": "17a5fae28ce733b3560c27c76620920b169bd2aea9473947b733b511f92e81dd",
+      "member": "loki-linux-amd64"
+    },
+    "arm64": {
+      "source_url": "https://github.com/grafana/loki/releases/download/v3.7.9/loki-linux-arm64.zip",
+      "sha256": "f46a623ff261d8579d09dcba545d48e14500bcfbc26caa59628ae465b3b67983",
+      "member": "loki-linux-arm64"
+    }
+  },
+  {
+    "package": "loki",
+    "version": "3.6.19",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/grafana/loki/releases/download/v3.6.19/loki-linux-amd64.zip",
+      "sha256": "f366798986e5089c5e4bae6a50361b77b8696c2405583dc86e44e7a2f7fc8a8b",
+      "member": "loki-linux-amd64"
+    },
+    "arm64": {
+      "source_url": "https://github.com/grafana/loki/releases/download/v3.6.19/loki-linux-arm64.zip",
+      "sha256": "cac765df0849b12755377b53fcc8af8fba6d48fb745652377954668932bbd6ec",
+      "member": "loki-linux-arm64"
+    }
+  },
+  {
+    "package": "openbao",
+    "version": "2.7.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/openbao/openbao/releases/download/v2.7.1/openbao_2.7.1_linux_amd64.tar.gz",
+      "sha256": "0e2f1ce10d124e03112b50dd2fbec6b78003783253bc3a91587938f39d1e2243",
+      "member": "bao"
+    },
+    "arm64": {
+      "source_url": "https://github.com/openbao/openbao/releases/download/v2.7.1/openbao_2.7.1_linux_arm64.tar.gz",
+      "sha256": "2b3807d90f224df05d4fe1fdede7f052d2227596c648a56bd291381f8fd01840",
+      "member": "bao"
+    }
+  },
+  {
+    "package": "openbao",
+    "version": "2.6.4",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/openbao/openbao/releases/download/v2.6.4/openbao_2.6.4_linux_amd64.tar.gz",
+      "sha256": "659a4875cb197d042b2c612e7b0e275f36ebacc16e3f1f6e8dc31275f6d84220",
+      "member": "bao"
+    },
+    "arm64": {
+      "source_url": "https://github.com/openbao/openbao/releases/download/v2.6.4/openbao_2.6.4_linux_arm64.tar.gz",
+      "sha256": "5382f2e2793ca39d8e87270c5ad82fb27c0f6f15501eb9f46cbb625b5f5e80b0",
+      "member": "bao"
+    }
+  },
+  {
+    "package": "qdrant",
+    "version": "1.20.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/qdrant/qdrant/releases/download/v1.20.0/qdrant-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "b03a64616a1f41ddab78b480a318466541765f19835318113b1821cbea8df52c",
+      "member": "qdrant"
+    },
+    "arm64": {
+      "source_url": "https://github.com/qdrant/qdrant/releases/download/v1.20.0/qdrant-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "bd8a458b8ef8006ce2c603c5bd6d1d973e39d787f794008dd959112e747c3bb7",
+      "member": "qdrant"
+    }
+  },
+  {
+    "package": "qdrant",
+    "version": "1.19.2",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/qdrant/qdrant/releases/download/v1.19.2/qdrant-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "50b253243309ed0ae50a19f678f0d0adcc4f0b567b3bd2c5c0c7e02fa8404bb6",
+      "member": "qdrant"
+    },
+    "arm64": {
+      "source_url": "https://github.com/qdrant/qdrant/releases/download/v1.19.2/qdrant-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "6970b93b56fa1203f0cea47d2f330fdb654988fd56617aa77e8478cffd3c0ccb",
+      "member": "qdrant"
+    }
+  },
+  {
+    "package": "static-web-server",
+    "version": "2.44.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/static-web-server/static-web-server/releases/download/v2.44.1/static-web-server-v2.44.1-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "8f94abd9bc9c6d11240301d7271b95f9ec05b1b3e8509087c86ca8fd0b56fb4e",
+      "member": "static-web-server-v2.44.1-x86_64-unknown-linux-musl/static-web-server"
+    },
+    "arm64": {
+      "source_url": "https://github.com/static-web-server/static-web-server/releases/download/v2.44.1/static-web-server-v2.44.1-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "28e53e5979735309ec3de685330719a11a0ef339aa06d0f0cd8eff5d973b9dfc",
+      "member": "static-web-server-v2.44.1-aarch64-unknown-linux-musl/static-web-server"
+    }
+  },
+  {
+    "package": "otelcol",
+    "version": "0.163.2",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.163.2/otelcol_0.163.2_linux_amd64.tar.gz",
+      "sha256": "9fbf3101331c88aab4b7f4cfd7c788b252e91e193793e39bd2154971c87f88a7",
+      "member": "otelcol"
+    },
+    "arm64": {
+      "source_url": "https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.163.2/otelcol_0.163.2_linux_arm64.tar.gz",
+      "sha256": "c71e69f5f5af203350bffede796a9bf5b9a69d6c7057ed77f6e8262aa6f728d4",
+      "member": "otelcol"
+    }
+  },
+  {
+    "package": "vector",
+    "version": "0.60.0",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/vectordotdev/vector/releases/download/v0.60.0/vector-0.60.0-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "89a9f134dcc35a6fbba9cb8ad0fec2d4802657bba6cb1c374a30660ef9456bdc",
+      "member": "vector-x86_64-unknown-linux-gnu/bin/vector"
+    },
+    "arm64": {
+      "source_url": "https://github.com/vectordotdev/vector/releases/download/v0.60.0/vector-0.60.0-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "1540662d8bc33af5afd287f821ba930417e0f3124073bc9db6a29c59dda88dbb",
+      "member": "vector-aarch64-unknown-linux-gnu/bin/vector"
+    }
+  },
+  {
+    "package": "gotify",
+    "version": "3.1.1",
+    "build_script": "scripts/build-prebuilt.sh",
+    "amd64": {
+      "source_url": "https://github.com/gotify/server/releases/download/v3.1.1/gotify-linux-amd64.zip",
+      "sha256": "d452faad071981d191d5c95f70d0f9520dc2ef2336b2b03055e12cfabfbae2d2",
+      "member": "gotify-linux-amd64"
+    },
+    "arm64": {
+      "source_url": "https://github.com/gotify/server/releases/download/v3.1.1/gotify-linux-arm64.zip",
+      "sha256": "742ca7e0dd63b0902b7fb01552bd37f4df4d3bb66ced583144faff90a3e76901",
+      "member": "gotify-linux-arm64"
+    }
+  },
+  {
+    "package": "valkey",
+    "version": "9.0.6",
+    "source_url": "https://github.com/valkey-io/valkey/archive/refs/tags/9.0.6.tar.gz",
+    "sha256": "38f1e83faf382637d6e49503903187acb3ceed624e96d7b1d32b8d3d52768414",
+    "build_script": "scripts/build-valkey.sh"
+  },
+  {
+    "package": "valkey",
+    "version": "8.1.10",
+    "source_url": "https://github.com/valkey-io/valkey/archive/refs/tags/8.1.10.tar.gz",
+    "sha256": "c74e50cd83f6d398a3dc570e04ac2fe538249585d021f76ee2449bbf9ebd04ed",
+    "build_script": "scripts/build-valkey.sh"
+  },
+  {
+    "package": "valkey",
+    "version": "7.2.14",
+    "source_url": "https://github.com/valkey-io/valkey/archive/refs/tags/7.2.14.tar.gz",
+    "sha256": "7d79e48e81ab353c4bb397dd576e2a19dec5e985007d37c3d41e4802f0f5e314",
+    "build_script": "scripts/build-valkey.sh"
+  },
+  {
+    "package": "memcached",
+    "version": "1.6.45",
+    "source_url": "https://memcached.org/files/memcached-1.6.45.tar.gz",
+    "sha256": "d362c64e6d8d5287153501eabf7c85b4a761432fbf53f5d7b085d0bb1653c1dd",
+    "build_script": "scripts/build-memcached.sh"
+  },
+  {
+    "package": "haproxy",
+    "version": "3.2.26",
+    "source_url": "https://www.haproxy.org/download/3.2/src/haproxy-3.2.26.tar.gz",
+    "sha256": "760ef35fafc1e05844e73ad07e138e9e96fddbf5de02f606249c027f754827da",
+    "build_script": "scripts/build-haproxy.sh"
+  },
+  {
+    "package": "haproxy",
+    "version": "3.0.30",
+    "source_url": "https://www.haproxy.org/download/3.0/src/haproxy-3.0.30.tar.gz",
+    "sha256": "a7c594a1985936890737219ae2d7c3769346a92a2f536522b8b3abc540d7a608",
+    "build_script": "scripts/build-haproxy.sh"
+  },
+  {
+    "package": "nginx",
+    "version": "1.31.8",
+    "source_url": "https://nginx.org/download/nginx-1.31.8.tar.gz",
+    "sha256": "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1",
+    "build_script": "scripts/build-nginx.sh"
   }
 ]

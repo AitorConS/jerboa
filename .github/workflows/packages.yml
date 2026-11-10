@@ -11,7 +11,7 @@ name: Package Build
   workflow_dispatch:
     inputs:
       package:
-        description: Package name or all
+        description: Package name, several separated by commas, or all
         required: true
         default: all
         type: string
@@ -47,7 +47,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |-
         apt-get update -q
-        apt-get install -y --no-install-recommends ca-certificates curl git file xz-utils python3 make build-essential autoconf automake libtool pkg-config bison flex libssl-dev zlib1g-dev libffi-dev libreadline-dev libyaml-dev libgdbm-dev libsqlite3-dev libbz2-dev liblzma-dev libncurses-dev libxml2-dev libonig-dev unzip
+        apt-get install -y --no-install-recommends ca-certificates curl git file xz-utils python3 make build-essential autoconf automake libtool pkg-config bison flex libssl-dev zlib1g-dev libffi-dev libreadline-dev libyaml-dev libgdbm-dev libsqlite3-dev libbz2-dev liblzma-dev libncurses-dev libxml2-dev libonig-dev libevent-dev unzip
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
@@ -78,6 +78,7 @@ jobs:
         PACKAGE_VERSION: ${{ matrix.version }}
         SOURCE_URL: file://${{ steps.fetch.outputs.verified_src }}
         BUILD_SCRIPT: ${{ matrix.build_script }}
+        ARCHIVE_MEMBER: ${{ matrix.member }}
       run: "if [ -f \"${BUILD_SCRIPT}\" ]; then\n  bash \"${BUILD_SCRIPT}\"\nelse\n  echo \"Build script\
         \ ${BUILD_SCRIPT} not found \u2014 skipping\"\n  exit 1\nfi\n"
     - name: Create package archive
