@@ -30,6 +30,13 @@
 #define PAGECACHE_WRITEBACK_MAX_BYTES (16 * MB)
 #define PAGECACHE_WRITEBACK_MAX_IOS 256
 
+/* A writer starts writeback of its node once it has dirtied this much, instead
+ * of leaving everything for fsync or the periodic scan: the device then writes
+ * while the application is still copying. It equals MAX_EXTENT_SIZE because an
+ * extent stops growing once writeback reaches it, so a lower threshold would
+ * split a sequential file into smaller extents. */
+#define PAGECACHE_BG_WRITEBACK_BYTES (PAGECACHE_MAX_SG_ENTRIES * PAGESIZE)
+
 typedef struct pagecache_page_entry {
     union {
         pteptr pte_ptr;
@@ -677,11 +684,24 @@ closure_function(6, 1, void, pagecache_write_sg_finish,
         bound(pi)++;
         pp = (pagecache_page)rbnode_get_next((rbnode)pp);
     } while (bound(pi) < end);
-    if ((bound(pi) == end) && !pagecache_set_dirty(pn, r))
-        s = timm("result", "failed to add dirty range");
+    boolean start_writeback = false;
+    if (bound(pi) == end) {
+        if (!pagecache_set_dirty(pn, r)) {
+            s = timm("result", "failed to add dirty range");
+        } else if (pn->fs_write) {
+            pn->bg_dirty_bytes += range_span(r);
+            if (pn->bg_dirty_bytes >= PAGECACHE_BG_WRITEBACK_BYTES && !pn->bg_queued &&
+                list_empty(&pn->ops)) {
+                pn->bg_queued = start_writeback = true;
+                pagecache_node_ref(pn);     /* released by the queued thunk */
+            }
+        }
+    }
     pagecache_unlock_node(pn);
     if (saved_ctx)
         clear_fault_handler();
+    if (start_writeback)
+        async_apply((thunk)&pn->bg_writeback);
     if (bound(pi) < end)
         return;
   exit:
@@ -1375,6 +1395,7 @@ static boolean pagecache_commit_dirty_node(pagecache_node pn, status_handler com
     status_handler sh;
     u64 range_count = rangemap_count(&pn->dirty);
     boolean busy = !list_empty(&pn->ops);
+    pn->bg_dirty_bytes = 0;     /* everything dirty so far is committed below */
     if (range_count != 0) {
         buffer b = allocate_buffer(h, range_count * sizeof(range));
         if (b == INVALID_ADDRESS)
@@ -1410,6 +1431,19 @@ static boolean pagecache_commit_dirty_node(pagecache_node pn, status_handler com
     if (complete)
         apply(complete, timm_oom);
     return false;
+}
+
+/* Queued by a writer that crossed PAGECACHE_BG_WRITEBACK_BYTES. It commits
+ * the node as the periodic scan does; nothing waits for it, and a commit
+ * refused during a truncate leaves the ranges dirty for the next scan. */
+closure_func_basic(thunk, void, pagecache_node_bg_writeback)
+{
+    pagecache_node pn = struct_from_closure(pagecache_node, bg_writeback);
+    pagecache_lock_node(pn);
+    pn->bg_queued = false;
+    pagecache_unlock_node(pn);
+    pagecache_commit_dirty_node(pn, 0);
+    pagecache_node_unref(pn);
 }
 
 static void pagecache_commit_dirty_pages(pagecache pc)
@@ -2418,6 +2452,9 @@ pagecache_node pagecache_allocate_node(pagecache_volume pv, sg_io fs_read, sg_io
     pn->fs_reserve = fs_reserve;
     list_init(&pn->ops);
     pn->truncating = false;
+    pn->bg_dirty_bytes = 0;
+    pn->bg_queued = false;
+    init_closure_func(&pn->bg_writeback, thunk, pagecache_node_bg_writeback);
     init_closure_func(&pn->free, thunk, pagecache_node_free);
     init_refcount(&pn->refcount, 1,
                   init_closure_func(&pn->queue_free, thunk, pagecache_node_queue_free));
