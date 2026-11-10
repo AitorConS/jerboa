@@ -674,5 +674,408 @@
     "source_url": "https://nginx.org/download/nginx-1.31.8.tar.gz",
     "sha256": "0652b760b3b772d2ec17b47c2fc15d9a95e6fe35cd5b877eadc1a62d9bc75af1",
     "build_script": "scripts/build-nginx.sh"
+  },
+  {
+    "package": "adguardhome",
+    "version": "0.107.79-1",
+    "upstream_version": "0.107.79",
+    "source_url": "https://github.com/AdguardTeam/AdGuardHome/archive/refs/tags/v0.107.79.tar.gz",
+    "sha256": "5f4fa119f24ea741bb8cecfa74203165fe6b86b904cef05ff429fb227b07d425",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "ldflags": "-X github.com/AdguardTeam/AdGuardHome/internal/version.version=v{version} -X github.com/AdguardTeam/AdGuardHome/internal/version.channel=release",
+      "assets": [
+        {
+          "url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_frontend.tar.gz",
+          "sha256": "30184c157d4aefe5371b575a43c0ab5a7314aef039a820cc421ea67bab994ce8",
+          "dest": "."
+        }
+      ]
+    }
+  },
+  {
+    "package": "alertmanager",
+    "version": "0.34.1-1",
+    "upstream_version": "0.34.1",
+    "source_url": "https://github.com/prometheus/alertmanager/archive/refs/tags/v0.34.1.tar.gz",
+    "sha256": "2f6bce4f4b2b28aec4e58fad1341f47cde9c30adb556399472a8831942057941",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/alertmanager",
+      "tags": "netgo",
+      "ldflags": "-X github.com/prometheus/common/version.Version={version} -X github.com/prometheus/common/version.Revision=v{version} -X github.com/prometheus/common/version.Branch=HEAD -X github.com/prometheus/common/version.BuildUser=jerboa -X github.com/prometheus/common/version.BuildDate=20240101-00:00:00",
+      "assets": [
+        {
+          "url": "https://github.com/prometheus/alertmanager/releases/download/v0.34.1/alertmanager-web-ui-0.34.1.tar.gz",
+          "sha256": "881fe0f7beb9573f35be47dd233af6220e72c8db72c03bcd1780402eb8dc1307",
+          "dest": "ui/app"
+        }
+      ]
+    }
+  },
+  {
+    "package": "blackbox-exporter",
+    "version": "0.29.1-1",
+    "upstream_version": "0.29.1",
+    "source_url": "https://github.com/prometheus/blackbox_exporter/archive/refs/tags/v0.29.1.tar.gz",
+    "sha256": "2d7ab72d6dbb4ec8bc6a4f875fe0c8f8792685cc1e5b9209bd999b174b20774f",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "tags": "netgo",
+      "ldflags": "-X github.com/prometheus/common/version.Version={version} -X github.com/prometheus/common/version.Revision=v{version} -X github.com/prometheus/common/version.Branch=HEAD -X github.com/prometheus/common/version.BuildUser=jerboa -X github.com/prometheus/common/version.BuildDate=20240101-00:00:00"
+    }
+  },
+  {
+    "package": "coredns",
+    "version": "1.15.0-1",
+    "upstream_version": "1.15.0",
+    "source_url": "https://github.com/coredns/coredns/archive/refs/tags/v1.15.0.tar.gz",
+    "sha256": "6631fd1d6daccb6eea5a31f31cf8295080aa43c9d0683ff6680b19224c4c2d57",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "ldflags": "-X github.com/coredns/coredns/coremain.GitCommit=v{version}"
+    }
+  },
+  {
+    "package": "coredns",
+    "version": "1.14.7-1",
+    "upstream_version": "1.14.7",
+    "source_url": "https://github.com/coredns/coredns/archive/refs/tags/v1.14.7.tar.gz",
+    "sha256": "c3ecdf3ebaba0c453e3dc62643548dbece09999d589513f25ca00ca4eca89423",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "ldflags": "-X github.com/coredns/coredns/coremain.GitCommit=v{version}"
+    }
+  },
+  {
+    "package": "distribution-registry",
+    "version": "3.1.2-1",
+    "upstream_version": "3.1.2",
+    "source_url": "https://github.com/distribution/distribution/archive/refs/tags/v3.1.2.tar.gz",
+    "sha256": "2f9b6fc00bec854e62e9b720903a9c9b48018505177f7c7a8ce7b74da2b23e4f",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/registry",
+      "ldflags": "-X github.com/distribution/distribution/v3/version.version=v{version} -X github.com/distribution/distribution/v3/version.mainpkg=github.com/distribution/distribution/v3"
+    }
+  },
+  {
+    "package": "etcd",
+    "version": "3.7.3-1",
+    "upstream_version": "3.7.3",
+    "source_url": "https://github.com/etcd-io/etcd/archive/refs/tags/v3.7.3.tar.gz",
+    "sha256": "38455879fd3744d9aec12f45e890bede61df8b2323279e2c895bbb1bd484681f",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "dir": "server",
+      "ldflags": "-X go.etcd.io/etcd/api/v3/version.GitSHA=v{version}"
+    }
+  },
+  {
+    "package": "etcd",
+    "version": "3.6.16-1",
+    "upstream_version": "3.6.16",
+    "source_url": "https://github.com/etcd-io/etcd/archive/refs/tags/v3.6.16.tar.gz",
+    "sha256": "b97efe5d8b16472e2434b53161feee69279f6eb00b0b9ffa493346c53dbdbf39",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "dir": "server",
+      "ldflags": "-X go.etcd.io/etcd/api/v3/version.GitSHA=v{version}"
+    }
+  },
+  {
+    "package": "etcd",
+    "version": "3.5.35-1",
+    "upstream_version": "3.5.35",
+    "source_url": "https://github.com/etcd-io/etcd/archive/refs/tags/v3.5.35.tar.gz",
+    "sha256": "48649bed934b590685407f7017055b9484d472e7d1aa46dad360ecc98b821024",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "dir": "server",
+      "ldflags": "-X go.etcd.io/etcd/api/v3/version.GitSHA=v{version}"
+    }
+  },
+  {
+    "package": "gotify",
+    "version": "3.1.1-1",
+    "upstream_version": "3.1.1",
+    "source_url": "https://github.com/gotify/server/archive/refs/tags/v3.1.1.tar.gz",
+    "sha256": "61e2b5d97ccbf1bba62420f8800b45295cd24b5cf9e149c24963554a0fbae1a5",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "cgo": true,
+      "node": true,
+      "ldflags": "-X main.Version={version} -X main.Mode=prod -X main.Commit=v{version} -X main.BuildDate=2024-01-01T00:00:00Z",
+      "prepare": [
+        "cd ui && corepack yarn install --frozen-lockfile && corepack yarn build"
+      ]
+    }
+  },
+  {
+    "package": "jaeger",
+    "version": "2.22.0-1",
+    "upstream_version": "2.22.0",
+    "source_url": "https://github.com/jaegertracing/jaeger/archive/refs/tags/v2.22.0.tar.gz",
+    "sha256": "b0617d50edc41f1aea5bf968240af0fd50b909812e40bf6a7e5fb7ee8b8fc573",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/jaeger",
+      "ldflags": "-X github.com/jaegertracing/jaeger/internal/version.latestVersion=v{version} -X github.com/jaegertracing/jaeger/internal/version.commitSHA=v{version}",
+      "assets": [
+        {
+          "url": "https://github.com/jaegertracing/jaeger-ui/releases/download/v2.22.0/assets.tar.gz",
+          "sha256": "18d9deb8aaf19ba9a5f9709417f8ae7ca71d99937ea68140a866d9d703da3d6a",
+          "dest": ".jaeger-ui"
+        }
+      ],
+      "prepare": [
+        "ui=cmd/jaeger/internal/extension/jaegerquery/internal/ui/actual; find \"$ui\" -mindepth 1 ! -name .gitignore -delete; cp -r .jaeger-ui/packages/jaeger-ui/build/. \"$ui/\"; find \"$ui\" -type f ! -name .gitignore -exec gzip --no-name {} +"
+      ]
+    }
+  },
+  {
+    "package": "loki",
+    "version": "3.7.9-1",
+    "upstream_version": "3.7.9",
+    "source_url": "https://github.com/grafana/loki/archive/refs/tags/v3.7.9.tar.gz",
+    "sha256": "374cc8b5f9aab740b44b1b0d9689e69b0e6f2c0feb41942cb52d3e1c4bb7bdeb",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/loki",
+      "tags": "netgo",
+      "ldflags": "-X github.com/grafana/loki/v3/pkg/util/build.Version={version} -X github.com/grafana/loki/v3/pkg/util/build.Branch=HEAD -X github.com/grafana/loki/v3/pkg/util/build.Revision=v{version}"
+    }
+  },
+  {
+    "package": "loki",
+    "version": "3.6.19-1",
+    "upstream_version": "3.6.19",
+    "source_url": "https://github.com/grafana/loki/archive/refs/tags/v3.6.19.tar.gz",
+    "sha256": "b7240493c9397ba007ffd26936d00950d2f759ff4531a76bd1c6319d3027501b",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/loki",
+      "tags": "netgo",
+      "ldflags": "-X github.com/grafana/loki/v3/pkg/util/build.Version={version} -X github.com/grafana/loki/v3/pkg/util/build.Branch=HEAD -X github.com/grafana/loki/v3/pkg/util/build.Revision=v{version}"
+    }
+  },
+  {
+    "package": "openbao",
+    "version": "2.7.1-1",
+    "upstream_version": "2.7.1",
+    "source_url": "https://github.com/openbao/openbao/releases/download/v2.7.1/openbao-dist-v2.7.1.tar.xz",
+    "sha256": "6da0c07e61d8dfd2ab72ad47cb96691fb7abfecd460a55272545346575c37711",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "tags": "ui",
+      "ldflags": "-X github.com/openbao/openbao/v2/internal/version.fullVersion={version} -X github.com/openbao/openbao/v2/internal/version.GitCommit=v{version}"
+    }
+  },
+  {
+    "package": "openbao",
+    "version": "2.6.4-1",
+    "upstream_version": "2.6.4",
+    "source_url": "https://github.com/openbao/openbao/releases/download/v2.6.4/openbao-dist-v2.6.4.tar.xz",
+    "sha256": "8d6bb28f5f12bdedf8331c975d8ab68f524e95348da4a45c7cf0d172ee91cbc0",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "tags": "ui",
+      "ldflags": "-X github.com/openbao/openbao/version.fullVersion={version} -X github.com/openbao/openbao/version.GitCommit=v{version}"
+    }
+  },
+  {
+    "package": "pushgateway",
+    "version": "1.11.4-1",
+    "upstream_version": "1.11.4",
+    "source_url": "https://github.com/prometheus/pushgateway/archive/refs/tags/v1.11.4.tar.gz",
+    "sha256": "7ae6541d891c9f700f81f2ef10f2d465fd61cc73b14a6f92ba0ce6b6250b5649",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "tags": "netgo",
+      "ldflags": "-X github.com/prometheus/common/version.Version={version} -X github.com/prometheus/common/version.Revision=v{version} -X github.com/prometheus/common/version.Branch=HEAD -X github.com/prometheus/common/version.BuildUser=jerboa -X github.com/prometheus/common/version.BuildDate=20240101-00:00:00"
+    }
+  },
+  {
+    "package": "seaweedfs",
+    "version": "4.51-1",
+    "upstream_version": "4.51",
+    "source_url": "https://github.com/seaweedfs/seaweedfs/archive/refs/tags/4.51.tar.gz",
+    "sha256": "316c9ef7d43bf7a90d6eefa269b2b4ef250992a44320c7c1c1466d3c788f6b08",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./weed",
+      "ldflags": "-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT={version}"
+    }
+  },
+  {
+    "package": "traefik",
+    "version": "3.7.16-1",
+    "upstream_version": "3.7.16",
+    "source_url": "https://github.com/traefik/traefik/releases/download/v3.7.16/traefik-v3.7.16.src.tar.gz",
+    "sha256": "3143af8f5e5e624477d6a5ea2dbaae656c6bd0ed700af1de671be32dab06c173",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/traefik",
+      "ldflags": "-X github.com/traefik/traefik/v3/pkg/version.Version={version} -X github.com/traefik/traefik/v3/pkg/version.Codename=cheddar -X github.com/traefik/traefik/v3/pkg/version.BuildDate=2026-10-20T15:19:30Z"
+    },
+    "source_strip": 0
+  },
+  {
+    "package": "zot",
+    "version": "2.1.22-1",
+    "upstream_version": "2.1.22",
+    "source_url": "https://github.com/project-zot/zot/archive/refs/tags/v2.1.22.tar.gz",
+    "sha256": "1e795f347c1025e0f513a0809a755cd927fd4cce663b142691f0cd1f96f82c12",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/zot",
+      "tags": "sync,search,scrub,metrics,lint,ui,mgmt,profile,userprefs,imagetrust,events",
+      "env": {
+        "GOEXPERIMENT": "jsonv2"
+      },
+      "ldflags": "-X zotregistry.dev/zot/v2/pkg/buildinfo.ReleaseTag=v{version} -X zotregistry.dev/zot/v2/pkg/buildinfo.Commit=v{version} -X zotregistry.dev/zot/v2/pkg/buildinfo.BinaryType=-sync-search-scrub-metrics-lint-ui-mgmt-profile-userprefs-imagetrust-events",
+      "assets": [
+        {
+          "url": "https://github.com/project-zot/zui/releases/download/commit-8e8457d/zui.tgz",
+          "sha256": "5221a4fa7749fb1ac925c840b2e68865b5e15967fdc9c58f0a7b65433c98a0dc",
+          "dest": "pkg/extensions"
+        }
+      ]
+    }
+  },
+  {
+    "package": "mailpit",
+    "version": "1.32.0-1",
+    "upstream_version": "1.32.0",
+    "source_url": "https://github.com/axllent/mailpit/archive/refs/tags/v1.32.0.tar.gz",
+    "sha256": "239e28527f83a7e76765de1a23b4b0c5e49a782f4009ec9788af6703d25397fe",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "node": true,
+      "ldflags": "-X github.com/axllent/mailpit/config.Version=v{version}",
+      "prepare": [
+        "npm ci --no-audit --no-fund && npm run build"
+      ]
+    }
+  },
+  {
+    "package": "nats-server",
+    "version": "2.15.1-1",
+    "upstream_version": "2.15.1",
+    "source_url": "https://github.com/nats-io/nats-server/archive/refs/tags/v2.15.1.tar.gz",
+    "sha256": "41b25fcb78a174f3afce4ec1eca0c1035439abf580f0a0569dbb03bd0d955e08",
+    "build_script": "scripts/build-go.sh",
+    "go": {}
+  },
+  {
+    "package": "nats-server",
+    "version": "2.14.8-1",
+    "upstream_version": "2.14.8",
+    "source_url": "https://github.com/nats-io/nats-server/archive/refs/tags/v2.14.8.tar.gz",
+    "sha256": "2104983242c41d6b7ed2616a651c86fd401dce4d7f7797e486224edea366a465",
+    "build_script": "scripts/build-go.sh",
+    "go": {}
+  },
+  {
+    "package": "ntfy",
+    "version": "2.34.0-1",
+    "upstream_version": "2.34.0",
+    "source_url": "https://github.com/binwiederhier/ntfy/archive/refs/tags/v2.34.0.tar.gz",
+    "sha256": "aec6aa2f5c329c18fe8882031934fceb527727989413d7f1604ab8e2f8c051fe",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "cgo": true,
+      "node": true,
+      "tags": "sqlite_omit_load_extension,osusergo,netgo",
+      "ldflags": "-X main.version={version} -X main.commit=v{version} -X main.date=2024-01-01T00:00:00Z",
+      "prepare": [
+        "cd web && npm ci --no-audit --no-fund && npm run build && mv build/index.html build/app.html && rm -rf ../server/site && mv build ../server/site",
+        "mkdir -p server/docs && printf \"%s\\n\" \"<!doctype html><title>ntfy</title><p>The documentation is at <a href=https://docs.ntfy.sh/>docs.ntfy.sh</a>.\" > server/docs/index.html"
+      ]
+    }
+  },
+  {
+    "package": "otelcol",
+    "version": "0.163.2-1",
+    "upstream_version": "0.163.2",
+    "source_url": "https://github.com/open-telemetry/opentelemetry-collector-releases/archive/refs/tags/v0.163.2.tar.gz",
+    "sha256": "152095ff4503464c8cf1710aa1350781deafffb3bb91e777494dea68ee931ffa",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "dir": "distributions/otelcol/_build",
+      "prepare": [
+        "cd distributions/otelcol && GOOS= GOARCH= go run go.opentelemetry.io/collector/cmd/builder@v0.163.0 --skip-compilation --config manifest.yaml"
+      ]
+    }
+  },
+  {
+    "package": "pocketbase",
+    "version": "0.40.6-1",
+    "upstream_version": "0.40.6",
+    "source_url": "https://github.com/pocketbase/pocketbase/archive/refs/tags/v0.40.6.tar.gz",
+    "sha256": "f5ed3d708d1598b9c8b2bbf07e0f1bfd9f4f6235a3157013a9a889d5081147e1",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./examples/base",
+      "ldflags": "-X github.com/pocketbase/pocketbase.Version={version}"
+    }
+  },
+  {
+    "package": "prometheus",
+    "version": "3.15.1-1",
+    "upstream_version": "3.15.1",
+    "source_url": "https://github.com/prometheus/prometheus/archive/refs/tags/v3.15.1.tar.gz",
+    "sha256": "dc204963713b5fce7aca92292bc3bf69482b088f9d7a6761e60525750c1ddfd2",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/prometheus",
+      "tags": "netgo,builtinassets",
+      "ldflags": "-X github.com/prometheus/common/version.Version={version} -X github.com/prometheus/common/version.Revision=v{version} -X github.com/prometheus/common/version.Branch=HEAD -X github.com/prometheus/common/version.BuildUser=jerboa -X github.com/prometheus/common/version.BuildDate=20240101-00:00:00",
+      "assets": [
+        {
+          "url": "https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-web-ui-3.15.1.tar.gz",
+          "sha256": "adf30f35abf0d23ffd25616afe75d1966a7ceb18ddad4161fe8ad76e28f2b48f",
+          "dest": "web/ui"
+        }
+      ],
+      "prepare": [
+        "scripts/compress_assets.sh"
+      ]
+    }
+  },
+  {
+    "package": "prometheus",
+    "version": "3.13.5-1",
+    "upstream_version": "3.13.5",
+    "source_url": "https://github.com/prometheus/prometheus/archive/refs/tags/v3.13.5.tar.gz",
+    "sha256": "d4b70b70c89ce68763532e4db7e7c83e9a8ff7c324531d8ccd78c90ec162792b",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./cmd/prometheus",
+      "tags": "netgo,builtinassets",
+      "ldflags": "-X github.com/prometheus/common/version.Version={version} -X github.com/prometheus/common/version.Revision=v{version} -X github.com/prometheus/common/version.Branch=HEAD -X github.com/prometheus/common/version.BuildUser=jerboa -X github.com/prometheus/common/version.BuildDate=20240101-00:00:00",
+      "assets": [
+        {
+          "url": "https://github.com/prometheus/prometheus/releases/download/v3.13.5/prometheus-web-ui-3.13.5.tar.gz",
+          "sha256": "c84c2c7eed84e184309cb5a07effade15a30ff767770eb9474e6fb4688ee02e1",
+          "dest": "web/ui"
+        }
+      ],
+      "prepare": [
+        "scripts/compress_assets.sh"
+      ]
+    }
+  },
+  {
+    "package": "victoria-metrics",
+    "version": "1.154.1-1",
+    "upstream_version": "1.154.1",
+    "source_url": "https://github.com/VictoriaMetrics/VictoriaMetrics/archive/refs/tags/v1.154.1.tar.gz",
+    "sha256": "7f5f78dab39467d5882005bef05940a4eed0ae6295309dfb602fc954c36e573d",
+    "build_script": "scripts/build-go.sh",
+    "go": {
+      "main": "./app/victoria-metrics",
+      "ldflags": "-X github.com/VictoriaMetrics/VictoriaMetrics/lib/buildinfo.Version=victoria-metrics-v{version}"
+    }
   }
 ]
