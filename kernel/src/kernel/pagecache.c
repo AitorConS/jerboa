@@ -30,11 +30,14 @@
 #define PAGECACHE_WRITEBACK_MAX_BYTES (16 * MB)
 #define PAGECACHE_WRITEBACK_MAX_IOS 256
 
-/* A writer starts writeback of its node once it has dirtied this much, instead
- * of leaving everything for fsync or the periodic scan: the device then writes
- * while the application is still copying. It equals MAX_EXTENT_SIZE because an
- * extent stops growing once writeback reaches it, so a lower threshold would
- * split a sequential file into smaller extents. */
+/* A sequential writer starts writeback of its node once it has dirtied this
+ * much, instead of leaving everything for fsync or the periodic scan: the
+ * device then writes while the application is still copying. It equals
+ * MAX_EXTENT_SIZE because an extent stops growing once writeback reaches it,
+ * so a lower threshold would split a sequential file into smaller extents.
+ * Only a run of writes that each begin where the previous one ended counts:
+ * scattered writes gain nothing from an early commit, which would compete
+ * with them for the device and write pages that are about to change again. */
 #define PAGECACHE_BG_WRITEBACK_BYTES (PAGECACHE_MAX_SG_ENTRIES * PAGESIZE)
 
 typedef struct pagecache_page_entry {
@@ -689,7 +692,11 @@ closure_function(6, 1, void, pagecache_write_sg_finish,
         if (!pagecache_set_dirty(pn, r)) {
             s = timm("result", "failed to add dirty range");
         } else if (pn->fs_write) {
-            pn->bg_dirty_bytes += range_span(r);
+            if (q.start == pn->bg_seq_end)
+                pn->bg_dirty_bytes += range_span(q);
+            else
+                pn->bg_dirty_bytes = 0;     /* not sequential: start over */
+            pn->bg_seq_end = q.end;
             if (pn->bg_dirty_bytes >= PAGECACHE_BG_WRITEBACK_BYTES && !pn->bg_queued &&
                 list_empty(&pn->ops)) {
                 pn->bg_queued = start_writeback = true;
@@ -2453,6 +2460,7 @@ pagecache_node pagecache_allocate_node(pagecache_volume pv, sg_io fs_read, sg_io
     list_init(&pn->ops);
     pn->truncating = false;
     pn->bg_dirty_bytes = 0;
+    pn->bg_seq_end = 0;
     pn->bg_queued = false;
     init_closure_func(&pn->bg_writeback, thunk, pagecache_node_bg_writeback);
     init_closure_func(&pn->free, thunk, pagecache_node_free);

@@ -71,7 +71,8 @@ typedef struct pagecache_node {
     u64 length;
 
     /* background writeback; protected by pages_lock */
-    u64 bg_dirty_bytes;         /* dirtied by writes since the last commit */
+    u64 bg_dirty_bytes;         /* dirtied sequentially since the last commit */
+    u64 bg_seq_end;             /* file offset where the last write ended */
     boolean bg_queued;
     closure_struct(thunk, bg_writeback);
 
