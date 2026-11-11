@@ -369,7 +369,10 @@ static int virtqueue_notify(virtqueue vq, u16 added)
     memory_barrier();
     int should_notify;
     if (vq->dev->features & VIRTIO_F_RING_EVENT_IDX)
-        should_notify = ((vq->avail->idx - *vq->avail_event - 1) < added) || (added == vq->entries);
+        /* The spec's vring_need_event(): the subtraction must wrap as u16, or
+         * every request is notified while avail->idx is behind avail_event
+         * (after the index wraps past 65535). */
+        should_notify = ((u16)(vq->avail->idx - *vq->avail_event - 1) < added) || (added == vq->entries);
     else
         should_notify = ((vq->used->flags & VRING_USED_F_NO_NOTIFY) == 0);
     if (should_notify)

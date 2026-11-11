@@ -5,6 +5,7 @@ import (
 	"debug/elf"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
@@ -306,6 +307,40 @@ func TestPullOfAResolvedRecipeIgnoresWhereTheTagMoved(t *testing.T) {
 	require.NoError(t, err)
 	_, err = Pull(ctx, PullOptions{Client: e.cl, Ref: byDigest, Recipe: v1, Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "d")})
 	require.ErrorContains(t, err, "does not name recipe")
+}
+
+func TestPullOfADiskAlreadyHeldAssemblesNothing(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	local := newStore(t)
+	v1 := e.build(t, local, "version 1")
+	_, err := Push(ctx, PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Store: local, Recipe: v1, Mkfs: e.mkfsFor})
+	require.NoError(t, err)
+
+	remote := newStore(t)
+	out := filepath.Join(t.TempDir(), "d")
+	first, err := Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: remote, Mkfs: e.mkfsFor, Out: out, Have: func(string) bool { return false }})
+	require.NoError(t, err)
+	require.False(t, first.AlreadyCached)
+	require.Equal(t, 1, e.reg.Pulls("alice", "web"))
+
+	// The caller holds the disk and the store every blob: no mkfs, no count.
+	var asked string
+	noMkfs := func(context.Context, string) (string, error) { return "", errors.New("mkfs must not run") }
+	again, err := Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: remote, Mkfs: noMkfs, Out: filepath.Join(t.TempDir(), "d"),
+		Have: func(d string) bool { asked = d; return true }})
+	require.NoError(t, err)
+	require.True(t, again.AlreadyCached)
+	require.Equal(t, first.Parsed.DiskDigest, asked)
+	require.Equal(t, v1, again.Recipe)
+	require.Equal(t, 1, e.reg.Pulls("alice", "web"))
+
+	// A store that lacks a blob fetches it and assembles, whatever the caller holds.
+	fresh, err := Pull(ctx, PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: newStore(t), Mkfs: e.mkfsFor, Out: filepath.Join(t.TempDir(), "d"),
+		Have: func(string) bool { return true }})
+	require.NoError(t, err)
+	require.False(t, fresh.AlreadyCached)
+	require.NotZero(t, fresh.BlobsFetched)
 }
 
 func TestPullNoCountSkipsTheCounter(t *testing.T) {
