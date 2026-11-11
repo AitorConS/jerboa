@@ -82,18 +82,20 @@ static inline void vnet_gso_prepare(u8 *virtio, u8 virtio_len, u8 *frame,
                              u16 frame_len, u8 header_len, u16 mss, u8 count)
 {
     __builtin_memset(virtio, 0, virtio_len);
-    if (count < 2)
-        return;
     u8 *ip = frame + 14;
     u8 *tcp = ip + 20;
-    vnet_put_be16(ip + 2, frame_len - 14);
-    vnet_put_be16(ip + 10, 0);
-    vnet_put_be16(ip + 10, vnet_checksum(ip, 20));
+    if (count >= 2) {
+        vnet_put_be16(ip + 2, frame_len - 14);
+        vnet_put_be16(ip + 10, 0);
+        vnet_put_be16(ip + 10, vnet_checksum(ip, 20));
+        virtio[1] = 1; /* VIRTIO_NET_HDR_GSO_TCPV4 */
+        vnet_put_le16(virtio + 2, header_len);
+        vnet_put_le16(virtio + 4, mss);
+    }
+    /* The stack leaves the TCP checksum to the device, for one segment as
+     * for an aggregate: only the pseudoheader sum is filled in here. */
     vnet_put_be16(tcp + 16, vnet_tcp_pseudo_seed(ip, frame_len - 34));
     virtio[0] = 1; /* VIRTIO_NET_HDR_F_NEEDS_CSUM */
-    virtio[1] = 1; /* VIRTIO_NET_HDR_GSO_TCPV4 */
-    vnet_put_le16(virtio + 2, header_len);
-    vnet_put_le16(virtio + 4, mss);
     vnet_put_le16(virtio + 6, 34); /* TCP starts after Ethernet and IPv4 */
     vnet_put_le16(virtio + 8, 16); /* TCP checksum field offset */
 }
