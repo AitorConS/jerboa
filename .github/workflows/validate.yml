@@ -18,7 +18,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: Check go.mod / go.sum are tidy
       run: |
@@ -37,7 +37,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     # Lint and tests run on Linux only; this catches darwin-only files that
     # stop compiling, e.g. after a dependency update.
@@ -60,7 +60,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: golangci-lint
       uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a
@@ -76,7 +76,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: Run unit tests
       run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
@@ -107,7 +107,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: govulncheck
       run: |
@@ -158,12 +158,19 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: false
     - name: Check KVM
       run: |
         test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
         test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    # The Firecracker shutdown test boots this change's kernel, not a release.
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: kernel-linux
+        path: .
+    - name: Restore tested kernel
+      run: tar -xzf kernel-linux.tar.gz
     - name: Build CLI binaries
       run: make build
     - name: Run integration tests
@@ -189,7 +196,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: false
     - name: Check KVM
       run: |
@@ -221,7 +228,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: Test release and workflow contracts
       run: python3 -m unittest discover -s scripts/release -p "test_*.py"

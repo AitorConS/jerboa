@@ -107,7 +107,8 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 	defer func() { _ = os.Remove(out) }()
 	res, err := transfer.Pull(ctx, transfer.PullOptions{
 		Client: client.New(ref.Registry), Ref: ref, Store: s.recipes, Mkfs: s.registryMkfs, Out: out,
-		NoCount: p.NoCount || transfer.DoNotTrack(), Platform: p.Platform,
+		NoCount: p.NoCount || transfer.DoNotTrack(), Platform: p.Platform, Recipe: p.Recipe,
+		Have: s.imgStore.Has,
 	})
 	if err != nil {
 		return nil, rpcErr(err)
@@ -117,7 +118,7 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 	if tag == "" {
 		tag = strings.TrimPrefix(res.Recipe, "sha256:")[:12]
 	}
-	m, err := s.imgStore.PutMove(ref.Name(), tag, image.Manifest{
+	manifest := image.Manifest{
 		SchemaVersion: image.SchemaVersion,
 		Platform:      r.Platform,
 		Architecture:  r.Architecture,
@@ -127,7 +128,18 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 		Created:       time.Now().UTC(),
 		DiskSize:      r.DiskSize,
 		Recipe:        res.Recipe,
-	}, out)
+	}
+	var m image.Manifest
+	if res.AlreadyCached {
+		// The store holds the recipe's disk: only the tag is written.
+		manifest.DiskDigest = r.DiskDigest
+		var ok bool
+		if m, ok, err = s.imgStore.PutStored(ref.Name(), tag, manifest); err == nil && !ok {
+			err = fmt.Errorf("the image was removed during the pull: pull %s again", ref)
+		}
+	} else {
+		m, err = s.imgStore.PutMove(ref.Name(), tag, manifest, out)
+	}
 	if err != nil {
 		return nil, rpcErr(err)
 	}

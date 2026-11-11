@@ -120,3 +120,28 @@ func TestWriteFCConfigMetricsDir(t *testing.T) {
 	parsed = writeParsedFCConfig(t, Config{ImagePath: "/i.img", Memory: "64M"})
 	require.Nil(t, parsed.Metrics)
 }
+
+// TestWriteFCConfigVsock verifies every Linux VM gets the vsock device that
+// carries jerboa stop's power-down request, and that a socket left behind by a
+// killed VMM is removed so Firecracker can bind it again.
+func TestWriteFCConfigVsock(t *testing.T) {
+	m := NewFirecrackerManager("firecracker", "vmlinux")
+	id := "vsock-test-vm"
+	stale := fcVsockPath(id)
+	require.NoError(t, os.WriteFile(stale, nil, 0o600))
+	t.Cleanup(func() { _ = os.Remove(stale) })
+
+	cfgPath, err := m.writeFCConfig(id, Config{Memory: "128M"}, filepath.Join(t.TempDir(), "root.img"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(cfgPath) })
+
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	var parsed fcVMConfig
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	require.NotNil(t, parsed.Vsock)
+	require.Equal(t, uint32(fcGuestCID), parsed.Vsock.GuestCID)
+	require.Equal(t, stale, parsed.Vsock.UDSPath)
+	require.NoFileExists(t, stale, "the stale socket must be removed before launch")
+	require.Equal(t, fcVsockPath(id), m.shutdownPath(id), "stop must dial the configured socket")
+}

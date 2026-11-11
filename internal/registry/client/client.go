@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
@@ -106,8 +107,44 @@ func (d Discovery) Supports(feature string) bool {
 	return slices.Contains(d.Features, feature)
 }
 
-// Discover reads GET /v2/ and checks the protocol version.
+// discoveryTTL is how long a registry's self-description is reused: what the
+// registry itself says it may be cached for.
+const discoveryTTL = 5 * time.Minute
+
+type cachedDiscovery struct {
+	d     Discovery
+	until time.Time
+}
+
+// discoveries holds each registry's last self-description by base URL, for
+// this process: the daemon asks once every discoveryTTL, not once a pull,
+// and a command that needs it twice asks once.
+var discoveries sync.Map
+
+// ForgetDiscoveries drops every cached self-description, so the next
+// Discover asks the registry again.
+func ForgetDiscoveries() { discoveries.Clear() }
+
+// Discover returns the registry's self-description, from GET /v2/ or from
+// the answer of the last discoveryTTL, and checks the protocol version.
 func (c *Client) Discover(ctx context.Context) (Discovery, error) {
+	if v, ok := discoveries.Load(c.Base); ok {
+		if e := v.(cachedDiscovery); time.Now().Before(e.until) {
+			d := e.d
+			d.Features = slices.Clone(d.Features)
+			return d, nil
+		}
+	}
+	d, err := c.discover(ctx)
+	if err == nil {
+		e := cachedDiscovery{d: d, until: time.Now().Add(discoveryTTL)}
+		e.d.Features = slices.Clone(d.Features)
+		discoveries.Store(c.Base, e)
+	}
+	return d, err
+}
+
+func (c *Client) discover(ctx context.Context) (Discovery, error) {
 	var d Discovery
 	if err := c.do(ctx, http.MethodGet, c.Base+"/v2/", "", nil, "", &d); err != nil {
 		return d, err

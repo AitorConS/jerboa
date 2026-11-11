@@ -69,6 +69,55 @@ under the package's name.
 Each architecture builds on a native runner (`ubuntu-24.04` or
 `ubuntu-24.04-arm`); nothing is cross-compiled.
 
+### Go programs built from source
+
+A release binary carries the Go toolchain and module versions upstream built
+it with, and keeps their known vulnerabilities until upstream releases again.
+`scripts/build-go.sh` builds the program from its source release instead,
+with the toolchain the script pins and with every module listed in
+`scripts/release/go-floor.txt` raised to at least that version. The package
+version adds a revision to the upstream one (`3.15.1-1`), raised whenever
+the package is rebuilt with newer floors.
+
+```json
+{
+  "package": "prometheus",
+  "version": "3.15.1-1",
+  "upstream_version": "3.15.1",
+  "source_url": "https://github.com/prometheus/prometheus/archive/refs/tags/v3.15.1.tar.gz",
+  "sha256": "…",
+  "build_script": "scripts/build-go.sh",
+  "go": {
+    "main": "./cmd/prometheus",
+    "ldflags": "-X github.com/prometheus/common/version.Version={version}",
+    "tags": "netgo,builtinassets",
+    "assets": [{"url": "https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-web-ui-3.15.1.tar.gz", "sha256": "…", "dest": "web/ui"}],
+    "prepare": ["scripts/compress_assets.sh"]
+  }
+}
+```
+
+| `go` field | Meaning |
+|---|---|
+| `main` | The package to build, relative to `dir` (default `.`). |
+| `dir` | The module directory, relative to the source root (default `.`). |
+| `ldflags` | Linker flags; `{version}` is the upstream version. Set them as upstream's release build does, so the program reports the same version. |
+| `tags` | Build tags, comma-separated. |
+| `cgo` | `true` to build with cgo (default `false`). |
+| `env` | More build environment, such as `GOEXPERIMENT`. |
+| `assets` | Archives added to the source before building, each pinned by `sha256`: a web UI upstream publishes prebuilt, for example. Prefer one to building the UI with Node.js. |
+| `node` | `true` when `prepare` builds a web UI with Node.js; the script installs the Node.js release it pins. |
+| `prepare` | Shell commands run in the source root before the build, with `VERSION` set. |
+
+`source_strip` (default 1) is how many leading path parts to drop when
+extracting the source archive.
+
+A floor applies only to programs that already require the module. A module
+with fixes on several release lines lists one version per line; a program
+on one of those lines gets that line's fix, so a program is never moved to a
+new minor release of a module it already pins the older line of. Every
+floor must be at least two weeks old when it is added.
+
 ## The build script contract
 
 The workflow runs the script from the repository root with:

@@ -3,7 +3,7 @@
 package vm
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,7 +11,6 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,20 +98,15 @@ type FirecrackerManager struct {
 	// Platform hooks for the VMM control and runtime paths.
 	vmSockPath         func(id string) string            // socket path as seen by the firecracker process
 	cfgPathForProcess  func(path string) string          // translates config file path for the FC process
-	shutdownAPI        func(sockPath string) error       // calls Firecracker's SendCtrlAltDel API
+	shutdownAPI        func(path string) error           // asks the guest to power down
+	shutdownPath       func(id string) string            // endpoint handed to shutdownAPI
 	rewriteConfigPaths func(cfg *fcVMConfig)             // rewrites paths inside the FC JSON config
 	vmmLogPath         func(id string) string            // path for Firecracker's --log-path arg
 	readVMMLog         func(path string) ([]byte, error) // reads VMM log (may use wsl on Windows)
 	shutdownGrace      time.Duration                     // outer bound after requesting guest shutdown
-	// guestShutdown reports whether the VMM has a shutdown channel this guest
-	// acts on. Upstream Firecracker only offers SendCtrlAltDel, which writes to
-	// the i8042 reset port; Nanos implements no i8042 or ACPI handler, so the
-	// guest never sees it. The macOS VMM raises a power button the guest does
-	// handle, so its platform hook sets this.
-	guestShutdown bool
-	metrics       MetricsSink
-	diskDir       string
-	metricsDir    string
+	metrics            MetricsSink
+	diskDir            string
+	metricsDir         string
 	// applyLimits places the firecracker process into a per-VM cgroup with the
 	// requested CPU/memory limits, returning an error the caller turns into a
 	// failed Start. Defaults to defaultApplyLimits; tests override it.
@@ -135,11 +129,12 @@ func NewFirecrackerManager(fcBin, kernelImage string, opts ...FCOption) *Firecra
 		hchecker:           NewHealthChecker(),
 		vmSockPath:         fcSocketPath,
 		cfgPathForProcess:  func(p string) string { return p },
-		shutdownAPI:        fcSendCtrlAltDel,
+		shutdownAPI:        fcRequestPowerdown,
+		shutdownPath:       fcVsockPath,
 		rewriteConfigPaths: func(*fcVMConfig) {},
 		vmmLogPath:         func(id string) string { return filepath.Join(qmpRuntimeDir(), "fc-"+id+"-vmm.log") },
 		readVMMLog:         os.ReadFile,
-		shutdownGrace:      gracePeriod,
+		shutdownGrace:      fcStopGracePeriod,
 		applyLimits:        defaultApplyLimits,
 	}
 	platformInitFC(m)
@@ -358,8 +353,10 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	return nil
 }
 
-// Stop gracefully shuts down the VM via Firecracker's SendCtrlAltDel API action,
-// falling back to SIGTERM → SIGKILL after gracePeriod.
+// Stop asks the guest to power down and waits up to shutdownGrace for the VMM to
+// exit, then kills it. A guest that cannot take the request (a kernel without
+// the vsock power-down handler, or one that has not brought vsock up yet) gets
+// SIGTERM to the VMM instead, as before.
 func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 	v, release, err := m.claimVM(id, "stop")
 	if err != nil {
@@ -384,22 +381,18 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 
-	// Ask the guest to shut down where that works. Otherwise terminate the VMM
-	// directly instead of waiting out the grace period for a request the guest
-	// cannot answer: the root disk is a per-VM clone discarded on exit, and
-	// volume writes the guest already flushed are on host storage (volumes
-	// default to cache_type Writeback).
+	// Ask the guest to shut down: Nanos sends SIGTERM to its processes, waits
+	// for them, and syncs its filesystems before powering off. On Linux the
+	// request goes over vsock (upstream Firecracker has no power button and its
+	// SendCtrlAltDel only exists on x86); the macOS VMM raises a power button.
+	// If the guest cannot take the request, terminate the VMM directly instead
+	// of waiting out the grace period: the root disk is a per-VM clone
+	// discarded on exit, and volume writes the guest already flushed are on
+	// host storage (volumes default to cache_type Writeback).
 	//
-	// id may be a name or ID prefix; the API socket is named after the resolved ID.
-	requested := false
-	if m.guestShutdown {
-		if err := m.shutdownAPI(m.vmSockPath(v.ID)); err != nil {
-			slog.Debug("firecracker stop: guest shutdown request failed, falling back to SIGTERM", "vm_id", v.ID, "err", err)
-		} else {
-			requested = true
-		}
-	}
-	if !requested {
+	// id may be a name or ID prefix; the endpoint is named after the resolved ID.
+	if err := m.shutdownAPI(m.shutdownPath(v.ID)); err != nil {
+		slog.Info("firecracker stop: guest did not accept the shutdown request, terminating the VMM", "vm_id", v.ID, "err", err)
 		if sigErr := proc.signal(syscall.SIGTERM); sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
 			_ = proc.kill()
 			return nil
@@ -596,6 +589,9 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vm
 		cleanup()
 	}
 	_ = os.Remove(sockPath)
+	if runtime.GOOS != "darwin" {
+		_ = os.Remove(fcVsockPath(v.ID))
+	}
 	cleanupFCConfig(cfgPath)
 	_ = os.Remove(vmmLog)
 	_ = os.Remove(rootfs)
@@ -759,6 +755,15 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 		}
 	}
 
+	// The vsock device carries jerboa stop's power-down request to the guest.
+	// Firecracker binds the socket itself and refuses an existing path, which a
+	// VMM that was killed leaves behind.
+	vsockPath := fcVsockPath(id)
+	if err := os.Remove(vsockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("remove stale firecracker vsock socket: %w", err)
+	}
+	fcCfg.Vsock = &fcVsock{GuestCID: fcGuestCID, UDSPath: vsockPath}
+
 	if m.metricsDir != "" {
 		// Firecracker opens an existing metrics file; it does not create one.
 		if err := os.MkdirAll(m.metricsDir, 0o700); err != nil {
@@ -903,30 +908,54 @@ func parseMiB(mem string) (int, error) {
 	}
 }
 
-// fcSendCtrlAltDel sends a graceful shutdown request to the Firecracker REST API.
-func fcSendCtrlAltDel(sockPath string) error {
-	dialer := &net.Dialer{}
-	client := &http.Client{
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				return dialer.DialContext(ctx, "unix", sockPath)
-			},
-		},
-		Timeout: 5 * time.Second,
-	}
-	body := bytes.NewReader([]byte(`{"action_type":"SendCtrlAltDel"}`))
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, "http://localhost/actions", body)
+const (
+	// fcGuestCID is the guest's vsock context ID; 0-2 are reserved.
+	fcGuestCID = 3
+	// fcVsockPowerdownPort must match VIRTIO_SOCK_POWERDOWN_PORT in
+	// kernel/src/virtio/virtio_socket.c. A host connection to it makes Nanos
+	// run its power button shutdown path.
+	fcVsockPowerdownPort = 0x4a425057
+	// fcStopGracePeriod leaves room for Nanos' own 30-second SIGTERM grace
+	// period (UNIX_SHUTDOWN_TIMEOUT_SECS) plus the final filesystem sync before
+	// the VMM is killed, matching the macOS backend.
+	fcStopGracePeriod = 40 * time.Second
+)
+
+// fcVsockHandshakeTimeout bounds the power-down handshake. The guest answers
+// from its virtio interrupt handler, so only a guest without a running vsock
+// driver comes close to it. A variable so tests can shorten it.
+var fcVsockHandshakeTimeout = 3 * time.Second
+
+// fcVsockPath is the host socket backing the VM's vsock device.
+func fcVsockPath(id string) string {
+	return filepath.Join(qmpRuntimeDir(), "fc-"+id+"-vsock.sock")
+}
+
+// fcRequestPowerdown asks the guest to power down through Firecracker's vsock
+// device, using its host-initiated connection protocol: write "CONNECT <port>"
+// and read "OK <host port>" once the guest accepts. A kernel without the
+// handler resets the connection, which Firecracker reports by closing the
+// socket without a reply.
+func fcRequestPowerdown(udsPath string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), fcVsockHandshakeTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", udsPath)
 	if err != nil {
-		return fmt.Errorf("fc shutdown request: %w", err)
+		return fmt.Errorf("fc power-down: connect vsock: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(fcVsockHandshakeTimeout)); err != nil {
+		return fmt.Errorf("fc power-down: %w", err)
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %d\n", fcVsockPowerdownPort); err != nil {
+		return fmt.Errorf("fc power-down: send request: %w", err)
+	}
+	reply, err := bufio.NewReader(io.LimitReader(conn, 64)).ReadString('\n')
 	if err != nil {
-		return fmt.Errorf("fc shutdown: %w", err)
+		return fmt.Errorf("fc power-down: guest did not accept the request: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+	if !strings.HasPrefix(reply, "OK ") {
+		return fmt.Errorf("fc power-down: unexpected reply %q", strings.TrimSpace(reply))
 	}
 	return nil
 }
@@ -971,7 +1000,15 @@ type fcVMConfig struct {
 	Drives            []fcDrive            `json:"drives"`
 	MachineConfig     fcMachineConfig      `json:"machine-config"`
 	NetworkInterfaces []fcNetworkInterface `json:"network-interfaces,omitempty"`
+	Vsock             *fcVsock             `json:"vsock,omitempty"`
 	Metrics           *fcMetrics           `json:"metrics,omitempty"`
+}
+
+// fcVsock is the Linux guest's virtio-vsock device. Firecracker listens on
+// UDSPath for host-initiated connections ("CONNECT <port>\n").
+type fcVsock struct {
+	GuestCID uint32 `json:"guest_cid"`
+	UDSPath  string `json:"uds_path"`
 }
 
 type fcMetrics struct {

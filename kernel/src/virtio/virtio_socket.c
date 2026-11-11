@@ -56,6 +56,17 @@ struct virtio_vsock_hdr {
 
 #define VIRTIO_SOCK_RXBUF_SIZE  (4 * KB)
 
+/* Well-known CID of the host side of a virtio-vsock device. */
+#define VIRTIO_SOCK_HOST_CID    2
+
+/* A connection request from the host to this port asks the guest to power
+ * down. Upstream Firecracker has no ACPI or power button device on either
+ * architecture, so jerboa uses this channel to run the same orderly shutdown as
+ * a power button press: SIGTERM to user processes, then the kernel shutdown path
+ * including storage_sync(). The value spells "JBPW" so it does not collide with
+ * ports applications pick. */
+#define VIRTIO_SOCK_POWERDOWN_PORT  0x4a425057
+
 typedef struct virtio_sock {
     heap general;
     backed_heap backed;
@@ -91,6 +102,41 @@ typedef struct virtio_sock_txbuf {
 } *virtio_sock_txbuf;
 
 static boolean virtio_sock_rxq_submit(virtio_sock vs);
+
+static boolean virtio_sock_powerdown_queued;
+static closure_struct(thunk, virtio_sock_powerdown_thunk);
+
+closure_func_basic(thunk, void, virtio_sock_powerdown)
+{
+    kernel_powerdown();
+}
+
+static boolean virtio_sock_tx_hdr(virtio_sock vs, virtio_sock_connection conn, u16 op, u32 flags);
+
+/* Accept a host power-down request without allocating connection state: the
+ * response tells the host the request was received, and any later packet for
+ * this connection finds no socket and is dropped. */
+static void virtio_sock_powerdown_request(virtio_sock vs, struct virtio_vsock_hdr *hdr)
+{
+    struct virtio_sock_connection conn = {
+        .vsock_conn = {
+            .id = {
+                .local_port = hdr->dst_port,
+                .peer_cid = hdr->src_cid,
+                .peer_port = hdr->src_port,
+            },
+        },
+        .type = hdr->type,
+        .buf_alloc = 0,
+        .fwd_cnt = 0,
+    };
+    virtio_sock_tx_hdr(vs, &conn, VIRTIO_VSOCK_OP_RESPONSE, 0);
+    if (virtio_sock_powerdown_queued)
+        return;
+    virtio_sock_powerdown_queued = true;
+    rputs("virtio socket: host power-down requested\n");
+    async_apply(init_closure_func(&virtio_sock_powerdown_thunk, thunk, virtio_sock_powerdown));
+}
 
 static boolean virtio_sock_dev_attach(heap general, backed_heap backed, vtdev dev)
 {
@@ -280,6 +326,11 @@ closure_func_basic(vqfinish, void, virtio_sock_rx_complete,
     conn_id.peer_port = hdr->src_port;
     switch (hdr->op) {
     case VIRTIO_VSOCK_OP_REQUEST:
+        if ((hdr->dst_port == VIRTIO_SOCK_POWERDOWN_PORT) &&
+            (hdr->src_cid == VIRTIO_SOCK_HOST_CID)) {
+            virtio_sock_powerdown_request(vs, hdr);
+            goto out;
+        }
         conn = (virtio_sock_connection)virtio_sock_conn_new(vs, conn_id.local_port,
                                                             conn_id.peer_cid, conn_id.peer_port,
                                                             vsock_get_buf_size());
