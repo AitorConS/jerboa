@@ -37,6 +37,36 @@ const (
 	EnvActionsToken    = "ACTIONS_ID_TOKEN_REQUEST_TOKEN" //nolint:gosec // the name of an environment variable, not a credential
 )
 
+// A registry behind Cloudflare Access (a private staging deployment) answers
+// only requests that carry a service token. These name the token and the one
+// registry it is for; all three must be set.
+const (
+	EnvAccessHost         = "JERBOA_REGISTRY_ACCESS_HOST"
+	EnvAccessClientID     = "JERBOA_REGISTRY_ACCESS_CLIENT_ID"
+	EnvAccessClientSecret = "JERBOA_REGISTRY_ACCESS_CLIENT_SECRET" //nolint:gosec // the name of an environment variable, not a credential
+)
+
+// AccessToken returns the Cloudflare Access service token to send to host:
+// the registry EnvAccessHost names, or a subdomain of it (its CDN). The token
+// is never sent to any other host.
+func AccessToken(host string) (id, secret string, ok bool) {
+	want := strings.ToLower(strings.TrimSpace(os.Getenv(EnvAccessHost)))
+	id, secret = os.Getenv(EnvAccessClientID), os.Getenv(EnvAccessClientSecret)
+	if want == "" || id == "" || secret == "" {
+		return "", "", false
+	}
+	host = strings.ToLower(host)
+	if host != want && !strings.HasSuffix(host, "."+want) {
+		return "", "", false
+	}
+	return id, secret, true
+}
+
+// AccessConfigured reports whether a service token is set for some registry.
+func AccessConfigured() bool {
+	return os.Getenv(EnvAccessHost) != "" && os.Getenv(EnvAccessClientID) != "" && os.Getenv(EnvAccessClientSecret) != ""
+}
+
 // InGitHubActions reports whether the process runs in a GitHub Actions job
 // that may request OIDC tokens.
 func InGitHubActions() bool {
