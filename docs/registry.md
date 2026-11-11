@@ -180,6 +180,19 @@ Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
 
 `JERBOA_REGISTRY_TOKEN` is only sent to `registry.jerboa.dev`. For another registry, also set `JERBOA_REGISTRY_HOST` to its host.
 
+### A registry behind Cloudflare Access
+
+A private deployment (a staging registry, say) can sit behind Cloudflare Access, which answers only requests that carry a service token. Set all three:
+
+```yaml
+env:
+  JERBOA_REGISTRY_ACCESS_HOST: staging.registry.example
+  JERBOA_REGISTRY_ACCESS_CLIENT_ID: ${{ secrets.REGISTRY_ACCESS_CLIENT_ID }}
+  JERBOA_REGISTRY_ACCESS_CLIENT_SECRET: ${{ secrets.REGISTRY_ACCESS_CLIENT_SECRET }}
+```
+
+The token travels in the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers, over HTTPS, to that host and its subdomains (its CDN) and to no other host, redirects included. It is separate from the registry credential: `JERBOA_REGISTRY_TOKEN` or a login is still needed to push. A daemon that pulls from such a registry needs the same variables in its own environment.
+
 `jerboa registry pat ls` lists your tokens; `jerboa registry pat rm <id>` revokes one.
 
 ## Description and README

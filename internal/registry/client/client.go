@@ -71,10 +71,44 @@ func New(host string) *Client {
 }
 
 func (c *Client) http() *http.Client {
-	if c.HTTP != nil {
-		return c.HTTP
+	hc := c.HTTP
+	if hc == nil {
+		hc = httpclient.Streaming
 	}
-	return httpclient.Streaming
+	if !credentials.AccessConfigured() {
+		return hc
+	}
+	withAccess := *hc
+	withAccess.Transport = accessTransport{base: hc.Transport}
+	return &withAccess
+}
+
+// The headers a Cloudflare Access service token travels in.
+const (
+	accessClientIDHeader     = "CF-Access-Client-Id"
+	accessClientSecretHeader = "CF-Access-Client-Secret" //nolint:gosec // a header name, not a credential
+)
+
+// accessTransport adds the Cloudflare Access service token to requests for
+// the registry it is for. It decides per request, redirects included, so the
+// token does not follow a redirect to another host.
+type accessTransport struct{ base http.RoundTripper }
+
+func (t accessTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	req = req.Clone(req.Context())
+	req.Header.Del(accessClientIDHeader)
+	req.Header.Del(accessClientSecretHeader)
+	if req.URL.Scheme == "https" {
+		if id, secret, ok := credentials.AccessToken(req.URL.Hostname()); ok {
+			req.Header.Set(accessClientIDHeader, id)
+			req.Header.Set(accessClientSecretHeader, secret)
+		}
+	}
+	return base.RoundTrip(req) //nolint:wrapcheck // a RoundTripper passes its transport's error through; the caller wraps it
 }
 
 // LoginDevice is Discovery.Login of a registry that runs GitHub's device flow
