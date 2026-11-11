@@ -98,6 +98,43 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 			_ = s.verifyDisk(imgDir, digest)
 		}
 	}
+	return s.record(imgDir, digest, m)
+}
+
+// PutStored tags the disk the store already holds for m.DiskDigest as
+// name:tag with m's metadata, without another copy of the disk: what a pull
+// of an image whose disk is already here needs. ok is false when the store
+// does not hold that disk, intact.
+func (s *Store) PutStored(name, tag string, m Manifest) (stored Manifest, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sha := stripPrefix(m.DiskDigest)
+	if !isSHA256Hex(sha) {
+		return Manifest{}, false, nil
+	}
+	imgDir := filepath.Join(s.root, sha)
+	if !s.Trusted(filepath.Join(imgDir, "disk.img"), m.DiskDigest) {
+		return Manifest{}, false, nil
+	}
+	m.Name, m.Tag = name, tag
+	stored, err = s.record(imgDir, m.DiskDigest, m)
+	return stored, err == nil, err
+}
+
+// Has reports whether the store holds the disk with this digest, intact.
+func (s *Store) Has(diskDigest string) bool {
+	sha := stripPrefix(diskDigest)
+	if !isSHA256Hex(sha) {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Trusted(filepath.Join(s.root, sha, "disk.img"), diskDigest)
+}
+
+// record writes m as the manifest of the disk in imgDir and of its
+// m.Name:m.Tag, and points that ref at the disk. The caller holds s.mu.
+func (s *Store) record(imgDir, digest string, m Manifest) (Manifest, error) {
 	data, err := Marshal(m)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
@@ -105,7 +142,7 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 	if err := writeFileAtomic(filepath.Join(imgDir, "manifest.json"), data); err != nil {
 		return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
 	}
-	ref := name + ":" + tag
+	ref := m.Name + ":" + m.Tag
 	if err := os.MkdirAll(filepath.Join(imgDir, "tags"), 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("image store put mkdir: %w", err)
 	}

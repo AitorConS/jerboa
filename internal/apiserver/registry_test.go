@@ -102,10 +102,20 @@ func TestImagePushAndPullThroughTheDaemon(t *testing.T) {
 
 	// A caller that resolved the tag itself names the recipe: it is pulled
 	// under the tag, and one the repository does not hold is refused.
+	// The disk is already stored, so this pull fetches and assembles nothing.
 	again, err := c.ImagePull(ctx, api.ImagePullParams{Reference: ref, Recipe: pulled.Recipe})
 	require.NoError(t, err)
 	require.Equal(t, pulled.Recipe, again.Recipe)
 	require.Equal(t, "v1", again.Image.Tag)
+	require.Equal(t, built.DiskDigest, again.Image.DiskDigest)
+	require.Zero(t, again.BlobsFetched)
+	require.Zero(t, again.Requests)
+	// Under another tag too: the same disk, a second ref.
+	other, err := c.ImagePull(ctx, api.ImagePullParams{Reference: reg.Host() + "/alice/web@" + pulled.Recipe})
+	require.NoError(t, err)
+	require.Equal(t, built.DiskDigest, other.Image.DiskDigest)
+	_, _, err = store.Get(reg.Host() + "/alice/web:" + other.Image.Tag)
+	require.NoError(t, err)
 	_, err = c.ImagePull(ctx, api.ImagePullParams{Reference: ref, Recipe: "sha256:" + strings.Repeat("0", 64)})
 	require.ErrorContains(t, err, "is not in alice/web")
 
