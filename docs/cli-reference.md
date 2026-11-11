@@ -167,6 +167,15 @@ Graceful stop by default. Idempotent: stopping a VM that is already stopped
 (for example a program that ran to completion and exited on its own) is a no-op
 that succeeds, matching `docker stop`.
 
+A graceful stop asks the guest to power down. Nanos sends `SIGTERM` to the
+program, waits up to 30 seconds for it to exit, and syncs its filesystems,
+including volumes, before powering off. The request reaches the guest as a
+power button press under QEMU and Firecracker on macOS, and over the VM's
+vsock device under Firecracker on Linux, where the daemon kills the VMM if the
+guest has not powered off within 40 seconds. A Linux Firecracker guest kernel
+without the vsock power-down handler cannot take the request; its VMM is
+terminated at once, without a guest-side sync.
+
 Flag:
 
 - `--force`: immediate kill
@@ -361,7 +370,7 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 | `logout [registry]` | Forget the stored credential |
 | `tag <image> <target>` | Give a stored image another name, e.g. the reference to push it as |
 | `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to. `push --index <target> <image>…` tags an image index of images already pushed, one per platform. A trusted publisher's push (GitHub Actions, with the job's OIDC token) is signed with Sigstore (provenance and SBOM attestations); `--sign=false` skips it (v0.57.0 and later) |
-| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store; for a tag published for several platforms, this host's, or `--platform linux/amd64\|linux/arm64`. Signed images are kept only if their signatures verify against `--identity <owner/repo[/workflow[@ref]]>`, the rule of `~/.jerboa/policy.json` for the namespace (always one for `jerboa/`), the signer remembered for the repository, or the workflow the registry recorded; the first verified pull remembers the signer, and later pulls refuse another one or an unsigned image. `--verify` also refuses unsigned images (v0.57.0 and later) |
+| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store; for a tag published for several platforms, this host's, or `--platform linux/amd64\|linux/arm64`. Signed images are pulled only if their signatures verify, which is checked before anything is downloaded, against `--identity <owner/repo[/workflow[@ref]]>`, the rule of `~/.jerboa/policy.json` for the namespace (always one for `jerboa/`), the signer remembered for the repository, or the workflow the registry recorded; the first verified pull remembers the signer, and later pulls refuse another one or an unsigned image. `--verify` also refuses unsigned images (v0.57.0 and later) |
 | `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host; `create` takes `--expires-in <days>`, `--namespace` and `--delete`) |
 | `registry verify <ref>` | Check an image's signatures as a pull does, without pulling or remembering anything, and show its attestations (`--identity`, `--platform` for a tag of several platforms; v0.57.0 and later) |
 | `registry signers` | List the signers pulls remember per repository (`~/.jerboa/signers.json`); `registry signers forget <repo>` forgets one, for a publisher that changed on purpose (v0.57.0 and later) |

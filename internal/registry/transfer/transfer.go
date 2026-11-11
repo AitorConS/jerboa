@@ -145,6 +145,15 @@ type PullOptions struct {
 	Parallel int
 	// NoCount skips reporting the pull to the hub's counter.
 	NoCount bool
+	// Recipe is the recipe to pull under Ref's tag, when the caller already
+	// resolved the tag, and checked the recipe's signatures: the pull fetches
+	// that recipe, which the repository must hold, whatever the tag names
+	// by now.
+	Recipe string
+	// Have reports whether the caller already holds, intact, the assembled
+	// disk with this digest. When it does and the store lacks none of the
+	// recipe's blobs, the pull assembles nothing (PullResult.AlreadyCached).
+	Have func(diskDigest string) bool
 	// Platform is the platform to pull, such as linux/arm64: a tag naming an
 	// image index pulls that platform's recipe, and any other pull fails
 	// unless its recipe is for it. Empty means the host's, for an index.
@@ -155,13 +164,16 @@ type PullOptions struct {
 type PullResult struct {
 	Recipe string `json:"recipe"`
 	// Index is the image index the recipe was chosen from, if the tag named one.
-	Index         string         `json:"index,omitempty"`
-	Parsed        *recipe.Recipe `json:"-"`
-	Blobs         int            `json:"blobs"`
-	BlobsFetched  int            `json:"blobs_fetched"`
-	Requests      int            `json:"requests"`
-	BytesFetched  int64          `json:"bytes_fetched"`
-	AlreadyCached bool           `json:"-"`
+	Index        string         `json:"index,omitempty"`
+	Parsed       *recipe.Recipe `json:"-"`
+	Blobs        int            `json:"blobs"`
+	BlobsFetched int            `json:"blobs_fetched"`
+	Requests     int            `json:"requests"`
+	BytesFetched int64          `json:"bytes_fetched"`
+	// AlreadyCached says nothing was fetched or assembled, and nothing is
+	// at PullOptions.Out: the caller holds the recipe's disk
+	// (PullOptions.Have) and the store every blob.
+	AlreadyCached bool `json:"-"`
 }
 
 // maxRangeGap merges frames of a pack closer than this into one request.
@@ -176,6 +188,12 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		return res, fmt.Errorf("pull: %w", err)
 	}
 	digest := o.Ref.Digest
+	if o.Recipe != "" {
+		if digest != "" && digest != o.Recipe {
+			return res, fmt.Errorf("pull: %s does not name recipe %s", o.Ref, o.Recipe)
+		}
+		digest = o.Recipe
+	}
 	if digest == "" {
 		tag, err := o.Client.Tag(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag)
 		if err != nil {
@@ -214,6 +232,13 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		if !o.Store.Has(b.Digest) {
 			missing = append(missing, b.Digest)
 		}
+	}
+	// Nothing to fetch and the disk already assembled: the recipe, checked
+	// against its digest, names that disk, so building it again would only
+	// reproduce it. Not counted as a pull either: nothing was downloaded.
+	if len(missing) == 0 && o.Have != nil && o.Have(r.DiskDigest) {
+		res.AlreadyCached = true
+		return res, nil
 	}
 	if len(missing) > 0 {
 		if err := fetch(ctx, o, d.CDN, digest, missing, sizes, &res); err != nil {

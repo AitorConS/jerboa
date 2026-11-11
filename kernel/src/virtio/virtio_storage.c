@@ -92,8 +92,12 @@ struct virtio_blk_config {
 #define VIRTIO_BLK_S_IOERR      1
 #define VIRTIO_BLK_S_UNSUPP     2
 
+/* EVENT_IDX lets the device suppress the notification for a request queued
+ * while it is still draining the ring, so a writeback wave of N requests costs
+ * a few VM exits instead of N. */
 #define VIRTIO_BLK_DRIVER_FEATURES  \
-    (VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_BLK_SIZE | VIRTIO_BLK_F_CONFIG_WCE | VIRTIO_BLK_F_FLUSH)
+    (VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_BLK_SIZE | VIRTIO_BLK_F_CONFIG_WCE | VIRTIO_BLK_F_FLUSH | \
+     VIRTIO_F_RING_EVENT_IDX)
 
 typedef struct storage {
     vtdev v;

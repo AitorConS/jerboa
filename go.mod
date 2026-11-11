@@ -2,7 +2,7 @@ module github.com/AitorConS/jerboa
 
 go 1.27
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/containers/gvisor-tap-vsock v0.9.0

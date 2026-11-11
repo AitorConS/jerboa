@@ -364,12 +364,13 @@ start.
 
 The lock is left behind whenever the guest is not told to shut down:
 
-- **QEMU** (Linux and macOS) and **Firecracker on macOS** deliver a shutdown to
-  the guest, so `jerboa stop` lets PostgreSQL checkpoint and clear its lock.
-  A `stop --force`, a `kill` or a host reboot still leaves the lock behind.
-- **Firecracker on Linux** has no shutdown channel the guest acts on (its only
-  option, `SendCtrlAltDel`, writes to an i8042 port Nanos does not implement),
-  so *every* stop is ungraceful and the lock is always left behind.
+- **QEMU** (Linux and macOS) and **Firecracker** (Linux and macOS) deliver a
+  shutdown to the guest, so `jerboa stop` lets PostgreSQL checkpoint and clear
+  its lock. A `stop --force`, a `kill` or a host reboot still leaves the lock
+  behind.
+- **Firecracker on Linux** delivers the shutdown over the VM's vsock device,
+  which needs a guest kernel that handles the request. With an older kernel
+  every stop is ungraceful and the lock is always left behind.
 
 **Your data is safe.** Volumes forward the guest's flushes to host storage, so
 PostgreSQL's crash recovery replays the write-ahead log on the next start,
