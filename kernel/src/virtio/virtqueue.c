@@ -103,6 +103,8 @@ typedef struct virtqueue {
     u16 desc_idx;               /* head of descriptor free list */
     u16 last_used_idx;          /* irq only */
     struct list msg_queue;
+    u32 queued_desc;            /* descriptors of the messages in msg_queue */
+    u16 fill_batch;             /* see virtqueue_set_fill_batch() */
     struct list free_msgs;
     u32 msg_seqno;
     struct spinlock lock;
@@ -180,6 +182,7 @@ void vqmsg_commit_seqno(virtqueue vq, vqmsg m, vqfinish completion, u32 *seqno, 
     if (seqno)
         *seqno = vq->msg_seqno++;
     list_push_back(&vq->msg_queue, &m->l);
+    vq->queued_desc += m->count;
     if (kick)
         virtqueue_fill(vq);
     spin_unlock_irq(&vq->lock, irqflags);
@@ -331,7 +334,23 @@ u16 virtqueue_entries(virtqueue vq)
 
 u16 virtqueue_free_entries(virtqueue vq)
 {
-    return vq->free_cnt;
+    /* Descriptors of messages that are committed but not yet in the ring are
+     * spoken for. */
+    u64 free = vq->free_cnt;
+    u32 queued = vq->queued_desc;
+    return (free > queued) ? free - queued : 0;
+}
+
+/* Hands buffers to the device `batch` descriptors at a time instead of one by
+ * one. For a queue the device only consumes from (receive buffers), every
+ * buffer added is otherwise a notification of its own: the device asks to be
+ * told about the next one, and it has been told about all the previous ones.
+ * The queue never holds back buffers while the device has less than half of
+ * the ring, so a batch that cannot be completed (allocation failure) does not
+ * starve it. */
+void virtqueue_set_fill_batch(virtqueue vq, u16 batch)
+{
+    vq->fill_batch = MIN(batch, vq->entries / 2);
 }
 
 static void vq_enable_events(virtqueue vq)
@@ -386,6 +405,9 @@ static void virtqueue_fill(virtqueue vq)
     virtqueue_debug("%s: ENTRY: vq %s: entries %d, desc_idx %d, avail->idx %d, avail->flags 0x%x\n",
                     func_ss, vq->name, vq->entries, vq->desc_idx, vq->avail->idx, vq->avail->flags);
 
+    if (vq->fill_batch && (vq->queued_desc < vq->fill_batch) &&
+        (vq->entries - vq->free_cnt >= vq->entries / 2))
+        return;
     list n = list_get_next(&vq->msg_queue);
     u16 added = 0;
   begin:
@@ -424,6 +446,7 @@ static void virtqueue_fill(virtqueue vq)
         vq->avail->ring[avail_idx] = head;
         virtqueue_debug_verbose("      avail->ring[%d] = %d\n", avail_idx, head);
         fetch_and_add(&vq->free_cnt, -m->count);
+        vq->queued_desc -= m->count;
         added++;
 
         // ensure desc and avail ring updates above are visible before updating avail->idx

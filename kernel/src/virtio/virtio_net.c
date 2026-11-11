@@ -68,6 +68,18 @@ typedef struct vnet_rx {
     struct virtio_net_hdr_mrg_rxbuf *hdr;
 } *vnet_rx;
 
+/* Receive buffer length when the device merges buffers and may deliver frames
+ * larger than the MTU (guest TSO). A 60 KB frame spread over MTU-sized buffers
+ * takes 40 of them: 40 descriptors for the device to walk, a 40-element pbuf
+ * chain for lwIP, and a 256-entry ring that holds six frames and has to be
+ * refilled for every one. With 16 KiB buffers it takes four. Larger buffers
+ * measure no better and pin more memory in the ring (256 x 16 KiB = 4 MiB). */
+#define VNET_RX_MRG_GSO_BUFLEN 16384
+/* A frame this small is copied out of a large receive buffer, so that the
+ * buffer returns to the ring instead of being held by a socket queue for the
+ * sake of an ACK or a datagram of a few bytes. */
+#define VNET_RX_COPYBREAK 2048
+
 #define VNET_GSO_MAX_FRAME 60000
 #define VNET_GSO_MAX_SEGMENTS 32
 #define VNET_GSO_MAX_HEADER 94
@@ -400,6 +412,19 @@ closure_func_basic(vqfinish, void, vnet_input,
             err = true;
         }
     }
+    if (!err && vn->rxbuflen >= 2 * VNET_RX_COPYBREAK && !x->p.pbuf.next &&
+        x->p.pbuf.tot_len <= VNET_RX_COPYBREAK) {
+        struct pbuf *c = pbuf_alloc(PBUF_RAW, x->p.pbuf.tot_len, PBUF_RAM);
+        if (c) {
+            runtime_memcpy(c->payload, x->p.pbuf.payload, x->p.pbuf.tot_len);
+            c->flags |= x->p.pbuf.flags & PBUF_FLAG_CSUM_VALID;
+            receive_buffer_release(&x->p.pbuf);
+            if (vn->ndev.n.input(c, &vn->ndev.n) != ERR_OK)
+                pbuf_free(c);
+            post_receive(vn, rx);
+            return;
+        }
+    }
     if (!err)
         err = (vn->ndev.n.input(&x->p.pbuf, &vn->ndev.n) != ERR_OK);
   out:
@@ -599,6 +624,7 @@ closure_func_basic(netif_dev_setup, boolean, virtio_net_setup,
             goto err2;
         }
         rx[i].q = vq;
+        virtqueue_set_fill_batch(vq, virtqueue_entries(vq) / 4);
         rx[i].seqno = 0;
         rx[i].hdr = 0;
         rxq_entries += virtqueue_entries(vq);
@@ -694,11 +720,13 @@ static void virtio_net_attach(vtdev dev)
 
     /* RX buffer length should be a multiple of 8 bytes to make xpbuf structures aligned to 8 bytes
      */
-    if (!(dev->features & (VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6 |
-                           VIRTIO_NET_F_GUEST_UFO)) ||
-        (dev->features & VIRTIO_NET_F_MRG_RXBUF))
+    boolean guest_gso = (dev->features & (VIRTIO_NET_F_GUEST_TSO4 | VIRTIO_NET_F_GUEST_TSO6 |
+                                          VIRTIO_NET_F_GUEST_UFO)) != 0;
+    if (!guest_gso)
         vn->rxbuflen = pad(vn->net_header_len + sizeof(struct eth_hdr) +
                            sizeof(struct eth_vlan_hdr) + 1500, 8);
+    else if (dev->features & VIRTIO_NET_F_MRG_RXBUF)
+        vn->rxbuflen = VNET_RX_MRG_GSO_BUFLEN;
     else
         vn->rxbuflen = U16_MAX & ~0x7;  /* lwIP maximum packet length is U16_MAX */
 
