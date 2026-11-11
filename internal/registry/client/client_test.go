@@ -126,3 +126,42 @@ func TestTokenScopesAndPATOptions(t *testing.T) {
 		`/auth/pats {"name":"ci","expires_in_days":30,"namespaces":["acme"],"delete":true}`,
 	}, bodies)
 }
+
+func TestDiscoverAsksTheRegistryOnceAWhile(t *testing.T) {
+	asked := 0
+	fail := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		if fail {
+			http.Error(w, `{"error":{"code":"INTERNAL","message":"down"}}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = io.WriteString(w, `{"api":1,"cdn":"https://cdn.example/","features":["index"]}`)
+	}))
+	defer srv.Close()
+	client.ForgetDiscoveries()
+	t.Cleanup(client.ForgetDiscoveries)
+	ctx := context.Background()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	// A failure is not remembered.
+	_, err := client.New(host).Discover(ctx)
+	require.Error(t, err)
+	fail = false
+	first, err := client.New(host).Discover(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, asked)
+
+	// Another client of the same registry reuses the answer, and cannot change it.
+	first.Features[0] = "changed"
+	second, err := client.New(host).Discover(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, asked)
+	require.Equal(t, "https://cdn.example", second.CDN)
+	require.True(t, second.Supports(client.FeatureIndex))
+
+	client.ForgetDiscoveries()
+	_, err = client.New(host).Discover(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, asked)
+}
