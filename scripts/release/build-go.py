@@ -41,7 +41,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-GO_VERSION = 'go1.27.3'
+GO_VERSION = 'go1.27.4'
 # Node.js for the recipes that build a web UI: the release, and the sha256 of
 # its linux-<arch>.tar.xz from the release's SHASUMS256.txt.
 NODE_VERSION = 'v24.22.1'
