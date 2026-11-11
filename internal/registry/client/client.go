@@ -108,7 +108,7 @@ func (t accessTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			req.Header.Set(accessClientSecretHeader, secret)
 		}
 	}
-	return base.RoundTrip(req)
+	return base.RoundTrip(req) //nolint:wrapcheck // a RoundTripper passes its transport's error through; the caller wraps it
 }
 
 // LoginDevice is Discovery.Login of a registry that runs GitHub's device flow
