@@ -99,6 +99,14 @@ typedef unsigned long size_t;
 #define LWIP_HOOK_IP4_INPUT net_ip_input_hook
 #define LWIP_HOOK_IP6_INPUT net_ip_input_hook
 
+/* Set in netif->flags by a driver whose device finishes TCP checksums (virtio
+ * CSUM): tcp_output leaves the checksum field to the driver on that interface. */
+#define NETIF_FLAG_TCP_CSUM_OFFLOAD 0x80U
+
+/* Set by a network driver on a received pbuf whose TCP checksum the device has
+ * vouched for (virtio NEEDS_CSUM or DATA_VALID): tcp_input skips verifying it. */
+#define PBUF_FLAG_CSUM_VALID 0x40U
+
 /* Synchronous TCP output boundary for optional virtio TX batching. */
 struct netif;
 void virtio_net_tx_batch(struct netif *netif, int begin);

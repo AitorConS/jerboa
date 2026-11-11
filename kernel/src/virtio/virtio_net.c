@@ -144,9 +144,61 @@ closure_function(2, 1, void, tx_complete,
 }
 
 
+/* With VIRTIO_NET_F_CSUM the stack does not generate TCP checksums on this
+ * interface (see virtioif_init). Frames that leave through the batch carry
+ * NEEDS_CSUM; the ones sent here share a constant, zeroed virtio header, so
+ * their checksum is completed in software. These are ACKs, control segments
+ * and the occasional segment sent from a context that cannot batch. */
+static void vnet_tcp_checksum_fill(struct pbuf *p)
+{
+    u8 *h = p->payload;
+    u16 off;
+    ip_addr_t src, dst;
+    if (p->len < 14 + 20 + 20)
+        return;
+    if (h[12] == 0x08 && h[13] == 0x00) {
+        off = 14 + (h[14] & 0x0f) * 4;
+        if ((h[14] >> 4) != 4 || off < 34 || h[23] != IP_PROTO_TCP ||
+            (h[20] & 0x3f) || h[21])    /* fragments carry no complete segment */
+            return;
+        ip4_addr_t s4, d4;
+        runtime_memcpy(&s4, h + 26, sizeof(s4));
+        runtime_memcpy(&d4, h + 30, sizeof(d4));
+        ip_addr_copy_from_ip4(src, s4);
+        ip_addr_copy_from_ip4(dst, d4);
+    } else if (h[12] == 0x86 && h[13] == 0xdd) {
+        off = 14 + 40;
+        if ((h[14] >> 4) != 6 || h[20] != IP_PROTO_TCP)
+            return;
+        ip6_addr_t s6, d6;
+        runtime_memcpy(s6.addr, h + 22, 16);
+        runtime_memcpy(d6.addr, h + 38, 16);
+        ip6_addr_clear_zone(&s6);
+        ip6_addr_clear_zone(&d6);
+        ip_addr_copy_from_ip6(src, s6);
+        ip_addr_copy_from_ip6(dst, d6);
+    } else {
+        return;
+    }
+    if (p->len < off + 20)
+        return;
+    p->payload = h + off;
+    p->len -= off;
+    p->tot_len -= off;
+    u16 zero = 0;
+    runtime_memcpy(h + off + 16, &zero, sizeof(zero));
+    u16 csum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len, &src, &dst);
+    runtime_memcpy(h + off + 16, &csum, sizeof(csum));
+    p->payload = h;
+    p->len += off;
+    p->tot_len += off;
+}
+
 static err_t low_level_output_scalar(struct netif *netif, struct pbuf *p)
 {
     vnet vn = netif->state;
+    if (vn->dev->features & VIRTIO_NET_F_CSUM)
+        vnet_tcp_checksum_fill(p);
 
     virtqueue txq = vn->txq_map[current_cpu()->id];
     u64 charge = p->tot_len + VNET_TX_PACKET_OVERHEAD;
@@ -308,7 +360,18 @@ closure_func_basic(vqfinish, void, vnet_input,
         hdr = (struct virtio_net_hdr *)x->p.pbuf.payload;
         len = vnet_rx_hdr_remove(vn, x, len);
     }
-    if (hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+    if (hdr->flags & VIRTIO_NET_HDR_F_DATA_VALID) {
+        x->p.pbuf.flags |= PBUF_FLAG_CSUM_VALID;
+    } else if ((hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) &&
+               hdr->csum_offset == 16 /* TCP checksum field */) {
+        /* The frame never left the host, so its sender did not fill in the
+         * checksum and nothing can have corrupted it. Computing the checksum
+         * here only for tcp_input to verify it would read every byte twice. */
+        if (hdr->csum_start + hdr->csum_offset <= len - sizeof(u16))
+            x->p.pbuf.flags |= PBUF_FLAG_CSUM_VALID;
+        else
+            err = true;
+    } else if (hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
         if (hdr->csum_start + hdr->csum_offset <= len - sizeof(u16)) {
             u16 offset = hdr->csum_start;
             struct pbuf *q = &x->p.pbuf;
@@ -467,6 +530,8 @@ static err_t virtioif_init(struct netif *netif)
     /* device capabilities */
     /* don't set NETIF_FLAG_ETHARP if this device is not an ethernet one */
     netif->flags = NETIF_FLAG_BROADCAST | NETIF_FLAG_ETHARP | NETIF_FLAG_UP;
+    if (vn->dev->features & VIRTIO_NET_F_CSUM)
+        netif->flags |= NETIF_FLAG_TCP_CSUM_OFFLOAD;
     return ERR_OK;
 }
 

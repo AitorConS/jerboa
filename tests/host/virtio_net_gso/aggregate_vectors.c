@@ -89,8 +89,18 @@ int main(void)
     assert(memcmp(reconstructed, first, sizeof(first)) == 0);
     segment_from_aggregate(reconstructed, frame, MSS, TAIL, 1);
     assert(memcmp(reconstructed, tail, sizeof(tail)) == 0);
+    /* A lone segment keeps its headers and is not marked as GSO, but its
+     * checksum is still left to the device. */
+    u8 single[54 + MSS];
+    memcpy(single, first, sizeof(first));
     memset(aggregate, 0xa5, VNET_LEN);
-    vnet_gso_prepare(aggregate, VNET_LEN, first, sizeof(first), 54, MSS, 1);
-    for (int i = 0; i < VNET_LEN; i++) assert(aggregate[i] == 0);
+    vnet_gso_prepare(aggregate, VNET_LEN, single, sizeof(single), 54, MSS, 1);
+    assert(aggregate[0] == 1 && aggregate[1] == 0);
+    for (int i = 2; i < 6; i++) assert(aggregate[i] == 0);
+    assert(aggregate[6] == 34 && aggregate[7] == 0 && aggregate[8] == 16 && aggregate[9] == 0);
+    for (int i = 10; i < VNET_LEN; i++) assert(aggregate[i] == 0);
+    assert(vnet_be16(single + 50) == vnet_tcp_pseudo_seed(single + 14, 20 + MSS));
+    memcpy(single + 50, first + 50, 2);
+    assert(memcmp(single, first, sizeof(first)) == 0);
     return 0;
 }
