@@ -468,6 +468,11 @@ type ImagePullParams struct {
 	// Platform picks the platform's image from a tag naming an image index
 	// (the host's when empty), and fails any other pull of another platform.
 	Platform string `json:"platform,omitempty"`
+	// Recipe is the recipe to pull under Reference's tag: what the caller
+	// resolved the tag to and verified. The daemon pulls that recipe, which
+	// the repository must hold, without resolving the tag again. A daemon
+	// that predates the field ignores it and resolves the tag itself.
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // ImagePullResult reports a pull and the image it stored.

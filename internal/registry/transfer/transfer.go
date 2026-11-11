@@ -145,6 +145,11 @@ type PullOptions struct {
 	Parallel int
 	// NoCount skips reporting the pull to the hub's counter.
 	NoCount bool
+	// Recipe is the recipe to pull under Ref's tag, when the caller already
+	// resolved the tag, and checked the recipe's signatures: the pull fetches
+	// that recipe, which the repository must hold, whatever the tag names
+	// by now.
+	Recipe string
 	// Platform is the platform to pull, such as linux/arm64: a tag naming an
 	// image index pulls that platform's recipe, and any other pull fails
 	// unless its recipe is for it. Empty means the host's, for an index.
@@ -176,6 +181,12 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		return res, fmt.Errorf("pull: %w", err)
 	}
 	digest := o.Ref.Digest
+	if o.Recipe != "" {
+		if digest != "" && digest != o.Recipe {
+			return res, fmt.Errorf("pull: %s does not name recipe %s", o.Ref, o.Recipe)
+		}
+		digest = o.Recipe
+	}
 	if digest == "" {
 		tag, err := o.Client.Tag(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag)
 		if err != nil {
