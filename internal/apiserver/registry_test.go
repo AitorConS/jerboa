@@ -100,6 +100,15 @@ func TestImagePushAndPullThroughTheDaemon(t *testing.T) {
 	require.Equal(t, built.DiskDigest, m.DiskDigest)
 	require.FileExists(t, disk)
 
+	// A caller that resolved the tag itself names the recipe: it is pulled
+	// under the tag, and one the repository does not hold is refused.
+	again, err := c.ImagePull(ctx, api.ImagePullParams{Reference: ref, Recipe: pulled.Recipe})
+	require.NoError(t, err)
+	require.Equal(t, pulled.Recipe, again.Recipe)
+	require.Equal(t, "v1", again.Image.Tag)
+	_, err = c.ImagePull(ctx, api.ImagePullParams{Reference: ref, Recipe: "sha256:" + strings.Repeat("0", 64)})
+	require.ErrorContains(t, err, "is not in alice/web")
+
 	_, err = c.ImagePush(ctx, api.ImagePushParams{Reference: reg.Host() + "/alice/missing:v1", Token: "t"})
 	require.ErrorContains(t, err, "jerboa tag")
 }

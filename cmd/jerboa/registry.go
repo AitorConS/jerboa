@@ -317,14 +317,15 @@ func newPullCmd(endpoint *string) *cobra.Command {
 A tag published for several platforms pulls the image for this host, or the
 one --platform names.
 
-A signed image is kept only if its Sigstore signatures verify, signed by:
+A signed image is pulled only if its Sigstore signatures verify, signed by:
 --identity, else the rule of the policy file (~/.jerboa/policy.json) for its
 namespace (official images under jerboa/ always have one), else the signer
 remembered for its repository, else the workflow the registry recorded as
 their uploader. The first pull of a repository that verifies remembers its
 signer (~/.jerboa/signers.json): later pulls refuse another signer, or an
-unsigned image. --verify refuses unsigned images too. A pull that fails the
-check removes what it pulled. See jerboa registry verify and signers.`,
+unsigned image. --verify refuses unsigned images too. The check comes first:
+a pull that fails it downloads nothing and leaves the image store as it was.
+See jerboa registry verify and signers.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if platform != "" {
@@ -345,19 +346,31 @@ check removes what it pulled. See jerboa registry verify and signers.`,
 				return fmt.Errorf("pull: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
-			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack(), Platform: platform})
+			// Verified before the daemon fetches anything, and the daemon pulls
+			// the recipe that verified, not what the tag names a moment later:
+			// an image that fails the check never reaches the store.
+			subject, err := resolveSubject(cmd.Context(), ref, platform)
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
-			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, res.Recipe, v)
+			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, subject, v)
 			if err != nil {
+				return fmt.Errorf("pull: %w; nothing was pulled", err)
+			}
+			if results != nil {
+				printVerified(cmd.OutOrStdout(), subject, results)
+			}
+			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack(), Platform: platform, Recipe: subject})
+			if err != nil {
+				return fmt.Errorf("pull: %w", err)
+			}
+			// A daemon older than this CLI resolves the tag itself.
+			if res.Recipe != subject {
+				err := fmt.Errorf("the daemon pulled %s, not %s, the recipe that was checked: update the daemon", res.Recipe, subject)
 				if rmErr := c.ImageRemove(cmd.Context(), res.Image.Name+":"+res.Image.Tag); rmErr != nil {
 					return fmt.Errorf("pull: %w (and removing the pulled image failed: %w)", err, rmErr)
 				}
 				return fmt.Errorf("pull: %w; the pulled image was removed", err)
-			}
-			if results != nil {
-				printVerified(cmd.OutOrStdout(), res.Recipe, results)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s (%s): fetched %d of %d files (%s) in %d requests\n%s\n",
 				res.Image.Name, res.Image.Tag, res.Image.Platform, res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, res.Image.DiskDigest)
@@ -365,8 +378,8 @@ check removes what it pulled. See jerboa registry verify and signers.`,
 		},
 	}
 	cmd.Flags().StringVar(&platform, "platform", "", "the platform to pull, linux/amd64 or linux/arm64 (default: this host's)")
-	cmd.Flags().BoolVar(&verify, "verify", false, "keep the image only if it is signed, even the first pull of a repository")
-	cmd.Flags().StringVar(&identity, "identity", "", "keep the image only if it is signed from this GitHub repository[/workflow[@ref]] (implies --verify)")
+	cmd.Flags().BoolVar(&verify, "verify", false, "pull the image only if it is signed, even the first pull of a repository")
+	cmd.Flags().StringVar(&identity, "identity", "", "pull the image only if it is signed from this GitHub repository[/workflow[@ref]] (implies --verify)")
 	return cmd
 }
 
