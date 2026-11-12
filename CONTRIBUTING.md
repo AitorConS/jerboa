@@ -72,6 +72,16 @@ Use more caution with:
 - avoid unrelated refactors in the same change
 - update docs when behavior changes
 
+## Performance Work
+
+- Read [the macOS performance log](docs/benchmarks/macos-performance-log.md)
+  before an experiment, and add its verdict to the log when it ends.
+- Push your branch and open a draft pull request when you start, not when you
+  finish. Kernel, VMM and daemon changes are measured against each other, and
+  a branch that only exists on one machine cannot be seen by whoever is
+  measuring the same area.
+- Show the comparison (`scripts/benchmark-compare.py`) in the pull request.
+
 ## Pull Requests
 
 A good PR should state:
