@@ -13,6 +13,9 @@ type fcCapabilities struct {
 	MemoryMiB   [2]int `json:"memory_mib"`
 	MaxDrives   int    `json:"max_drives"`
 	PeerControl bool   `json:"peer_control"`
+	// SlirpMTUMax is the largest MTU a slirp link takes; 0 for a VMM whose
+	// slirp link is fixed at 1500.
+	SlirpMTUMax int `json:"slirp_mtu_max"`
 	// declared is false for a VMM too old to say: the bounds are then those
 	// every such build had, and whether it takes a direct VM-to-VM link is
 	// found by asking it about a config (preflightFCConfig).

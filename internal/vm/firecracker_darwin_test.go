@@ -210,6 +210,33 @@ func TestFCCapabilitiesComeFromTheVMM(t *testing.T) {
 	}
 }
 
+func TestSlirpLinkUsesTheNetworkMTUOnlyWithAVMMThatDeclaresIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		capabilities string
+		network      string
+		mtu          int
+	}{
+		"declared": {`{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"slirp_mtu_max":9000}`, "10.0.2.15/24,10.0.2.2,9000", 9000},
+		"smaller":  {`{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"slirp_mtu_max":4000}`, "10.0.2.15/24,10.0.2.2", 0},
+		"old VMM":  {"", "10.0.2.15/24,10.0.2.2", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, _ := fcScript(t, t.TempDir(), 0, tc.capabilities)
+			p, err := m.writeFCConfig("test", Config{Memory: "256M", CPUs: 1}, "/private-root.img")
+			require.NoError(t, err)
+			t.Cleanup(func() { cleanupFCConfig(p) })
+			data, err := os.ReadFile(p)
+			require.NoError(t, err)
+			var c nativeFCConfig
+			require.NoError(t, json.Unmarshal(data, &c))
+			require.Equal(t, tc.mtu, c.Networks[0].MTU)
+			guest, err := os.ReadFile(c.Firmware["opt/uni/network"])
+			require.NoError(t, err)
+			require.Equal(t, tc.network, string(guest), "the guest and the VMM are given the same MTU")
+		})
+	}
+}
+
 func TestExplainFCStartPrefersTheVMMsRejection(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
