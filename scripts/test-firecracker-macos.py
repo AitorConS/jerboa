@@ -109,7 +109,11 @@ def main():
                     cli('rm', vm)
                     active.remove(vm)
                     print(f'Firecracker/HVF: {cpus} CPU, bind={bind or "omitted"}, HTTP/UDP, environment, volume count={count}, port collision and guest exit OK', flush=True)
-                cli('run', 'fc-smoke:latest', '--cpus', '5', success=False)
+                # The bound is the VMM's: one that does not declare it has four.
+                declared = subprocess.run([str(FC), '--capabilities'], capture_output=True, text=True)
+                max_cpus = json.loads(declared.stdout)['max_vcpus'] if declared.returncode == 0 else 4
+                error = cli('run', 'fc-smoke:latest', '--cpus', str(max_cpus + 1), success=False)
+                assert f'1-{max_cpus} CPUs' in error, error
                 name = 'fc-failure'
                 cli('run', 'fc-smoke:latest', '--name', name, '-e', 'MODE=fail', '--restart', 'on-failure:1')
                 active.append(name)

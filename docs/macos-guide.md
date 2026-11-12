@@ -99,7 +99,7 @@ Jerboa on macOS can run VMs with two engines:
 | Snapshots | Yes | No |
 | Outbound internet from VMs | Blocked unless you allow it | Allowed |
 | `--cpu-shares` / `--memory-max` | Not supported | Approximate |
-| vCPUs / RAM per VM | 1–4 vCPUs, 64–2048 MiB | No fixed range |
+| vCPUs / RAM per VM | 1–8 vCPUs, 64–8192 MiB (what the VMM declares) | No fixed range |
 
 Use Firecracker unless you need to run x86 images. To switch engines, stop your
 VMs first. Then, in the Desktop app, open **Settings → Engine configuration**,
@@ -292,7 +292,7 @@ The Mac has no Linux cgroups, so CPU and memory limits behave differently:
 
 | Flag | QEMU | Firecracker |
 | --- | --- | --- |
-| `--cpus`, `--memory` | Supported | 1–4 vCPUs, 64–2048 MiB |
+| `--cpus`, `--memory` | Supported | 1–8 vCPUs, 64–8192 MiB (what the VMM declares) |
 | `--cpu-shares` | Lower or higher process priority; not a hard share | Rejected |
 | `--memory-max` | The VM is stopped if it exceeds the limit (checked every 100 ms) | Rejected |
 | Disk IOPS/BPS limits | Supported | Supported |

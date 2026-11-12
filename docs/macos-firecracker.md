@@ -76,7 +76,8 @@ requirements; Jerboa does not rebuild or re-sign it.
 
 ## Supported behavior
 
-ARM64 ELF guests can use 1-4 vCPUs, 64-2048 MiB of RAM, an ephemeral root disk,
+ARM64 ELF guests can use 1-8 vCPUs, 64-8192 MiB of RAM (1-4 and 64-2048 with a
+VMM that does not answer `--capabilities`: Jerboa asks the VMM for its bounds), an ephemeral root disk,
 and up to three persistent volumes. Environment, static network configuration and
 mount labels are delivered through `opt/uni/*` firmware files. Root disk writes
 never modify the image-store copy.
