@@ -21,6 +21,11 @@
 //	JERBOA_REGISTRY_E2E_HOST=staging.registry.jerboa.dev \
 //	JERBOA_REGISTRY_E2E_TOKEN=jpat_... JERBOA_REGISTRY_E2E_NAMESPACE=jerboa-e2e \
 //	go test -tags registry_e2e ./tests/registry/...
+//
+// Either way it logs how long each push and pull took and the requests it
+// made, and checks the ones a step must not make: a push of what the registry
+// holds uploads no pack, a pull of a disk already held reads no pack and is
+// not counted, and a pull of a resolved recipe does not read the tag.
 package registry
 
 import (
@@ -38,12 +43,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/naming"
 	pkg "github.com/AitorConS/jerboa/internal/package"
@@ -388,6 +396,90 @@ func refOf(t *testing.T, cl *client.Client, s string) naming.ImageReference {
 	return r
 }
 
+// requests counts the requests a client makes, by kind.
+type requests struct {
+	next http.RoundTripper
+	mu   sync.Mutex
+	n    map[string]int
+}
+
+// record makes cl count its requests from now on.
+func record(cl *client.Client) *requests {
+	r := &requests{next: httpclient.Streaming.Transport, n: map[string]int{}}
+	if r.next == nil {
+		r.next = http.DefaultTransport
+	}
+	cl.HTTP = &http.Client{Transport: r, CheckRedirect: httpclient.Streaming.CheckRedirect}
+	return r
+}
+
+// requestKind names what a request is for, from its method and path: the
+// CDN's layout and the API's share the words that tell them apart.
+func requestKind(method, path string) string {
+	read := method == http.MethodGet || method == http.MethodHead
+	switch {
+	case path == "/v2/":
+		return "discover"
+	case method == http.MethodPost && strings.HasSuffix(path, "/pulls"):
+		return "count"
+	case strings.HasSuffix(path, "/blobs/missing"):
+		return "missing"
+	case strings.Contains(path, "/packs/") && read:
+		return "pack-read"
+	case strings.Contains(path, "/packs/"):
+		return "pack-write"
+	case strings.Contains(path, "/tags/") && read:
+		return "tag-read"
+	case strings.Contains(path, "/tags/"):
+		return "tag-write"
+	case strings.Contains(path, "/refs/"):
+		return "ref"
+	case strings.Contains(path, "/recipes/") && read:
+		return "recipe-read"
+	case strings.Contains(path, "/recipes/"):
+		return "recipe-write"
+	case strings.Contains(path, "/locations/"):
+		return "locations"
+	}
+	return "other"
+}
+
+func (r *requests) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.mu.Lock()
+	r.n[requestKind(req.Method, req.URL.Path)]++
+	r.mu.Unlock()
+	return r.next.RoundTrip(req)
+}
+
+// during runs step and returns the requests it made, logging them with the
+// time it took: the figures to compare between runs of a deployed registry.
+func (r *requests) during(t *testing.T, name string, step func()) map[string]int {
+	t.Helper()
+	r.mu.Lock()
+	before := make(map[string]int, len(r.n))
+	for k, v := range r.n {
+		before[k] = v
+	}
+	r.mu.Unlock()
+	start := time.Now()
+	step()
+	took := time.Since(start)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	made, total := map[string]int{}, 0
+	var parts []string
+	for k, v := range r.n {
+		if d := v - before[k]; d > 0 {
+			made[k] = d
+			total += d
+			parts = append(parts, fmt.Sprintf("%s=%d", k, d))
+		}
+	}
+	slices.Sort(parts)
+	t.Logf("%-32s %8s  %3d requests  %s", name, took.Round(time.Millisecond), total, strings.Join(parts, " "))
+	return made
+}
+
 // runFlow pushes two versions of an app to ns/repo with credential, pulls
 // both into an empty store, and checks another user's namespace is refused.
 func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, ns, repo string, remote bool) {
@@ -410,7 +502,7 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 				del = token
 			}
 			if err := cl.DeleteRepo(context.Background(), del, ns, repo); err != nil {
-				for _, tag := range []string{"v1", "v2", "v2-arm64", "multi"} {
+				for _, tag := range []string{"v1", "v2", "v2-arm64", "multi", "moving"} {
 					_ = cl.DeleteTag(context.Background(), del, ns, repo, tag)
 				}
 			}
@@ -418,40 +510,122 @@ func runFlow(t *testing.T, ctx context.Context, cl *client.Client, credential, n
 	}
 	ref := func(tag string) naming.ImageReference { return refOf(t, cl, ns+"/"+repo+":"+tag) }
 
-	res, err := transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v1"), Store: builder, Recipe: v1, Mkfs: mkfsFor})
+	rec := record(cl)
+	// The registry describes itself once a while, not once a command.
+	var d client.Discovery
+	made := rec.during(t, "discover, twice", func() {
+		d, err = cl.Discover(ctx)
+		require.NoError(t, err)
+		_, err = cl.Discover(ctx)
+	})
+	require.NoError(t, err)
+	require.LessOrEqual(t, made["discover"], 1)
+
+	var res transfer.PushResult
+	rec.during(t, "push v1", func() {
+		res, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v1"), Store: builder, Recipe: v1, Mkfs: mkfsFor})
+	})
 	require.NoError(t, err)
 	if !remote {
 		// A shared registry may already hold the runtime from an earlier run.
 		require.Equal(t, res.Blobs, res.BlobsUploaded)
 	}
-	res, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v2"), Store: builder, Recipe: v2, Mkfs: mkfsFor})
+	made = rec.during(t, "push v2, one new blob", func() {
+		res, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v2"), Store: builder, Recipe: v2, Mkfs: mkfsFor})
+	})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.BlobsUploaded)
+	require.NotZero(t, made["pack-write"])
+
+	// Pushing what the registry holds uploads nothing, and still tags it.
+	made = rec.during(t, "push v2 again", func() {
+		res, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v2"), Store: builder, Recipe: v2, Mkfs: mkfsFor})
+	})
+	require.NoError(t, err)
+	require.Equal(t, v2, res.Recipe)
+	require.Zero(t, res.BlobsUploaded)
+	require.Zero(t, res.PacksUploaded)
+	require.Zero(t, made["pack-write"])
 
 	// Tags written at once all land: they share objects on R2, which takes
 	// one write a second to each.
-	burst := make(chan error, 8)
-	for i := range cap(burst) {
-		go func() { burst <- cl.PutTag(ctx, token, ns, repo, fmt.Sprintf("burst-%d", i), v2) }()
-	}
-	for range cap(burst) {
-		require.NoError(t, <-burst)
-	}
+	rec.during(t, "tag v2 eight times at once", func() {
+		burst := make(chan error, 8)
+		for i := range cap(burst) {
+			go func() { burst <- cl.PutTag(ctx, token, ns, repo, fmt.Sprintf("burst-%d", i), v2) }()
+		}
+		for range cap(burst) {
+			require.NoError(t, <-burst)
+		}
+	})
 
 	// Another machine pulls both, anonymously, through the CDN layout.
 	machine := newStore(t)
 	out := filepath.Join(t.TempDir(), "disk.img")
-	got, err := transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v1"), Store: machine, Mkfs: mkfsFor, Out: out})
+	var got transfer.PullResult
+	made = rec.during(t, "pull v1 into an empty store", func() {
+		got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v1"), Store: machine, Mkfs: mkfsFor, Out: out})
+	})
 	require.NoError(t, err)
 	require.Equal(t, v1, got.Recipe)
 	require.Equal(t, got.Blobs, got.BlobsFetched)
-	got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v2"), Store: machine, Mkfs: mkfsFor, Out: out})
+	require.False(t, got.AlreadyCached)
+	require.Equal(t, 1, made["count"])
+	made = rec.during(t, "pull v2, one new blob", func() {
+		got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v2"), Store: machine, Mkfs: mkfsFor, Out: out})
+	})
 	require.NoError(t, err)
 	require.Equal(t, 1, got.BlobsFetched)
+	require.Equal(t, 1, made["count"])
+
+	// Pulling an image whose disk the machine holds reads the tag and the
+	// recipe, then stops: no pack, no disk written, and no pull counted.
+	held := got.Parsed.DiskDigest
+	warm := filepath.Join(t.TempDir(), "warm.img")
+	made = rec.during(t, "pull v2, disk already held", func() {
+		got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v2"), Store: machine, Mkfs: mkfsFor, Out: warm,
+			Have: func(disk string) bool { return disk == held }})
+	})
+	require.NoError(t, err)
+	require.True(t, got.AlreadyCached)
+	require.Equal(t, v2, got.Recipe)
+	require.Zero(t, got.BlobsFetched)
+	require.NoFileExists(t, warm)
+	require.Zero(t, made["pack-read"])
+	require.Zero(t, made["locations"])
+	require.Zero(t, made["count"])
+	require.Zero(t, made["discover"])
+	// A machine that has the blobs but lost the disk builds it again.
+	made = rec.during(t, "pull v2, disk lost", func() {
+		got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("v2"), Store: machine, Mkfs: mkfsFor, Out: warm,
+			Have: func(string) bool { return false }})
+	})
+	require.NoError(t, err)
+	require.False(t, got.AlreadyCached)
+	require.Zero(t, got.BlobsFetched)
+	require.FileExists(t, warm)
+	require.Zero(t, made["pack-read"])
+
+	// jerboa pull resolves the tag, checks that recipe's signatures, and
+	// pulls the recipe it checked: a tag moved in between changes nothing,
+	// and a recipe the repository never tagged is refused.
+	require.NoError(t, cl.PutTag(ctx, token, ns, repo, "moving", v1))
+	resolved, err := cl.Tag(ctx, d.CDN, ns, repo, "moving")
+	require.NoError(t, err)
+	require.Equal(t, v1, resolved.Recipe)
+	require.NoError(t, cl.PutTag(ctx, token, ns, repo, "moving", v2))
+	made = rec.during(t, "pull a resolved recipe", func() {
+		got, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("moving"), Store: newStore(t), Mkfs: mkfsFor, Out: out, Recipe: resolved.Recipe})
+	})
+	require.NoError(t, err)
+	require.Equal(t, v1, got.Recipe)
+	require.Zero(t, made["tag-read"])
+	require.NotZero(t, made["ref"])
+	stranger := buildApp(t, mkfs, builder, fmt.Sprintf("console.log('never pushed %s')", repo))
+	_, err = transfer.Pull(ctx, transfer.PullOptions{Client: cl, Ref: ref("moving"), Store: newStore(t), Mkfs: mkfsFor, Out: out, Recipe: stranger})
+	require.ErrorContains(t, err, "is not in "+ns+"/"+repo)
 
 	// One tag for both platforms, on registries that store image indexes.
-	d, err := cl.Discover(ctx)
-	require.NoError(t, err)
 	if d.Supports(client.FeatureIndex) {
 		arm := buildAppFor(t, mkfs, builder, fmt.Sprintf("console.log('v2 %s')", repo), "linux/arm64")
 		_, err = transfer.Push(ctx, transfer.PushOptions{Client: cl, Token: token, Ref: ref("v2-arm64"), Store: builder, Recipe: arm, Mkfs: mkfsFor})
