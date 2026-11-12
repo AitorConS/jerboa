@@ -435,6 +435,8 @@ type nativeFCNetwork struct {
 	SocketPath string            `json:"socket_path,omitempty"`
 	GuestMAC   string            `json:"guest_mac"`
 	Forwards   []nativeFCForward `json:"forwards,omitempty"`
+	// MTU of a slirp link; 0 leaves the VMM's 1500.
+	MTU int `json:"mtu,omitempty"`
 }
 
 type nativeFCConfig struct {
@@ -498,6 +500,15 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		}
 	}
 	netcfg := "10.0.2.15/24,10.0.2.2"
+	// A VM outside a Jerboa network talks through slirp, in the VMM. With
+	// the networks' MTU instead of 1500 a published port carries two to four
+	// times as much. The VMM and the guest must agree, so it is used only
+	// with a VMM that declares it; the guest reads it from here.
+	slirpMTU := 0
+	if cfg.NetworkName == "" && m.fcCapabilities().SlirpMTUMax >= netconst.NativeMTU {
+		slirpMTU = netconst.NativeMTU
+		netcfg += "," + strconv.Itoa(slirpMTU)
+	}
 	if cfg.NetworkName != "" {
 		mask := cfg.SubnetMask
 		if mask == "" {
@@ -517,7 +528,7 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		}
 		c.Firmware["opt/uni/"+name] = p
 	}
-	n := nativeFCNetwork{IfaceID: "eth0", Backend: "slirp", GuestMAC: guestMACFromIP("10.0.2.15")}
+	n := nativeFCNetwork{IfaceID: "eth0", Backend: "slirp", GuestMAC: guestMACFromIP("10.0.2.15"), MTU: slirpMTU}
 	c.Security = map[string]json.RawMessage{"version": json.RawMessage("1")}
 	if len(m.fcSecurity) > 0 {
 		if err := json.Unmarshal(m.fcSecurity, &c.Security); err != nil {
