@@ -38,7 +38,8 @@ Candidate: [43297051915](https://github.com/AitorConS/jerboa/actions/runs/432970
 
 - **macOS VMs outside a network use MTU 9000.** The VMM and the guest are configured together, and only with a VMM that declares support. Nothing to change in images.
 - **Start-up no longer survives a power cut cleanly in one case.** If the Mac loses power right after a VM starts, the VMM's temporary directory for that VM may be left behind instead of being deleted on the next start. No image, volume or VM state is involved.
-- **Images built before this release keep their kernel.** The kernel is part of the image: rebuild an image to get the faster kernel.
+- **Which kernel an image runs.** With Firecracker (the macOS default, and `--hypervisor firecracker` on Linux) every image boots the kernel of the installed release, so existing images get the faster kernel without being rebuilt. With QEMU on Linux x86-64 an image boots the kernel it was built with: rebuild it to get the new one.
+- **Existing images and volumes need no change.** An image and a volume made by v0.55.1 (kernel toolset 0.2.2) were used by this release on macOS: the data verified, was rewritten, and was still read by v0.55.1 afterwards. The official `jerboa/redis` and `jerboa/nginx` images, published with toolset 0.2.3, run unchanged.
 - **`--cpus` above 4 and `--memory` above 2G on macOS** need the VMM of this release; an older VMM keeps the old limits and says so in the error.
 
 ## Native Mac
