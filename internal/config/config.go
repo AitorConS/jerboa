@@ -13,7 +13,10 @@ import (
 
 // Config holds global jerboa configuration stored at ~/.jerboa/config.toml.
 type Config struct {
-	Hypervisor string `toml:"hypervisor"`
+	// Hypervisor is "qemu" or "firecracker". Empty leaves the choice to the
+	// daemon, which runs Firecracker wherever the host can (see
+	// internal/hypervisor).
+	Hypervisor string `toml:"hypervisor,omitempty"`
 	// Daemon is omitted when empty so writing an unrelated key (e.g.
 	// `config set hypervisor`) does not materialize a [daemon] table full of
 	// empty endpoint/token/distro strings — which read as "explicitly set to
@@ -153,7 +156,7 @@ func noHomeDir() string {
 
 // Load reads the config file at path. Returns defaults if the file does not exist.
 func Load(path string) (*Config, error) {
-	cfg := &Config{Hypervisor: "qemu"}
+	cfg := &Config{}
 	if strings.HasPrefix(path, os.TempDir()) {
 		if err := checkOwner(path); err != nil {
 			return nil, err
@@ -169,8 +172,9 @@ func Load(path string) (*Config, error) {
 	if err := toml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("config: parse %s: %w", path, err)
 	}
-	if cfg.Hypervisor == "" {
-		cfg.Hypervisor = "qemu"
+	// "auto" may be written by hand: it is the same as leaving it out.
+	if strings.EqualFold(cfg.Hypervisor, "auto") {
+		cfg.Hypervisor = ""
 	}
 	return cfg, nil
 }

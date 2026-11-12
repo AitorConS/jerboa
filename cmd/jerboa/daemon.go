@@ -69,7 +69,7 @@ type daemonOpts struct {
 
 func (o *daemonOpts) bind(c *cobra.Command) {
 	c.Flags().StringVar(&o.hypervisor, "hypervisor", "",
-		"hypervisor to run (qemu or firecracker); defaults to config")
+		"hypervisor to run (auto, qemu or firecracker); defaults to config, then auto")
 	// Observability passthrough: these enable the managed
 	// daemon's metrics/UI/tracing/log-format, which previously required
 	// hand-launching jerboad inside the distro. A provided value is persisted so
@@ -100,7 +100,7 @@ func resolveDaemonConfig(o daemonOpts) (wslboot.Config, string, error) {
 
 	cfg, err := config.Load(config.DefaultPath())
 	if err != nil || cfg == nil {
-		cfg = &config.Config{Hypervisor: "qemu"}
+		cfg = &config.Config{}
 	}
 
 	hyp := o.hypervisor
@@ -643,7 +643,12 @@ func launchAndWait(cmd *cobra.Command, wcfg wslboot.Config, token string) error 
 	if err := wslboot.SaveDaemonFile(daemonJSONPath(), token, wcfg.Endpoint); err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: persist daemon file: %v\n", err)
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "daemon running at %s (hypervisor=%s)\n", wcfg.Endpoint, wcfg.Hypervisor)
+	chosen := wcfg.Hypervisor
+	if chosen == "" {
+		// The daemon inside the distro picks: Firecracker with KVM, else QEMU.
+		chosen = "auto"
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "daemon running at %s (hypervisor=%s)\n", wcfg.Endpoint, chosen)
 	return nil
 }
 
