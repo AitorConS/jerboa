@@ -636,6 +636,7 @@ closure_func_basic(netif_dev_setup, boolean, virtio_net_setup,
             goto err2;
         }
         virtqueue_set_polling(vq, true);
+        virtqueue_set_deferred_notify(vq, true);
         for (u64 j = first_cpu; j < first_cpu + num_cpus; j++)
             vn->txq_map[j] = vq;
         txq_entries += virtqueue_entries(vq);
