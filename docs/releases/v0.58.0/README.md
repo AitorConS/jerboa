@@ -2,6 +2,13 @@
 
 Release notes and validation evidence.
 
+Candidate: [43297051915](https://github.com/AitorConS/jerboa/actions/runs/43297051915).
+
+- Engine: `36c996e8d97e374e0d02024a3527921dc46e7d36`
+- Desktop: `ac39d202a62f9f0a6ea60c2c4d18cf13c796edab` (unchanged since v0.56.0)
+- Firecracker macOS: `f3110ea334f0794eccc3fdd99d0f6ad6f4a1ea78`
+- Product: `v0.58.0`; Linux kernel toolset: `v0.2.4`, built by the candidate from the engine commit.
+
 ## What changes
 
 **Faster on macOS.**
@@ -33,6 +40,28 @@ Release notes and validation evidence.
 - **Start-up no longer survives a power cut cleanly in one case.** If the Mac loses power right after a VM starts, the VMM's temporary directory for that VM may be left behind instead of being deleted on the next start. No image, volume or VM state is involved.
 - **Images built before this release keep their kernel.** The kernel is part of the image: rebuild an image to get the faster kernel.
 - **`--cpus` above 4 and `--memory` above 2G on macOS** need the VMM of this release; an older VMM keeps the old limits and says so in the error.
+
+## Native Mac
+
+The actual candidate app ZIP passed `scripts/release/native-macos.sh` on a physical Apple Silicon Mac (M5) running macOS 26.6.2. The checkout matched the candidate engine commit. The test used an isolated daemon and temporary VM state.
+
+App: `jerboa-desktop-0.58.0-macos-arm64.zip`.
+
+SHA-256: `7de13d99331e28178e8819dbbc324bc321eed6a1554ad776dbf2578ba440e3f3` (matches `native_macos_app.sha256` in the candidate's signed inventory).
+
+[Machine-readable result](native-macos.json) and [test output](native-macos.log).
+
+Checks passed: app code-signature integrity, CLI/daemon versions, VM boot with 1 and 4 vCPUs, HTTP/UDP port forwarding with an omitted, loopback and wildcard bind, environment variables, persistent-volume contents across boots, port conflicts, the VMM's declared CPU limit, daemon recovery, guest exit, restart after guest failure, and forced stop. These are functional checks, not throughput benchmarks.
+
+The Firecracker macOS commit has the same tree that passed that repository's native suite (`experiments/hvf/ci/hvf.sh`) on the same Mac: Linux and Debian guests, snapshots, security, I/O limits, 100 network start/stop cycles and three fuzzers. That suite is not part of the hosted CI.
+
+## Linux kernel
+
+The candidate built toolset v0.2.4 from the engine commit. It passed the QEMU/KVM 8.2.2 and Firecracker 1.16.0 boot checks. The [kernel report](kernel-boot.json) is the candidate inventory's `kernel_boot` record, binding both results to the engine commit, candidate run and SHA-256 of each toolset file.
+
+## Windows
+
+The candidate's signed Windows installer passed the full installer smoke on a Windows machine started for this run only: silent install, WSL2 distro provisioning from the run's rootfs, and the example unikernels.
 
 ## Publication gate
 
