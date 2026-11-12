@@ -58,6 +58,10 @@ temporary directory in place. Nothing else depends on the marker.
 Open: random write spends most of its time waiting on reclaim syncs; a
 redesign of the throttle is the known next step and the risky one.
 
+Measured and not pursued (2026-11-12): `EVENT_IDX` and indirect descriptors on
+the block device. Random write 4k x 4 already costs 0.79 vCPU exits per block
+request, about 5,000 exits a second: there is no time to win there.
+
 ## Network
 
 | Change | Verdict |
@@ -75,10 +79,16 @@ redesign of the throttle is the known next step and the risky one.
 | MTU 16000 | rejected |
 | TSO on the switch path by segmenting in the VMM | rejected |
 | 20 µs poll; `nice` | rejected |
+| MTU 9000 on the slirp link of a VM outside a network | kept (firecracker-macos #33, jerboa #242): published port 4.9 to 9.7 Gbit/s in, 2.1 to 9.0 out |
 
 Open: VM-to-host bulk TCP is the largest gap to Docker and needs a path that
-does not copy through user space twice. A port published without a Jerboa
-network goes through slirp and is several times slower than one on a network.
+does not copy through user space twice.
+
+Measured, not yet acted on (2026-11-12): bulk TCP through slirp at MTU 9000
+costs 0.35 to 0.43 vCPU exits per packet, about 50,000 a second. `EVENT_IDX`
+on the network queues would remove part of those; the expected gain is a few
+percent and it has not been tried. All vCPU exits and the device loop share
+one lock; its cost with several busy vCPUs has not been measured.
 
 ## Method
 
