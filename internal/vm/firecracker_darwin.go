@@ -125,10 +125,11 @@ func nativeFCShutdown(socket string) error {
 
 // preflightFCConfig asks the VMM about a config before starting it only when
 // the answer changes what is started: a config that offers a direct VM-to-VM
-// link, until the VMM has accepted or refused one. Every other config is
-// checked by the VMM as it starts, and explainFCStart reports a rejection.
+// link to a VMM too old to declare its capabilities, until that VMM has
+// accepted or refused one. Every other config is checked by the VMM as it
+// starts, and explainFCStart reports a rejection.
 func (m *FirecrackerManager) preflightFCConfig(ctx context.Context, cfg Config, path string) error {
-	if cfg.nativeControl == "" || m.noPeerControl.Load() || m.peerControlOK.Load() {
+	if cfg.nativeControl == "" || m.fcCapabilities().declared || m.noPeerControl.Load() || m.peerControlOK.Load() {
 		return nil
 	}
 	if err := m.checkFCConfig(ctx, path); err != nil {
@@ -370,11 +371,13 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if cfg.CPUs > 4 || mem < 64 || mem > 2048 {
-		return fmt.Errorf("Firecracker/HVF requires 1-4 CPUs and 64-2048 MiB RAM")
+	// The bounds are the VMM's, not Jerboa's: a newer VMM raises them alone.
+	caps := m.fcCapabilities()
+	if cfg.CPUs > caps.MaxVCPUs || mem < caps.MemoryMiB[0] || mem > caps.MemoryMiB[1] {
+		return fmt.Errorf("Firecracker/HVF requires 1-%d CPUs and %d-%d MiB RAM", caps.MaxVCPUs, caps.MemoryMiB[0], caps.MemoryMiB[1])
 	}
-	if len(cfg.Volumes) > 3 {
-		return fmt.Errorf("Firecracker/HVF supports at most three volumes plus the root disk")
+	if len(cfg.Volumes) > caps.MaxDrives-1 {
+		return fmt.Errorf("Firecracker/HVF supports at most %d volumes plus the root disk", caps.MaxDrives-1)
 	}
 	if cfg.NetworkName == "" && cfg.IPAddress != "" {
 		return fmt.Errorf("custom guest IP requires a named network")

@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -93,6 +94,9 @@ type FirecrackerManager struct {
 	// noPeerControl records that the VMM rejected security.unix_control
 	// (an older build); direct VM-to-VM links are then never offered to it.
 	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
+	// fcCaps is what the VMM declared it can run, asked once (macOS only).
+	fcCapsOnce sync.Once //nolint:unused // only macOS VMMs declare capabilities
+	fcCaps     any       //nolint:unused // only macOS VMMs declare capabilities
 	// peerControlOK records that the VMM accepted a config offering it.
 	peerControlOK atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
 	mkCmd         CommandFunc
