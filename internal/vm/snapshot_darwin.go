@@ -365,7 +365,7 @@ func (m *FirecrackerManager) SnapshotRestore(ctx context.Context, id, name strin
 	}
 	prepareNativeFCHealth(v)
 	m.hchecker.Start(ctx, v)
-	go m.monitor(v, cmd, socket, filepath.Join(workDir, "config.json"), m.vmmLogPath(v.ID), m.rootfsPath(v.ID))
+	go m.monitor(v, cmd, watchFCExit(cmd), socket, filepath.Join(workDir, "config.json"), m.vmmLogPath(v.ID), m.rootfsPath(v.ID))
 	slog.Info("snapshot restored", "vm_id", v.ID, "snapshot", name, "pid", pid)
 	return nil
 }
