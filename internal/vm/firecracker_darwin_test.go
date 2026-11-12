@@ -146,13 +146,24 @@ func TestAwaitFCReadyReportsVMMGoneBeforeBoot(t *testing.T) {
 	require.Less(t, time.Since(start), 5*time.Second)
 }
 
-// fcCheckScript is a VMM whose --check-config counts its calls in dir and
-// answers with the given exit status.
+// fcCheckScript is a VMM too old to declare capabilities, whose
+// --check-config counts its calls in dir and answers with the given exit
+// status.
 func fcCheckScript(t *testing.T, dir string, status int) (m *FirecrackerManager, calls func() int) {
 	t.Helper()
+	return fcScript(t, dir, status, "")
+}
+
+// fcScript is fcCheckScript for a VMM that answers --capabilities with the
+// given JSON, or refuses the option when it is empty.
+func fcScript(t *testing.T, dir string, status int, capabilities string) (m *FirecrackerManager, calls func() int) {
+	t.Helper()
 	log := filepath.Join(dir, "calls")
-	m = NewFirecrackerManager("fc", "/kernel", WithFCCommandFunc(func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
-		return exec.CommandContext(ctx, "/bin/sh", "-c", "echo x >> "+log+"; echo unknown field; exit "+strconv.Itoa(status))
+	script := `case "$*" in *--capabilities*) [ -n "$CAPS" ] || exit 1; echo "$CAPS"; exit 0;; esac; echo x >> ` + log + "; echo unknown field; exit " + strconv.Itoa(status)
+	m = NewFirecrackerManager("fc", "/kernel", WithFCCommandFunc(func(ctx context.Context, _ string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", script, "fc"}, args...)...)
+		cmd.Env = append(os.Environ(), "CAPS="+capabilities)
+		return cmd
 	}))
 	return m, func() int {
 		data, _ := os.ReadFile(log)
@@ -174,6 +185,29 @@ func TestPreflightFCConfigOnlyForAnUnansweredPeerControl(t *testing.T) {
 	require.Equal(t, 1, calls())
 	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
 	require.Equal(t, 1, calls(), "once the VMM accepted a direct link it is not asked again")
+}
+
+func TestFCCapabilitiesComeFromTheVMM(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	linked := Config{nativeControl: "/control.sock"}
+
+	m, calls := fcScript(t, dir, 0, `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true}`)
+	require.Equal(t, fcCapabilities{MaxVCPUs: 8, MemoryMiB: [2]int{64, 8192}, MaxDrives: 4, PeerControl: true, declared: true}, m.fcCapabilities())
+	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
+	require.Zero(t, calls(), "a VMM that declares direct links is not asked about a config")
+	require.False(t, m.noPeerControl.Load())
+
+	without, calls := fcScript(t, dir, 0, `{"max_vcpus":4,"memory_mib":[64,2048],"max_drives":4}`)
+	require.NoError(t, without.preflightFCConfig(context.Background(), linked, path))
+	require.Zero(t, calls())
+	require.True(t, without.noPeerControl.Load(), "a VMM that declares no direct links is never offered one")
+
+	for name, answer := range map[string]string{"no option": "", "not JSON": "usage", "nonsense": `{"max_vcpus":0}`} {
+		old, _ := fcScript(t, dir, 0, answer)
+		require.Equal(t, legacyFCCapabilities, old.fcCapabilities(), name)
+	}
 }
 
 func TestExplainFCStartPrefersTheVMMsRejection(t *testing.T) {
