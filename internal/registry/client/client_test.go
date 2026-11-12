@@ -115,9 +115,10 @@ func TestReadRangeRetriesACutOrFailedRead(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			requests := 0
+			var ranges []string
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
-				require.Equal(t, "bytes=8-11", r.Header.Get("Range"))
+				ranges = append(ranges, r.Header.Get("Range"))
 				if requests == 1 {
 					first(w)
 					return
@@ -129,7 +130,7 @@ func TestReadRangeRetriesACutOrFailedRead(t *testing.T) {
 			data, err := client.New(srv.URL).ReadRange(context.Background(), srv.URL, p, 8, 4)
 			require.NoError(t, err)
 			require.Equal(t, "abcd", string(data))
-			require.Equal(t, 2, requests)
+			require.Equal(t, []string{"bytes=8-11", "bytes=8-11"}, ranges)
 		})
 	}
 }
