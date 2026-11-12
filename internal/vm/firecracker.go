@@ -93,6 +93,8 @@ type FirecrackerManager struct {
 	// noPeerControl records that the VMM rejected security.unix_control
 	// (an older build); direct VM-to-VM links are then never offered to it.
 	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
+	// peerControlOK records that the VMM accepted a config offering it.
+	peerControlOK atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket
 	mkCmd         CommandFunc
 	hchecker      *HealthChecker
 	// Platform hooks for the VMM control and runtime paths.
@@ -245,7 +247,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 			return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
 		}
 	}
-	if err := m.checkFCConfig(ctx, cfgPath); err != nil {
+	if err := m.preflightFCConfig(ctx, v.Cfg, cfgPath); err != nil {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(rootfs)
 		_ = os.Remove(vmmLog)
@@ -279,6 +281,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	}
 	configOwned = false
 	hostOwned = false
+	exit := watchFCExit(cmd)
 
 	now := time.Now()
 	v.mu.Lock()
@@ -302,9 +305,11 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	abort := func() {
 		v.SetExplicitStop()
 		_ = cmd.Process.Kill()
-		go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
+		go m.monitor(v, cmd, exit, sockPath, cfgPath, vmmLog, rootfs)
 	}
-	if err := awaitFCReady(ctx, sockPath); err != nil {
+	if err := awaitFCReady(ctx, sockPath, exit); err != nil {
+		// Before abort: the monitor deletes the config the VMM is asked about.
+		err = m.explainFCStart(ctx, cfgPath, err)
 		abort()
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
@@ -344,7 +349,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 
 	prepareNativeFCHealth(v)
 	m.hchecker.Start(ctx, v)
-	go m.monitor(v, cmd, sockPath, cfgPath, vmmLog, rootfs)
+	go m.monitor(v, cmd, exit, sockPath, cfgPath, vmmLog, rootfs)
 	// Watch the boot log for a volume that fails to mount, so the silent
 	// data-loss case surfaces as a visible warning instead of vanishing writes.
 	if len(v.Cfg.Volumes) > 0 {
@@ -539,9 +544,25 @@ func recordFCExit(log io.Writer, attached io.Writer, err error) {
 	}
 }
 
-func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, sockPath, cfgPath, vmmLog, rootfs string) {
+// fcExit is the VMM process's exit. It is waited for once, when the process
+// starts, so that both the wait for the guest to boot and the monitor see it.
+type fcExit struct {
+	done chan struct{}
+	err  error // valid once done is closed
+}
+
+func watchFCExit(cmd *exec.Cmd) *fcExit {
+	e := &fcExit{done: make(chan struct{})}
+	go func() {
+		e.err = cmd.Wait()
+		close(e.done)
+	}()
+	return e
+}
+
+func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPath, cfgPath, vmmLog, rootfs string) {
 	defer recoverGoroutine("firecracker monitor", v.ID)
-	exitErr := waitFCProcess(cmd, sockPath)
+	exitErr := waitFCProcess(cmd, exit, sockPath)
 	now := time.Now()
 	v.mu.Lock()
 	explicitStop := v.explicitStop

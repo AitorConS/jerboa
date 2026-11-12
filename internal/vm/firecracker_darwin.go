@@ -123,6 +123,32 @@ func nativeFCShutdown(socket string) error {
 	return nil
 }
 
+// preflightFCConfig asks the VMM about a config before starting it only when
+// the answer changes what is started: a config that offers a direct VM-to-VM
+// link, until the VMM has accepted or refused one. Every other config is
+// checked by the VMM as it starts, and explainFCStart reports a rejection.
+func (m *FirecrackerManager) preflightFCConfig(ctx context.Context, cfg Config, path string) error {
+	if cfg.nativeControl == "" || m.noPeerControl.Load() || m.peerControlOK.Load() {
+		return nil
+	}
+	if err := m.checkFCConfig(ctx, path); err != nil {
+		return err
+	}
+	if !m.noPeerControl.Load() {
+		m.peerControlOK.Store(true)
+	}
+	return nil
+}
+
+// explainFCStart is the error of a VMM that did not start the guest: the
+// VMM's own account of its config when it rejects it, otherwise err.
+func (m *FirecrackerManager) explainFCStart(ctx context.Context, path string, err error) error {
+	if cerr := m.checkFCConfig(context.WithoutCancel(ctx), path); cerr != nil {
+		return cerr
+	}
+	return err
+}
+
 func (m *FirecrackerManager) checkFCConfig(ctx context.Context, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -224,7 +250,7 @@ func awaitFCReachable(ctx context.Context, socket string) error {
 	}
 }
 
-func awaitFCReady(ctx context.Context, socket string) error {
+func awaitFCReady(ctx context.Context, socket string, exit *fcExit) error {
 	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 	client, transport := nativeFCStateClient(socket)
@@ -246,6 +272,10 @@ func awaitFCReady(ctx context.Context, socket string) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for HVF boot: %w", ctx.Err())
+		case <-exit.done:
+			// The supervisor outlives its guest: gone this early, it never
+			// started one, and nothing will answer on the socket.
+			return fmt.Errorf("HVF boot failed: the VMM exited before the guest started: %v", exit.err)
 		case <-ticker.C:
 		}
 	}
@@ -253,9 +283,7 @@ func awaitFCReady(ctx context.Context, socket string) error {
 
 // The API supervisor outlives the guest. Reap it after guest exit and retain
 // the guest's result so RestartOnFailure does not use the supervisor's status.
-func waitFCProcess(cmd *exec.Cmd, socket string) error {
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+func waitFCProcess(cmd *exec.Cmd, exit *fcExit, socket string) error {
 	// Short-lived guests often exit just after readiness. Observe their result
 	// promptly, then return to the normal cadence for long-running services.
 	started := time.Now()
@@ -268,11 +296,11 @@ func waitFCProcess(cmd *exec.Cmd, socket string) error {
 	terminal := false
 	for {
 		select {
-		case err := <-done:
+		case <-exit.done:
 			if terminal {
 				return guestErr
 			}
-			return err
+			return exit.err
 		case <-ticker.C:
 			if fastPolling && time.Since(started) >= 250*time.Millisecond {
 				ticker.Reset(50 * time.Millisecond)

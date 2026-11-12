@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -114,7 +115,7 @@ func TestAwaitFCReadyReusesSupervisorConnection(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	require.NoError(t, awaitFCReady(ctx, socket))
+	require.NoError(t, awaitFCReady(ctx, socket, &fcExit{done: make(chan struct{})}))
 	require.EqualValues(t, 3, requests.Load())
 	require.EqualValues(t, 1, connections.Load())
 }
@@ -131,8 +132,63 @@ func TestAwaitFCReadyReportsBootFailure(t *testing.T) {
 	})}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
-	err = awaitFCReady(context.Background(), socket)
+	err = awaitFCReady(context.Background(), socket, &fcExit{done: make(chan struct{})})
 	require.ErrorContains(t, err, "BOOT_FAILED")
+}
+
+func TestAwaitFCReadyReportsVMMGoneBeforeBoot(t *testing.T) {
+	cmd := exec.Command("/usr/bin/false")
+	require.NoError(t, cmd.Start())
+	// Nothing ever listens on the socket: only the exit can end the wait.
+	start := time.Now()
+	err := awaitFCReady(context.Background(), filepath.Join(t.TempDir(), "s"), watchFCExit(cmd))
+	require.ErrorContains(t, err, "exited before the guest started")
+	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+// fcCheckScript is a VMM whose --check-config counts its calls in dir and
+// answers with the given exit status.
+func fcCheckScript(t *testing.T, dir string, status int) (m *FirecrackerManager, calls func() int) {
+	t.Helper()
+	log := filepath.Join(dir, "calls")
+	m = NewFirecrackerManager("fc", "/kernel", WithFCCommandFunc(func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "/bin/sh", "-c", "echo x >> "+log+"; echo unknown field; exit "+strconv.Itoa(status))
+	}))
+	return m, func() int {
+		data, _ := os.ReadFile(log)
+		return len(data) / 2
+	}
+}
+
+func TestPreflightFCConfigOnlyForAnUnansweredPeerControl(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"security":{"version":1}}`), 0o600))
+	m, calls := fcCheckScript(t, dir, 0)
+
+	require.NoError(t, m.preflightFCConfig(context.Background(), Config{}, path))
+	require.Zero(t, calls(), "a config without a direct link is checked by the VMM as it starts")
+
+	linked := Config{nativeControl: "/control.sock"}
+	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
+	require.Equal(t, 1, calls())
+	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
+	require.Equal(t, 1, calls(), "once the VMM accepted a direct link it is not asked again")
+}
+
+func TestExplainFCStartPrefersTheVMMsRejection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	boot := errors.New("HVF boot failed: port in use")
+
+	accepts, _ := fcCheckScript(t, dir, 0)
+	require.Equal(t, boot, accepts.explainFCStart(context.Background(), path, boot))
+
+	rejects, _ := fcCheckScript(t, dir, 1)
+	err := rejects.explainFCStart(context.Background(), path, boot)
+	require.ErrorContains(t, err, "HVF configuration rejected")
+	require.ErrorContains(t, err, "unknown field")
 }
 
 func TestNativeFCNetStatsWithoutNetwork(t *testing.T) {
@@ -388,7 +444,7 @@ func TestWaitFCProcessPreservesGuestExit(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "/bin/sleep", "30")
 			require.NoError(t, cmd.Start())
-			err = waitFCProcess(cmd, socket)
+			err = waitFCProcess(cmd, watchFCExit(cmd), socket)
 			if code == 0 {
 				require.NoError(t, err)
 			} else {
