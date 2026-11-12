@@ -188,6 +188,17 @@ boolean attach_vtmmio(heap h, backed_heap page_allocator, vtmmio d, u64 feature_
 closure_func_basic(thunk, void, vtmmio_irq)
 {
     vtmmio dev = struct_from_closure(vtmmio, irq_handler);
+    if (!dev->cfg_chg_handler) {
+        /* Nobody listens for configuration changes, so there is nothing to
+         * tell apart: acknowledge both causes without reading which ones are
+         * set (a VM exit per interrupt) and look at the queues. */
+        vtmmio_set_u32(dev, VTMMIO_OFFSET_INTACK, VTMMIO_INT_VRING | VTMMIO_INT_CONFIG);
+        thunk vq_handler;
+        vector_foreach(dev->vq_handlers, vq_handler) {
+            apply(vq_handler);
+        }
+        return;
+    }
     u32 status = vtmmio_get_u32(dev, VTMMIO_OFFSET_INTSTATUS);
     virtio_mmio_debug("int status 0x%x", status);
     vtmmio_set_u32(dev, VTMMIO_OFFSET_INTACK, status);

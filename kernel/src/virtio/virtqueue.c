@@ -105,6 +105,10 @@ typedef struct virtqueue {
     struct list msg_queue;
     u32 queued_desc;            /* descriptors of the messages in msg_queue */
     u16 fill_batch;             /* see virtqueue_set_fill_batch() */
+    boolean defer_notify;       /* see virtqueue_set_deferred_notify() */
+    boolean notify_pending;     /* deferred_notify is scheduled */
+    u32 unnotified;             /* messages in the ring the device has not been told about */
+    closure_struct(thunk, deferred_notify);
     struct list free_msgs;
     u32 msg_seqno;
     struct spinlock lock;
@@ -256,6 +260,20 @@ closure_function(1, 0, void, vq_interrupt,
     spin_unlock(&vq->lock);
 }
 
+static int virtqueue_notify(virtqueue vq, u16 added);
+
+closure_func_basic(thunk, void, vq_deferred_notify)
+{
+    virtqueue vq = struct_from_closure(virtqueue, deferred_notify);
+    u64 irqflags = spin_lock_irq(&vq->lock);
+    u32 added = vq->unnotified;
+    vq->unnotified = 0;
+    vq->notify_pending = false;
+    spin_unlock_irq(&vq->lock, irqflags);
+    if (added > 0)
+        virtqueue_notify(vq, MIN(added, vq->entries));
+}
+
 status virtqueue_alloc(vtdev dev,
                        sstring name,
                        u16 queue_index,
@@ -287,6 +305,7 @@ status virtqueue_alloc(vtdev dev,
     list_init(&vq->msg_queue);
     list_init(&vq->free_msgs);
     spin_lock_init(&vq->lock);
+    init_closure_func(&vq->deferred_notify, thunk, vq_deferred_notify);
 
     if ((vq->ring_mem = allocate_zero(&dev->contiguous->h, alloc)) == INVALID_ADDRESS) {
         deallocate(dev->general, vq, vq_alloc_size);
@@ -351,6 +370,16 @@ u16 virtqueue_free_entries(virtqueue vq)
 void virtqueue_set_fill_batch(virtqueue vq, u16 batch)
 {
     vq->fill_batch = MIN(batch, vq->entries / 2);
+}
+
+/* Tells the device about new messages once per pass of the run loop instead
+ * of once per message. A notification is a VM exit, and what is queued in one
+ * pass belongs together: the segments of one write, or the acknowledgments
+ * for the frames one interrupt delivered. The notification still goes out
+ * before any thread runs again, because the run loop drains its queues first. */
+void virtqueue_set_deferred_notify(virtqueue vq, boolean enable)
+{
+    vq->defer_notify = enable;
 }
 
 static void vq_enable_events(virtqueue vq)
@@ -478,8 +507,17 @@ static void virtqueue_fill(virtqueue vq)
     }
 
     int notified = 0;
-    if (added > 0)
-        notified = virtqueue_notify(vq, added);
+    if (added > 0) {
+        if (vq->defer_notify) {
+            vq->unnotified += added;
+            if (!vq->notify_pending) {
+                vq->notify_pending = true;
+                async_apply_bh((thunk)&vq->deferred_notify);
+            }
+        } else {
+            notified = virtqueue_notify(vq, added);
+        }
+    }
     (void) notified;
     virtqueue_debug_verbose("   added %d, notified %d, desc_idx %d\n", added, notified, vq->desc_idx);
 }

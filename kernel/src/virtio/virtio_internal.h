@@ -128,6 +128,7 @@ u16 virtqueue_entries(virtqueue vq);
 u16 virtqueue_free_entries(virtqueue vq);
 void virtqueue_set_fill_batch(virtqueue vq, u16 batch);
 void virtqueue_set_polling(virtqueue vq, boolean enable);
+void virtqueue_set_deferred_notify(virtqueue vq, boolean enable);
 
 typedef struct vqmsg *vqmsg;
 
