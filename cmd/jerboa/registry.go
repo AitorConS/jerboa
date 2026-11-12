@@ -259,7 +259,19 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 				return fmt.Errorf("push: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
+			// A push token lasts 15 minutes and a large image can take longer.
+			// The registry keeps what was uploaded, so with a new token the
+			// push carries on from there.
+			issued := time.Now()
 			res, err := c.ImagePush(cmd.Context(), api.ImagePushParams{Reference: args[0], Token: token})
+			for attempt := 0; pushTokenExpired(err, time.Since(issued)) && attempt < 8; attempt++ {
+				fmt.Fprintln(cmd.ErrOrStderr(), "note: the push token expired; continuing with a new one")
+				if token, err = cl.PushToken(cmd.Context(), cred, ref.Namespace, ref.Repository); err != nil {
+					return fmt.Errorf("push: %w", err)
+				}
+				issued = time.Now()
+				res, err = c.ImagePush(cmd.Context(), api.ImagePushParams{Reference: args[0], Token: token})
+			}
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
@@ -281,6 +293,14 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 	cmd.Flags().BoolVar(&index, "index", false, "tag an image index of the images named after the target, one per platform")
 	cmd.Flags().BoolVar(&sign, "sign", false, "sign the push with Sigstore (default: in GitHub Actions jobs that may request OIDC tokens)")
 	return cmd
+}
+
+// pushTokenExpired reports whether a push failed because its token ran out
+// while it was uploading. The daemon reports the registry's error as text. A
+// token refused within minutes of being issued was never valid: asking for
+// another would only repeat the refusal.
+func pushTokenExpired(err error, age time.Duration) bool {
+	return err != nil && age > 5*time.Minute && strings.Contains(err.Error(), "push token is invalid or expired")
 }
 
 // pushIndex tags ref as an image index of the images sources name, and
