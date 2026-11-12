@@ -600,8 +600,9 @@ func (s *Store) writeRefs(refs map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("marshal refs: %w", err)
 	}
-	path := filepath.Join(s.root, "refs.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// Every image name lives in this one file: a crash while it is being
+	// rewritten must leave the old one, not half of the new.
+	if err := writeFileAtomic(filepath.Join(s.root, "refs.json"), data); err != nil {
 		return fmt.Errorf("write refs.json: %w", err)
 	}
 	return nil
