@@ -304,12 +304,16 @@ func TestStore_writeRefs_error(t *testing.T) {
 
 	filePath := filepath.Join(root, "refs.json")
 	require.NoError(t, os.WriteFile(filePath, []byte("{}"), 0o644))
-	os.Chmod(filePath, 0o444)
-	defer os.Chmod(filePath, 0o755)
+	// The file is replaced, not rewritten: what stops that is its directory.
+	os.Chmod(root, 0o555)
+	defer os.Chmod(root, 0o755)
 
 	s := &Store{root: root}
 	err := s.addRef("hello:latest", "abc123")
-	require.Error(t, err)
+	require.ErrorContains(t, err, "write refs.json")
+	data, rerr := os.ReadFile(filePath)
+	require.NoError(t, rerr)
+	require.Equal(t, "{}", string(data), "a failed write leaves the old file")
 }
 
 func TestFileSHA256(t *testing.T) {

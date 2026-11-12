@@ -539,33 +539,60 @@ func (c *Client) Locations(ctx context.Context, cdn, recipe string) (map[string]
 	return out.Blobs, err
 }
 
-// ReadRange reads length bytes of a pack starting at offset.
+// ReadRange reads length bytes of a pack starting at offset. A read the
+// network cut short, or the CDN answered with an error of its own, is tried
+// again, as do does for every other request.
 func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, length int64) ([]byte, error) {
 	if err := (pack.Location{Pack: packDigest, Offset: offset, Length: length}).Validate(); err != nil {
 		return nil, fmt.Errorf("registry: %w", err)
 	}
+	var last error
+	for attempt := range 4 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("registry: %w", ctx.Err())
+			case <-time.After(time.Duration(1<<attempt) * 250 * time.Millisecond):
+			}
+		}
+		data, retry, err := c.readRangeOnce(ctx, cdn, packDigest, offset, length)
+		if err == nil || !retry || ctx.Err() != nil {
+			return data, err
+		}
+		last = err
+	}
+	return nil, last
+}
+
+// readRangeOnce is one attempt of ReadRange; retry says another may succeed.
+func (c *Client) readRangeOnce(ctx context.Context, cdn, packDigest string, offset, length int64) (data []byte, retry bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cdn+"/packs/"+strings.TrimPrefix(packDigest, "sha256:"), nil)
 	if err != nil {
-		return nil, fmt.Errorf("registry: %w", err)
+		return nil, false, fmt.Errorf("registry: %w", err)
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
 	req.Header.Set("User-Agent", c.UserAgent)
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("registry: read pack: %w", err)
+		return nil, true, fmt.Errorf("registry: read pack: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusPartialContent {
-		return nil, fmt.Errorf("registry: read pack %s: HTTP %d, want 206", packDigest, resp.StatusCode)
+		retry = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+		return nil, retry, fmt.Errorf("registry: read pack %s: HTTP %d, want 206", packDigest, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, length+1))
+	data, err = io.ReadAll(io.LimitReader(resp.Body, length+1))
 	if err != nil {
-		return nil, fmt.Errorf("registry: read pack: %w", err)
+		return nil, true, fmt.Errorf("registry: read pack: %w", err)
+	}
+	if int64(len(data)) > length {
+		return nil, false, fmt.Errorf("registry: read pack %s: got more than the %d bytes asked for", packDigest, length)
 	}
 	if int64(len(data)) != length {
-		return nil, fmt.Errorf("registry: read pack %s: got %d bytes, want %d", packDigest, len(data), length)
+		// A connection closed early ends the body without an error.
+		return nil, true, fmt.Errorf("registry: read pack %s: got %d bytes, want %d", packDigest, len(data), length)
 	}
-	return data, nil
+	return data, false, nil
 }
 
 func jsonBody(v any) []byte {
