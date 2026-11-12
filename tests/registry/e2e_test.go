@@ -491,7 +491,16 @@ func requireCDNCaches(t *testing.T, ctx context.Context, cl *client.Client, reci
 	url := d.CDN + "/recipes/" + strings.TrimPrefix(recipeDigest, "sha256:") + ".json"
 	var status, cacheControl string
 	require.Eventually(t, func() bool {
-		resp, err := http.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return false
+		}
+		// A private registry keeps its CDN behind Cloudflare Access too.
+		if id, secret, ok := credentials.AccessToken(req.URL.Hostname()); ok {
+			req.Header.Set("CF-Access-Client-Id", id)
+			req.Header.Set("CF-Access-Client-Secret", secret)
+		}
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return false
 		}
