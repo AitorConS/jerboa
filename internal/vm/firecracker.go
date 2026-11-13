@@ -30,10 +30,18 @@ import (
 // FCOption configures a FirecrackerManager.
 type FCOption func(*FirecrackerManager)
 
-// WithFCSecurity supplies the macOS VMM's security JSON object. Published port
-// permissions are added per VM; outbound permissions remain explicitly chosen.
+// WithFCSecurity supplies the macOS VMM's security JSON object, which then
+// states every outbound permission: nothing is added to it but the published
+// ports of each VM. Without it guests reach public addresses (see
+// defaultFCPolicy).
 func WithFCSecurity(data []byte) FCOption {
 	return func(m *FirecrackerManager) { m.fcSecurity = append([]byte(nil), data...) }
+}
+
+// WithFCDefaultDNS names the resolver ("ip:port") macOS guests use when no
+// security object was supplied; empty leaves them without external DNS.
+func WithFCDefaultDNS(upstream string) FCOption {
+	return func(m *FirecrackerManager) { m.fcDefaultDNS = upstream }
 }
 
 // WithFCStore injects a custom Store implementation.
@@ -91,6 +99,7 @@ type FirecrackerManager struct {
 	fcBin        string
 	kernelImage  string
 	fcSecurity   json.RawMessage
+	fcDefaultDNS string
 	// noPeerControl records that the VMM rejected security.unix_control
 	// (an older build); direct VM-to-VM links are then never offered to it.
 	noPeerControl atomic.Bool //nolint:unused // only macOS VMMs take a peer control socket

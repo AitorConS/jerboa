@@ -537,6 +537,15 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		if c.Security == nil {
 			return "", fmt.Errorf("HVF security must be a JSON object")
 		}
+	} else if m.fcCapabilities().PublicEgress {
+		// No policy was supplied: the guest reaches public addresses through
+		// the daemon's resolver. A VMM that predates the rule keeps every
+		// outbound connection closed.
+		p := m.defaultFCPolicy()
+		c.Security["public_egress"] = json.RawMessage("true")
+		if p.DNS != nil {
+			c.Security["dns"], _ = json.Marshal(p.DNS)
+		}
 	}
 	var listeners []nativeFCListener
 	if data := c.Security["listeners"]; len(data) > 0 {
