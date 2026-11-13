@@ -431,6 +431,30 @@ jerboa kernel update    # install the latest kernel toolchain
 
 ---
 
+## Uninstalling
+
+Uninstalling removes Jerboa and everything it stored: images, VMs, volumes,
+snapshots, registry credentials and settings. Back up what you need first.
+
+- **Windows** — uninstall **Jerboa Desktop** from Windows Settings. It removes
+  the app, the `jerboa` WSL distro, the `.jerboa` folder in your user profile
+  and the CLI from your PATH.
+- **macOS** — in Jerboa Desktop, open **Settings → Uninstall**. Moving the app
+  to the Trash instead leaves the engine's service, `~/.jerboa` and the
+  commands in `/usr/local/bin` behind.
+- **Linux** — run the installer with `--uninstall`:
+
+  ```sh
+  curl -fsSL https://jerboa.dev/install.sh | sudo bash -s -- --uninstall
+  ```
+
+  It stops and removes the `jerboad` service, the binaries, the `jerboa` system
+  user, `/var/lib/jerboa`, `/etc/jerboa` and your `~/.jerboa`. Add `--keep-data`
+  to remove only the programs and the service. Packages the installer added
+  with `apt` (QEMU, iptables…) are left in place.
+
+---
+
 ## Next
 
 - [Build Concepts]({% link build-concepts.md %})
