@@ -657,7 +657,19 @@ Add `--channel beta` to query the beta channel instead of stable.
 
 The command group currently exposes only one writable key:
 
-- `hypervisor`: `qemu` or `firecracker`
+- `hypervisor`: `auto`, `qemu` or `firecracker`
+
+Without a choice (`auto`, the default) the daemon runs Firecracker wherever
+the host can and QEMU otherwise, and logs which and why when it starts:
+
+| Host | Firecracker is used when |
+|---|---|
+| Linux, and Windows inside the WSL2 distro | `/dev/kvm` opens, a `firecracker` binary is found, and the daemon is root or has `CAP_NET_ADMIN` |
+| macOS | Apple Silicon, macOS 26 or newer, and the bundled `firecracker` is present |
+
+QEMU remains for hosts without KVM and for x86 emulation on Apple Silicon; set
+`hypervisor` to `qemu` for those. A config file that already names a
+hypervisor keeps it.
 
 The config file supports more fields than the CLI subcommand currently edits. The underlying schema in `~/.jerboa/config.toml` also includes:
 
@@ -703,7 +715,7 @@ Flags:
 
 - `--rootfs <tarball>` — use a local rootfs instead of downloading the release
 - `--keep-data` — preserve images, VMs, networks and volumes across the reimport
-- `--hypervisor <qemu|firecracker>` — hypervisor to run after restart
+- `--hypervisor <auto|qemu|firecracker>` — hypervisor to run after restart
 
 ### `jerboa daemon uninstall`
 ### `jerboa daemon start`
@@ -714,7 +726,7 @@ Flags:
 
 Daemon start/restart flag:
 
-- `--hypervisor qemu|firecracker`
+- `--hypervisor auto|qemu|firecracker`
 
 `jerboa daemon logs` flag:
 
@@ -735,7 +747,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--auth-token` | Deprecated: a token on the command line is visible to other local users in `ps`. Use `--auth-token-file` or `JERBOA_AUTH_TOKEN` |
 | `--insecure` | Allow serving a TCP endpoint without an auth token (unsafe). A TCP endpoint with no token is rejected at startup otherwise; a Unix socket needs no token (it is restricted to the owning user with `0600` permissions) |
 | `--qemu` | QEMU binary path (default `qemu-system-x86_64`) |
-| `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |
+| `--hypervisor` | `auto`, `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`; default `auto`: Firecracker where the host can run it, QEMU otherwise) |
 | `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
 | `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
 | `--fc-metrics-dir` | Linux only: write each Firecracker VM's device metrics (per-drive bytes, operations, flushes, latency) as JSON lines to `fc-<id>-metrics.json` in this directory, for storage profiling |

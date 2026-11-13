@@ -26,14 +26,15 @@
 #                         FIRECRACKER_VERSION or FC_ARCH is not a default pin
 #   FC_ARCH               firecracker arch              (default x86_64)
 #   JERBOA_PORT           daemon loopback TCP port      (default 7890)
-#   HYPERVISOR            qemu or firecracker           (default firecracker)
+#   HYPERVISOR            auto, qemu or firecracker     (default auto: firecracker
+#                         where KVM is present, qemu otherwise)
 #   RELEASE_BASE          release origin (default https://releases.jerboa.dev)
 set -euo pipefail
 
 FIRECRACKER_VERSION="${FIRECRACKER_VERSION:-v1.17.0}"
 FC_ARCH="${FC_ARCH:-x86_64}"
 JERBOA_PORT="${JERBOA_PORT:-7890}"
-HYPERVISOR="${HYPERVISOR:-firecracker}"
+HYPERVISOR="${HYPERVISOR:-auto}"
 RELEASE_BASE="${RELEASE_BASE:-https://releases.jerboa.dev}"
 RELEASE_BASE="${RELEASE_BASE%/}"
 VERSION=latest
@@ -93,7 +94,8 @@ Usage: sudo bash install.sh [--version VERSION]
 Requires Debian/Ubuntu with systemd on x86_64 Linux, or macOS 26+ Apple Silicon.
 On macOS run without sudo; Homebrew supplies jq and minisign if missing.
 The signed native package uses Firecracker; sudo is requested for package installation.
-HYPERVISOR=qemu allows running without KVM (software emulation).
+Without KVM the installer sets up QEMU (software emulation, slower);
+HYPERVISOR=firecracker or HYPERVISOR=qemu forces one.
 HELP
 }
 
@@ -112,7 +114,7 @@ if [ "${VERSION}" != latest ]; then
 	[[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid version: ${VERSION}"
 fi
 [[ "${RELEASE_BASE}" =~ ^https://[^[:space:]]+$ ]] || die "RELEASE_BASE must be an HTTPS origin"
-case "${HYPERVISOR}" in qemu|firecracker) ;; *) die "HYPERVISOR must be qemu or firecracker" ;; esac
+case "${HYPERVISOR}" in auto|qemu|firecracker) ;; *) die "HYPERVISOR must be auto, qemu or firecracker" ;; esac
 [[ "${JERBOA_PORT}" =~ ^[0-9]{1,5}$ ]] || die "JERBOA_PORT must be between 1 and 65535"
 JERBOA_PORT=$((10#${JERBOA_PORT}))
 [ "${JERBOA_PORT}" -ge 1 ] && [ "${JERBOA_PORT}" -le 65535 ] || die "JERBOA_PORT must be between 1 and 65535"
@@ -121,7 +123,8 @@ install_macos() {
 	[ "$(uname -m)" = arm64 ] || die "macOS requires Apple Silicon; run from a native ARM64 terminal (not Rosetta)"
 	macos_version="$(sw_vers -productVersion)"
 	[ "${macos_version%%.*}" -ge 26 ] || die "Firecracker requires macOS 26 or newer"
-	[ "${HYPERVISOR}" = firecracker ] || die "the macOS package installer supports HYPERVISOR=firecracker"
+	[ "${HYPERVISOR}" != qemu ] || die "the macOS package installer supports HYPERVISOR=firecracker"
+	HYPERVISOR=firecracker
 	[ "$(id -u)" -ne 0 ] || die "run the macOS installer without sudo; it requests elevation when installing the package"
 	for dependency in jq minisign; do
 		if ! command -v "${dependency}" >/dev/null 2>&1; then
@@ -191,6 +194,15 @@ esac
 command -v apt-get >/dev/null 2>&1 || die "this installer targets Debian/Ubuntu (apt-get not found)"
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
 [ -d /run/systemd/system ] || die "systemd must be running as the system manager"
+# Firecracker wherever the machine can run it; QEMU is the fallback.
+if [ "${HYPERVISOR}" = auto ]; then
+	if [ -e /dev/kvm ]; then
+		HYPERVISOR=firecracker
+	else
+		HYPERVISOR=qemu
+		log "/dev/kvm not present: installing with QEMU (software emulation, slower). Enable virtualization and reinstall to use Firecracker."
+	fi
+fi
 if [ "${HYPERVISOR}" = firecracker ] && [ ! -e /dev/kvm ]; then
 	die "/dev/kvm not present: enable virtualization or use HYPERVISOR=qemu"
 fi

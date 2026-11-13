@@ -39,10 +39,12 @@ Available keys:
 			}
 			switch strings.ToLower(key) {
 			case "hypervisor":
-				if value != "qemu" && value != "firecracker" {
-					return fmt.Errorf("hypervisor must be qemu or firecracker, got %q", value)
+				if value != "qemu" && value != "firecracker" && value != "auto" {
+					return fmt.Errorf("hypervisor must be auto, qemu or firecracker, got %q", value)
 				}
-				cfg.Hypervisor = value
+				// auto is stored as no choice: the daemon then runs
+				// Firecracker wherever the host can.
+				cfg.Hypervisor = strings.TrimPrefix(value, "auto")
 			default:
 				return fmt.Errorf("unknown config key %q", key)
 			}
@@ -68,6 +70,10 @@ func newConfigGetCmd() *cobra.Command {
 			}
 			switch key {
 			case "hypervisor":
+				if cfg.Hypervisor == "" {
+					fmt.Fprintln(cmd.OutOrStdout(), "auto")
+					break
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), cfg.Hypervisor)
 			default:
 				return fmt.Errorf("unknown config key %q", key)
