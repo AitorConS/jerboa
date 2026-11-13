@@ -4,6 +4,7 @@ package transfer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"github.com/AitorConS/jerboa/internal/registry/pack"
 	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // MkfsFor returns the mkfs binary of a toolset version.
@@ -35,6 +38,59 @@ type PushOptions struct {
 	Mkfs   MkfsFor
 	// WorkDir holds the dry-run disk; empty means the system temp dir.
 	WorkDir string
+}
+
+// pushInFlightBytes bounds the compressed bytes being uploaded at once: three
+// packs of the usual size (pack.TargetSize), or one large pack alone.
+const pushInFlightBytes = 3 * pack.TargetSize
+
+// packUploader uploads packs concurrently. What is in flight is bounded in
+// bytes, not in requests: a registry verifies each pack in memory, so a pack
+// near the size limit travels alone.
+type packUploader struct {
+	group    *errgroup.Group
+	ctx      context.Context
+	cancel   context.CancelFunc
+	inFlight *semaphore.Weighted
+	put      func(context.Context, pack.Pack) error
+}
+
+func newPackUploader(ctx context.Context, put func(context.Context, pack.Pack) error) *packUploader {
+	ctx, cancel := context.WithCancel(ctx)
+	group, ctx := errgroup.WithContext(ctx)
+	return &packUploader{group: group, ctx: ctx, cancel: cancel, inFlight: semaphore.NewWeighted(pushInFlightBytes), put: put}
+}
+
+// Add starts uploading packs, waiting while the bytes in flight are at their
+// bound. It returns the error of an upload that already failed.
+func (u *packUploader) Add(packs []pack.Pack) error {
+	for _, p := range packs {
+		weight := min(int64(len(p.Data)), pushInFlightBytes)
+		if err := u.inFlight.Acquire(u.ctx, weight); err != nil {
+			return u.Abandon(fmt.Errorf("push: %w", err))
+		}
+		u.group.Go(func() error {
+			defer u.inFlight.Release(weight)
+			return u.put(u.ctx, p)
+		})
+	}
+	return nil
+}
+
+// Wait returns once every pack is uploaded, or the first error.
+func (u *packUploader) Wait() error {
+	defer u.cancel()
+	return u.group.Wait() //nolint:wrapcheck // put wraps its own errors
+}
+
+// Abandon stops the uploads and returns the error of one that failed, which
+// explains a canceled push better than err; otherwise err.
+func (u *packUploader) Abandon(err error) error {
+	u.cancel()
+	if uerr := u.group.Wait(); uerr != nil && !errors.Is(uerr, context.Canceled) {
+		return uerr //nolint:wrapcheck // put wraps its own errors
+	}
+	return err
 }
 
 // PushResult reports what a push uploaded.
@@ -78,34 +134,41 @@ func Push(ctx context.Context, o PushOptions) (PushResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("push: %w", err)
 	}
-	upload := func(packs []pack.Pack) error {
-		for _, p := range packs {
-			if err := o.Client.PutPack(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, p); err != nil {
-				return fmt.Errorf("push: pack: %w", err)
-			}
-			res.PacksUploaded++
-			res.BlobsUploaded += len(p.Entries)
-			res.BytesUploaded += int64(len(p.Data))
+	// Packs upload while the next ones are compressed.
+	var mu sync.Mutex
+	up := newPackUploader(ctx, func(ctx context.Context, p pack.Pack) error {
+		if err := o.Client.PutPack(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, p); err != nil {
+			return fmt.Errorf("push: pack: %w", err)
 		}
+		mu.Lock()
+		defer mu.Unlock()
+		res.PacksUploaded++
+		res.BlobsUploaded += len(p.Entries)
+		res.BytesUploaded += int64(len(p.Data))
 		return nil
-	}
+	})
 	for _, d := range missing {
 		// Upload only this recipe's blobs, whatever the registry asks for.
 		if _, ok := sizes[d]; !ok {
-			return res, fmt.Errorf("push: the registry asked for blob %s, which this image does not use", d)
+			return res, up.Abandon(fmt.Errorf("push: the registry asked for blob %s, which this image does not use", d))
 		}
 		path, err := o.Store.Path(d)
 		if err != nil {
-			return res, fmt.Errorf("push: %w", err)
+			return res, up.Abandon(fmt.Errorf("push: %w", err))
 		}
 		if err := w.Add(pack.Blob{Digest: d, Size: sizes[d], Open: func() (io.ReadCloser, error) { return os.Open(path) }}); err != nil {
-			return res, fmt.Errorf("push: %w", err)
+			return res, up.Abandon(fmt.Errorf("push: %w", err))
 		}
-		if err := upload(w.Take()); err != nil {
+		if err := up.Add(w.Take()); err != nil {
 			return res, err
 		}
 	}
-	if err := upload(w.Close()); err != nil {
+	if err := up.Add(w.Close()); err != nil {
+		return res, err
+	}
+	// The recipe and the tag follow every pack: a tag never names a recipe
+	// whose blobs are still on their way.
+	if err := up.Wait(); err != nil {
 		return res, err
 	}
 	if err := o.Client.PutRecipe(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, o.Recipe, data); err != nil {
