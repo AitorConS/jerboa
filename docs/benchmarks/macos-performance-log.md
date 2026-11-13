@@ -80,15 +80,26 @@ request, about 5,000 exits a second: there is no time to win there.
 | TSO on the switch path by segmenting in the VMM | rejected |
 | 20 µs poll; `nice` | rejected |
 | MTU 9000 on the slirp link of a VM outside a network | kept (firecracker-macos #33, jerboa #242): published port 4.9 to 9.7 Gbit/s in, 2.1 to 9.0 out |
+| No guest notification for RX buffers unless the device waits for them (`VRING_USED_F_NO_NOTIFY`) | rejected (2026-11-13): three interleaved rounds each; published port 9.93 against 10.00 Gbit/s in and 9.81 against 9.82 out, VM to VM 24.84 against 24.99 |
 
 Open: VM-to-host bulk TCP is the largest gap to Docker and needs a path that
 does not copy through user space twice.
 
-Measured, not yet acted on (2026-11-12): bulk TCP through slirp at MTU 9000
-costs 0.35 to 0.43 vCPU exits per packet, about 50,000 a second. `EVENT_IDX`
-on the network queues would remove part of those; the expected gain is a few
-percent and it has not been tried. All vCPU exits and the device loop share
-one lock; its cost with several busy vCPUs has not been measured.
+Measured (2026-11-12): bulk TCP through slirp at MTU 9000 costs 0.35 to 0.43
+vCPU exits per packet, about 50,000 a second. Removing the RX-buffer
+notifications among them (2026-11-13, table above) changed nothing that can be
+measured, so `EVENT_IDX` on the network queues is not expected to either: the
+exits are not what bounds these paths. All vCPU exits and the device loop
+share one lock; its cost with several busy vCPUs has not been measured.
+
+## Client and registry
+
+Measured on the same machine, 2026-11-13.
+
+| Question | Result |
+|---|---|
+| Is compression what a push waits for? | No. On 117 MiB of package files, zstd "best" (the level in use) runs at 71 MiB/s on one core and stores 58.3%; "better" runs at 330 MiB/s and stores 60.2%. The level stays. |
+| Is an unchanged `jerboa build` worth making incremental? | No. A Go image rebuilt without changes takes 0.16 s (3.0 s the first time, compiling). Images with large packages were not measured. |
 
 ## Method
 
