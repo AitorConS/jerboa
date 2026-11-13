@@ -16,6 +16,9 @@ type fcCapabilities struct {
 	// SlirpMTUMax is the largest MTU a slirp link takes; 0 for a VMM whose
 	// slirp link is fixed at 1500.
 	SlirpMTUMax int `json:"slirp_mtu_max"`
+	// PublicEgress reports that the VMM takes "public_egress" in its security
+	// object; without it a slirp guest has no outbound network by default.
+	PublicEgress bool `json:"public_egress"`
 	// declared is false for a VMM too old to say: the bounds are then those
 	// every such build had, and whether it takes a direct VM-to-VM link is
 	// found by asking it about a config (preflightFCConfig).

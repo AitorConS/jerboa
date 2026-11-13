@@ -141,6 +141,15 @@ func newRootCmd() *cobra.Command {
 				}
 				fcOpts = append(fcOpts, vm.WithFCSecurity(data))
 			}
+			if runtime.GOOS == "darwin" {
+				// Without --fc-security, Firecracker guests resolve names where
+				// QEMU guests do.
+				dns := "1.1.1.1:53"
+				if upstream, exists := os.LookupEnv("JERBOA_DNS_UPSTREAM"); exists {
+					dns = upstream
+				}
+				fcOpts = append(fcOpts, vm.WithFCDefaultDNS(dns))
+			}
 			if fcMetricsDir != "" {
 				if runtime.GOOS != "linux" {
 					return fmt.Errorf("--fc-metrics-dir is only supported on Linux")
@@ -190,7 +199,7 @@ func newRootCmd() *cobra.Command {
 		"Hypervisor backend: qemu, firecracker or auto (overrides ~/.jerboa/config.toml; default auto: Firecracker where the host can run it, else QEMU)")
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
-	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON (outbound/DNS permissions)")
+	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON: the outbound and DNS permissions of guests, replacing the default (public addresses only)")
 	root.Flags().StringVar(&fcMetricsDir, "fc-metrics-dir", "",
 		"Linux Firecracker: write per-VM device metrics (block I/O counts, flushes, latency) to this directory for profiling; empty disables")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
