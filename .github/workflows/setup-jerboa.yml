@@ -21,11 +21,11 @@ jobs:
     - id: setup
       uses: ./.github/actions/setup-jerboa
       with:
-        version: 0.58.0
+        version: 0.59.0
         hypervisor: qemu
     - name: The CLI reaches the daemon
       env:
         INSTALLED: ${{ steps.setup.outputs.version }}
       run: |
-        [ "${INSTALLED#v}" = 0.58.0 ] || { echo "installed ${INSTALLED}"; exit 1; }
+        [ "${INSTALLED#v}" = 0.59.0 ] || { echo "installed ${INSTALLED}"; exit 1; }
         jerboa images
