@@ -11,10 +11,9 @@ name: Build release candidate
         required: true
         type: string
       runtime_sha:
-        description: Exact Firecracker commit SHA
+        description: Exact 40-character firecracker-macos commit SHA
         required: true
         type: string
-        default: 6750fc374d4758a8181d75e5299e7137a110dd41
       kernel_version:
         description: Kernel version (kernel/VERSION for build; published version for stable)
         required: true
