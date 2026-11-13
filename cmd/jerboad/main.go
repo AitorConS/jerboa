@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/apiserver"
 	"github.com/AitorConS/jerboa/internal/cluster"
 	"github.com/AitorConS/jerboa/internal/config"
@@ -141,6 +142,15 @@ func newRootCmd() *cobra.Command {
 				}
 				fcOpts = append(fcOpts, vm.WithFCSecurity(data))
 			}
+			if runtime.GOOS == "darwin" {
+				// Without --fc-security, Firecracker guests resolve names where
+				// QEMU guests do.
+				dns := "1.1.1.1:53"
+				if upstream, exists := os.LookupEnv("JERBOA_DNS_UPSTREAM"); exists {
+					dns = upstream
+				}
+				fcOpts = append(fcOpts, vm.WithFCDefaultDNS(dns))
+			}
 			if fcMetricsDir != "" {
 				if runtime.GOOS != "linux" {
 					return fmt.Errorf("--fc-metrics-dir is only supported on Linux")
@@ -190,7 +200,7 @@ func newRootCmd() *cobra.Command {
 		"Hypervisor backend: qemu, firecracker or auto (overrides ~/.jerboa/config.toml; default auto: Firecracker where the host can run it, else QEMU)")
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
-	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON (outbound/DNS permissions)")
+	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON: the outbound and DNS permissions of guests, replacing the default (public addresses only)")
 	root.Flags().StringVar(&fcMetricsDir, "fc-metrics-dir", "",
 		"Linux Firecracker: write per-VM device metrics (block I/O counts, flushes, latency) to this directory for profiling; empty disables")
 	root.Flags().StringVar(&fcKernelPath, "fc-kernel", "",
@@ -265,28 +275,39 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	// still lacks (its kernel) sends the daemon to QEMU instead of failing.
 	chosenByHost := false
 	// Resolve hypervisor: flag > config file > whatever this host can run.
+	hypervisorReason := "chosen with --hypervisor"
 	if hypervisor == "" {
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {
 			slog.Warn("jerboad: could not read config, choosing the hypervisor from the host", "err", err)
 		} else {
 			hypervisor = cfg.Hypervisor
+			hypervisorReason = "chosen in " + config.DefaultPath()
 		}
 	}
+	binDir := ""
+	if exe, err := os.Executable(); err == nil {
+		binDir = filepath.Dir(exe)
+	}
+	// What this host can run, whatever was chosen: a daemon held on QEMU
+	// says so when Firecracker would run here.
+	hostChoice := hypervisorpkg.Default(fcBin, binDir)
+	firecrackerAvailable := hostChoice.Name == hypervisorpkg.Firecracker
 	if hypervisor == "" || hypervisor == hypervisorpkg.Auto {
 		// Firecracker wherever it can run; QEMU where it cannot (no KVM, no
 		// VMM binary, an older macOS).
-		binDir := ""
-		if exe, err := os.Executable(); err == nil {
-			binDir = filepath.Dir(exe)
+		hypervisor = hostChoice.Name
+		if hostChoice.FCBin != "" {
+			fcBin = hostChoice.FCBin
 		}
-		choice := hypervisorpkg.Default(fcBin, binDir)
-		hypervisor = choice.Name
-		if choice.FCBin != "" {
-			fcBin = choice.FCBin
-		}
-		slog.Info("jerboad: no hypervisor was chosen", "using", hypervisor, "because", choice.Reason)
+		hypervisorReason = hostChoice.Reason
+		slog.Info("jerboad: no hypervisor was chosen", "using", hypervisor, "because", hostChoice.Reason)
 		chosenByHost = true
+	} else if hypervisor == hypervisorpkg.QEMU && firecrackerAvailable {
+		// Releases before 0.59 wrote hypervisor = "qemu" into the config
+		// without being asked, so this may not be anyone's choice.
+		slog.Info("jerboad: this host can run Firecracker, but QEMU was chosen; `jerboa config set hypervisor auto` selects Firecracker",
+			"qemu", hypervisorReason)
 	}
 
 	// Opened before the VM managers, which consult it to skip re-hashing
@@ -327,6 +348,8 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		case kerr != nil && chosenByHost:
 			slog.Warn("jerboad: Firecracker has no kernel to boot; using QEMU", "err", kerr)
 			hypervisor = "qemu"
+			hypervisorReason = "Firecracker has no kernel to boot"
+			firecrackerAvailable = false
 		case kerr != nil:
 			return kerr
 		}
@@ -468,6 +491,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		return fmt.Errorf("jerboad: vm server: %w", err)
 	}
 	vmSrv.SetCollectors(collectors)
+	vmSrv.SetHypervisor(api.DaemonHypervisor{Name: hypervisor, Reason: hypervisorReason, FirecrackerAvailable: firecrackerAvailable})
 
 	// Require a token on every connection when one is configured. A TCP
 	// endpoint without a token is reachable by any local process, so warn.

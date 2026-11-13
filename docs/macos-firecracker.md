@@ -115,11 +115,24 @@ Jerboa's existing adoption behavior. Console history is not recovered.
 
 ## Network policy and limits
 
-Outbound traffic and external DNS are denied by default. Joining a named
-network explicitly enables communication and service DNS inside that network.
-Supply a JSON
-security object with `jerboad --fc-security /absolute/path/policy.json`, or set
-`JERBOA_FIRECRACKER_SECURITY` when starting the managed service. For example:
+By default a guest reaches the public Internet and nothing nearer:
+
+- **Allowed:** TCP and UDP to public IPv4 addresses, and external DNS through
+  the daemon's resolver (`1.1.1.1:53`, or `JERBOA_DNS_UPSTREAM`; an empty value
+  leaves guests without external DNS).
+- **Refused:** the host itself (its loopback, through the guest's gateway) and
+  private (`10/8`, `172.16/12`, `192.168/16`), shared (`100.64/10`),
+  link-local (`169.254/16`), multicast and reserved addresses.
+
+This is the policy QEMU guests have. Joining a named network adds
+communication and service DNS inside that network; names of the network are
+answered locally and never forwarded.
+
+To state the permissions yourself, supply a JSON security object with
+`jerboad --fc-security /absolute/path/policy.json`, or set
+`JERBOA_FIRECRACKER_SECURITY` when starting the managed service. It replaces
+the default entirely: `{"version": 1}` closes every outbound connection and
+external DNS, as releases up to 0.58 did by default. For example:
 
 ```json
 {
@@ -129,11 +142,14 @@ security object with `jerboad --fc-security /absolute/path/policy.json`, or set
 }
 ```
 
+Add `"public_egress": true` to keep public addresses reachable beside the
+exact rules, for instance to also open one address of the local network.
+
 Replace the example destination with the actual endpoint needed by the guest.
 Policy is shared by this daemon's Firecracker VMs. Slirp receives these rules
 in the VMM and adds published listener permissions. For shared networks,
 Jerboa enforces exact IPv4/protocol/port egress rules and uses only `dns` as its
-external resolver. `JERBOA_DNS_UPSTREAM` does not override Firecracker's policy.
+external resolver. `JERBOA_DNS_UPSTREAM` does not override a supplied policy.
 Service DNS is answered locally. Access through the network gateway to the
 host is translated to `127.0.0.1`, so authorize that address and the required
 port explicitly. Granting DNS does not authorize TCP/UDP to resolved addresses.

@@ -230,13 +230,16 @@ Things to know:
 - With Firecracker, health checks on a VM without `--network` need a published
   TCP port. On a named network, health checks work on any port.
 
-### Allowing internet access (Firecracker)
+### Restricting or widening outbound access (Firecracker)
 
-For safety, Firecracker VMs **cannot open outbound connections or resolve
-external DNS names** unless you allow it. Traffic inside a named network and
-published ports always work.
+By default a Firecracker VM reaches the **public internet** and resolves
+external DNS names, but **not your Mac nor your local network**: private,
+shared and link-local addresses are refused, and so is the Mac itself through
+the VM's gateway. Traffic inside a named network and published ports always
+work.
 
-Write a policy file listing the destinations your VMs need:
+To decide yourself, write a policy file. It replaces the default entirely, so
+it must list everything your VMs need:
 
 ```json
 {
@@ -246,15 +249,19 @@ Write a policy file listing the destinations your VMs need:
 }
 ```
 
+- `{"version": 1}` alone closes every outbound connection and external DNS.
+- `"public_egress": true` keeps the public internet reachable beside the
+  `egress` rules, for instance to also open one address of your local network.
+
 Then restart the daemon with it:
 
 ```sh
 JERBOA_FIRECRACKER_SECURITY=~/jerboa-policy.json jerboa daemon restart
 ```
 
-Each rule allows one exact IPv4 address, protocol and port. Allowing DNS does
-not allow connections to the addresses it returns — add those as `egress`
-rules too. To let a VM reach a service on your Mac through the gateway, allow
+Each rule allows one exact IPv4 address, protocol and port. Without
+`public_egress`, allowing DNS does not allow connections to the addresses it
+returns — add those as `egress` rules too. To let a VM reach a service on your Mac through the gateway, allow
 `127.0.0.1` and that port. The policy applies to all VMs of the daemon, and you
 need to pass the variable again each time you start the daemon from the terminal.
 

@@ -138,29 +138,36 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 		return nil, fmt.Errorf("parse question: %w", err)
 	}
 
-	if q.Type == dnsmessage.TypeA {
-		// Scope the lookup to the caller's own network. An empty network (source
-		// IP not held by any running VM) must NOT fall through to Resolve, which
-		// would search across every network and leak names between them; treat
-		// it as not-owned and forward/NXDOMAIN below instead.
-		if network := s.resolver.NetworkForIP(srcIP); network != "" {
-			name := strings.TrimSuffix(q.Name.String(), ".")
+	// Scope the lookup to the caller's own network. An empty network (source
+	// IP not held by any running VM) must NOT fall through to Resolve, which
+	// would search across every network and leak names between them; treat
+	// it as not-owned and forward/NXDOMAIN below instead.
+	if network := s.resolver.NetworkForIP(srcIP); network != "" {
+		name := strings.TrimSuffix(q.Name.String(), ".")
+		if q.Type == dnsmessage.TypeA {
 			if rec, rErr := s.resolver.Resolve(name, network); rErr == nil {
 				if ip := net.ParseIP(rec.IP).To4(); ip != nil {
 					return s.answerA(hdr.ID, q, [4]byte{ip[0], ip[1], ip[2], ip[3]})
 				}
 			}
+		} else if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
+			// The name belongs to this network, which has only IPv4
+			// addresses: there is no such record, and the question stays
+			// here. Forwarded, a public domain of the same name would answer
+			// (an AAAA for "db.app"), and the upstream resolver would learn
+			// the network's service names.
+			return s.empty(hdr.ID, q, dnsmessage.RCodeSuccess)
 		}
 	}
 
-	// Not an A record we own (or an AAAA/other query): forward upstream so
+	// Not a name this network owns: forward upstream so
 	// ordinary internet name resolution still works for the guest.
 	if s.upstream != "" {
 		if resp, fErr := s.forward(query); fErr == nil {
 			return resp, nil
 		}
 	}
-	return s.nxdomain(hdr.ID, q)
+	return s.empty(hdr.ID, q, dnsmessage.RCodeNameError)
 }
 
 func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, error) {
@@ -197,13 +204,16 @@ func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, 
 	return resp, nil
 }
 
-func (s *Server) nxdomain(id uint16, q dnsmessage.Question) ([]byte, error) {
+// empty answers a question with no records: NXDOMAIN (RCodeNameError) for a
+// name nobody has, NOERROR for a name that has no record of the asked type.
+func (s *Server) empty(id uint16, q dnsmessage.Question, rcode dnsmessage.RCode) ([]byte, error) {
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
 		ID:                 id,
 		Response:           true,
+		Authoritative:      rcode == dnsmessage.RCodeSuccess,
 		RecursionDesired:   true,
 		RecursionAvailable: true,
-		RCode:              dnsmessage.RCodeNameError,
+		RCode:              rcode,
 	})
 	if err := b.StartQuestions(); err != nil {
 		return nil, fmt.Errorf("start questions: %w", err)

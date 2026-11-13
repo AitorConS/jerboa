@@ -207,6 +207,23 @@ type IDParams struct {
 	ID string `json:"id"`
 }
 
+// DaemonHypervisor is the hypervisor a daemon runs and what decided it.
+type DaemonHypervisor struct {
+	// Name is "qemu" or "firecracker"; empty from a daemon that does not say.
+	Name string
+	// Reason says what decided it: a flag, the config file or the host.
+	Reason string
+	// FirecrackerAvailable reports that this host could run Firecracker, so a
+	// daemon held on QEMU by its configuration could switch.
+	FirecrackerAvailable bool
+}
+
+// DaemonInfo is what Daemon.Version reports.
+type DaemonInfo struct {
+	Version    string
+	Hypervisor DaemonHypervisor
+}
+
 // ProtoVersion is the wire protocol version this build speaks. Client and daemon
 // negotiate it in the Auth.Hello handshake and refuse to talk across a mismatch,
 // so a stale binary on either side fails fast with a clear message instead of

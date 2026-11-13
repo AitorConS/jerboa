@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -183,4 +184,22 @@ func TestEnsureNestedVirtualization_WarnsOnError(t *testing.T) {
 	ensureNestedVirtualization(cmd)
 	require.Contains(t, out.String(), "could not enable nested virtualization")
 	require.Contains(t, out.String(), "nestedVirtualization=true manually")
+}
+
+func TestPrintDaemonHypervisor(t *testing.T) {
+	var out bytes.Buffer
+	printDaemonHypervisor(&out, api.DaemonHypervisor{})
+	require.Empty(t, out.String(), "an older daemon says nothing")
+
+	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: "firecracker", Reason: "this host can run Firecracker", FirecrackerAvailable: true})
+	require.Equal(t, "hypervisor: firecracker (this host can run Firecracker)\n", out.String())
+
+	out.Reset()
+	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: "qemu", Reason: "chosen in config.toml", FirecrackerAvailable: true})
+	require.Contains(t, out.String(), "hypervisor: qemu (chosen in config.toml)\n")
+	require.Contains(t, out.String(), "jerboa config set hypervisor auto")
+
+	out.Reset()
+	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: "qemu", Reason: "KVM is not available"})
+	require.NotContains(t, out.String(), "hint:")
 }

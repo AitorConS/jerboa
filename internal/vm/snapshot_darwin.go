@@ -23,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/snapshot"
 )
 
@@ -530,10 +531,13 @@ func (m *FirecrackerManager) abandonRestore(v *VM) error {
 	v.proc = nil
 	close(v.done)
 	v.mu.Unlock()
-	// The crashed daemon could not unlink its switch listener; the API socket
-	// belonged to the supervisor recovery just stopped.
+	// The crashed daemon could not unlink its switch listener or the peer
+	// control socket beside it; the API socket belonged to the supervisor
+	// recovery just stopped.
 	_ = os.Remove(m.vmSockPath(v.ID))
-	_ = os.Remove(filepath.Join(qmpRuntimeDir(), "net-"+v.ID+".sock"))
+	stream := filepath.Join(qmpRuntimeDir(), "net-"+v.ID+".sock")
+	_ = os.Remove(stream)
+	_ = os.Remove(network.PeerControlPath(stream))
 	v.AddWarning("snapshot restore was interrupted by a daemon restart and rolled back; the VM is stopped")
 	if err := m.store.Save(v); err != nil {
 		return fmt.Errorf("snapshot recovery: persist rolled-back vm: %w", err)

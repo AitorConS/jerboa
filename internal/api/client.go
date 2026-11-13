@@ -244,12 +244,23 @@ func (c *Client) Shutdown(_ context.Context) error {
 }
 
 // DaemonVersion returns the version string reported by the running daemon.
-func (c *Client) DaemonVersion(_ context.Context) (string, error) {
+func (c *Client) DaemonVersion(ctx context.Context) (string, error) {
+	info, err := c.DaemonInfo(ctx)
+	return info.Version, err
+}
+
+// DaemonInfo returns the running daemon's version and the hypervisor it
+// runs. The hypervisor is empty from a daemon that predates reporting it.
+func (c *Client) DaemonInfo(_ context.Context) (DaemonInfo, error) {
 	var resp map[string]string
 	if err := c.call("Daemon.Version", nil, &resp); err != nil {
-		return "", fmt.Errorf("client daemon version: %w", err)
+		return DaemonInfo{}, fmt.Errorf("client daemon version: %w", err)
 	}
-	return resp["version"], nil
+	return DaemonInfo{Version: resp["version"], Hypervisor: DaemonHypervisor{
+		Name:                 resp["hypervisor"],
+		Reason:               resp["hypervisor_reason"],
+		FirecrackerAvailable: resp["firecracker_available"] == "true",
+	}}, nil
 }
 
 // NetworkCreate creates a new network.

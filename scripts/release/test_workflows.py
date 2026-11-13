@@ -29,6 +29,8 @@ class WorkflowContracts(unittest.TestCase):
    self.assertIn('name: validated-kernel',part)
   self.assertIn('JERBOA_KERNEL_TOOLSET: kernel-candidate',text)
   self.assertNotIn('default: v0.2.0',text)
+  # A release names the hypervisor commit it ships: a default goes stale.
+  self.assertNotIn('default:',text.split('      runtime_sha:',1)[1].split('      kernel_version:',1)[0])
  def test_self_hosted_jobs_never_run_fork_code(self):
   workflows=ROOT/'.github/workflows'
   fork="github.event.pull_request.head.repo.full_name == github.repository"

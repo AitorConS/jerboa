@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
 
@@ -73,8 +74,9 @@ func (r *Resolver) ResolveAll(name, network string) ([]Record, error) {
 }
 
 // lookup gives literal names/aliases priority in the caller's network. Only
-// absent literal matches fall back to host.network; an explicit network never
-// changes scope. Unscoped dotted queries retain suffix-based network selection.
+// absent literal matches fall back to host.network, where network is the
+// caller's own, by its full name or the one its compose file gives it; an
+// explicit network never changes scope. Unscoped dotted queries retain suffix-based network selection.
 func (r *Resolver) lookup(name, network string) ([]Record, string, string) {
 	host, scope := splitScopedName(name)
 	if network == "" {
@@ -93,7 +95,9 @@ func (r *Resolver) lookup(name, network string) ([]Record, string, string) {
 	if matches := match(name); len(matches) > 0 {
 		return matches, name, network
 	}
-	if scope == network && scope != "" {
+	// A guest names a network as its compose file does ("db.backend"), while
+	// the network itself carries the project-scoped name.
+	if scope != "" && (scope == network || scope == naming.ComposeLocalName(network)) {
 		return match(host), host, network
 	}
 	return nil, name, network

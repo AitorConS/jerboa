@@ -27,11 +27,15 @@ export PATH="$res/bin:$PATH"
 "$res/bin/jerboad" --version
 "$res/bin/firecracker" --version
 # Native suites accept the staged binaries and build their own isolated fixtures.
-JERBOA_TEST_BIN="$res/bin" JERBOA_FIRECRACKER_BIN="$res/bin/firecracker" \
-  python3 scripts/test-firecracker-macos.py
+export JERBOA_TEST_BIN="$res/bin" JERBOA_FIRECRACKER_BIN="$res/bin/firecracker"
+python3 scripts/test-firecracker-macos.py
+python3 scripts/test-firecracker-network.py
+JERBOA_TEST_GO="$(command -v go)" JERBOA_TEST_OUTPUT="$work/stats" python3 scripts/test-firecracker-stats.py
+python3 scripts/test-jerboa-snapshots.py --bin-dir "$res/bin" --firecracker-bin "$res/bin/firecracker" \
+  --tools-dir "$res/bin/tools" --go-bin "$(command -v go)" --output-dir "$work/snapshots"
 python3 - "$archive" "$candidate_run" "$version" "$report" <<'PY'
 import datetime,hashlib,json,pathlib,sys
 archive,run,version,out=sys.argv[1:]
 h=hashlib.sha256(pathlib.Path(archive).read_bytes()).hexdigest()
-pathlib.Path(out).write_text(json.dumps({'candidate_run':run,'app_sha256':h,'version':version,'result':'pass','tested_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'checks':['app-signature','binary-versions','native-vm-start-stop']},indent=2)+'\n')
+pathlib.Path(out).write_text(json.dumps({'candidate_run':run,'app_sha256':h,'version':version,'result':'pass','tested_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'checks':['app-signature','binary-versions','native-vm-start-stop','native-networks-compose','native-stats','native-snapshots']},indent=2)+'\n')
 PY
