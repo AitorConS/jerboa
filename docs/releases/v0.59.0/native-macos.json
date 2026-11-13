@@ -1,0 +1,15 @@
+{
+  "candidate_run": "43483595008",
+  "app_sha256": "a7251662e31df887fcc78008384f3a5f448c4b37f98d09c09ffc5b2b411fada8",
+  "version": "v0.59.0",
+  "result": "pass",
+  "tested_at": "2026-11-13T19:02:13.196415+00:00",
+  "checks": [
+    "app-signature",
+    "binary-versions",
+    "native-vm-start-stop",
+    "native-networks-compose",
+    "native-stats",
+    "native-snapshots"
+  ]
+}
