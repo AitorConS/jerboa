@@ -135,6 +135,40 @@ func TestStore_List(t *testing.T) {
 	require.Len(t, list, 2)
 }
 
+// An image directory deleted behind the store leaves its ref in refs.json.
+// That used to make List fail outright, hiding every image that was intact.
+func TestStore_ListSkipsRefWhoseImageIsGone(t *testing.T) {
+	s := makeStore(t)
+
+	disk1 := makeDiskFile(t)
+	disk2 := makeDiskFile(t)
+	require.NoError(t, os.WriteFile(disk2, []byte("different content"), 0o644))
+	require.NoError(t, s.Put("kept", "latest", validManifest(), disk1))
+	require.NoError(t, s.Put("gone", "latest", validManifest(), disk2))
+
+	_, gonePath, err := s.Resolve("gone:latest")
+	require.NoError(t, err)
+	goneDir := filepath.Dir(gonePath)
+	require.NoError(t, os.Chmod(gonePath, 0o644))
+	require.NoError(t, os.RemoveAll(goneDir))
+
+	list, err := s.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, "kept", list[0].Name)
+
+	// Prune drops the stale ref and leaves the intact image alone.
+	removed, err := s.PruneUnreferenced(nil)
+	require.NoError(t, err)
+	require.Empty(t, removed)
+	refs, err := s.readRefs()
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	require.Contains(t, refs, "kept:latest")
+	_, _, err = s.Get("kept:latest")
+	require.NoError(t, err)
+}
+
 func TestStore_List_empty(t *testing.T) {
 	s := makeStore(t)
 	list, err := s.List()
