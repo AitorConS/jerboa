@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: AitorConS/jerboa/.github/actions/setup-jerboa@main
         with:
-          version: 0.58.0
+          version: 0.59.0
       - run: jerboa build -t aitorcons/web:${{ github.sha }} .
       - run: jerboa push aitorcons/web:${{ github.sha }}
 ```
