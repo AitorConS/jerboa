@@ -31,7 +31,7 @@ def cli(*args,**kw):return run([BIN/'jerboa',*args],**kw)
 def rpc(method,params):
     with socket.socket(socket.AF_UNIX) as sock:
         sock.connect(env['JERBOA_HOST'][7:]);f=sock.makefile('rwb')
-        for i,(m,p) in enumerate([('Auth.Hello',{'token':env['JERBOA_AUTH_TOKEN'],'proto':2}),(method,params)]):
+        for i,(m,p) in enumerate([('Auth.Hello',{'token':env['JERBOA_AUTH_TOKEN'],'proto':3}),(method,params)]):
             f.write((json.dumps({'jsonrpc':'2.0','id':i+1,'method':m,'params':p})+'\n').encode());f.flush()
             result=json.loads(f.readline())
             if result.get('error'):raise RuntimeError(str(result['error']))

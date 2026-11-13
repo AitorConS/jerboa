@@ -140,6 +140,31 @@ func TestResolverDottedAliasPriority(t *testing.T) {
 	}
 }
 
+func TestResolverQualifiesNamesWithTheComposeFilesNetworkName(t *testing.T) {
+	const scoped = "compose-0123456789ab-app"
+	r := NewResolver(&fakeSource{vms: []*vm.VM{
+		{ID: "pg", State: vm.StateRunning, Cfg: vm.Config{Name: "postgres", NetworkName: scoped, IPAddress: "172.25.0.2", NetworkAliases: []string{"database.app"}}},
+		{ID: "db", State: vm.StateRunning, Cfg: vm.Config{Name: "database", NetworkName: scoped, IPAddress: "172.25.0.3"}},
+		{ID: "plain", State: vm.StateRunning, Cfg: vm.Config{Name: "postgres", NetworkName: "app", IPAddress: "172.26.0.2"}},
+	}})
+	for name, id := range map[string]string{
+		"postgres.app": "pg", "database.app": "pg", "database.app.app": "pg", "database": "db",
+		"postgres." + scoped: "pg",
+	} {
+		rec, err := r.Resolve(name, scoped)
+		require.NoError(t, err, name)
+		require.Equal(t, id, rec.VMID, name)
+	}
+	// The short name reaches only the caller's own network.
+	rec, err := r.Resolve("postgres.app", "app")
+	require.NoError(t, err)
+	require.Equal(t, "plain", rec.VMID)
+	_, err = r.Resolve("database.app", "app")
+	require.Error(t, err)
+	_, err = r.Resolve("postgres.other", scoped)
+	require.Error(t, err)
+}
+
 func TestResolverScopesStartingGuestWithoutPublishingIt(t *testing.T) {
 	for _, state := range []vm.State{vm.StateCreated, vm.StateStarting, vm.StateRunning, vm.StateStopped} {
 		t.Run(string(state), func(t *testing.T) {

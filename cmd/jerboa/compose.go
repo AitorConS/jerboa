@@ -567,7 +567,7 @@ func resolveComposeImages(f *compose.File, path string) {
 // it. Only entries marked external keep their name and must already exist.
 func scopeComposeResources(f *compose.File, path string) error {
 	sum := sha256.Sum256([]byte(stateFilePath(path)))
-	prefix := fmt.Sprintf("compose-%x-", sum[:6])
+	prefix := naming.ComposeScopedPrefix(sum[:])
 	scoped := func(kind, name string) (string, error) {
 		n := prefix + name
 		if err := naming.ValidateResourceName(kind, n); err != nil {
