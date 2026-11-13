@@ -41,8 +41,8 @@ Required for native execution:
 
 Optional:
 
-- `/dev/kvm` for accelerated QEMU; without it, QEMU runs with TCG emulation
-- Firecracker if you want `--hypervisor firecracker`
+- `/dev/kvm`: with it the daemon runs Firecracker; without it, QEMU with TCG emulation (slower)
+- Firecracker, which the installer adds; a daemon started by hand uses it when it is on `PATH`
 - kernel build toolchain (`gcc-multilib`, `nasm`, `qemu-utils`) only if you build the kernel/toolchain locally
 
 ### Windows

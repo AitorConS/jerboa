@@ -23,6 +23,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/dnsserver"
 	"github.com/AitorConS/jerboa/internal/httpauth"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/metrics"
 	"github.com/AitorConS/jerboa/internal/netconst"
@@ -186,7 +187,7 @@ func newRootCmd() *cobra.Command {
 	root.Flags().StringVar(&qemuBin, "qemu", vm.DefaultQEMUBinary(),
 		"QEMU binary to use")
 	root.Flags().StringVar(&hypervisor, "hypervisor", "",
-		"Hypervisor backend: qemu or firecracker (overrides ~/.jerboa/config.toml)")
+		"Hypervisor backend: qemu, firecracker or auto (overrides ~/.jerboa/config.toml; default auto: Firecracker where the host can run it, else QEMU)")
 	root.Flags().StringVar(&fcBin, "fc-bin", "firecracker",
 		"Firecracker binary to use (only with --hypervisor=firecracker)")
 	root.Flags().StringVar(&fcSecurityPath, "fc-security", "", "macOS Firecracker security policy JSON (outbound/DNS permissions)")
@@ -260,17 +261,32 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	// below can be wired with WithMetrics/WithFCMetrics for lifecycle counters.
 	collectors := metrics.NewCollectors(version)
 
-	// Resolve hypervisor: flag > config file > default "qemu".
+	// chosenByHost: nobody asked for this hypervisor, so what Firecracker
+	// still lacks (its kernel) sends the daemon to QEMU instead of failing.
+	chosenByHost := false
+	// Resolve hypervisor: flag > config file > whatever this host can run.
 	if hypervisor == "" {
 		cfg, err := config.Load(config.DefaultPath())
 		if err != nil {
-			slog.Warn("jerboad: could not read config, defaulting to qemu", "err", err)
+			slog.Warn("jerboad: could not read config, choosing the hypervisor from the host", "err", err)
 		} else {
 			hypervisor = cfg.Hypervisor
 		}
 	}
-	if hypervisor == "" {
-		hypervisor = "qemu"
+	if hypervisor == "" || hypervisor == hypervisorpkg.Auto {
+		// Firecracker wherever it can run; QEMU where it cannot (no KVM, no
+		// VMM binary, an older macOS).
+		binDir := ""
+		if exe, err := os.Executable(); err == nil {
+			binDir = filepath.Dir(exe)
+		}
+		choice := hypervisorpkg.Default(fcBin, binDir)
+		hypervisor = choice.Name
+		if choice.FCBin != "" {
+			fcBin = choice.FCBin
+		}
+		slog.Info("jerboad: no hypervisor was chosen", "using", hypervisor, "because", choice.Reason)
+		chosenByHost = true
 	}
 
 	// Opened before the VM managers, which consult it to skip re-hashing
@@ -289,24 +305,34 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		vm.Manager
 		Store() vm.Store
 	}
-	switch hypervisor {
-	case "firecracker":
+	if hypervisor == "firecracker" {
+		var kerr error
 		if runtime.GOOS == "darwin" && fcKernelPath == "" {
 			fcKernelPath = filepath.Join(toolsDir, "kernel.img")
 			if _, err := os.Stat(fcKernelPath); err != nil {
-				return fmt.Errorf("firecracker/HVF needs the ARM64 ELF kernel: build kernel PLATFORM=virt and pass --fc-kernel or --tools-dir: %w", err)
+				kerr = fmt.Errorf("firecracker/HVF needs the ARM64 ELF kernel: build kernel PLATFORM=virt and pass --fc-kernel or --tools-dir: %w", err)
 			}
 		}
-		if fcKernelPath == "" {
+		if kerr == nil && fcKernelPath == "" {
 			slog.Info("jerboad: ensuring Firecracker kernel is available", "dir", toolsDir)
 			dlCtx, dlCancel := context.WithTimeout(ctx, 5*time.Minute)
 			defer dlCancel()
 			var err error
 			fcKernelPath, err = tools.EnsureFCKernel(dlCtx, toolsDir)
 			if err != nil {
-				return fmt.Errorf("jerboad: download Firecracker kernel: %w", err)
+				kerr = fmt.Errorf("jerboad: download Firecracker kernel: %w", err)
 			}
 		}
+		switch {
+		case kerr != nil && chosenByHost:
+			slog.Warn("jerboad: Firecracker has no kernel to boot; using QEMU", "err", kerr)
+			hypervisor = "qemu"
+		case kerr != nil:
+			return kerr
+		}
+	}
+	switch hypervisor {
+	case "firecracker":
 		slog.Info("jerboad: using Firecracker hypervisor", "fc-bin", fcBin, "fc-kernel", fcKernelPath)
 		fcOpts = append(fcOpts, vm.WithFCStore(vmStore), vm.WithFCMetrics(collectors), vm.WithFCDiskDir(vmDiskDir), vm.WithFCTrustedImages(trusted))
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, fcOpts...)
@@ -316,7 +342,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		hostAccess := os.Getenv("JERBOA_GUEST_HOST_ACCESS") == "1"
 		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir), vm.WithTrustedImages(trusted), vm.WithGuestHostAccess(hostAccess))
 	default:
-		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: qemu, firecracker)", hypervisor)
+		return fmt.Errorf("jerboad: unknown hypervisor %q (valid: auto, qemu, firecracker)", hypervisor)
 	}
 
 	netStore, err := network.NewStore(networksDir())
