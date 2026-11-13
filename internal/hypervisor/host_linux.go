@@ -16,7 +16,7 @@ const capNetAdmin = 12
 func unsupported() string {
 	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
 	if err != nil {
-		return "KVM is not available (/dev/kvm: " + err.Error() + ")"
+		return noKVM(err, os.IsNotExist(err) && underWSL())
 	}
 	_ = f.Close()
 	if os.Geteuid() != 0 && !hasCapability(capNetAdmin) {
@@ -40,4 +40,19 @@ func hasCapability(bit uint) bool {
 		}
 	}
 	return false
+}
+
+// noKVM says why KVM is out of reach. Inside WSL2 a missing /dev/kvm means
+// Windows does not pass virtualization through, which the user can change.
+func noKVM(err error, wsl bool) string {
+	if wsl {
+		return `KVM is not available: set nestedVirtualization=true under [wsl2] in %USERPROFILE%\.wslconfig, then run "wsl --shutdown"`
+	}
+	return "KVM is not available (/dev/kvm: " + err.Error() + ")"
+}
+
+// underWSL reports whether this kernel is a WSL2 one.
+func underWSL() bool {
+	version, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	return err == nil && strings.Contains(strings.ToLower(string(version)), "microsoft")
 }
