@@ -20,6 +20,10 @@
 # Usage: sudo bash install.sh [--version latest|0.51.2|v0.51.2]
 # Piped: curl -fsSL https://jerboa.dev/install.sh | sudo bash -s -- --version 0.51.2
 #
+# Uninstall: sudo bash install.sh --uninstall [--keep-data]
+# removes everything this script installed, and all images, VMs, volumes,
+# credentials and settings unless --keep-data is given.
+#
 # Environment overrides:
 #   FIRECRACKER_VERSION   firecracker release tag       (default v1.17.0)
 #   FIRECRACKER_SHA256    sha256 of the firecracker archive; required when
@@ -38,6 +42,8 @@ HYPERVISOR="${HYPERVISOR:-auto}"
 RELEASE_BASE="${RELEASE_BASE:-https://releases.jerboa.dev}"
 RELEASE_BASE="${RELEASE_BASE%/}"
 VERSION=latest
+UNINSTALL=0
+KEEP_DATA=0
 PUBLIC_KEY="RWQUeMEQrLXFcshAMUevjf6nlhsSB1PuZYt5dFhb0za9aypwSAUMorsH"
 # The release that publishes this script sets this to its manifest's
 # generation time: no older stable manifest is accepted.
@@ -87,8 +93,12 @@ record_fresh() {
 usage() {
 	cat <<'HELP'
 Usage: sudo bash install.sh [--version VERSION]
+       sudo bash install.sh --uninstall [--keep-data]
 
   --version VERSION  Install latest (default), 0.51.2 or v0.51.2.
+  --uninstall        Remove Jerboa: the daemon and its service, the binaries
+                     and all images, VMs, volumes, credentials and settings.
+  --keep-data        With --uninstall, keep the data and settings.
   -h, --help         Show this help without changing the system.
 
 Requires Debian/Ubuntu with systemd on x86_64 Linux, or macOS 26+ Apple Silicon.
@@ -105,10 +115,14 @@ while [ "$#" -gt 0 ]; do
 			[ "$#" -ge 2 ] || die "--version requires a value"
 			VERSION="$2"; shift 2 ;;
 		--version=*) VERSION="${1#*=}"; shift ;;
+		--uninstall) UNINSTALL=1; shift ;;
+		--keep-data) KEEP_DATA=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unknown argument: $1 (see --help)" ;;
 	esac
 done
+[ "${KEEP_DATA}" -eq 0 ] || [ "${UNINSTALL}" -eq 1 ] || die "--keep-data only applies to --uninstall"
+[ "${UNINSTALL}" -eq 0 ] || [ "${VERSION}" = latest ] || die "--uninstall does not take --version"
 if [ "${VERSION}" != latest ]; then
 	VERSION="v${VERSION#v}"
 	[[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid version: ${VERSION}"
@@ -179,11 +193,86 @@ install_macos() {
 	log "done. Jerboa ${VERSION} with native Firecracker is installed"
 	echo "    verify: /usr/local/bin/jerboa status"
 }
+# remove_user_data deletes one user's ~/.jerboa: images, volumes, snapshots,
+# registry credentials and settings.
+remove_user_data() {
+	local home="$1"
+	case "${home}" in
+		/?*) ;;
+		*) return 0 ;;
+	esac
+	[ ! -e "${home}/.jerboa" ] || { log "removing ${home}/.jerboa"; rm -rf "${home}/.jerboa"; }
+}
+
+uninstall_macos() {
+	[ "$(id -u)" -ne 0 ] || die "run the macOS uninstaller without sudo; it requests elevation when needed"
+	local desktop="/Applications/Jerboa Desktop.app" binary wrapper
+	if [ -d "${desktop}" ]; then
+		# Jerboa Desktop runs the same launchd service on the same ~/.jerboa.
+		log "Jerboa Desktop is installed: its engine and ~/.jerboa are left to it (uninstall it from its Settings)"
+		KEEP_DATA=1
+	else
+		log "stopping the daemon"
+		launchctl bootout "gui/$(id -u)/dev.jerboa.daemon" 2>/dev/null || true
+	fi
+	for binary in jerboa jerboad; do
+		wrapper="/usr/local/bin/${binary}"
+		# Only the wrappers this script wrote; Jerboa Desktop's and Homebrew's stay.
+		if [ -f "${wrapper}" ] && grep -q "exec /usr/local/libexec/jerboa/bin/${binary} " "${wrapper}"; then
+			sudo rm -f "${wrapper}"
+		fi
+	done
+	if [ -d /usr/local/libexec/jerboa ]; then
+		log "removing /usr/local/libexec/jerboa"
+		sudo rm -rf /usr/local/libexec/jerboa
+	fi
+	sudo pkgutil --forget dev.jerboa.firecracker >/dev/null 2>&1 || true
+	[ "${KEEP_DATA}" -eq 1 ] || remove_user_data "${HOME:-}"
+	log "done. Jerboa is uninstalled"
+}
+
+uninstall_linux() {
+	[ "$(id -u)" -eq 0 ] || die "run as root: sudo bash install.sh --uninstall"
+	if command -v systemctl >/dev/null 2>&1 && [ -e "${UNIT}" ]; then
+		log "stopping and removing jerboad.service"
+		# Stopping the daemon stops its VMs and removes its network devices.
+		systemctl disable --now jerboad.service 2>/dev/null || true
+		rm -f "${UNIT}"
+		systemctl daemon-reload || true
+	fi
+	log "removing binaries from ${PREFIX}"
+	rm -f "${PREFIX}/jerboa" "${PREFIX}/jerboad" "${PREFIX}/firecracker"
+	rm -f /etc/modules-load.d/jerboa-kvm.conf
+	if [ "${KEEP_DATA}" -eq 1 ]; then
+		log "keeping ${JERBOA_HOME}, ${ENV_DIR} and ~/.jerboa (--keep-data)"
+	else
+		log "removing ${JERBOA_HOME} and ${ENV_DIR}"
+		rm -rf "${JERBOA_HOME}" "${ENV_DIR}"
+		if id "${JERBOA_USER}" >/dev/null 2>&1; then
+			userdel "${JERBOA_USER}" 2>/dev/null || true
+		fi
+		if getent group "${JERBOA_USER}" >/dev/null 2>&1; then
+			groupdel "${JERBOA_USER}" 2>/dev/null || true
+		fi
+		# The CLI configuration of the user who ran sudo, as the installer wrote it.
+		remove_user_data "$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)"
+	fi
+	log "done. Jerboa is uninstalled"
+	echo "    The packages the installer added with apt (qemu, iptables, minisign…) are"
+	echo "    shared with the rest of the system and were left in place."
+}
+
 case "$(uname -s)" in
-	Darwin) install_macos; exit 0 ;;
+	Darwin)
+		if [ "${UNINSTALL}" -eq 1 ]; then uninstall_macos; else install_macos; fi
+		exit 0 ;;
 	Linux) ;;
 	*) die "supported platforms: Linux x86_64 and macOS Apple Silicon" ;;
 esac
+if [ "${UNINSTALL}" -eq 1 ]; then
+	uninstall_linux
+	exit 0
+fi
 
 [ "${FC_ARCH}" = x86_64 ] || die "only FC_ARCH=x86_64 is supported by the Linux daemon"
 [[ "${FIRECRACKER_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid FIRECRACKER_VERSION"
