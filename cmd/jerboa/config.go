@@ -28,7 +28,8 @@ func newConfigSetCmd() *cobra.Command {
 
 Available keys:
 
-  hypervisor   VM backend to use: qemu (default) or firecracker`,
+  hypervisor   VM backend to use: auto (default: Firecracker where this
+               host can run it, else QEMU), qemu or firecracker`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], strings.ToLower(args[1])

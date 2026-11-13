@@ -48,11 +48,13 @@ type ClusterMember struct {
 // Server listens on a Unix socket and dispatches JSON-RPC requests to a
 // vm.Manager.
 type Server struct {
-	mgr          vm.Manager
-	netStore     *network.Store
-	listener     net.Listener
-	shutdownFn   func()
-	version      string
+	mgr        vm.Manager
+	netStore   *network.Store
+	listener   net.Listener
+	shutdownFn func()
+	version    string
+	// hypervisor is what Daemon.Version says this daemon runs and why.
+	hypervisor   api.DaemonHypervisor
 	resolver     *scheduler.Resolver
 	cluster      ClusterMemberLister
 	imgStore     *image.Store
@@ -116,6 +118,12 @@ func (s *Server) createUnique(ctx context.Context, cfg vm.Config) (*vm.VM, error
 // increment lifecycle counters. Optional: nil-safe when metrics are disabled.
 func (s *Server) SetCollectors(c *metrics.Collectors) {
 	s.collectors = c
+}
+
+// SetHypervisor records the hypervisor this daemon runs, why, and whether the
+// host could run Firecracker, for Daemon.Version. Call once before Serve.
+func (s *Server) SetHypervisor(h api.DaemonHypervisor) {
+	s.hypervisor = h
 }
 
 // SetAuthToken requires every connection to authenticate via an Auth.Hello
@@ -1054,7 +1062,16 @@ func (s *Server) handleDaemonShutdown() (any, *api.RPCError) {
 }
 
 func (s *Server) handleDaemonVersion() (any, *api.RPCError) {
-	return map[string]string{"version": s.version}, nil
+	// Strings only: clients before DaemonInfo decode this into a string map.
+	out := map[string]string{"version": s.version}
+	if s.hypervisor.Name != "" {
+		out["hypervisor"] = s.hypervisor.Name
+		out["hypervisor_reason"] = s.hypervisor.Reason
+	}
+	if s.hypervisor.FirecrackerAvailable {
+		out["firecracker_available"] = "true"
+	}
+	return out, nil
 }
 
 func (s *Server) handleInspect(params json.RawMessage) (any, *api.RPCError) {
