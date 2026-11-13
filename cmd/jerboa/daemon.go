@@ -536,12 +536,13 @@ func newDaemonStatusCmd() *cobra.Command {
 				return nil
 			}
 			defer func() { _ = client.Close() }()
-			ver, err := client.DaemonVersion(cmd.Context())
+			info, err := client.DaemonInfo(cmd.Context())
 			if err != nil {
 				fmt.Fprintf(out, "daemon: unreachable (%s): %v\n", endpoint, err)
 				return nil
 			}
-			fmt.Fprintf(out, "daemon:   running\nendpoint: %s\nversion:  %s\n", endpoint, ver)
+			fmt.Fprintf(out, "daemon:   running\nendpoint: %s\nversion:  %s\n", endpoint, info.Version)
+			printDaemonHypervisor(out, info.Hypervisor)
 			return nil
 		},
 	}
@@ -804,4 +805,20 @@ func backupDistro(cmd *cobra.Command) (string, error) {
 	}
 	fmt.Fprintf(cmd.ErrOrStderr(), "Recovery backup: %s (kept if replacement fails; restore with wsl --import)\n", name)
 	return name, nil
+}
+
+// printDaemonHypervisor says which hypervisor the daemon runs and why, and
+// how to move a daemon held on QEMU to Firecracker when the host could run it.
+func printDaemonHypervisor(out io.Writer, h api.DaemonHypervisor) {
+	if h.Name == "" {
+		return // a daemon that predates reporting it
+	}
+	line := "hypervisor: " + h.Name
+	if h.Reason != "" {
+		line += " (" + h.Reason + ")"
+	}
+	fmt.Fprintln(out, line)
+	if h.Name == "qemu" && h.FirecrackerAvailable {
+		fmt.Fprintln(out, "hint:       this host can run Firecracker: `jerboa config set hypervisor auto`, then restart the daemon")
+	}
 }
