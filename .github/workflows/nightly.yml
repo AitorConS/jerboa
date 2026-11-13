@@ -198,6 +198,15 @@ jobs:
           bench-summary.txt
           ${{ env.BENCH_ROOT }}/fc-metrics/
         if-no-files-found: ignore
+    # The KVM runner is persistent: without this each night leaves its images,
+    # VM disks and logs in /tmp.
+    - name: Remove the benchmark directory
+      if: always()
+      run: |
+        # Only the directory this job made: it holds both daemons' homes.
+        if [ -n "${BENCH_ROOT:-}" ] && [ -d "${BENCH_ROOT}/qemu" ] && [ -d "${BENCH_ROOT}/fc" ]; then
+          rm -rf -- "${BENCH_ROOT}"
+        fi
     if: inputs.suite != 'kernel'
   fuzz-extended:
     name: Fuzz (extended)
