@@ -323,9 +323,18 @@ func (s *Store) AllocateIP(name string) (net.IP, error) {
 	// otherwise re-hand-out a static address that happens to fall inside the
 	// dynamic range, producing the very duplicate-IP collision static reservation
 	// is meant to prevent.
-	allocated := make(map[string]bool, len(st.AllocatedIPs))
+	allocated := make(map[string]bool, len(st.AllocatedIPs)+1)
 	for _, a := range st.AllocatedIPs {
 		allocated[a] = true
+	}
+	// The gateway is never a VM's address, even when a lease file that lost
+	// its content (it parses, but lists nothing) no longer says so. Index 0
+	// is the network address and index 1 the gateway.
+	if n.Gateway != "" {
+		allocated[n.Gateway] = true
+	}
+	if st.NextIndex < 2 {
+		st.NextIndex = 2
 	}
 	var ip net.IP
 	for {
@@ -334,7 +343,9 @@ func (s *Store) AllocateIP(name string) (net.IP, error) {
 			return nil, fmt.Errorf("network %q: no available IPs in subnet %s", name, n.Subnet)
 		}
 		st.NextIndex++
-		if !allocated[candidate.String()] {
+		// The last address of the range is the directed broadcast address:
+		// like ReserveIP, never give it to a VM, which could not communicate.
+		if !allocated[candidate.String()] && !networkOrBroadcast(ipNet, candidate) {
 			ip = candidate
 			break
 		}
@@ -416,6 +427,12 @@ func (s *Store) readMeta(name string) (*Network, error) {
 	var n Network
 	if err := json.Unmarshal(data, &n); err != nil {
 		return nil, fmt.Errorf("network %q corrupt meta: %w", name, err)
+	}
+	// Metadata that parses but does not describe this network (a file holding
+	// "null", or another network's name) is as unreadable as garbage: callers
+	// use the name it carries, which must be the directory they asked for.
+	if n.Name != name {
+		return nil, fmt.Errorf("network %q corrupt meta: it names network %q", name, n.Name)
 	}
 	return &n, nil
 }
