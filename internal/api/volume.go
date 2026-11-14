@@ -77,20 +77,20 @@ func (c *Client) VolumeImport(ctx context.Context, p VolumeImportParams, disk io
 	return &result, nil
 }
 
-func (c *Client) VolumeCreate(_ context.Context, name string, size int64) (*volume.Volume, error) {
+func (c *Client) VolumeCreate(ctx context.Context, name string, size int64) (*volume.Volume, error) {
 	var result volume.Volume
-	err := c.call("Volume.Create", VolumeCreateParams{Name: name, SizeBytes: size}, &result)
+	err := c.call(ctx, "Volume.Create", VolumeCreateParams{Name: name, SizeBytes: size}, &result)
 	return &result, err
 }
 
-func (c *Client) VolumeGet(_ context.Context, name string) (*volume.Volume, error) {
+func (c *Client) VolumeGet(ctx context.Context, name string) (*volume.Volume, error) {
 	var result volume.Volume
-	err := c.call("Volume.Get", VolumeRemoveParams{Name: name}, &result)
+	err := c.call(ctx, "Volume.Get", VolumeRemoveParams{Name: name}, &result)
 	return &result, err
 }
 
-func (c *Client) VolumeList(_ context.Context) ([]*volume.Volume, error) {
+func (c *Client) VolumeList(ctx context.Context) ([]*volume.Volume, error) {
 	var result []*volume.Volume
-	err := c.call("Volume.List", nil, &result)
+	err := c.call(ctx, "Volume.List", nil, &result)
 	return result, err
 }
