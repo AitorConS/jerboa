@@ -486,10 +486,10 @@ func (c *Client) ImageBuild(_ context.Context, p BuildParams, contextTar io.Read
 
 	fw := NewFrameWriter(conn)
 	if _, err := io.Copy(fw, contextTar); err != nil {
-		return ImageManifestResult{}, fmt.Errorf("stream build context: %w", err)
+		return ImageManifestResult{}, refusal(conn, dec, fmt.Errorf("stream build context: %w", err))
 	}
 	if err := fw.Close(); err != nil {
-		return ImageManifestResult{}, fmt.Errorf("finish build context: %w", err)
+		return ImageManifestResult{}, refusal(conn, dec, fmt.Errorf("finish build context: %w", err))
 	}
 
 	var resp Response
@@ -538,10 +538,10 @@ func (c *Client) VolumeSeed(_ context.Context, p VolumeSeedParams, contextTar io
 
 	fw := NewFrameWriter(conn)
 	if _, err := io.Copy(fw, contextTar); err != nil {
-		return VolumeSeedResult{}, fmt.Errorf("stream seed context: %w", err)
+		return VolumeSeedResult{}, refusal(conn, dec, fmt.Errorf("stream seed context: %w", err))
 	}
 	if err := fw.Close(); err != nil {
-		return VolumeSeedResult{}, fmt.Errorf("finish seed context: %w", err)
+		return VolumeSeedResult{}, refusal(conn, dec, fmt.Errorf("finish seed context: %w", err))
 	}
 
 	var resp Response
