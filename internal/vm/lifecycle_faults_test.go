@@ -601,7 +601,21 @@ func TestFaults_RunningStateThatCannotBeSaved(t *testing.T) {
 			mgr := NewQEMUManager("fake-qemu", WithCommandFunc(fakeVMM("block")), WithStore(store))
 			v, err := mgr.Create(context.Background(), faultCfg())
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = mgr.Kill(context.Background(), v.ID) })
+			stopRecorded := func() bool {
+				data, err := os.ReadFile(filepath.Join(dir, v.ID, "state.json"))
+				var st vmState
+				return err == nil && json.Unmarshal(data, &st) == nil && st.State == StateStopped
+			}
+			// The monitor records the stop after the process is reaped, on
+			// its own goroutine. Wait for that write, or it lands in the
+			// directory while the test removes it.
+			t.Cleanup(func() {
+				_ = mgr.Kill(context.Background(), v.ID)
+				deadline := time.Now().Add(10 * time.Second)
+				for !stopRecorded() && time.Now().Before(deadline) {
+					time.Sleep(5 * time.Millisecond)
+				}
+			})
 
 			durabletest.Inject(t, f, 0, nil)
 			err = mgr.Start(context.Background(), v.ID)
@@ -619,11 +633,7 @@ func TestFaults_RunningStateThatCannotBeSaved(t *testing.T) {
 
 				// The monitor records the stop once the process is reaped;
 				// the registry must end up saying so, not "running".
-				require.Eventually(t, func() bool {
-					data, err := os.ReadFile(filepath.Join(dir, v.ID, "state.json"))
-					var st vmState
-					return err == nil && json.Unmarshal(data, &st) == nil && st.State == StateStopped
-				}, 10*time.Second, 5*time.Millisecond, "the registry never recorded the stop")
+				require.Eventually(t, stopRecorded, 10*time.Second, 5*time.Millisecond, "the registry never recorded the stop")
 				return
 			}
 			var st vmState
