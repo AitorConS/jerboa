@@ -344,7 +344,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		abort()
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
-	_ = m.store.Save(v)
+	// A running VM the registry has no record of is an orphan after the next
+	// daemon start: nothing would know its process, tap or disk. If the state
+	// cannot be written (a full disk), the start fails and the process goes.
+	if err := m.store.Save(v); err != nil {
+		abort()
+		return fmt.Errorf("firecracker start %s: record running state: %w", id, err)
+	}
 
 	// A published port that never binds is a broken run, so a port-forwarder start
 	// failure FAILS the run instead of leaving a "running" VM whose published port
@@ -633,7 +639,11 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPat
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("firecracker monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
-	_ = m.store.Save(v)
+	if err := m.store.Save(v); err != nil {
+		// Not fatal: the next daemon start finds the process gone and marks
+		// the VM stopped. Until then the registry on disk says it runs.
+		slog.Warn("monitor: record stopped state", "vm_id", v.ID, "err", err)
+	}
 	m.hchecker.Stop(v.ID)
 
 	if explicitStop {
