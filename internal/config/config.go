@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/durable"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -193,7 +194,7 @@ func Save(path string, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("config: marshal: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := durable.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {

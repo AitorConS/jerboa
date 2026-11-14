@@ -9,12 +9,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/naming"
 )
 
@@ -106,28 +109,91 @@ func (s *Store) Create(name string, sizeBytes int64) (*Volume, error) {
 	if _, statErr := os.Stat(dir); statErr == nil {
 		return nil, fmt.Errorf("volume %q already exists", name)
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+
+	// The volume is assembled in a staging directory and renamed into place,
+	// so it exists complete or not at all: a full disk or a power cut half-way
+	// cannot leave a name that is taken but holds no usable volume.
+	stage, err := os.MkdirTemp(s.root, stagingPrefix+"create-")
+	if err != nil {
 		return nil, fmt.Errorf("volume create dir %s: %w", dir, err)
 	}
+	defer func() { _ = os.RemoveAll(stage) }()
 
-	diskPath := filepath.Join(dir, "disk.img")
-	if err := allocateDisk(diskPath, sizeBytes); err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("volume create disk %s: %w", diskPath, err)
+	if err := allocate(filepath.Join(stage, "disk.img"), sizeBytes); err != nil {
+		return nil, fmt.Errorf("volume create disk %s: %w", filepath.Join(dir, "disk.img"), err)
 	}
 
 	v := &Volume{
 		ID:        name,
-		DiskPath:  diskPath,
+		DiskPath:  filepath.Join(dir, "disk.img"),
 		SizeBytes: sizeBytes,
 		CreatedAt: time.Now().UTC(),
 		Label:     SanitizeLabel(name),
 	}
-	if err := writeMeta(dir, v); err != nil {
-		_ = os.RemoveAll(dir)
+	if err := writeMeta(stage, v); err != nil {
 		return nil, fmt.Errorf("volume write meta: %w", err)
 	}
+	if err := os.Rename(stage, dir); err != nil {
+		return nil, fmt.Errorf("volume create dir %s: %w", dir, err)
+	}
+	durable.SyncDir(s.root)
 	return v, nil
+}
+
+// stagingPrefix starts the name of every directory a volume is assembled in
+// before it is published. Volume names cannot start with a dot, so a staging
+// directory is never taken for a volume.
+const stagingPrefix = "."
+
+// SweepStaging removes the staging directories that interrupted creations and
+// imports left behind and returns how many it removed and the bytes they
+// occupied. Only call it while no creation or import can be running.
+func (s *Store) SweepStaging() (count int, bytes int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, dir := range s.stagingDirs() {
+		size := dirAllocated(dir)
+		if os.RemoveAll(dir) == nil {
+			count++
+			bytes += size
+		}
+	}
+	return count, bytes
+}
+
+// Staging returns the staging directories currently in the store.
+func (s *Store) Staging() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.stagingDirs()
+}
+
+func (s *Store) stagingDirs() []string {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && (strings.HasPrefix(e.Name(), stagingPrefix+"create-") || strings.HasPrefix(e.Name(), stagingPrefix+"import-")) {
+			out = append(out, filepath.Join(s.root, e.Name()))
+		}
+	}
+	return out
+}
+
+func dirAllocated(dir string) int64 {
+	var total int64
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	for _, e := range entries {
+		if info, err := e.Info(); err == nil && !e.IsDir() {
+			total += info.Size()
+		}
+	}
+	return total
 }
 
 // Get returns the volume with the given name.
@@ -153,7 +219,8 @@ func (s *Store) List() ([]*Volume, error) {
 		}
 		v, err := s.readMeta(e.Name())
 		if err != nil {
-			continue // skip corrupt entries
+			slog.Warn("volume store: skipping an unreadable volume", "name", e.Name(), "err", err)
+			continue
 		}
 		out = append(out, v)
 	}
@@ -191,16 +258,35 @@ func (s *Store) readMeta(name string) (*Volume, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, metaFile)
+	disk := filepath.Join(dir, "disk.img")
 	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("volume %q not found: %w", name, err)
+	if err == nil {
+		var v Volume
+		if uerr := json.Unmarshal(data, &v); uerr == nil && v.ID != "" {
+			v.DiskPath = disk
+			return &v, nil
+		} else if uerr != nil {
+			err = fmt.Errorf("corrupt meta: %w", uerr)
+		} else {
+			err = fmt.Errorf("corrupt meta: no volume id")
+		}
 	}
-	var v Volume
-	if err := json.Unmarshal(data, &v); err != nil {
-		return nil, fmt.Errorf("volume %q corrupt meta: %w", name, err)
+	// The metadata is a few lines describing the disk beside it; the disk is
+	// the user's data. Losing the former must not cost access to the latter,
+	// so it is written again from what the disk itself says.
+	info, serr := os.Stat(disk)
+	if serr != nil || !info.Mode().IsRegular() {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("volume %q not found: %w", name, err)
+		}
+		return nil, fmt.Errorf("volume %q %w", name, err)
 	}
-	v.DiskPath = filepath.Join(dir, "disk.img")
-	return &v, nil
+	v := &Volume{ID: name, DiskPath: disk, SizeBytes: info.Size(), CreatedAt: info.ModTime().UTC(), Label: SanitizeLabel(name)}
+	slog.Warn("volume store: metadata unreadable, rebuilt from the disk", "name", name, "err", err)
+	if werr := writeMeta(dir, v); werr != nil {
+		slog.Warn("volume store: could not save the rebuilt metadata", "name", name, "err", werr)
+	}
+	return v, nil
 }
 
 func writeMeta(dir string, v *Volume) error {
@@ -208,11 +294,14 @@ func writeMeta(dir string, v *Volume) error {
 	if err != nil {
 		return fmt.Errorf("marshal volume meta: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
+	if err := durable.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
 		return fmt.Errorf("write volume meta: %w", err)
 	}
 	return nil
 }
+
+// allocate is allocateDisk, replaceable so tests can make allocation fail.
+var allocate = allocateDisk
 
 // allocateDisk creates a sparse raw disk image of exactly sizeBytes.
 func allocateDisk(path string, sizeBytes int64) error {

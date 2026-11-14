@@ -5,6 +5,7 @@ package vm
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/durable"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -187,12 +188,12 @@ func (s *FileStore) writeState(v *VM) error {
 	}
 
 	path := filepath.Join(dir, "state.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// Rewritten on every state change of a start or stop, where a flush to
+	// stable storage costs milliseconds; an atomic replace keeps a daemon crash
+	// from ever leaving half a file, and Restore skips a record a power cut
+	// emptied.
+	if err := durable.WriteFileNoSync(path, data, 0o600); err != nil {
 		return fmt.Errorf("write vm state: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename vm state: %w", err)
 	}
 	return nil
 }

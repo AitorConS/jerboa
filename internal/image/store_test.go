@@ -325,9 +325,14 @@ func TestStore_readRefs_parse_error(t *testing.T) {
 	require.NoError(t, os.MkdirAll(root, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "refs.json"), []byte("{bad"), 0o644))
 
+	// An unreadable index is rebuilt (here, to an empty store) and set aside.
 	s := &Store{root: root}
-	_, err := s.List()
-	require.Error(t, err)
+	list, err := s.List()
+	require.NoError(t, err)
+	require.Empty(t, list)
+	saved, err := os.ReadFile(filepath.Join(root, "refs.json.corrupt"))
+	require.NoError(t, err)
+	require.Equal(t, "{bad", string(saved))
 }
 
 func TestStore_writeRefs_error(t *testing.T) {

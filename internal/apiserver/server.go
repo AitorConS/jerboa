@@ -158,13 +158,20 @@ func NewServer(mgr vm.Manager, netStore *network.Store, endpoint string, shutdow
 func (s *Server) Serve(ctx context.Context) error {
 	if s.netStore != nil {
 		live := make(map[string]bool)
+		leases := make(map[string][]string)
 		for _, v := range s.mgr.List() {
 			live[v.ID] = true
+			if v.Cfg.NetworkName != "" && v.Cfg.IPAddress != "" {
+				leases[v.Cfg.NetworkName] = append(leases[v.Cfg.NetworkName], v.Cfg.IPAddress)
+			}
 		}
 		if err := s.netStore.RecoverReleases(live); err != nil {
 			_ = s.listener.Close()
 			return fmt.Errorf("recover network leases: %w", err)
 		}
+		// A lease file lost to a power cut was rebuilt empty: every address a
+		// registered VM holds goes back in before any request can take it.
+		s.netStore.ReclaimLeases(leases)
 	}
 	go func() {
 		<-ctx.Done()
