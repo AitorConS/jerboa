@@ -17,7 +17,7 @@ const CodeNotFound = -32004
 // IsNotFound identifies a missing resource without interpreting server messages.
 func IsNotFound(err error) bool {
 	var rpc *RPCError
-	return errors.As(err, &rpc) && rpc.Code == CodeNotFound
+	return errors.As(err, &rpc) && rpc != nil && rpc.Code == CodeNotFound
 }
 
 type VolumeCreateParams struct {
