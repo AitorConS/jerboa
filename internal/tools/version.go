@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 const versionFileName = "kernel-version.txt"
@@ -51,10 +53,12 @@ func IsNewer(local, remote string) bool {
 	return semverGT(remote, local)
 }
 
-// SaveLocalVersion writes version to toolsDir/kernel-version.txt.
+// SaveLocalVersion writes version to toolsDir/kernel-version.txt. The marker
+// names the toolset recipes are pinned to, so it is replaced atomically: a
+// failed or interrupted save leaves the previous version, never an empty file.
 func SaveLocalVersion(toolsDir, version string) error {
 	path := filepath.Join(toolsDir, versionFileName)
-	if err := os.WriteFile(path, []byte(version+"\n"), 0o644); err != nil {
+	if err := durable.WriteFile(path, []byte(version+"\n"), 0o644); err != nil {
 		return fmt.Errorf("tools: save kernel version: %w", err)
 	}
 	return nil

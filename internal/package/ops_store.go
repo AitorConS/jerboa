@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/naming"
 )
@@ -693,7 +694,7 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		}
 		// The store's own digest index (and its temporary files) is not
 		// package content.
-		if rel == digestsFile || strings.HasPrefix(rel, ".digests-") {
+		if rel == digestsFile || strings.HasPrefix(rel, ".digests-") || durable.IsTemp(rel) {
 			return nil
 		}
 
@@ -790,26 +791,12 @@ func (s *OpsStore) Remove(namespace, name, version string) error {
 	return nil
 }
 
-// SaveManifest caches the ops manifest locally. It writes a temporary file and
-// renames it, so a concurrent build never reads a half-written manifest.
+// SaveManifest caches the ops manifest locally. The write is atomic and
+// flushed, so neither a concurrent build nor a power cut ever finds a
+// half-written manifest.
 func (s *OpsStore) SaveManifest(data []byte) error {
 	path := filepath.Join(s.root, "manifest.json")
-	tmp, err := os.CreateTemp(s.root, ".manifest-*.json")
-	if err != nil {
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := durable.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("ops save manifest %s: %w", path, err)
 	}
 	return nil
