@@ -623,3 +623,57 @@ func TestListenFaults(t *testing.T) {
 		}
 	})
 }
+
+// A daemon that refuses a streamed request answers and closes without
+// reading the stream. The caller must see the daemon's reason, not the
+// broken pipe its own writes run into.
+func TestStreamFaults_RefusalReachesTheCallerOfACutStream(t *testing.T) {
+	refuse := func(conn net.Conn) {
+		var req api.Request
+		if json.NewDecoder(conn).Decode(&req) != nil {
+			return
+		}
+		_ = json.NewEncoder(conn).Encode(api.Response{JSONRPC: "2.0", ID: req.ID,
+			Error: &api.RPCError{Code: -32601, Message: "method not found: " + req.Method}})
+		// Returning closes the connection with the stream unread.
+	}
+	calls := map[string]func(c *api.Client) error{
+		"build": func(c *api.Client) error {
+			_, err := c.ImageBuild(context.Background(), api.BuildParams{Name: "app"}, &endless{})
+			return err
+		},
+		"seed": func(c *api.Client) error {
+			_, err := c.VolumeSeed(context.Background(), api.VolumeSeedParams{}, &endless{})
+			return err
+		},
+		"import": func(c *api.Client) error {
+			_, err := c.VolumeImport(context.Background(), api.VolumeImportParams{Name: "data"}, &endless{})
+			return err
+		},
+	}
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			for range 20 {
+				endpoint, _ := fakeDaemon(t, refuse)
+				c := dialFake(t, endpoint)
+				err := returns(t, name, func() error { return call(c) })
+				require.ErrorContains(t, err, "method not found")
+				var rpcErr *api.RPCError
+				require.ErrorAs(t, err, &rpcErr)
+				assert.Equal(t, -32601, rpcErr.Code)
+			}
+		})
+	}
+}
+
+// A daemon that dies mid-stream has no reason to give: the stream's own
+// error is reported, after a bounded wait.
+func TestStreamFaults_ACutStreamWithoutAnAnswerReportsTheCut(t *testing.T) {
+	endpoint, _ := fakeDaemon(t, afterRequest(func(net.Conn) {}))
+	c := dialFake(t, endpoint)
+	err := returns(t, "ImageBuild", func() error {
+		_, err := c.ImageBuild(context.Background(), api.BuildParams{Name: "app"}, &endless{})
+		return err
+	})
+	require.ErrorContains(t, err, "stream build context")
+}
