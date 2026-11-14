@@ -96,11 +96,11 @@ func TestRenderPrune_OnlyErrors(t *testing.T) {
 
 func TestErrOldDaemon(t *testing.T) {
 	err := errOldDaemon("system df", &api.RPCError{Code: -32601, Message: "method not found: System.DF"})
-	assert.EqualError(t, err, "system df: the running daemon is older than this CLI and does not support it; restart the daemon")
+	require.EqualError(t, err, "system df: the running daemon is older than this CLI and does not support it; restart the daemon")
 
 	other := &api.RPCError{Code: -32000, Message: "boom"}
 	err = errOldDaemon("system df", other)
-	assert.ErrorIs(t, err, other)
+	require.ErrorIs(t, err, other)
 	assert.Contains(t, err.Error(), "boom")
 }
 
