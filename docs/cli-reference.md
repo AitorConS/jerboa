@@ -640,6 +640,64 @@ These manage the cached toolchain (`mkfs`, `boot.img`, `kernel.img`) independent
 
 ---
 
+## Maintenance Commands
+
+### `jerboa doctor`
+
+Checks that this machine, the daemon and everything the daemon stores are in order, and says what to do about each problem. It changes nothing and exits non-zero when it finds a problem (warnings and information do not fail it), so it can run in scripts.
+
+```text
+[ ok ] cli             jerboa v0.60.0 on linux/amd64
+[ ok ] daemon          running v0.60.0
+[ ok ] hypervisor      firecracker (this host can run it)
+[warn] disk space      only 3.1GB free of 250.0GB in /var/lib/jerboa
+                       -> jerboa system df shows what takes the space; jerboa system prune frees it
+[FAIL] images          image web:latest is corrupt: its disk no longer matches its digest
+                       -> jerboa rmi web:latest, then build or pull it again
+```
+
+What it looks at: the CLI's config and credentials files, hardware virtualization, whether the daemon answers and runs the same version as the CLI, the hypervisor in use, free disk space, and the consistency of images, VMs, volumes, networks and snapshots (names that point at nothing, VMs whose image or volume is gone, records that cannot be read, leftovers of interrupted operations).
+
+| Flag | Meaning |
+|---|---|
+| `--deep` | Also re-reads every image disk and compares it with its digest. Finds silent corruption; reads every image, so it takes as long as that takes. |
+| `--output json` | `{"ok": bool, "findings": [{check, severity, message, hint}]}`. Severities are `ok`, `info`, `warning` and `error`. |
+
+When the daemon is not reachable, `doctor` still runs the local checks and reports the daemon as the problem, with the command that starts it on this platform.
+
+### `jerboa system df`
+
+Shows the disk space the daemon's data takes, by kind, and how much of it nothing uses.
+
+```text
+TYPE          TOTAL  ACTIVE  SIZE     RECLAIMABLE
+Images        12     3       4.1GB    2.6GB (63%)
+VMs           4      2       310.0MB  0B
+Volumes       3      2       1.2GB    80.0MB (6%)
+Build cache   418    260     900.0MB  310.0MB (34%)
+Kernel tools  6      6       96.0MB   0B
+```
+
+Sizes are what the files occupy on disk: a 10 GB volume holding 80 MB counts as 80 MB. Images are counted per stored disk, so two tags of the same build are one. An image counts as active while any VM, running or stopped, was created from it.
+
+### `jerboa system prune`
+
+Removes what nothing refers to any more: images left without a name by a rebuild, names whose disk is gone, boot disks of VMs that no longer exist, build cache no image needs, and what interrupted operations left behind (after an hour, so a pull or import still running is never touched).
+
+Nothing you can still name is removed unless you ask for it:
+
+| Flag | Also removes |
+|---|---|
+| `--vms` | every stopped VM |
+| `-a`, `--all` | every image that no VM uses |
+| `--volumes` | every volume that no VM mounts. **Their data is lost.** |
+| `--dry-run` | nothing: prints what would be removed |
+| `-y`, `--yes` | skips the confirmation |
+
+The command prints the exact list and asks before removing anything. `--dry-run` runs the same selection as the real command, so its list is what would go. With `--vms`, images and volumes that only stopped VMs were using become removable in the same run.
+
+---
+
 ## Version Command
 
 ### `jerboa version`
@@ -781,6 +839,7 @@ Root commands currently exposed by the built CLI:
 - `config`
 - `daemon` (Windows only)
 - `dns`
+- `doctor`
 - `exec`
 - `images`
 - `init`
@@ -803,6 +862,7 @@ Root commands currently exposed by the built CLI:
 - `stats`
 - `status`
 - `stop`
+- `system`
 - `tag`
 - `verify`
 - `version`

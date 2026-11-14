@@ -85,6 +85,15 @@ func WithFCSnapshotStore(s *snapshot.Store) FCOption {
 	return func(m *FirecrackerManager) { m.snapshots = s }
 }
 
+// SnapshotDir returns the directory of the snapshot store, or "" when
+// snapshots are disabled.
+func (m *FirecrackerManager) SnapshotDir() string {
+	if m.snapshots == nil {
+		return ""
+	}
+	return m.snapshots.Root()
+}
+
 // claimVM also rechecks membership after claiming: Remove may have completed
 // between Resolve and claim, leaving the caller with a stale VM pointer.
 func (m *FirecrackerManager) claimVM(id, op string) (*VM, func(), error) {

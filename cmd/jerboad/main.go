@@ -539,6 +539,13 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	} else {
 		vmSrv.SetVolumeStore(volStore)
 	}
+	// What `jerboa system df`, `system prune` and `doctor` measure, clean and
+	// check. VM records are directories only with the file store.
+	sysPaths := apiserver.SystemPaths{DataDir: filepath.Dir(storePath), VMDisks: vmDiskDir, Tools: toolsDir}
+	if vmStoreType == "file" || vmStoreType == "" {
+		sysPaths.VMs = vmsDir()
+	}
+	vmSrv.SetSystemPaths(sysPaths)
 
 	// Enable on-demand TFS formatting of attached volumes (lazy mkfs resolver).
 	// Volumes are created as sparse files in the daemon-owned store;

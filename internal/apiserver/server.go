@@ -91,6 +91,8 @@ type Server struct {
 	// concurrent runs cannot both register the same name.
 	nameMu     sync.Mutex
 	resourceMu sync.Mutex
+	// paths is where the daemon's data lives, for System.DF/Prune/Check.
+	paths SystemPaths
 }
 
 // createUnique registers a VM, rejecting a name already held by another VM
@@ -526,6 +528,12 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleSnapshotList()
 	case "Snapshot.Inspect":
 		return s.handleSnapshotInspect(req.Params)
+	case "System.DF":
+		return s.handleSystemDF()
+	case "System.Prune":
+		return s.handleSystemPrune(ctx, req.Params)
+	case "System.Check":
+		return s.handleSystemCheck(req.Params)
 	case "Snapshot.Remove":
 		return s.handleSnapshotRemove(req.Params)
 	default:
@@ -835,6 +843,11 @@ func (s *Server) autoRemoveSession(ctx context.Context, v *vm.VM, session *vm.At
 func (s *Server) removeVM(ctx context.Context, id string) error {
 	s.resourceMu.Lock()
 	defer s.resourceMu.Unlock()
+	return s.removeVMLocked(ctx, id)
+}
+
+// removeVMLocked is removeVM for a caller that already holds resourceMu.
+func (s *Server) removeVMLocked(ctx context.Context, id string) error {
 	v, err := s.mgr.Get(id)
 	if err != nil {
 		return err

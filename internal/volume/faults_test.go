@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/durable/durabletest"
@@ -96,7 +97,7 @@ func TestFaults_CreateIsAllOrNothing(t *testing.T) {
 				_, err = s.Create("fresh", mib)
 				require.NoError(t, err)
 			}
-			s.SweepStaging()
+			s.SweepStaging(0)
 			assert.Empty(t, s.Staging())
 			assert.ElementsMatch(t, []string{"keep", "fresh"}, names(t, s))
 		})
@@ -150,7 +151,20 @@ func TestFaults_SweepStagingRemovesOnlyStaging(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".create-file"), []byte("x"), 0o600))
 
 	assert.Len(t, s.Staging(), 2)
-	count, bytes := s.SweepStaging()
+	// Staging this recent may belong to an import that is still running.
+	count, bytes := s.SweepStaging(time.Hour)
+	assert.Zero(t, count)
+	assert.Zero(t, bytes)
+	assert.Len(t, s.Staging(), 2)
+
+	old := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(filepath.Join(root, ".create-123"), old, old))
+	count, _ = s.SweepStaging(time.Hour)
+	assert.Equal(t, 1, count)
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".create-123"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".create-123", "disk.img"), []byte("12345"), 0o600))
+
+	count, bytes = s.SweepStaging(0)
 	assert.Equal(t, 2, count)
 	assert.Equal(t, int64(10), bytes)
 	assert.Empty(t, s.Staging())

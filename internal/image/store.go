@@ -787,15 +787,43 @@ func (s *Store) PruneUnreferenced(inUse func(digest string) bool) ([]string, err
 			return nil, fmt.Errorf("image store prune: %w", err)
 		}
 	}
+	unreferenced, err := s.unreferencedLocked(refs, inUse)
+	if err != nil {
+		return nil, fmt.Errorf("image store prune: %w", err)
+	}
+	var removed []string
+	for _, digest := range unreferenced {
+		if err := os.RemoveAll(filepath.Join(s.root, stripPrefix(digest))); err != nil {
+			return removed, fmt.Errorf("image store prune %s: %w", digest, err)
+		}
+		removed = append(removed, digest)
+	}
+	return removed, nil
+}
+
+// Unreferenced returns the digests ("sha256:<hex>") of the stored images that
+// PruneUnreferenced would delete: no ref names them and inUse does not claim
+// them. Nothing is changed.
+func (s *Store) Unreferenced(inUse func(digest string) bool) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	refs, err := s.readRefs()
+	if err != nil {
+		return nil, fmt.Errorf("image store: %w", err)
+	}
+	return s.unreferencedLocked(refs, inUse)
+}
+
+func (s *Store) unreferencedLocked(refs map[string]string, inUse func(digest string) bool) ([]string, error) {
 	referenced := make(map[string]bool, len(refs))
 	for _, sha := range refs {
 		referenced[sha] = true
 	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
-		return nil, fmt.Errorf("image store prune: %w", err)
+		return nil, err //nolint:wrapcheck // callers add context
 	}
-	var removed []string
+	var out []string
 	for _, e := range entries {
 		sha := e.Name()
 		if !e.IsDir() || !isSHA256Hex(sha) || referenced[sha] {
@@ -805,12 +833,58 @@ func (s *Store) PruneUnreferenced(inUse func(digest string) bool) ([]string, err
 		if inUse != nil && inUse(digest) {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(s.root, sha)); err != nil {
-			return removed, fmt.Errorf("image store prune %s: %w", digest, err)
-		}
-		removed = append(removed, digest)
+		out = append(out, digest)
 	}
-	return removed, nil
+	return out, nil
+}
+
+// Root returns the directory the store keeps its images in.
+func (s *Store) Root() string { return s.root }
+
+// Refs returns every name in the store and the digest ("sha256:<hex>") of the
+// disk it points at, whether or not that disk is still there.
+func (s *Store) Refs() (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	refs, err := s.readRefs()
+	if err != nil {
+		return nil, fmt.Errorf("image store: %w", err)
+	}
+	out := make(map[string]string, len(refs))
+	for ref, sha := range refs {
+		out[ref] = "sha256:" + sha
+	}
+	return out, nil
+}
+
+// Digests returns the digest of every image directory in the store, named or
+// not.
+func (s *Store) Digests() ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("image store: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && isSHA256Hex(e.Name()) {
+			out = append(out, "sha256:"+e.Name())
+		}
+	}
+	return out, nil
+}
+
+// VerifyDisk hashes the disk stored for digest, ignoring any earlier
+// verification, and reports whether it still is that disk.
+func (s *Store) VerifyDisk(digest string) error {
+	sha := stripPrefix(digest)
+	if !isSHA256Hex(sha) {
+		return fmt.Errorf("image store: %q is not a digest", digest)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.verifyDisk(filepath.Join(s.root, sha), digest)
 }
 
 func isSHA256Hex(s string) bool {

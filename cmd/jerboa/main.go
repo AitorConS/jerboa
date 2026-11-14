@@ -123,6 +123,8 @@ func newRootCmd() *cobra.Command {
 		newStatsCmd(&endpoint, &outputFmt),
 		newNodeCmd(&endpoint, &outputFmt),
 		newConfigCmd(),
+		newSystemCmd(&endpoint, &outputFmt),
+		newDoctorCmd(&endpoint, &outputFmt),
 	)
 	// The daemon command group manages the dedicated WSL2 distro that hosts
 	// jerboad on Windows (import/start/stop). On Linux jerboad runs natively
@@ -158,6 +160,9 @@ func needsDaemon(cmd *cobra.Command) bool {
 		"config": true, "kernel": true, "pkg": true,
 		"completion": true, "help": true,
 		"daemon": true, "init": true, "version": true,
+		// The doctor reports an unreachable daemon as a finding; it brings
+		// the Windows daemon up itself.
+		"doctor": true,
 	}
 	for c := cmd; c != nil; c = c.Parent() {
 		if c.Name() == "jerboa" && c.Parent() == nil {

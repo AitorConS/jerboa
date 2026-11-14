@@ -147,11 +147,17 @@ const stagingPrefix = "."
 
 // SweepStaging removes the staging directories that interrupted creations and
 // imports left behind and returns how many it removed and the bytes they
-// occupied. Only call it while no creation or import can be running.
-func (s *Store) SweepStaging() (count int, bytes int64) {
+// occupied. A creation or import in progress has a staging directory too, so
+// only those untouched for longer than olderThan are removed; pass 0 only
+// while nothing can be running, such as before the daemon serves requests.
+func (s *Store) SweepStaging(olderThan time.Duration) (count int, bytes int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	cutoff := time.Now().Add(-olderThan)
 	for _, dir := range s.stagingDirs() {
+		if info, err := os.Stat(dir); err != nil || (olderThan > 0 && info.ModTime().After(cutoff)) {
+			continue
+		}
 		size := dirAllocated(dir)
 		if os.RemoveAll(dir) == nil {
 			count++
@@ -160,6 +166,9 @@ func (s *Store) SweepStaging() (count int, bytes int64) {
 	}
 	return count, bytes
 }
+
+// Root returns the directory the store keeps its volumes in.
+func (s *Store) Root() string { return s.root }
 
 // Staging returns the staging directories currently in the store.
 func (s *Store) Staging() []string {
