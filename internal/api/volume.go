@@ -58,10 +58,10 @@ func (c *Client) VolumeImport(ctx context.Context, p VolumeImportParams, disk io
 	}
 	w := NewFrameWriter(conn)
 	if _, err := io.Copy(w, disk); err != nil {
-		return nil, fmt.Errorf("stream volume import: %w", err)
+		return nil, refusal(conn, dec, fmt.Errorf("stream volume import: %w", err))
 	}
 	if err := w.Close(); err != nil {
-		return nil, err
+		return nil, refusal(conn, dec, fmt.Errorf("finish volume import: %w", err))
 	}
 	var response Response
 	if err := dec.Decode(&response); err != nil {
