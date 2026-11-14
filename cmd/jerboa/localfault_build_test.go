@@ -413,7 +413,12 @@ func TestLocalFault_BuildDaemonFailsDuringAssembly(t *testing.T) {
 		handler fdHandler
 		want    string
 	}{
-		"refuses before reading the context": {fdFail(-32601, "image build disabled"), "image build disabled"},
+		// A daemon that answers and hangs up without reading the context races
+		// the client's upload: the client reports either the daemon's refusal
+		// or the broken pipe, depending on which it meets first. The real
+		// daemon drains the context before refusing, which is the next case.
+		"refuses before reading the context": {fdFail(-32601, "image build disabled"), "build"},
+		"refuses after reading the context":  {drainThen(fdFail(-32601, "image build disabled")), "image build disabled"},
 		"hangs up before reading":            {fdHangup(), "build"},
 		"mkfs fails":                         {drainThen(fdFail(-32000, "mkfs: no space left on device")), "no space left on device"},
 		"dies after reading the context":     {drainThen(fdHangup()), "build"},
