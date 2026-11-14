@@ -262,8 +262,6 @@ func TestClientFaults_DaemonNeverAnswers(t *testing.T) {
 }
 
 func TestClientFaults_CancelledContextReleasesACallTheDaemonSitsOn(t *testing.T) {
-	t.Skip("BUG: Client.call (client.go) ignores its context: a call to a daemon that never answers " +
-		"blocks until the connection is closed, whatever deadline the caller set")
 	got := make(chan struct{})
 	endpoint, _ := fakeDaemon(t, afterRequest(func(conn net.Conn) {
 		close(got)
@@ -284,8 +282,7 @@ func TestClientFaults_CancelledContextReleasesACallTheDaemonSitsOn(t *testing.T)
 }
 
 func TestClientFaults_DialDoesNotHangOnASilentEndpoint(t *testing.T) {
-	t.Skip("BUG: DialWithToken (client.go) sets no deadline on the handshake: with a token, dialing " +
-		"an endpoint that accepts and never answers Auth.Challenge blocks forever")
+	t.Cleanup(api.SetHandshakeTimeout(200 * time.Millisecond))
 	endpoint, _ := fakeDaemon(t, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) })
 	err := returns(t, "DialWithToken", func() error {
 		c, err := api.DialWithToken(endpoint, "secret-token")
@@ -294,7 +291,125 @@ func TestClientFaults_DialDoesNotHangOnASilentEndpoint(t *testing.T) {
 		}
 		return err
 	})
-	require.Error(t, err)
+	require.ErrorContains(t, err, "did not answer the handshake")
+}
+
+func TestClientFaults_DeadlineReleasesACallTheDaemonSitsOn(t *testing.T) {
+	endpoint, _ := fakeDaemon(t, afterRequest(func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) }))
+	c := dialFake(t, endpoint)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := returns(t, "List", func() error { _, err := c.List(ctx); return err })
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestClientFaults_AContextThatAlreadyEndedSendsNothing(t *testing.T) {
+	got := make(chan struct{}, 1)
+	endpoint, _ := fakeDaemon(t, afterRequest(func(net.Conn) { got <- struct{}{} }))
+	c := dialFake(t, endpoint)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := c.Get(ctx, "vm-1")
+	require.ErrorIs(t, err, context.Canceled)
+	select {
+	case <-got:
+		t.Fatal("a request was sent for a context that had already ended")
+	case <-time.After(100 * time.Millisecond):
+	}
+	// Nothing was sent, so the connection is still good.
+	require.NoError(t, c.Close())
+}
+
+// The answer to an abandoned request is still on its way, so the next call
+// on the same connection would read it as its own.
+func TestClientFaults_AnAbandonedCallRetiresTheConnection(t *testing.T) {
+	release := make(chan struct{})
+	endpoint, _ := fakeDaemon(t, func(conn net.Conn) {
+		dec, enc := json.NewDecoder(conn), json.NewEncoder(conn)
+		var req api.Request
+		if dec.Decode(&req) != nil {
+			return
+		}
+		<-release
+		_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: json.RawMessage(`{"id":"late"}`)})
+		_, _ = io.Copy(io.Discard, conn)
+	})
+	c := dialFake(t, endpoint)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := c.Get(ctx, "vm-1")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	close(release)
+
+	err = returns(t, "Get", func() error {
+		info, err := c.Get(context.Background(), "vm-2")
+		if err == nil {
+			t.Errorf("the abandoned call's answer was taken for this one: %+v", info)
+		}
+		return err
+	})
+	require.ErrorContains(t, err, "abandoned")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// An error the daemon answers with is a complete exchange: the connection
+// stays usable even if the context ends as the answer lands.
+func TestClientFaults_AnAnsweredCallKeepsTheConnection(t *testing.T) {
+	endpoint, _ := fakeDaemon(t, func(conn net.Conn) {
+		answer(conn, func(req api.Request) api.Response {
+			if req.Method == "VM.Get" {
+				return api.Response{Error: &api.RPCError{Code: api.CodeNotFound, Message: "no such vm"}}
+			}
+			return api.Response{Result: json.RawMessage(`[]`)}
+		})
+	})
+	c := dialFake(t, endpoint)
+	for range 50 {
+		ctx, cancel := context.WithCancel(context.Background())
+		go cancel()
+		_, err := c.Get(ctx, "vm-1")
+		if errors.Is(err, context.Canceled) {
+			// The call lost the race outright; whether it was cut mid-way
+			// decides the connection's fate, and both are legitimate.
+			if _, err := c.List(context.Background()); err != nil {
+				require.ErrorContains(t, err, "abandoned")
+				return
+			}
+			continue
+		}
+		require.True(t, api.IsNotFound(err), "got %v", err)
+		_, err = c.List(context.Background())
+		require.NoError(t, err)
+	}
+}
+
+func TestClientFaults_CancelEndsABuildTheDaemonSitsOn(t *testing.T) {
+	endpoint, _ := fakeDaemon(t, func(conn net.Conn) { _, _ = io.Copy(io.Discard, conn) })
+	c := dialFake(t, endpoint)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := returns(t, "ImageBuild", func() error {
+		_, err := c.ImageBuild(ctx, api.BuildParams{Name: "app"}, strings.NewReader("context"))
+		return err
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	err = returns(t, "VolumeSeed", func() error {
+		_, err := c.VolumeSeed(ctx, api.VolumeSeedParams{}, strings.NewReader("context"))
+		return err
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+func TestClientFaults_CancelEndsAnAttach(t *testing.T) {
+	endpoint, _ := fakeDaemon(t, afterRequest(func(conn net.Conn) {
+		_, _ = conn.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"framed":true}}` + "\n"))
+		_, _ = io.Copy(io.Discard, conn)
+	}))
+	c := dialFake(t, endpoint)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := returns(t, "Attach", func() error { return c.Attach(ctx, "vm-1", io.Discard) })
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestClientFaults_RPCErrorsKeepTheirCodeThroughEveryWrapper(t *testing.T) {

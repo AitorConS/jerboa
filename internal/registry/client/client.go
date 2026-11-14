@@ -567,9 +567,11 @@ func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, 
 			}
 		}
 		data, retry, err := c.readRangeOnce(ctx, cdn, packDigest, offset, length)
-		if err == nil || !retry || ctx.Err() != nil {
+		if err == nil || !retry {
 			return data, err
 		}
+		// A context that ended during the attempt is reported by the wait
+		// above as what it is, not as the attempt's own failure.
 		last = err
 	}
 	return nil, last
