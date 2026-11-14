@@ -109,14 +109,15 @@ func (s *FileStore) Restore() error {
 			continue
 		}
 		v := &VM{
-			ID:           st.ID,
-			Cfg:          st.Config,
-			State:        st.State,
-			CreatedAt:    st.CreatedAt,
-			StartedAt:    st.StartedAt,
-			StoppedAt:    st.StoppedAt,
-			RestartCount: st.RestartCount,
-			done:         make(chan struct{}),
+			ID:              st.ID,
+			Cfg:             st.Config,
+			State:           st.State,
+			CreatedAt:       st.CreatedAt,
+			StartedAt:       st.StartedAt,
+			StoppedAt:       st.StoppedAt,
+			RestartCount:    st.RestartCount,
+			DaemonRecovered: st.DaemonRecovered,
+			done:            make(chan struct{}),
 		}
 		if st.HealthStatus != "" {
 			v.HealthStatus = HealthStatus(st.HealthStatus)
