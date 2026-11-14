@@ -137,9 +137,9 @@ func TestFaults_BootDiskTrustIsCheckedAfterTheCopy(t *testing.T) {
 	dst := filepath.Join(dir, "disks", "qemu-abc-boot.img")
 	// The image is replaced while it is being copied: the store withdraws its
 	// trust, so the copy has to be hashed, and the hash does not match.
-	trusted := func(path, want string) bool {
+	trusted := func(path, askedDigest string) bool {
 		assert.Equal(t, src, path)
-		assert.Equal(t, digest, want)
+		assert.Equal(t, digest, askedDigest)
 		_, err := os.Stat(dst)
 		assert.NoError(t, err, "trust was asked before the copy existed")
 		return false
