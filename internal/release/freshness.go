@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 // stateFile records, per release origin and channel, the generation time of
@@ -78,23 +80,13 @@ func writeState(path string, seen map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("release: encode state: %w", err)
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("release: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, stateFile+".*")
-	if err != nil {
-		return fmt.Errorf("release: %w", err)
-	}
-	_, werr := tmp.Write(append(data, '\n'))
-	cerr := tmp.Close()
-	if err := errors.Join(werr, cerr); err != nil {
-		_ = os.Remove(tmp.Name())
+	// A truncated state file would make every later manifest fetch fail, so
+	// it is replaced atomically and flushed.
+	if err := durable.WriteFile(path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("release: write state: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("release: %w", err)
 	}
 	return nil
 }

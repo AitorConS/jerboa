@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/naming"
 )
@@ -194,6 +195,12 @@ func (s *Store) Remove(name, version string) error {
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("package remove %s: %w", name, err)
+	}
+	if s.platform != "" {
+		// The version directory, once its last platform is gone, would be
+		// listed as a package without metadata or archive; removing it
+		// fails harmlessly while another platform is still there.
+		_ = os.Remove(filepath.Dir(dir))
 	}
 	return nil
 }
@@ -458,7 +465,15 @@ func (s *Store) List() ([]Package, error) {
 				}
 				meta := Package{Name: name.Name(), Version: version.Name()}
 				if err == nil {
-					_ = json.Unmarshal(data, &meta)
+					err = json.Unmarshal(data, &meta)
+				}
+				// A platform directory whose metadata is missing or damaged
+				// (a download cut before it was recorded) is not a legacy
+				// package: listing it as one would make every later resolve
+				// look for its archive in the wrong place. It is left for
+				// the index to describe again.
+				if dir != base && (err != nil || meta.Platform == "") {
+					continue
 				}
 				if err := validatePackageRef(meta.Name, meta.Version); err != nil {
 					return nil, err
@@ -494,7 +509,7 @@ func (s *Store) SaveMeta(pkg Package) error {
 		return fmt.Errorf("package meta marshal: %w", err)
 	}
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
+	if err := durable.WriteFile(metaPath, data, 0o644); err != nil {
 		return fmt.Errorf("package meta write %s: %w", metaPath, err)
 	}
 	return nil
@@ -541,7 +556,9 @@ func (s *Store) FetchIndexCached() (*Index, error) {
 	idx, raw, fetchErr := fetchIndexRaw()
 	if fetchErr == nil {
 		// Best-effort cache write: a failure only degrades offline behavior.
-		_ = os.WriteFile(cachePath, raw, 0o644)
+		// It is replaced atomically so a build that dies here leaves the
+		// previous copy, not a truncated one, for the next offline build.
+		_ = durable.WriteFile(cachePath, raw, 0o644)
 		return s.mergeLocalIndex(idx), nil
 	}
 
@@ -667,6 +684,11 @@ func (s *Store) CreateFromFiles(name, version string, files []File, description,
 	}
 
 	if err := s.writeMeta(dir, meta); err != nil {
+		// An archive without its metadata would refuse the retry as
+		// "already exists".
+		if !errors.Is(err, durable.ErrCrash) {
+			_ = os.Remove(archivePath)
+		}
 		return fmt.Errorf("pkg create meta: %w", err)
 	}
 
@@ -1214,7 +1236,7 @@ func (s *Store) writeMeta(dir string, meta Package) error {
 		return fmt.Errorf("meta marshal: %w", err)
 	}
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
+	if err := durable.WriteFile(metaPath, data, 0o644); err != nil {
 		return fmt.Errorf("meta write %s: %w", metaPath, err)
 	}
 	return nil
