@@ -784,6 +784,13 @@ func (m *QEMUManager) restartVM(old *VM) {
 	slog.Info("monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 
+	// The user may have removed the crashed VM during the backoff; a removed
+	// VM must not come back as a replacement.
+	if cur, err := m.store.Get(old.ID); err != nil || cur != old {
+		slog.Info("monitor: restart skipped; vm was removed", "vm_id", old.ID)
+		return
+	}
+
 	if m.metrics != nil {
 		m.metrics.RecordRestart()
 	}
