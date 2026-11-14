@@ -598,3 +598,46 @@ func FuzzParseDigest(f *testing.F) {
 		require.Equal(t, h, filepath.Base(p))
 	})
 }
+
+func TestFaults_DiscardDamagedRemovesOnlyWhatIsDamaged(t *testing.T) {
+	content := []byte("a blob the store was asked to keep")
+	for name, damage := range damages {
+		t.Run(name, func(t *testing.T) {
+			s, err := New(t.TempDir())
+			require.NoError(t, err)
+			digest, err := s.PutBytes(content)
+			require.NoError(t, err)
+			other, err := s.PutBytes([]byte("an intact neighbor"))
+			require.NoError(t, err)
+
+			gone, err := s.DiscardDamaged(digest)
+			require.NoError(t, err)
+			require.False(t, gone, "an intact blob was discarded")
+
+			path, err := s.Path(digest)
+			require.NoError(t, err)
+			require.NoError(t, os.Chmod(path, 0o644))
+			require.NoError(t, os.WriteFile(path, damage(content), 0o644))
+
+			gone, err = s.DiscardDamaged(digest)
+			require.NoError(t, err)
+			require.True(t, gone)
+			assert.False(t, s.Has(digest))
+			assert.True(t, s.Has(other))
+
+			// Absent now: nothing to discard, and a put stores it afresh.
+			gone, err = s.DiscardDamaged(digest)
+			require.NoError(t, err)
+			assert.False(t, gone)
+			_, err = s.PutBytes(content)
+			require.NoError(t, err)
+			require.NoError(t, s.Verify(digest))
+		})
+	}
+	t.Run("not a digest", func(t *testing.T) {
+		s, err := New(t.TempDir())
+		require.NoError(t, err)
+		_, err = s.DiscardDamaged("../../etc/passwd")
+		require.Error(t, err)
+	})
+}

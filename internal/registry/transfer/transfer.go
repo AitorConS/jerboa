@@ -237,6 +237,8 @@ type PullResult struct {
 	// at PullOptions.Out: the caller holds the recipe's disk
 	// (PullOptions.Have) and the store every blob.
 	AlreadyCached bool `json:"-"`
+	// Repaired counts blobs the store held damaged, fetched again by this pull.
+	Repaired int `json:"repaired,omitempty"`
 }
 
 // maxRangeGap merges frames of a pack closer than this into one request.
@@ -313,7 +315,25 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		return res, fmt.Errorf("pull: mkfs %s: %w", r.Toolset.Version, err)
 	}
 	if err := recipe.Assemble(ctx, r, o.Store, mkfs, o.Out); err != nil {
-		return res, fmt.Errorf("pull: %w", err)
+		// The blobs just downloaded were checked as they arrived; the ones
+		// already in the store were only looked up by name. If one of those
+		// went bad on disk, fetch it again and assemble once more, instead
+		// of failing every pull of the image until the file is removed by
+		// hand. Checking them costs a hash of each, so it is done only here.
+		damaged, derr := discardDamaged(o.Store, r)
+		if derr != nil {
+			return res, fmt.Errorf("pull: %w (and checking the stored blobs failed: %w)", err, derr)
+		}
+		if len(damaged) == 0 {
+			return res, fmt.Errorf("pull: %w", err)
+		}
+		if ferr := fetch(ctx, o, d.CDN, digest, damaged, sizes, &res); ferr != nil {
+			return res, ferr
+		}
+		if err := recipe.Assemble(ctx, r, o.Store, mkfs, o.Out); err != nil {
+			return res, fmt.Errorf("pull: %w", err)
+		}
+		res.Repaired = len(damaged)
 	}
 	// The hub's pull counter: best effort, bounded, never fails the pull.
 	if !o.NoCount {
@@ -510,4 +530,20 @@ func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []str
 	}
 	wg.Wait()
 	return firstErr
+}
+
+// discardDamaged removes the recipe's blobs that no longer match their
+// digests and returns them, for the caller to fetch again.
+func discardDamaged(store *cas.Store, r *recipe.Recipe) ([]string, error) {
+	var damaged []string
+	for _, b := range r.Blobs {
+		gone, err := store.DiscardDamaged(b.Digest)
+		if err != nil {
+			return damaged, fmt.Errorf("check blob: %w", err)
+		}
+		if gone {
+			damaged = append(damaged, b.Digest)
+		}
+	}
+	return damaged, nil
 }

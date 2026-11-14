@@ -205,6 +205,34 @@ func (s *Store) Verify(digest string) error {
 	return nil
 }
 
+// DiscardDamaged removes a stored blob whose bytes no longer match its
+// digest, so the next put stores it again instead of reusing the damaged
+// file. It reports whether it removed one; a blob that is intact or absent
+// is left alone. No put of the same blob runs between the check and the
+// removal.
+func (s *Store) DiscardDamaged(digest string) (bool, error) {
+	p, err := s.Path(digest)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.Has(digest) {
+		return false, nil
+	}
+	got, err := diskclone.HashFile(p)
+	if err != nil {
+		return false, fmt.Errorf("cas: hash %s: %w", digest, err)
+	}
+	if got == digest {
+		return false, nil
+	}
+	if err := removeBlob(p); err != nil {
+		return false, fmt.Errorf("cas: remove damaged %s: %w", digest, err)
+	}
+	return true, nil
+}
+
 // Prune removes blobs that keep rejects and that were added more than grace
 // ago. The grace period protects blobs a concurrent build or pull has stored
 // but not yet referenced from a recipe. It also removes the temporary files
