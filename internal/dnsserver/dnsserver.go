@@ -17,6 +17,7 @@ import (
 	"net"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -32,13 +33,19 @@ const upstreamTimeout = 3 * time.Second
 // are dropped (DNS clients retry) rather than exhausting host memory/CPU.
 const maxConcurrentQueries = 64
 
+// maxUpstreamResponse is the largest answer relayed from the upstream
+// resolver, the most a UDP datagram carries.
+const maxUpstreamResponse = 65535
+
 // Server answers guest DNS queries from the daemon's in-memory VM state.
 type Server struct {
 	resolver *scheduler.Resolver
 	// upstream is the "host:port" of a fallback resolver for names the daemon
 	// does not own. Empty disables forwarding (unknown names return NXDOMAIN).
 	upstream string
-	conn     *net.UDPConn
+	// mu guards conn: Close runs on another goroutine than ListenAndServe.
+	mu   sync.Mutex
+	conn *net.UDPConn
 	// sem bounds concurrent query handlers (see maxConcurrentQueries).
 	sem chan struct{}
 }
@@ -64,7 +71,9 @@ func (s *Server) ListenAndServe(addr string) error {
 	if err != nil {
 		return fmt.Errorf("dnsserver: listen %s: %w", addr, err)
 	}
+	s.mu.Lock()
 	s.conn = conn
+	s.mu.Unlock()
 	slog.Info("guest dns server listening", "addr", addr)
 
 	buf := make([]byte, 512)
@@ -87,7 +96,7 @@ func (s *Server) ListenAndServe(addr string) error {
 		case s.sem <- struct{}{}:
 			go func() {
 				defer func() { <-s.sem }()
-				s.handle(query, src)
+				s.handle(conn, query, src)
 			}()
 		default:
 			slog.Debug("dnsserver: worker pool saturated, dropping query", "src", src.IP)
@@ -97,15 +106,18 @@ func (s *Server) ListenAndServe(addr string) error {
 
 // Close stops the server.
 func (s *Server) Close() error {
-	if s.conn != nil {
-		if err := s.conn.Close(); err != nil {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn != nil {
+		if err := conn.Close(); err != nil {
 			return fmt.Errorf("dnsserver: close: %w", err)
 		}
 	}
 	return nil
 }
 
-func (s *Server) handle(query []byte, src *net.UDPAddr) {
+func (s *Server) handle(conn *net.UDPConn, query []byte, src *net.UDPAddr) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("dnsserver: recovered panic", "src", src.IP, "panic", r, "stack", string(debug.Stack()))
@@ -116,7 +128,7 @@ func (s *Server) handle(query []byte, src *net.UDPAddr) {
 		slog.Debug("dnsserver: handle", "src", src.IP, "err", err)
 		return
 	}
-	if _, err := s.conn.WriteToUDP(resp, src); err != nil {
+	if _, err := conn.WriteToUDP(resp, src); err != nil {
 		slog.Debug("dnsserver: write", "src", src.IP, "err", err)
 	}
 }
@@ -244,7 +256,10 @@ func (s *Server) forward(query []byte) ([]byte, error) {
 	if _, err := conn.Write(query); err != nil {
 		return nil, fmt.Errorf("write upstream: %w", err)
 	}
-	resp := make([]byte, 512)
+	// Room for the largest UDP answer: a guest that announces a bigger buffer
+	// (EDNS0) gets answers over 512 bytes, and one read into a smaller buffer
+	// would cut them short without the truncation flag that makes it retry.
+	resp := make([]byte, maxUpstreamResponse)
 	n, err := conn.Read(resp)
 	if err != nil {
 		return nil, fmt.Errorf("read upstream: %w", err)

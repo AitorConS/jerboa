@@ -52,6 +52,10 @@ type Client struct {
 	// HTTP performs requests; nil means a client suited to large bodies.
 	HTTP      *http.Client
 	UserAgent string
+	// Backoff returns how long to wait before retry number attempt (1 is the
+	// first retry) of a request that failed in a way worth retrying; nil
+	// means half a second, doubling each time.
+	Backoff func(attempt int) time.Duration
 	// sleep waits between login polls; replaced in tests.
 	sleep func(context.Context, time.Duration) error
 }
@@ -68,6 +72,13 @@ func New(host string) *Client {
 		scheme = "http"
 	}
 	return &Client{Base: scheme + "://" + host, UserAgent: "jerboa"}
+}
+
+func (c *Client) backoff(attempt int) time.Duration {
+	if c.Backoff != nil {
+		return c.Backoff(attempt)
+	}
+	return time.Duration(1<<attempt) * 250 * time.Millisecond
 }
 
 func (c *Client) http() *http.Client {
@@ -552,7 +563,7 @@ func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, 
 			select {
 			case <-ctx.Done():
 				return nil, fmt.Errorf("registry: %w", ctx.Err())
-			case <-time.After(time.Duration(1<<attempt) * 250 * time.Millisecond):
+			case <-time.After(c.backoff(attempt)):
 			}
 		}
 		data, retry, err := c.readRangeOnce(ctx, cdn, packDigest, offset, length)
@@ -613,7 +624,7 @@ func (c *Client) do(ctx context.Context, method, url, token string, body []byte,
 			select {
 			case <-ctx.Done():
 				return fmt.Errorf("registry: %w", ctx.Err())
-			case <-time.After(time.Duration(1<<attempt) * 250 * time.Millisecond):
+			case <-time.After(c.backoff(attempt)):
 			}
 		}
 		retry, err := c.once(ctx, method, url, token, body, contentType, out)

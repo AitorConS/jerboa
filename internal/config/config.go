@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AitorConS/jerboa/internal/durable"
+
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -193,7 +195,7 @@ func Save(path string, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("config: marshal: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := durable.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {

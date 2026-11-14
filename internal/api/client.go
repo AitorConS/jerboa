@@ -723,3 +723,32 @@ func (c *Client) call(method string, params any, out any) error {
 func (c *Client) VolumeRemove(ctx context.Context, name, disk string) error {
 	return c.call("Volume.Remove", VolumeRemoveParams{Name: name, DiskPath: disk}, nil)
 }
+
+// SystemDF reports the disk space the daemon's images, VMs, volumes,
+// snapshots and caches take.
+func (c *Client) SystemDF(_ context.Context) (SystemDF, error) {
+	var out SystemDF
+	if err := c.call("System.DF", nil, &out); err != nil {
+		return SystemDF{}, err
+	}
+	return out, nil
+}
+
+// SystemPrune removes what nothing refers to any more, and whatever else p
+// selects.
+func (c *Client) SystemPrune(_ context.Context, p SystemPruneParams) (SystemPruneResult, error) {
+	var out SystemPruneResult
+	if err := c.call("System.Prune", p, &out); err != nil {
+		return SystemPruneResult{}, err
+	}
+	return out, nil
+}
+
+// SystemCheck has the daemon examine its own state.
+func (c *Client) SystemCheck(_ context.Context, p SystemCheckParams) (SystemCheckResult, error) {
+	var out SystemCheckResult
+	if err := c.call("System.Check", p, &out); err != nil {
+		return SystemCheckResult{}, err
+	}
+	return out, nil
+}

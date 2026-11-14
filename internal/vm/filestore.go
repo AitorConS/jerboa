@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 // vmState is the on-disk representation of a VM, used for persistence.
@@ -107,14 +109,15 @@ func (s *FileStore) Restore() error {
 			continue
 		}
 		v := &VM{
-			ID:           st.ID,
-			Cfg:          st.Config,
-			State:        st.State,
-			CreatedAt:    st.CreatedAt,
-			StartedAt:    st.StartedAt,
-			StoppedAt:    st.StoppedAt,
-			RestartCount: st.RestartCount,
-			done:         make(chan struct{}),
+			ID:              st.ID,
+			Cfg:             st.Config,
+			State:           st.State,
+			CreatedAt:       st.CreatedAt,
+			StartedAt:       st.StartedAt,
+			StoppedAt:       st.StoppedAt,
+			RestartCount:    st.RestartCount,
+			DaemonRecovered: st.DaemonRecovered,
+			done:            make(chan struct{}),
 		}
 		if st.HealthStatus != "" {
 			v.HealthStatus = HealthStatus(st.HealthStatus)
@@ -187,12 +190,12 @@ func (s *FileStore) writeState(v *VM) error {
 	}
 
 	path := filepath.Join(dir, "state.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// Rewritten on every state change of a start or stop, where a flush to
+	// stable storage costs milliseconds; an atomic replace keeps a daemon crash
+	// from ever leaving half a file, and Restore skips a record a power cut
+	// emptied.
+	if err := durable.WriteFileNoSync(path, data, 0o600); err != nil {
 		return fmt.Errorf("write vm state: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename vm state: %w", err)
 	}
 	return nil
 }

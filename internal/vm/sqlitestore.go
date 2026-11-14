@@ -107,14 +107,16 @@ func (s *SQLiteStore) Create(cfg Config) (*VM, error) {
 func (s *SQLiteStore) Remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.MemoryStore.Remove(id); err != nil {
-		return err
+	if _, err := s.Get(id); err != nil {
+		return fmt.Errorf("vm %q not found", id)
 	}
+	// Delete the row first: a VM whose row could not be deleted stays
+	// registered, instead of vanishing now and coming back at the next start.
 	_, err := s.db.Exec("DELETE FROM vms WHERE id = ?", id) //nolint:noctx // store Remove has no context parameter
 	if err != nil {
 		return fmt.Errorf("delete vm %s: %w", id, err)
 	}
-	return nil
+	return s.MemoryStore.Remove(id)
 }
 
 func (s *SQLiteStore) Save(v *VM) error {
@@ -161,12 +163,13 @@ func (s *SQLiteStore) Restore() error {
 		}
 
 		v := &VM{
-			ID:           id,
-			Cfg:          cfg,
-			State:        State(stateStr),
-			CreatedAt:    createdAt,
-			RestartCount: restartCount,
-			done:         make(chan struct{}),
+			ID:              id,
+			Cfg:             cfg,
+			State:           State(stateStr),
+			CreatedAt:       createdAt,
+			RestartCount:    restartCount,
+			DaemonRecovered: daemonRecovered != 0,
+			done:            make(chan struct{}),
 		}
 
 		if startedAtStr.Valid {
@@ -256,6 +259,18 @@ func (s *SQLiteStore) writeVM(v *VM) error {
 		return fmt.Errorf("upsert vm %s: %w", v.ID, dbErr)
 	}
 	return nil
+}
+
+// hasRow reports whether the database holds a row for id, whether or not the
+// VM is loaded in memory.
+func (s *SQLiteStore) hasRow(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM vms WHERE id = ?", id).Scan(&n); err != nil { //nolint:noctx // startup migration; no per-request context
+		return false, fmt.Errorf("look up vm %s: %w", id, err)
+	}
+	return n > 0, nil
 }
 
 func nullTime(t *time.Time) any {

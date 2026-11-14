@@ -117,6 +117,13 @@ func (r Resumable) attempt(ctx context.Context, url, partial string) (size int64
 		}
 	case resp.StatusCode == http.StatusOK:
 		offset = 0
+		// Empty the partial file before recording the validator of this
+		// response: if the download dies in between, the new validator must
+		// not sit beside bytes of an older version, or the next resume would
+		// join the two.
+		if err := os.Truncate(partial, 0); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return 0, nil, false, fmt.Errorf("reset %s: %w", partial, err)
+		}
 		if err := writeValidator(partial, resp.Header); err != nil {
 			return 0, nil, false, err
 		}
