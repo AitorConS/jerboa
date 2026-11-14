@@ -756,8 +756,6 @@ func TestFaults_UndescribedArchiveIsCheckedAgainstTheIndex(t *testing.T) {
 // time. Each must get the whole package or an error, never a partly written
 // one.
 func TestFaults_ConcurrentFirstResolve(t *testing.T) {
-	t.Skip("BUG: concurrent first resolves of one package download into the same files.tar.gz.partial " +
-		"(Store.ForPlatform returns a store with its own mutex), so all but one fail with a rename error")
 	b := buildPackage(t, "app", "1.0.0")
 	s, _ := newFaultStore(t)
 	newFakeIndex(t, b)

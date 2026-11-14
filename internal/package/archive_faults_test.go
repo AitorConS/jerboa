@@ -146,15 +146,12 @@ func TestFaults_TruncatedTarInsideAWholeGzip(t *testing.T) {
 	}
 	// Cuts inside the first header, inside the first body, in the padding
 	// after it, and inside the second header.
-	const afterFirstBody = 512 + 3200 + 100
-	for _, cut := range []int{100, 511, 600, 512 + 1000, afterFirstBody, 512 + 3584 + 300} {
+	// ... and exactly between the two entries, and after the second with
+	// none, half and one block of the end marker.
+	const secondEntry, afterSecond = 512 + 3584, 512 + 3584 + 512 + 512
+	for _, cut := range []int{100, 511, 600, 512 + 1000, 512 + 3200 + 100, secondEntry, secondEntry + 300, afterSecond, afterSecond + 256, afterSecond + 512} {
 		t.Run(fmt.Sprintf("cut at %d", cut), func(t *testing.T) {
 			require.Less(t, cut, len(tarBytes))
-			if cut == afterFirstBody {
-				t.Skip("BUG: a tar cut between two entries extracts as a smaller package without an error " +
-					"(archive/tar accepts an archive with no end marker); only the archive digest checked by " +
-					"Store.Verify stands between such an archive and a build")
-			}
 			s, pkgDir, sandbox := planted(t, gz(tarBytes[:cut]))
 			require.Error(t, s.Extract(Package{Name: "evil", Version: "1.0.0"}))
 			requireNotExtracted(t, s, pkgDir)
