@@ -8,13 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AitorConS/jerboa/internal/durable"
 	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 )

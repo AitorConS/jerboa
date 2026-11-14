@@ -2,12 +2,13 @@ package config
 
 import (
 	"fmt"
-	"github.com/AitorConS/jerboa/internal/durable"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 
 	"github.com/pelletier/go-toml/v2"
 )

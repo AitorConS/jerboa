@@ -5,12 +5,13 @@ package vm
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/AitorConS/jerboa/internal/durable"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 // vmState is the on-disk representation of a VM, used for persistence.

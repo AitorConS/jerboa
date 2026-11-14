@@ -11,12 +11,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AitorConS/jerboa/internal/durable"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 
 	"github.com/AitorConS/jerboa/internal/api"
 )

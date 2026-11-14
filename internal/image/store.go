@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AitorConS/jerboa/internal/durable"
 	"io"
 	"log/slog"
 	"net/url"
@@ -16,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 // Store is a content-addressable local image store.

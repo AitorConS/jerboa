@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	oldContent = `{"generation":"old","padding":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
-	newContent = `{"generation":"new","padding":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}`
+	// Plain text on purpose: these are compared byte for byte, which is what
+	// tells a whole file from a truncated one.
+	oldContent = "generation old aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	newContent = "generation new bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )
 
 func read(t *testing.T, path string) string {
@@ -58,8 +60,8 @@ func TestWriteFile_CreatesAndReplaces(t *testing.T) {
 func TestWriteFile_ShorterContentLeavesNoTail(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	require.NoError(t, durable.WriteFile(path, []byte(newContent), 0o600))
-	require.NoError(t, durable.WriteFile(path, []byte("{}"), 0o600))
-	assert.Equal(t, "{}", read(t, path))
+	require.NoError(t, durable.WriteFile(path, []byte("ab"), 0o600))
+	assert.Equal(t, "ab", read(t, path))
 }
 
 func TestWriteFile_EmptyContent(t *testing.T) {
@@ -104,7 +106,7 @@ func TestWriteFile_MissingDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "absent", "state.json")
 	err := durable.WriteFile(path, []byte(oldContent), 0o600)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, os.ErrNotExist)
+	require.ErrorIs(t, err, os.ErrNotExist)
 	assert.Contains(t, err.Error(), "create")
 }
 
@@ -120,7 +122,7 @@ func TestWriteFile_ReadOnlyDirectory(t *testing.T) {
 
 	err := durable.WriteFile(path, []byte(newContent), 0o600)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, os.ErrPermission)
+	require.ErrorIs(t, err, os.ErrPermission)
 	assert.Equal(t, oldContent, read(t, path), "a write that cannot start must not touch the file")
 }
 
@@ -307,7 +309,7 @@ func TestRemoveTemps(t *testing.T) {
 	assert.Equal(t, int64(8), bytes)
 	for _, name := range append(keep, ".dir.tmp-3") {
 		_, err := os.Stat(filepath.Join(dir, name))
-		assert.NoError(t, err, name)
+		require.NoError(t, err, name)
 	}
 
 	count, bytes = durable.RemoveTemps(filepath.Join(dir, "absent"))

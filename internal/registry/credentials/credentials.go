@@ -10,11 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/AitorConS/jerboa/internal/durable"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 )

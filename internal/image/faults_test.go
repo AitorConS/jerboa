@@ -1,7 +1,6 @@
 package image
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -566,7 +565,7 @@ func TestFaults_MissingSourceDisk(t *testing.T) {
 	s, root := seedStore(t)
 	err := s.Put("app", "latest", validManifest(), filepath.Join(t.TempDir(), "absent.img"))
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, os.ErrNotExist))
+	require.ErrorIs(t, err, os.ErrNotExist)
 	_, got := requireIntact(t, root)
 	assert.Len(t, got, 1)
 }
