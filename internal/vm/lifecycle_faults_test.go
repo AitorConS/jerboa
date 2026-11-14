@@ -594,29 +594,44 @@ func TestFaults_LifecycleIsPersistedAtEachStep(t *testing.T) {
 }
 
 func TestFaults_RunningStateThatCannotBeSaved(t *testing.T) {
-	t.Skip("BUG: Start ignores a failed save of the running state (qemu.go: `_ = m.store.Save(v)`), so with a full disk the VM runs while the registry still says created; after a daemon restart its hypervisor is an untracked orphan")
-	dir := t.TempDir()
-	store := restored(t, dir)
-	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(fakeVMM("block")), WithStore(store))
-	v, err := mgr.Create(context.Background(), faultCfg())
-	require.NoError(t, err)
+	for _, f := range durabletest.Failures() {
+		t.Run(f.Name, func(t *testing.T) {
+			dir := t.TempDir()
+			store := restored(t, dir)
+			mgr := NewQEMUManager("fake-qemu", WithCommandFunc(fakeVMM("block")), WithStore(store))
+			v, err := mgr.Create(context.Background(), faultCfg())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = mgr.Kill(context.Background(), v.ID) })
 
-	durabletest.Inject(t, durabletest.Failures()[0], 0, nil) // disk full on the first write
-	err = mgr.Start(context.Background(), v.ID)
-	durable.SetFault(nil)
-	t.Cleanup(func() { _ = mgr.Kill(context.Background(), v.ID) })
+			durabletest.Inject(t, f, 0, nil)
+			err = mgr.Start(context.Background(), v.ID)
+			durable.SetFault(nil)
 
-	// Either the start fails and the process is gone, or the registry knows
-	// about the running VM.
-	if err != nil {
-		waitDone(t, v)
-		requireReaped(t, vmPID(v))
-		return
+			// Either the start fails and the process is gone, or the registry
+			// knows about the running VM. A fault after the rename leaves the
+			// state written, so both outcomes are legitimate; what must never
+			// happen is a running process the registry does not know.
+			if err != nil {
+				require.ErrorContains(t, err, "record running state")
+				waitDone(t, v)
+				requireReaped(t, vmPID(v))
+				assert.Equal(t, StateStopped, v.GetState())
+
+				// The monitor records the stop once the process is reaped;
+				// the registry must end up saying so, not "running".
+				require.Eventually(t, func() bool {
+					data, err := os.ReadFile(filepath.Join(dir, v.ID, "state.json"))
+					var st vmState
+					return err == nil && json.Unmarshal(data, &st) == nil && st.State == StateStopped
+				}, 10*time.Second, 5*time.Millisecond, "the registry never recorded the stop")
+				return
+			}
+			var st vmState
+			readJSONFile(t, filepath.Join(dir, v.ID, "state.json"), &st)
+			assert.Equal(t, StateRunning, st.State)
+			assert.Equal(t, vmPID(v), st.PID)
+		})
 	}
-	var st vmState
-	readJSONFile(t, filepath.Join(dir, v.ID, "state.json"), &st)
-	assert.Equal(t, StateRunning, st.State)
-	assert.Equal(t, vmPID(v), st.PID)
 }
 
 func readJSONFile(t *testing.T, path string, into any) {
