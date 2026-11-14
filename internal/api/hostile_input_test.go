@@ -457,8 +457,8 @@ func FuzzClientAttach(f *testing.F) {
 }
 
 // FuzzClientCall plays arbitrary bytes as the daemon's answers to a series of
-// calls on one connection. No call may panic or succeed on a malformed
-// answer, and once the stream is broken every later call fails too.
+// calls on one connection. No call may panic, fail without saying why, or
+// succeed without an answer of its own.
 func FuzzClientCall(f *testing.F) {
 	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"result":{"id":"vm-1","state":"running"}}` + "\n"))
 	f.Add([]byte(`{"jsonrpc":"2.0","id":1,"result":[{"id":"a"},{"id":"b"}]}` + "\n" + `{"id":2,"result":{"version":"v1"}}`))
@@ -469,6 +469,10 @@ func FuzzClientCall(f *testing.F) {
 	f.Add([]byte("HTTP/1.1 400 Bad Request\r\n\r\n"))
 	f.Add([]byte{})
 	f.Add([]byte{0xff, 0xfe, 0x00})
+	// A value of the wrong type fails its own call only: the decoder took
+	// the whole value, so the next answer still belongs to the next call.
+	f.Add([]byte(`{"jsonrpC":[]}{}`))
+	f.Add([]byte(`null {} null`))
 
 	f.Fuzz(func(t *testing.T, wire []byte) {
 		c := scriptedClient(wire)
@@ -481,29 +485,36 @@ func FuzzClientCall(f *testing.F) {
 			func() error { _, err := c.ImageRecipe(ctx, "app"); return err },
 			func() error { return c.Stop(ctx, "vm-1", true) },
 		}
-		broken := false
+		answered := 0
 		for i, call := range calls {
 			err := call()
 			var rpcErr *RPCError
 			switch {
 			case err == nil:
-				if broken {
-					t.Fatalf("call %d succeeded after the connection broke: %q", i, wire)
-				}
+				answered++
 			case errors.As(err, &rpcErr):
 				if rpcErr == nil {
 					t.Fatalf("call %d returned a nil RPC error", i)
 				}
-			case strings.Contains(err.Error(), "decode response"):
-				broken = true
-			case !strings.Contains(err.Error(), "unmarshal result"):
+				answered++
+			case strings.Contains(err.Error(), "unmarshal result"):
+				answered++
+			case !strings.Contains(err.Error(), "decode response"):
 				t.Fatalf("call %d failed with an error that explains nothing: %v", i, err)
 			}
 		}
-		// The daemon said only len(wire) bytes: six calls cannot all have
-		// been answered by fewer than six values.
-		if !broken && len(bytes.TrimSpace(wire)) < len(calls) {
-			t.Fatalf("six calls were answered by %d bytes: %q", len(wire), wire)
+		// The shortest answers are "{}" and "null": calls that were answered
+		// cannot outnumber the values the daemon sent.
+		if answered*2 > len(bytes.TrimSpace(wire)) {
+			t.Fatalf("%d calls were answered by %d bytes: %q", answered, len(wire), wire)
+		}
+		// With the daemon's bytes used up, a further call fails: it is not
+		// answered from thin air.
+		for range len(wire) {
+			_ = calls[0]()
+		}
+		if _, err := c.Get(ctx, "vm-1"); err == nil {
+			t.Fatalf("a call succeeded after the daemon's last byte: %q", wire)
 		}
 	})
 }
