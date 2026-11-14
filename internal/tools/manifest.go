@@ -93,6 +93,11 @@ func DownloadKernelFromManifest(ctx context.Context, cl *release.Client, toolsDi
 	if runtime.GOOS == "darwin" {
 		return fmt.Errorf("macOS ARM64 kernel toolsets must be built locally; the published kernel files target Linux/x86_64")
 	}
+	return installKernelFiles(ctx, cl, toolsDir, k)
+}
+
+// installKernelFiles is DownloadKernelFromManifest without the host check.
+func installKernelFiles(ctx context.Context, cl *release.Client, toolsDir string, k release.Component) error {
 	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
 		return fmt.Errorf("tools: create tools dir: %w", err)
 	}
