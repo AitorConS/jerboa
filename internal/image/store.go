@@ -282,6 +282,12 @@ func (s *Store) List() ([]Manifest, error) {
 	out := make([]Manifest, 0, len(names))
 	for _, ref := range names {
 		m, err := s.readRefManifest(refs[ref], ref)
+		if errors.Is(err, os.ErrNotExist) {
+			// The image this ref names was deleted from disk behind the
+			// store. One stale ref must not hide every other image; the next
+			// prune drops it.
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("image store list: %w", err)
 		}
@@ -669,6 +675,20 @@ func (s *Store) PruneUnreferenced(inUse func(digest string) bool) ([]string, err
 	refs, err := s.readRefs()
 	if err != nil {
 		return nil, fmt.Errorf("image store prune: %w", err)
+	}
+	// A ref whose image directory is gone names nothing: drop it, so a store
+	// that lost images outside jerboa heals instead of failing on them.
+	dangling := false
+	for ref, sha := range refs {
+		if _, err := os.Stat(filepath.Join(s.root, sha)); os.IsNotExist(err) {
+			delete(refs, ref)
+			dangling = true
+		}
+	}
+	if dangling {
+		if err := s.writeRefs(refs); err != nil {
+			return nil, fmt.Errorf("image store prune: %w", err)
+		}
 	}
 	referenced := make(map[string]bool, len(refs))
 	for _, sha := range refs {
