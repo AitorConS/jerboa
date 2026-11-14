@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/durable"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,7 +154,7 @@ func SaveDaemonFile(path, token, endpoint string) error {
 	if err != nil {
 		return fmt.Errorf("wslboot: marshal daemon file: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	if err := durable.WriteFile(path, out, 0o600); err != nil {
 		return fmt.Errorf("wslboot: write %s: %w", path, err)
 	}
 	return nil
@@ -390,7 +391,7 @@ func LoadOrCreateToken(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("wslboot: marshal token: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
+	if err := durable.WriteFile(path, out, 0o600); err != nil {
 		return "", fmt.Errorf("wslboot: write %s: %w", path, err)
 	}
 	return token, nil

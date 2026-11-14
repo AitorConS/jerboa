@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/AitorConS/jerboa/internal/durable"
 	"log/slog"
 	"net"
 	"os"
@@ -88,7 +89,14 @@ func (s *Store) Create(name, subnet, driver string) (*Network, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(dir); err == nil {
-		return nil, fmt.Errorf("network %q already exists", name)
+		if _, merr := os.Stat(filepath.Join(dir, metaFile)); !os.IsNotExist(merr) {
+			return nil, fmt.Errorf("network %q already exists", name)
+		}
+		// A directory without metadata is a creation that a crash cut short:
+		// it is no network, and must not hold the name forever.
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			return nil, fmt.Errorf("network create: clear incomplete %s: %w", dir, rerr)
+		}
 	}
 
 	if driver == "" {
@@ -411,6 +419,12 @@ func (s *Store) readMeta(name string) (*Network, error) {
 	return &n, nil
 }
 
+// readState returns the address leases of a network. A state file that is
+// missing or unreadable (a power cut can empty a file that is rewritten on
+// every lease) is rebuilt holding only the gateway instead of failing: one
+// damaged file must not keep the daemon from starting or the network from
+// being used. The daemon puts the addresses of its VMs back right after
+// (ReclaimLeases), so nothing a VM holds is handed out twice.
 func (s *Store) readState(name string) (*networkState, error) {
 	dir, err := s.networkDir(name)
 	if err != nil {
@@ -418,14 +432,39 @@ func (s *Store) readState(name string) (*networkState, error) {
 	}
 	path := filepath.Join(dir, stateFile)
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err == nil {
+		var st networkState
+		if uerr := json.Unmarshal(data, &st); uerr == nil {
+			return &st, nil
+		} else {
+			err = uerr
+		}
+	}
+	n, merr := s.readMeta(name)
+	if merr != nil {
 		return nil, fmt.Errorf("network %q read state: %w", name, err)
 	}
-	var st networkState
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("network %q corrupt state: %w", name, err)
+	slog.Warn("network: lease state unreadable, rebuilding it", "network", name, "err", err)
+	st := &networkState{NextIndex: 2}
+	if n.Gateway != "" {
+		st.AllocatedIPs = append(st.AllocatedIPs, n.Gateway)
 	}
-	return &st, nil
+	return st, nil
+}
+
+// ReclaimLeases marks addresses as taken in their networks: leases maps a
+// network name to the addresses its VMs hold. The daemon calls it at start so
+// a lease state that had to be rebuilt knows every address still in use. An
+// address already recorded is left alone; one that cannot be recorded (its
+// network is gone, it left the subnet) is reported and skipped.
+func (s *Store) ReclaimLeases(leases map[string][]string) {
+	for name, ips := range leases {
+		for _, ip := range ips {
+			if err := s.ReserveIP(name, ip); err != nil && !errors.Is(err, ErrIPAlreadyAllocated) {
+				slog.Warn("network: could not reclaim a VM address", "network", name, "ip", ip, "err", err)
+			}
+		}
+	}
 }
 
 // allocatedNet pairs a parsed subnet with the network that owns it, so overlap
@@ -501,7 +540,7 @@ func writeNetworkMeta(dir string, n *Network) error {
 	if err != nil {
 		return fmt.Errorf("marshal network meta: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
+	if err := durable.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
 		return fmt.Errorf("write network meta: %w", err)
 	}
 	return nil
@@ -512,12 +551,10 @@ func writeNetworkState(dir string, st *networkState) error {
 	if err != nil {
 		return fmt.Errorf("marshal network state: %w", err)
 	}
-	tmp := filepath.Join(dir, stateFile+".tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write network state tmp: %w", err)
-	}
-	if err := os.Rename(tmp, filepath.Join(dir, stateFile)); err != nil {
-		return fmt.Errorf("rename network state: %w", err)
+	// Rewritten on every address a VM takes or returns, so it is not flushed
+	// each time; readState rebuilds a state a power cut left unreadable.
+	if err := durable.WriteFileNoSync(filepath.Join(dir, stateFile), data, 0o600); err != nil {
+		return fmt.Errorf("write network state: %w", err)
 	}
 	return nil
 }
