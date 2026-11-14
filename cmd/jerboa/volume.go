@@ -292,6 +292,9 @@ func newVolumeLsCmd(endpoint *string, outputFmt *string) *cobra.Command {
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tSIZE\tCREATED")
 			for _, v := range vols {
+				if v == nil {
+					continue
+				}
 				fmt.Fprintf(w, "%s\t%s\t%s\n",
 					v.ID,
 					humanBytes(v.SizeBytes),

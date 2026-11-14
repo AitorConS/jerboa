@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -393,6 +394,9 @@ func ParseSize(s string) (int64, error) {
 		n, err := strconv.ParseInt(s[:len(s)-1], 10, 64)
 		if err != nil {
 			return 0, fmt.Errorf("invalid size %q", s)
+		}
+		if n > math.MaxInt64/mul || n < math.MinInt64/mul {
+			return 0, fmt.Errorf("invalid size %q: too large", s)
 		}
 		return n * mul, nil
 	}
