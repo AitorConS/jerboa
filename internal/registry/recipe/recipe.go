@@ -313,10 +313,13 @@ func Assemble(ctx context.Context, r *Recipe, store *cas.Store, mkfs, out string
 	// older ones ignore it, and the check above already holds.
 	cmd.Env = append(os.Environ(), HostRootEnv+"="+store.Root())
 	if output, err := cmd.CombinedOutput(); err != nil {
+		// Whatever mkfs wrote before it failed or was killed is not a disk.
+		_ = os.Remove(out)
 		return fmt.Errorf("recipe: mkfs: %w: %s", err, lastLine(output))
 	}
 	got, err := diskclone.HashFile(out)
 	if err != nil {
+		_ = os.Remove(out)
 		return fmt.Errorf("recipe: hash disk: %w", err)
 	}
 	if got != r.DiskDigest {
