@@ -65,6 +65,15 @@ const sqlCreateSchema = `
 	)
 `
 
+// sqlCreateMigrated records the VMs already taken over from the file
+// registry. The record outlives the VM's own row, so a VM removed later is
+// not migrated a second time from the state.json it left behind.
+const sqlCreateMigrated = `
+	CREATE TABLE IF NOT EXISTS migrated_vms (
+		id TEXT PRIMARY KEY
+	)
+`
+
 const sqlUpsertVM = `
 	INSERT INTO vms (id, config, state, created_at, started_at, stopped_at, daemon_recovered, health_status, restart_count, pid)
 	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -88,6 +97,9 @@ func (s *SQLiteStore) createSchema() error {
 	if _, err := s.db.Exec("ALTER TABLE vms ADD COLUMN pid INTEGER DEFAULT 0"); err != nil && //nolint:noctx // startup migration; no per-request context
 		!strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("add pid column: %w", err)
+	}
+	if _, err := s.db.Exec(sqlCreateMigrated); err != nil { //nolint:noctx // schema creation at startup; no per-request context
+		return fmt.Errorf("create migration table: %w", err)
 	}
 	return nil
 }
@@ -271,6 +283,28 @@ func (s *SQLiteStore) hasRow(id string) (bool, error) {
 		return false, fmt.Errorf("look up vm %s: %w", id, err)
 	}
 	return n > 0, nil
+}
+
+// wasMigrated reports whether the VM was already taken over from the file
+// registry by this or an earlier start.
+func (s *SQLiteStore) wasMigrated(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM migrated_vms WHERE id = ?", id).Scan(&n); err != nil { //nolint:noctx // startup migration; no per-request context
+		return false, fmt.Errorf("look up migration of vm %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// markMigrated records that the VM needs no further migration.
+func (s *SQLiteStore) markMigrated(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec("INSERT OR IGNORE INTO migrated_vms (id) VALUES (?)", id); err != nil { //nolint:noctx // startup migration; no per-request context
+		return fmt.Errorf("record migration of vm %s: %w", id, err)
+	}
+	return nil
 }
 
 func nullTime(t *time.Time) any {

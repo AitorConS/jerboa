@@ -48,9 +48,21 @@ func (m *Migrator) Migrate() (int, error) {
 			continue
 		}
 
+		// A VM is migrated once. Without this record a VM removed after its
+		// migration would be migrated again from the state.json it left in
+		// the file registry, and come back at every start.
+		done, err := m.sqliteDB.wasMigrated(st.ID)
+		if err != nil {
+			slog.Warn("migration: look up vm migration", "vm_id", st.ID, "err", err)
+			continue
+		}
+		if done {
+			continue
+		}
 		existing, err := m.sqliteDB.Get(st.ID)
 		if err == nil && existing != nil {
 			slog.Debug("migration: vm already exists in sqlite, skipping", "vm_id", st.ID)
+			m.recordMigrated(st.ID)
 			continue
 		}
 		// Migration runs before Restore, so memory alone does not say whether
@@ -62,7 +74,10 @@ func (m *Migrator) Migrate() (int, error) {
 			continue
 		}
 		if inDB {
+			// Migrated by a start that predates the record, or one that was
+			// cut between writing the row and recording it.
 			slog.Debug("migration: vm already exists in sqlite, skipping", "vm_id", st.ID)
+			m.recordMigrated(st.ID)
 			continue
 		}
 
@@ -105,10 +120,20 @@ func (m *Migrator) Migrate() (int, error) {
 			continue
 		}
 
+		m.recordMigrated(v.ID)
 		slog.Info("migration: migrated vm", "vm_id", v.ID)
 		migrated++
 	}
 
 	slog.Info("migration complete", "migrated", migrated)
 	return migrated, nil
+}
+
+// recordMigrated marks a VM as migrated. A failure is only logged: the VM's
+// row keeps it from being migrated again for as long as the VM exists, and
+// the next start retries the record.
+func (m *Migrator) recordMigrated(id string) {
+	if err := m.sqliteDB.markMigrated(id); err != nil {
+		slog.Warn("migration: record vm as migrated", "vm_id", id, "err", err)
+	}
 }
