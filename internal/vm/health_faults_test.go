@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,14 +23,17 @@ import (
 // errors, or flap. A probe must be bounded by its timeout, one bad answer must
 // not flip a healthy VM, and a stopped probe must stop.
 
-// closedPort returns a loopback address nothing listens on.
+// closedPort returns a loopback address that refuses connections: a socket
+// bound but not listening, so no other process can take the port meanwhile.
 func closedPort(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
 	require.NoError(t, err)
-	addr := ln.Addr().String()
-	require.NoError(t, ln.Close())
-	return addr
+	t.Cleanup(func() { _ = syscall.Close(fd) })
+	require.NoError(t, syscall.Bind(fd, &syscall.SockaddrInet4{Addr: [4]byte{127, 0, 0, 1}}))
+	sa, err := syscall.Getsockname(fd)
+	require.NoError(t, err)
+	return net.JoinHostPort("127.0.0.1", strconv.Itoa(sa.(*syscall.SockaddrInet4).Port))
 }
 
 // silentListener accepts connections and never writes a byte, like a guest
@@ -273,10 +277,14 @@ func TestFaults_HealthLoopDeclaresUnhealthyAndStops(t *testing.T) {
 	h.Stop("never-started")
 	assert.Zero(t, probeCountFor(h))
 
-	// After Stop the probe no longer writes: a status set now stays.
-	v.SetHealthStatus(HealthUnknown)
-	require.Never(t, func() bool { return v.GetHealthStatus() != HealthUnknown }, 150*time.Millisecond, 5*time.Millisecond,
-		"a stopped probe is still running")
+	// After Stop the probe no longer writes: a status set now stays. One
+	// probe may have been in flight when Stop was called, so the status is
+	// only required to become stable.
+	require.Eventually(t, func() bool {
+		v.SetHealthStatus(HealthUnknown)
+		time.Sleep(100 * time.Millisecond) // twenty probe intervals
+		return v.GetHealthStatus() == HealthUnknown
+	}, 30*time.Second, time.Millisecond, "a stopped probe is still running")
 }
 
 func TestFaults_HealthLoopEndsWithItsContext(t *testing.T) {
