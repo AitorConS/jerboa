@@ -42,8 +42,10 @@ func fakeWSL(t *testing.T, output, code string) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$@\" > '" + dir + "/args'\n" +
-		"printf '%s|%s|%s' \"$JERBOA_AUTH_TOKEN\" \"$JERBOA_OBSERVABILITY_TOKEN\" \"$WSLENV\" > '" + dir + "/env'\n" +
+		// Each record is written beside its final name and renamed, so a
+		// reader never sees half of one: a launch does not wait for wsl.
+		"printf '%s\\n' \"$@\" > '" + dir + "/args.tmp' && mv '" + dir + "/args.tmp' '" + dir + "/args'\n" +
+		"printf '%s|%s|%s' \"$JERBOA_AUTH_TOKEN\" \"$JERBOA_OBSERVABILITY_TOKEN\" \"$WSLENV\" > '" + dir + "/env.tmp' && mv '" + dir + "/env.tmp' '" + dir + "/env'\n" +
 		"printf '%s' '" + output + "'\n" +
 		"exit " + code + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "wsl"), []byte(script), 0o700)) //nolint:gosec // the test's own script must be executable
