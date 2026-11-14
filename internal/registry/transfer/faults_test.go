@@ -525,9 +525,85 @@ func TestFaults_FailedAssemblyDoesNotLeaveTheOldDisk(t *testing.T) {
 	assert.NoFileExists(t, out)
 }
 
+// damageBlob flips one bit of a blob in the store, as a failing disk does.
+func damageBlob(t *testing.T, store *cas.Store, digest string) {
+	t.Helper()
+	path, err := store.Path(digest)
+	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	data[len(data)/2] ^= 0x01
+	require.NoError(t, os.Chmod(path, 0o644))
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+}
+
 // A blob the store already holds was damaged on disk. The pull must not hand
-// out a disk built from it.
-func TestFaults_PullWithADamagedLocalBlobBuildsNothing(t *testing.T) {
+// out a disk built from it, nor fail for good: it fetches the blob again.
+func TestFaults_PullRepairsADamagedLocalBlob(t *testing.T) {
+	p := publish(t)
+	for i, victim := range p.parsed.Blobs {
+		t.Run(fmt.Sprintf("blob %d", i), func(t *testing.T) {
+			store := newStore(t)
+			out := filepath.Join(t.TempDir(), "disk.img")
+			pull := func() (PullResult, error) {
+				return Pull(context.Background(), PullOptions{Client: p.e.cl, Ref: p.e.ref(t, "v1"), Store: store, Mkfs: p.e.mkfsFor, Out: out, NoCount: true})
+			}
+			_, err := pull()
+			require.NoError(t, err)
+			require.NoError(t, os.Remove(out))
+			damageBlob(t, store, victim.Digest)
+			require.Error(t, store.Verify(victim.Digest))
+
+			res, err := pull()
+			require.NoError(t, err)
+			assert.Equal(t, 1, res.Repaired)
+			assert.Equal(t, 1, res.BlobsFetched, "only the damaged blob is fetched again")
+			require.NoError(t, store.Verify(victim.Digest), "the damaged blob is still in the store")
+			sum, err := fileDigest(out)
+			require.NoError(t, err)
+			assert.Equal(t, p.parsed.DiskDigest, sum)
+
+			// Nothing left to repair.
+			require.NoError(t, os.Remove(out))
+			res, err = pull()
+			require.NoError(t, err)
+			assert.Zero(t, res.Repaired)
+			assert.Zero(t, res.BlobsFetched)
+		})
+	}
+}
+
+// The registry cannot be reached while a damaged blob is being replaced: the
+// pull fails with nothing at the destination, and works once it can.
+func TestFaults_PullCannotRepairWithoutTheRegistry(t *testing.T) {
+	p := publish(t)
+	store := newStore(t)
+	out := filepath.Join(t.TempDir(), "disk.img")
+	_, err := Pull(context.Background(), PullOptions{Client: p.e.cl, Ref: p.e.ref(t, "v1"), Store: store, Mkfs: p.e.mkfsFor, Out: out, NoCount: true})
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(out))
+	victim := p.parsed.Blobs[0].Digest
+	damageBlob(t, store, victim)
+
+	f := newFlaky(t, p.e.reg)
+	f.on(stages["pack"], -1, errorPage)
+	client.ForgetDiscoveries()
+	_, err = Pull(context.Background(), PullOptions{Client: f.client(), Ref: f.ref(t, "v1"), Store: store, Mkfs: p.e.mkfsFor, Out: out, NoCount: true})
+	require.Error(t, err)
+	assert.NoFileExists(t, out)
+	assert.False(t, store.Has(victim), "the damaged blob was kept, so the next pull would trust it again")
+
+	f.heal()
+	client.ForgetDiscoveries()
+	res, err := Pull(context.Background(), PullOptions{Client: f.client(), Ref: f.ref(t, "v1"), Store: store, Mkfs: p.e.mkfsFor, Out: out, NoCount: true})
+	require.NoError(t, err)
+	assert.Equal(t, 1, res.BlobsFetched)
+	require.NoError(t, store.Verify(victim))
+}
+
+// An assembly that fails with every blob intact is not a damaged store:
+// nothing is fetched again and the failure is reported as it is.
+func TestFaults_PullDoesNotRefetchIntactBlobs(t *testing.T) {
 	p := publish(t)
 	store := newStore(t)
 	out := filepath.Join(t.TempDir(), "disk.img")
@@ -535,26 +611,16 @@ func TestFaults_PullWithADamagedLocalBlobBuildsNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.Remove(out))
 
-	victim := p.parsed.Blobs[0].Digest
-	path, err := store.Path(victim)
-	require.NoError(t, err)
-	data, err := os.ReadFile(path)
-	require.NoError(t, err)
-	data[len(data)/2] ^= 0x01
-	require.NoError(t, os.Chmod(path, 0o644))
-	require.NoError(t, os.WriteFile(path, data, 0o644))
-
-	_, err = Pull(context.Background(), PullOptions{Client: p.e.cl, Ref: p.e.ref(t, "v1"), Store: store, Mkfs: p.e.mkfsFor, Out: out, NoCount: true})
-	require.ErrorContains(t, err, "does not match")
-	assert.NoFileExists(t, out, "a disk assembled from a damaged blob was left in place")
-
-	t.Run("the next pull repairs the store", func(t *testing.T) {
-		t.Skip("BUG: a blob damaged on disk is never fetched again: Pull asks the store only whether a file with " +
-			"the digest's name exists (cas.Store.Has), so every later pull of an image using it fails until the " +
-			"blob file is removed by hand")
-		_, err := Pull(context.Background(), PullOptions{Client: p.e.cl, Ref: p.e.ref(t, "v1"), Store: store, Mkfs: p.e.mkfsFor, Out: out, NoCount: true})
-		require.NoError(t, err)
-	})
+	failing := filepath.Join(t.TempDir(), "mkfs")
+	require.NoError(t, os.WriteFile(failing, []byte("#!/bin/sh\nexit 1\n"), 0o755))
+	res, err := Pull(context.Background(), PullOptions{Client: p.e.cl, Ref: p.e.ref(t, "v1"), Store: store, NoCount: true, Out: out,
+		Mkfs: func(context.Context, string) (string, error) { return failing, nil }})
+	require.ErrorContains(t, err, "mkfs")
+	assert.Zero(t, res.BlobsFetched)
+	assert.Zero(t, res.Repaired)
+	for _, b := range p.parsed.Blobs {
+		require.NoError(t, store.Verify(b.Digest))
+	}
 }
 
 // The recipe is stored before the blobs arrive. One damaged on disk is
