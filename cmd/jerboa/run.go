@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -509,6 +510,9 @@ func parseByteSize(flag, s string) (int64, error) {
 	}
 	if val <= 0 {
 		return 0, fmt.Errorf("%s: must be positive, got %d", flag, val)
+	}
+	if val > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("%s: %s is too large", flag, s)
 	}
 	return val * multiplier, nil
 }

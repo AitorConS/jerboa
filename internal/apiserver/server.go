@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -860,7 +861,8 @@ func (s *Server) removeVMLocked(ctx context.Context, id string) error {
 			}
 		}
 		if _, err := s.netStore.Get(v.Cfg.NetworkName); err != nil {
-			if !os.IsNotExist(err) {
+			// The store wraps the error, which os.IsNotExist does not see through.
+			if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			release = false

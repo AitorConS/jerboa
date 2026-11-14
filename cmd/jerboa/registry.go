@@ -434,6 +434,11 @@ func newRegistryCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("pat create: %w", err)
 			}
+			// The token is shown once: an answer without one must not read as
+			// a token created, with an empty line for CI to store.
+			if token == "" {
+				return fmt.Errorf("pat create: the registry at %s answered without a token", registry)
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", token)
 			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], id, credentials.EnvToken)
 			return nil

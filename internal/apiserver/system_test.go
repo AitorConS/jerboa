@@ -533,14 +533,18 @@ func TestSystemPrune_FailuresAreReportedAndTheRestGoesOn(t *testing.T) {
 	orphan := filepath.Join(e.root, "vm-disks", "fc-gone-rootfs.img")
 	require.NoError(t, os.WriteFile(orphan, []byte("orphan"), 0o600))
 	mgr := e.mgr
-	e.mgr.RemoveFn = func(_ context.Context, id string) error {
+	// The hook steps aside to let the mock remove the other VMs and must be
+	// back in place afterwards, whichever VM the prune reaches first.
+	var hook func(context.Context, string) error
+	hook = func(_ context.Context, id string) error {
 		if id == stuck.ID {
 			return errors.New("device busy")
 		}
 		mgr.RemoveFn = nil
-		defer func() { mgr.RemoveFn = e.mgr.RemoveFn }()
+		defer func() { mgr.RemoveFn = hook }()
 		return mgr.Remove(context.Background(), id)
 	}
+	mgr.RemoveFn = hook
 
 	res := e.prune(api.SystemPruneParams{VMs: true})
 	require.Len(t, res.Errors, 1)

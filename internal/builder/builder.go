@@ -730,6 +730,12 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 		args = append(args, opts.Entrypoint)
 	}
 
+	// A binary left by an earlier build must not be taken for this one's if
+	// the compiler reports success without writing anything.
+	if err := os.Remove(output); err != nil && !os.IsNotExist(err) {
+		return BuildResult{}, fmt.Errorf("go build: remove previous binary: %w", err)
+	}
+
 	env := append(Env(platform.GoCrossCompileEnv()...), opts.Env...)
 	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Network: true, Env: env}, "go", args...)
 	if err != nil {
@@ -742,6 +748,10 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 	done()
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("go build: %w", err)
+	}
+
+	if _, err := os.Stat(output); err != nil {
+		return BuildResult{}, fmt.Errorf("go build: the compiler produced no binary (is the entrypoint a main package?): %w", err)
 	}
 
 	abs, err := filepath.Abs(output)
