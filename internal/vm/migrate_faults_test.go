@@ -225,7 +225,6 @@ func TestFaults_MigrationSourceUnreadable(t *testing.T) {
 }
 
 func TestFaults_MigrationBringsBackRemovedVMs(t *testing.T) {
-	t.Skip("BUG: the file registry is never marked as migrated, so a VM removed under SQLite is migrated again from its leftover state.json at the next daemon start")
 	dir, vms := fileRegistry(t, "app")
 	s, _ := startDaemonStore(t, dir)
 	require.NoError(t, s.Remove(vms[0].ID))
@@ -234,6 +233,57 @@ func TestFaults_MigrationBringsBackRemovedVMs(t *testing.T) {
 	again, n := startDaemonStore(t, dir)
 	assert.Zero(t, n)
 	assert.Empty(t, again.List(), "a VM the user removed came back after a daemon restart")
+}
+
+// A database from before migrations were recorded holds migrated VMs with no
+// record. The first start with this version must record them, so removing
+// one afterwards is final.
+func TestFaults_MigrationRecordsVMsMigratedByAnOlderVersion(t *testing.T) {
+	dir, vms := fileRegistry(t, "app", "db")
+	s, _ := startDaemonStore(t, dir)
+	_, err := s.db.Exec("DELETE FROM migrated_vms")
+	require.NoError(t, err)
+	require.NoError(t, s.Close())
+
+	s, n := startDaemonStore(t, dir)
+	require.Zero(t, n)
+	require.NoError(t, s.Remove(vms[0].ID))
+	require.NoError(t, s.Close())
+
+	again, n := startDaemonStore(t, dir)
+	assert.Zero(t, n)
+	assert.Equal(t, []string{vms[1].ID}, sqliteIDs(again))
+}
+
+// Removal is final however many times the daemon starts afterwards.
+func TestFaults_MigrationLeavesARemovedVMRemovedAcrossStarts(t *testing.T) {
+	dir, vms := fileRegistry(t, "app")
+	s, n := startDaemonStore(t, dir)
+	require.Equal(t, 1, n)
+	require.NoError(t, s.Remove(vms[0].ID))
+	require.NoError(t, s.Close())
+	for range 3 {
+		s, n = startDaemonStore(t, dir)
+		require.Zero(t, n)
+		require.Empty(t, s.List())
+		require.NoError(t, s.Close())
+	}
+}
+
+// A VM created in the file registry after the first migration (the daemon
+// was run with the file store again) is still migrated.
+func TestFaults_MigrationTakesVMsAddedLater(t *testing.T) {
+	dir, _ := fileRegistry(t, "app")
+	s, n := startDaemonStore(t, dir)
+	require.Equal(t, 1, n)
+	require.NoError(t, s.Close())
+
+	late, err := NewFileStore(dir).Create(Config{Name: "late", ImagePath: "a.img"})
+	require.NoError(t, err)
+	s, n = startDaemonStore(t, dir)
+	require.Equal(t, 1, n)
+	_, err = s.Get(late.ID)
+	require.NoError(t, err)
 }
 
 // Both registries must carry the "recovered after a daemon restart" marker
