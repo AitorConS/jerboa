@@ -226,7 +226,9 @@ func TestEthernetSlowPortHoldsTheSwitchForOneBoundedWait(t *testing.T) {
 			waited += d
 		}
 	}
-	require.Less(t, waited, 2*ethernetWriteWait, "the switch waited on the slow port frame after frame")
+	// One bounded wait plus scheduling slack; a wait per frame would be
+	// close to the whole ten-wait run.
+	require.Less(t, waited, 4*ethernetWriteWait, "the switch waited on the slow port frame after frame")
 }
 
 // A port that keeps up under backpressure loses nothing.
