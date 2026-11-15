@@ -188,6 +188,11 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if err := validatePortNetwork(v.Cfg); err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
+	// The API and vsock sockets, the config file and the VMM log live in the
+	// private runtime dir; without one the VM is not started.
+	if _, err := vmRuntimeDir(); err != nil {
+		return fmt.Errorf("firecracker start %s: %w", id, err)
+	}
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
@@ -273,12 +278,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
-		pr, pw := io.Pipe()
+		// Never blocks: the VM is reaped whether or not anyone reads its console.
+		pipe := newAttachPipe()
 		v.mu.Lock()
-		v.logPipeReader = pr
-		v.logPipeWriter = pw
+		v.logPipeReader = pipe
+		v.logPipeWriter = pipe
 		v.mu.Unlock()
-		stdout = io.MultiWriter(&v.logBuf, pw)
+		stdout = io.MultiWriter(&v.logBuf, pipe)
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
@@ -683,10 +689,7 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	restartCount := old.RestartCount
 	old.mu.RUnlock()
 
-	backoff := time.Duration(1<<uint(restartCount)) * time.Second
-	if backoff > 30*time.Second {
-		backoff = 30 * time.Second
-	}
+	backoff := restartBackoff(restartCount)
 	slog.Info("firecracker monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 

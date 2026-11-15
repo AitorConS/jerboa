@@ -79,33 +79,71 @@ func parseQMPAddr(addr string) (network, address string) {
 	}
 }
 
-// qmpRuntimeDir returns a per-user, 0700 directory for VMM sockets, configs
+// vmRuntimeDir returns a per-user, 0700 directory for VMM sockets, configs
 // and logs, creating it on demand. Keeping them in a private directory rather
 // than directly under a world-writable temp dir stops another local process
 // from name-squatting a path between cleanup and the VMM's bind. A directory
 // at the expected path that is not ours (another owner, a symlink, open
-// permissions) is never used: the daemon falls back to a fresh private one.
+// permissions) is never used: the daemon falls back to a fresh private one,
+// and when it cannot make one either it fails closed with an error rather
+// than use the rejected path. Only a private directory is remembered, so a
+// transient failure (a full temp dir) is retried on the next call.
+func vmRuntimeDir() (string, error) {
+	runtimeDir.mu.Lock()
+	defer runtimeDir.mu.Unlock()
+	if runtimeDir.path != "" {
+		return runtimeDir.path, nil
+	}
+	dir, err := resolveRuntimeDir(os.TempDir(), os.Getuid(), os.MkdirTemp)
+	if err != nil {
+		return "", err
+	}
+	runtimeDir.path = dir
+	return dir, nil
+}
+
+// resolveRuntimeDir picks the private runtime directory under base: the
+// predictable <base>/jerboa-run-<uid> when it is ours, else a fresh one made
+// with mkdirTemp. It never returns a directory that failed checkPrivateDir.
+func resolveRuntimeDir(base string, uid int, mkdirTemp func(dir, pattern string) (string, error)) (string, error) {
+	dir := expectedRuntimeDir(base, uid)
+	_ = os.Mkdir(dir, 0o700)
+	err := checkPrivateDir(dir)
+	if err == nil {
+		return dir, nil
+	}
+	slog.Warn("vm runtime dir is not private, using a new one", "dir", dir, "err", err)
+	fresh, tempErr := mkdirTemp(base, "jerboa-run-")
+	if tempErr != nil {
+		return "", fmt.Errorf("vm runtime dir: %s is not private (%w) and no private one could be made: %w", dir, err, tempErr)
+	}
+	if err := checkPrivateDir(fresh); err != nil {
+		return "", fmt.Errorf("vm runtime dir: %w", err)
+	}
+	return fresh, nil
+}
+
+func expectedRuntimeDir(base string, uid int) string {
+	return filepath.Join(base, fmt.Sprintf("jerboa-run-%d", uid))
+}
+
+// qmpRuntimeDir is vmRuntimeDir for code that only names paths in it: the
+// socket, config and log helpers, and recovery matching a live VMM's command
+// line. Everything that creates or binds an entry there (QEMU and Firecracker
+// Start, snapshot restore) calls vmRuntimeDir first and refuses to go on
+// without a private directory, so the expected path this returns when none
+// could be made is only compared against or cleaned up, never written
+// through.
 func qmpRuntimeDir() string {
-	runtimeDir.Do(func() {
-		dir := filepath.Join(os.TempDir(), fmt.Sprintf("jerboa-run-%d", os.Getuid()))
-		_ = os.Mkdir(dir, 0o700)
-		err := checkPrivateDir(dir)
-		if err == nil {
-			runtimeDir.path = dir
-			return
-		}
-		slog.Warn("vm runtime dir is not private, using a new one", "dir", dir, "err", err)
-		dir, err = os.MkdirTemp("", "jerboa-run-")
-		if err != nil {
-			dir = filepath.Join(os.TempDir(), fmt.Sprintf("jerboa-run-%d", os.Getuid()))
-		}
-		runtimeDir.path = dir
-	})
-	return runtimeDir.path
+	dir, err := vmRuntimeDir()
+	if err != nil {
+		return expectedRuntimeDir(os.TempDir(), os.Getuid())
+	}
+	return dir
 }
 
 var runtimeDir struct {
-	sync.Once
+	mu   sync.Mutex
 	path string
 }
 

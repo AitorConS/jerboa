@@ -149,6 +149,11 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	if err := validatePortNetwork(cfg); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
+	// The QMP socket (and, on macOS, the network socket) live in the private
+	// runtime dir; without one the VM is not started.
+	if _, err := vmRuntimeDir(); err != nil {
+		return fmt.Errorf("qemu start %s: %w", id, err)
+	}
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
@@ -207,12 +212,13 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
-		pr, pw := io.Pipe()
+		// Never blocks: the VM is reaped whether or not anyone reads its console.
+		pipe := newAttachPipe()
 		v.mu.Lock()
-		v.logPipeReader = pr
-		v.logPipeWriter = pw
+		v.logPipeReader = pipe
+		v.logPipeWriter = pipe
 		v.mu.Unlock()
-		stdout = io.MultiWriter(&v.logBuf, pw)
+		stdout = io.MultiWriter(&v.logBuf, pipe)
 	}
 
 	cmd.Stdout = stdout
@@ -788,6 +794,25 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	go m.restartVM(v)
 }
 
+// maxRestartBackoff caps the delay between restart attempts.
+const maxRestartBackoff = 30 * time.Second
+
+// restartBackoff returns the delay before restart attempt restartCount+1:
+// 2^restartCount seconds, capped at maxRestartBackoff. The exponent is clamped
+// before shifting, since the restart count is unbounded (MaxRetries 0) and an
+// unclamped shift overflows int64 nanoseconds from 34 on, wrapping to a
+// negative or zero delay that would restart a crash-looping guest at once.
+func restartBackoff(restartCount int) time.Duration {
+	if restartCount < 0 {
+		restartCount = 0
+	}
+	// 2^5 s already exceeds the cap; never shift further than that.
+	if restartCount >= 5 {
+		return maxRestartBackoff
+	}
+	return time.Duration(1<<uint(restartCount)) * time.Second
+}
+
 // restartVM creates a replacement VM with the same config, removes the old
 // one, and starts the replacement. Uses exponential backoff capped at 30s.
 func (m *QEMUManager) restartVM(old *VM) {
@@ -795,10 +820,7 @@ func (m *QEMUManager) restartVM(old *VM) {
 	restartCount := old.RestartCount
 	old.mu.Unlock()
 
-	backoff := time.Duration(1<<uint(restartCount)) * time.Second
-	if backoff > 30*time.Second {
-		backoff = 30 * time.Second
-	}
+	backoff := restartBackoff(restartCount)
 	slog.Info("monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 

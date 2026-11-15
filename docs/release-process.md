@@ -27,6 +27,31 @@ runner timestamp in that API; queue and approval latency are explicitly unknown,
 calculated by subtracting workflow creation time. Compare p50/p95 over a representative
 sample before claiming the 3–5 minute PR target has been achieved.
 
+### Self-hosted KVM runner access
+
+The `if:` guards (head repository must be this one) and `environment: kvm` on the
+KVM jobs are lines of workflow files that a `pull_request` run takes from the pull
+request itself: a fork can delete them, or add a workflow naming
+`[self-hosted, linux, kvm]`. They document intent; they do not enforce it. What
+enforces it is outside the pull request's reach:
+
+- **Runner job-started hook.** Install `scripts/release/kvm-runner-guard.py` on the
+  runner as its `ACTIONS_RUNNER_HOOK_JOB_STARTED` script, with
+  `JERBOA_KVM_REPOSITORY=AitorConS/jerboa` (see the script's header). Before any step
+  of a job it refuses pull requests whose head is another repository, events other
+  than push, pull_request, workflow_dispatch and schedule, and workflows other than
+  `main.yml`, `release.yml` and `nightly.yml`. Reinstall it from main when it
+  changes, and add a workflow to its list before giving that workflow KVM jobs.
+- **Settings > Actions > General:** "Require approval for all external
+  contributors" for fork pull request workflows.
+- **Environment `kvm`:** required reviewer (the owner), so same-repository pull
+  request jobs wait for a review of the revision they run.
+- **Runner:** dedicated to this repository, not shared with other repositories;
+  preferably ephemeral (`--ephemeral`, re-registered per job). While it is
+  persistent, a job can leave state for the next one, which is why release
+  assembly trusts no artifact a KVM job could replace (see
+  [Promote](#promote)).
+
 Kernel host tests are required in full CI and also run nightly on hosted Linux: they do not use KVM. For diagnosis,
 manual `nightly.yml` dispatch accepts `suite: kernel`; scheduled/default runs still
 execute all suites. Native Mac validation remains manual and distribution remains
@@ -57,8 +82,11 @@ preview, as selected for this rollout.
    The installer smoke runs on a Windows machine started for this run only (see
    [Windows installer smoke](#windows-installer-smoke)); assembly waits for it.
 6. Download `release-candidate` and `macos-app` from the run. The candidate includes a
-   signed manifest, a signed inventory with source revisions, exact payload hashes,
-   and a generated Windows update feed. Stable remains unchanged.
+   manifest signed for the `candidate` channel, a signed inventory with source
+   revisions, exact payload hashes, and a generated Windows update feed. Stable
+   remains unchanged: clients and `install.sh` only accept a manifest whose channel
+   is `stable`, and only promotion signs one, so an unpromoted or rejected candidate
+   cannot be served to them as a release.
 7. Run native Mac tests on the candidate app using `scripts/release/native-macos.sh`.
    Preserve the JSON result with the candidate run ID and app archive hash in a
    reviewable HTTPS report. A hosted Mac VM does not provide Hypervisor.framework.
@@ -116,9 +144,14 @@ missing platforms, invalid signatures, changed bytes, an older version, or a pre
 published version with another manifest. Production paths remain compatible with old
 clients, including `desktop/jerboa-desktop-setup-X.Y.Z.exe`.
 
-Promotion uploads immutable objects, records a signed receipt, verifies public artifact
-downloads, then updates `channels/stable.json`, its detached signature, and
-`desktop/latest.yml`. The final step dispatches `Jerboa_Docs/release-sync.yml`, which
+Promotion signs the stable manifest only after its checks pass: the candidate's
+manifest with its channel changed to `stable` and nothing else (the generation time
+stays the candidate's, so a retry re-creates the same bytes and signature). It
+uploads immutable objects, including that manifest as `releases/<v>/manifest.json`
+and the candidate's as `releases/<v>/candidate-manifest.json`, records a signed
+receipt, verifies public artifact downloads, then updates `channels/stable.json`,
+its detached signature, and `desktop/latest.yml`. Candidates assembled before this
+change carry a stable signature of their own and are refused; rebuild them. The final step dispatches `Jerboa_Docs/release-sync.yml`, which
 checks signed published metadata, verifies both download URLs, preserves existing
 editorial notes and commits generated metadata. Verify the website workflow and Vercel
 status separately; successful dispatch means queued, not deployed.
@@ -133,8 +166,11 @@ The Linux download toolset and WSL rootfs contain the same selected `mkfs`,
 rootfs archive and verifies each embedded tool against the selected toolset.
 The manifest's kernel version and the distro's kernel version must agree.
 Native Mac continues to carry its source-built ARM64 kernel and native tools,
-validated using the candidate app on a physical Mac. Linux x86_64 tools are never
-substituted into the Mac app.
+validated using the candidate app on a physical Mac. Linux x86_64 host tools are
+never substituted into the Mac app. Its x86 guest boot files (`tools/x86`, used only
+for explicitly emulated linux/amd64 images) are the candidate's selected
+`boot.img` and `kernel.img`, staged by `build-macos` from the verified
+`selected-kernel` artifact; the job never fetches them from the live stable channel.
 
 The signed inventory includes the selection mode, engine SHA, candidate run,
 per-file hashes and QEMU/Firecracker boot evidence bound to those hashes. The
@@ -142,6 +178,19 @@ boot job verifies bytes before and after execution; assembly and promotion check
 the same identity again. The complete rootfs and installers are also hashed.
 Promotion uploads the candidate's existing bytes, including new kernel paths,
 before updating stable. It neither builds a kernel nor resolves one from stable.
+
+Artifacts of a run share one namespace, which the run's self-hosted KVM jobs can
+also write to, and are downloaded by name. Each GitHub-hosted job that uploads an
+artifact a later trusted job uses therefore records its digest
+(`scripts/release/artifact-digest.py record`) as a job output, which no other job
+can set, and the consumer checks the download against it before using, executing
+or signing anything (`verify`; `validate.yml` exports `kernel_linux_sha256` for
+`kernel-linux`). Assembly downloads every artifact by its own name, never by
+pattern. The KVM runner's `validated-kernel` is not trusted on its own: it must
+equal the verified `selected-kernel` apart from its boot report. A missing or
+different digest fails the job; rebuild the candidate rather than re-running only
+the consumer. The release binaries assembly runs for their version check get an
+environment without the signing seed or other credentials.
 
 ## Reattempts and partial failures
 
@@ -175,6 +224,18 @@ release origin and channel, the newest `generated` they accepted (in
 field once a dated one was seen. A restored old manifest is therefore refused by
 clients that saw a newer one: an emergency rollback means re-signing the old content
 as a new candidate, not republishing the old manifest bytes.
+
+Clients with no state of their own (a first run, or `~/.jerboa` lost) still have a
+floor for the stable channel: `release.MinStableGenerated`, compiled into the binary,
+and the generation time `install.sh` recorded in `/etc/jerboa/release-state.json`,
+whichever is newer. A stable manifest older than that floor, or without
+`generated`, is refused. `MinStableGenerated` is the engine commit time of a release
+known to be promoted (no stable manifest of that release or a later one can be older);
+when preparing a candidate, raise it to the engine commit time of the newest
+promoted release (`TZ=UTC git log -1 --date=iso-strict-local --format=%cd <sha>`).
+Never set it later than the live stable manifest's `generated`, or every client
+built from that source refuses stable. There is no maximum age: releases are
+irregular and a floor that expired would stop offline mirrors and old installs.
 
 Mac continues to use ad-hoc signatures and the documented preview installation flow.
 Production Developer ID/notarization requires a certificate and Apple credentials;

@@ -140,15 +140,24 @@ func (s *Store) Has(diskDigest string) bool {
 	return s.Trusted(filepath.Join(s.root, sha, "disk.img"), diskDigest)
 }
 
-// record writes m as the manifest of the disk in imgDir and of its
-// m.Name:m.Tag, and points that ref at the disk. The caller holds s.mu.
+// record writes m as the manifest of m.Name:m.Tag on the disk in imgDir and
+// points that ref at the disk. The disk's shared manifest.json, which digest
+// references resolve to, is written only when the disk has none yet: config
+// and recipe are not part of the disk digest, so a later tag of the same
+// disk (a pull of another repository's recipe for it, say) must not change
+// the defaults an existing image is run with by digest. The caller holds s.mu.
 func (s *Store) record(imgDir, digest string, m Manifest) (Manifest, error) {
 	data, err := Marshal(m)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(imgDir, "manifest.json"), data); err != nil {
-		return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
+	shared := filepath.Join(imgDir, "manifest.json")
+	if _, err := os.Stat(shared); errors.Is(err, os.ErrNotExist) {
+		if err := writeFileAtomic(shared, data); err != nil {
+			return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
+		}
+	} else if err != nil {
+		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
 	}
 	ref := m.Name + ":" + m.Tag
 	if err := os.MkdirAll(filepath.Join(imgDir, "tags"), 0o755); err != nil {

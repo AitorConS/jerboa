@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/release"
@@ -29,7 +30,9 @@ var errIndexNotFound = errors.New("not found")
 // verifyIndex checks data against the minisign signature published beside the
 // index at <indexURL>.minisig. An index served from this machine (file:// or a
 // loopback http server: local mirrors and tests) may be unsigned; it is then
-// accepted with a warning. Any signature that is present must verify.
+// accepted with a warning. Any signature that is present must verify, and its
+// trusted comment must say it was made for the package index: the release key
+// also signs release manifests and toolsets, which must not pass for an index.
 func verifyIndex(indexURL string, data []byte) error {
 	sig, err := readIndexURL(indexURL+".minisig", maxIndexSignatureSize)
 	switch {
@@ -43,10 +46,22 @@ func verifyIndex(indexURL string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("package index signature: %w", err)
 	}
-	if err := pk.Verify(data, sig); err != nil {
+	comment, err := pk.VerifyComment(data, sig)
+	if err != nil {
 		return fmt.Errorf("package index signature: %w", err)
 	}
+	if !isIndexComment(comment) {
+		return fmt.Errorf("package index signature: signed for %q, not for the package index", comment)
+	}
 	return nil
+}
+
+// indexCommentPurpose is the trusted comment the Package Build workflow signs
+// the index with, optionally followed by ":<run id>".
+const indexCommentPurpose = "packages"
+
+func isIndexComment(comment string) bool {
+	return comment == indexCommentPurpose || strings.HasPrefix(comment, indexCommentPurpose+":")
 }
 
 // isLocalIndex reports whether an index URL is served from this machine.

@@ -268,7 +268,7 @@ func TestMaterializeLinks(t *testing.T) {
 		links = append(links, pendingLink{path: l.path, resolved: resolved, linkname: l.linkname})
 	}
 
-	materializeLinks(links)
+	require.NoError(t, materializeLinks(links, 1<<20))
 
 	for _, name := range []string{"libpq.so.5", "libpq.so"} {
 		got, err := os.ReadFile(filepath.Join(libDir, name))

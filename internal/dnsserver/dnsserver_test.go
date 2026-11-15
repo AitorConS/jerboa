@@ -75,7 +75,9 @@ func TestNamesOfTheNetworkNeverReachTheUpstreamResolver(t *testing.T) {
 	}
 	s := New(scheduler.NewResolver(guests), addr)
 
-	for _, name := range []string{"postgres", "postgres.app", "db.internal"} {
+	// DNS names have no letter case: a guest resolver may ask in any (0x20
+	// randomization), and the variant is the same name of the network.
+	for _, name := range []string{"postgres", "postgres.app", "db.internal", "POSTGRES", "pOsTgReS", "postgres.APP", "Postgres.App", "DB.Internal", "PG"} {
 		resp, err := s.Answer(question(t, name, dnsmessage.TypeA), "172.25.0.9")
 		require.NoError(t, err)
 		hdr, answers := parse(t, resp)
@@ -94,8 +96,20 @@ func TestNamesOfTheNetworkNeverReachTheUpstreamResolver(t *testing.T) {
 	}
 	require.Zero(t, asked.Load(), "no question about a name of the network leaves the host")
 
+	// The answer repeats the question as it was asked, in its letter case,
+	// which a resolver using 0x20 randomization checks.
+	resp, err := s.Answer(question(t, "PoStGrEs", dnsmessage.TypeA), "172.25.0.9")
+	require.NoError(t, err)
+	var p dnsmessage.Parser
+	_, err = p.Start(resp)
+	require.NoError(t, err)
+	q, err := p.Question()
+	require.NoError(t, err)
+	require.Equal(t, "PoStGrEs.", q.Name.String())
+	require.Zero(t, asked.Load())
+
 	// Every other name is the upstream resolver's to answer.
-	resp, err := s.Answer(question(t, "example.com", dnsmessage.TypeAAAA), "172.25.0.9")
+	resp, err = s.Answer(question(t, "example.com", dnsmessage.TypeAAAA), "172.25.0.9")
 	require.NoError(t, err)
 	_, answers := parse(t, resp)
 	require.Len(t, answers, 1)
@@ -105,4 +119,38 @@ func TestNamesOfTheNetworkNeverReachTheUpstreamResolver(t *testing.T) {
 	_, err = s.Answer(question(t, "postgres", dnsmessage.TypeAAAA), "10.9.9.9")
 	require.NoError(t, err)
 	require.EqualValues(t, 2, asked.Load())
+}
+
+// A stored name in mixed case is owned in every case it is asked in, and a
+// case variant never joins two networks.
+func TestMixedCaseNamesStayOnTheHost(t *testing.T) {
+	addr, asked := upstream(t)
+	guests := vms{
+		{ID: "client", State: vm.StateRunning, Cfg: vm.Config{Name: "client", NetworkName: "app", IPAddress: "172.25.0.9"}},
+		{ID: "c1", State: vm.StateRunning, Cfg: vm.Config{Name: "Cache", NetworkName: "app", IPAddress: "172.25.0.3", NetworkAliases: []string{"Api.Dev"}}},
+		{ID: "c2", State: vm.StateRunning, Cfg: vm.Config{Name: "cache-2", NetworkName: "app", IPAddress: "172.25.0.4", NetworkAliases: []string{"api.dev"}}},
+		{ID: "o1", State: vm.StateRunning, Cfg: vm.Config{Name: "secret", NetworkName: "App", IPAddress: "172.26.0.2"}},
+	}
+	s := New(scheduler.NewResolver(guests), addr)
+	for name, want := range map[string]int{"cache": 1, "CACHE": 1, "cache.app": 1, "api.dev": 2, "API.DEV": 2, "Api.Dev": 2} {
+		resp, err := s.Answer(question(t, name, dnsmessage.TypeA), "172.25.0.9")
+		require.NoError(t, err)
+		hdr, answers := parse(t, resp)
+		require.Equal(t, dnsmessage.RCodeSuccess, hdr.RCode, name)
+		require.True(t, hdr.Authoritative, name)
+		require.Len(t, answers, want, name)
+
+		resp, err = s.Answer(question(t, name, dnsmessage.TypeAAAA), "172.25.0.9")
+		require.NoError(t, err)
+		hdr, answers = parse(t, resp)
+		require.Equal(t, dnsmessage.RCodeSuccess, hdr.RCode, name)
+		require.Empty(t, answers, name)
+	}
+	require.Zero(t, asked.Load(), "a case variant of a name of the network left the host")
+
+	// "App" is another network than "app": its VM is not this network's.
+	_, err := scheduler.NewResolver(guests).ResolveAll("secret", "app")
+	require.Error(t, err)
+	_, err = scheduler.NewResolver(guests).ResolveAll("SECRET.App", "app")
+	require.Error(t, err)
 }

@@ -322,14 +322,29 @@ func (p *peering) observe(src *peerMember, dst [6]byte) {
 	p.byID[pr.id] = pr
 	src.pairs++
 	d.pairs++
-	for i, s := range pr.side {
-		other := pr.side[1-i].member
-		dup, err := dupFD(fds[i])
-		if err != nil {
+	// Take both duplicates before the first enqueue: an enqueue that
+	// overflows a control queue ends that session, which removes the pair
+	// and closes pr.held, and fds would then name closed (or reused)
+	// descriptors. The duplicates belong to this call until queued.
+	dups := [2]int{-1, -1}
+	for i := range dups {
+		if dups[i], err = dupFD(fds[i]); err != nil {
+			closeFD(dups[0])
 			p.removePairLocked(pr, true)
 			return
 		}
-		p.enqueueLocked(s, peerMessage{Type: peerAdd, Epoch: s.epoch, Value: pr.id, MAC: other.mac, IP: other.ip}, dup)
+	}
+	for i, s := range pr.side {
+		if p.pairs[key] != pr {
+			// Withdrawn by the previous enqueue; its peerDel is queued.
+			closeFD(dups[i])
+			continue
+		}
+		other := pr.side[1-i].member
+		p.enqueueLocked(s, peerMessage{Type: peerAdd, Epoch: s.epoch, Value: pr.id, MAC: other.mac, IP: other.ip}, dups[i])
+	}
+	if p.pairs[key] != pr {
+		return
 	}
 	time.AfterFunc(peerAckWait, func() {
 		p.mu.Lock()

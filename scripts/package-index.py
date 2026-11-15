@@ -5,15 +5,41 @@ index is never replaced: a rebuild with the same archive or the same
 content_digest is skipped, and one with different content is refused, because
 a client that cached the old archive would no longer match the index.
 
+The index carries a purpose, a publication time and a serial that grows by
+one with every publication that adds an entry; clients refuse an index whose
+serial is below the newest they accepted. The base index must not be older
+than PKG_INDEX_MIN_SERIAL (the serial of the last publication, recorded where
+release-asset writers cannot change it), so a superseded index restored on
+the release is not extended and signed again. A base without a serial (the
+format before serials) is accepted only while that floor is unset.
+
 Prints the file names of new archives, one per line, for the caller to upload.
 """
+import datetime
 import hashlib
 import json
+import os
 import pathlib
 import shutil
 import sys
 
 ALLOWED = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+PURPOSE = "jerboa-package-index"
+
+
+def check_base(index, min_serial):
+    """Refuse a base index that is not a package index or is older than the floor."""
+    serial = index.get("serial", 0)
+    if "serial" in index or "purpose" in index:
+        if index.get("purpose") != PURPOSE:
+            raise SystemExit(f"Base index purpose is {index.get('purpose')!r}, not {PURPOSE!r}")
+        if not isinstance(serial, int) or isinstance(serial, bool) or serial < 1:
+            raise SystemExit(f"Base index has an invalid serial {serial!r}")
+    if serial < min_serial:
+        raise SystemExit(
+            f"Base index serial {serial} is older than the last publication ({min_serial}); "
+            "restore the newest packages.json on the release instead of extending an older one")
+    return serial
 
 
 def same_content(old, new):
@@ -41,6 +67,8 @@ def main():
     repository = sys.argv[3]
     index_path = destination / "packages.json"
     index = json.loads(index_path.read_text()) if index_path.exists() else {"packages": {}}
+    min_serial = int(os.environ.get("PKG_INDEX_MIN_SERIAL") or 0)
+    serial = check_base(index, min_serial)
     check_urls(index, repository)
     metadata = sorted(source.rglob("meta.json"))
     if not metadata:
@@ -78,6 +106,11 @@ def main():
     if conflicts:
         raise SystemExit(
             "Refusing to republish with different content (bump the version instead): " + ", ".join(conflicts))
+    if added:
+        index["purpose"] = PURPOSE
+        index["serial"] = serial + 1
+        index["generated"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print(f"Package index serial {index['serial']}", file=sys.stderr)
     index_path.write_text(json.dumps(index, indent=2) + "\n")
     for filename in added:
         print(filename)

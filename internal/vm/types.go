@@ -395,7 +395,7 @@ type VM struct {
 	done          chan struct{}
 	logBuf        safeBuffer
 	logPipeReader io.Reader
-	logPipeWriter *io.PipeWriter
+	logPipeWriter *attachPipe
 	explicitStop  bool
 	attachSession *AttachSession
 	statsProvider func() RuntimeStats
