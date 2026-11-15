@@ -614,17 +614,25 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			if err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 			}
+			if p.ExpectedDigest != "" && m.DiskDigest != p.ExpectedDigest {
+				return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("image %s is now %s, not the verified %s", p.Image, m.DiskDigest, p.ExpectedDigest)}
+			}
 			resolvedManifest = &m
 			imagePath = disk
 			imageDigest = m.DiskDigest
 			p.Image = imageDigest
 		} else {
+			if p.ExpectedDigest != "" {
+				return nil, &api.RPCError{Code: -32602, Message: "expected_digest applies only to an image of the store"}
+			}
 			resolved, err := s.resolveImageRef(p.Image)
 			if err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 			}
 			imagePath = resolved
 		}
+	} else if p.ExpectedDigest != "" {
+		return nil, &api.RPCError{Code: -32602, Message: "expected_digest applies only to an image of the store"}
 	}
 	if (p.Image == "" && imagePath != "") || (looksLikePath(p.Image) && !s.isStoredImage(p.Image)) {
 		checked, err := hostImagePathCheck(ctx, imagePath)
