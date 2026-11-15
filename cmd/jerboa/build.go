@@ -3,14 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"debug/elf"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -185,32 +188,44 @@ project markers (go.mod, package.json, etc.).`,
 			}
 
 			if info.IsDir() {
+				// The policy files as they were before any build step ran: a
+				// step must not change them, nor create one bubblewrap could
+				// not bind read-only because it did not exist yet.
+				policy := snapshotBuildPolicy(sandbox, sandbox.ReadOnly)
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
 					var cleanupBinary bool
 					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, sandbox, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
+					if cleanupBinary && binaryPath != "" {
+						defer func() { _ = os.Remove(binaryPath) }()
+					}
+					if perr := policy.check(); perr != nil {
+						sp.Fail("Build failed")
+						return perr
+					}
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
 					}
 					sp.Done("Build complete")
-					if cleanupBinary && binaryPath != "" {
-						defer func() { _ = os.Remove(binaryPath) }()
-					}
 				} else {
 					sp.Start("Building project")
 					var buildEntrypoint string
 					var driverEnv map[string]string
 					var cleanupBinary bool
 					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, sandbox, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
+					if cleanupBinary && binaryPath != "" {
+						defer func() { _ = os.Remove(binaryPath) }()
+					}
+					if perr := policy.check(); perr != nil {
+						sp.Fail("Build failed")
+						return perr
+					}
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
 					}
 					sp.Done("Build complete")
-					if cleanupBinary && binaryPath != "" {
-						defer func() { _ = os.Remove(binaryPath) }()
-					}
 					if buildEntrypoint != "" {
 						entrypoint = buildEntrypoint
 					}
@@ -684,6 +699,69 @@ func buildPolicyFiles(srcPath, configFile string) []string {
 		files = append(files, absPath(configFile))
 	}
 	return files
+}
+
+// buildPolicySnapshot records the policy files of a build: whether each
+// existed, and the digest of its content.
+type buildPolicySnapshot map[string]buildPolicyState
+
+type buildPolicyState struct {
+	exists bool
+	digest [sha256.Size]byte
+}
+
+// snapshotBuildPolicy records files before the build steps run. Unconfined
+// steps (--allow-unsandboxed) may change anything; nothing is recorded.
+func snapshotBuildPolicy(sandbox builder.Sandbox, files []string) buildPolicySnapshot {
+	if sandbox.Off {
+		return nil
+	}
+	s := buildPolicySnapshot{}
+	for _, f := range files {
+		s[f] = readBuildPolicyState(f)
+	}
+	return s
+}
+
+// readBuildPolicyState reads what is at path now. An entry that is not a
+// regular file (a link a step left, say) has the digest of its kind and
+// link target, so it never matches a file's.
+func readBuildPolicyState(path string) buildPolicyState {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return buildPolicyState{}
+	}
+	if !fi.Mode().IsRegular() {
+		target, _ := os.Readlink(path)
+		return buildPolicyState{exists: true, digest: sha256.Sum256([]byte("non-regular " + fi.Mode().Type().String() + " " + target))}
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // the project's own policy file
+	if err != nil {
+		return buildPolicyState{exists: true}
+	}
+	return buildPolicyState{exists: true, digest: sha256.Sum256(data)}
+}
+
+// check fails when a build step changed a policy file since the snapshot.
+// A file a step created is removed, so the next build does not read it.
+func (s buildPolicySnapshot) check() error {
+	var changed []string
+	for _, f := range slices.Sorted(maps.Keys(s)) {
+		before, now := s[f], readBuildPolicyState(f)
+		if before == now {
+			continue
+		}
+		if !before.exists && now.exists {
+			_ = os.Remove(f)
+			changed = append(changed, f+" (created; removed)")
+			continue
+		}
+		changed = append(changed, f)
+	}
+	if len(changed) > 0 {
+		return fmt.Errorf("build: a build step changed the build's policy files, which build steps may not touch: %s; check the project before building it again", strings.Join(changed, ", "))
+	}
+	return nil
 }
 
 // describeBuildSandbox says how the build steps of cfg run, for every build.

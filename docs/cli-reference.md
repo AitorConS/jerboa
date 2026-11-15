@@ -297,8 +297,10 @@ Build driver behavior to know:
   the language tools keep it to fetch dependencies. A step that writes
   elsewhere (for example straight to `/tmp`) fails: write under `TMPDIR` or
   the project, or set `[build] sandbox = false`. Confined steps cannot
-  change the project's `unikernel.toml` or `.unignore` (on Linux, those
-  that exist when the step starts), nor connect to the host services known
+  change the project's `unikernel.toml` or `.unignore`; a build whose steps
+  changed or created one anyway (on Linux, a file that did not exist yet
+  cannot be made read-only) fails, and a file they created is removed.
+  Nor can they connect to the host services known
   to act for whoever asks: the D-Bus session and system buses, the systemd
   user manager, Docker, Podman, containerd, BuildKit, libvirt, LXD/Incus
   and snapd, X11, tmux and screen, and the GnuPG agent, at their usual

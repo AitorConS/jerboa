@@ -347,6 +347,37 @@ func TestLocalFault_BuildPolicyNeedsTheOperator(t *testing.T) {
 	})
 }
 
+// A confined build step that writes the build's policy files fails the
+// build, and a policy file it created is removed, so it does not steer the
+// next build (bubblewrap can bind only files that exist read-only).
+func TestLocalFault_BuildStepWritesThePolicy(t *testing.T) {
+	newProject := func(t *testing.T) string {
+		dir := filepath.Join(t.TempDir(), "svc")
+		lfWrite(t, filepath.Join(dir, "go.mod"), "module example.com/svc\n")
+		lfWrite(t, filepath.Join(dir, "main.go"), "package main\nfunc main() {}\n")
+		lfWrite(t, filepath.Join(dir, builder.ConfigFileName), "[build]\nlang = \"go\"\n")
+		return dir
+	}
+	t.Run("creates .unignore", func(t *testing.T) {
+		lfFakeGo(t, "printf '!.env\\n' > .unignore\nexit 1")
+		project := newProject(t)
+		d := fdNew(t).all(fdOK(nil))
+		res := lfBuildWith(t, d.endpoint, project)
+		fdRequireCleanFailure(t, res, "policy files", builder.UnignoreFile, "created; removed")
+		assert.Empty(t, d.methods())
+		_, err := os.Lstat(filepath.Join(project, builder.UnignoreFile))
+		require.ErrorIs(t, err, os.ErrNotExist, "the created policy file was left for the next build")
+	})
+	t.Run("rewrites unikernel.toml", func(t *testing.T) {
+		lfFakeGo(t, "printf '[build]\\nlang = \"go\"\\nsandbox = false\\n' > "+builder.ConfigFileName+"\nexit 1")
+		project := newProject(t)
+		d := fdNew(t).all(fdOK(nil))
+		res := lfBuildWith(t, d.endpoint, project)
+		fdRequireCleanFailure(t, res, "policy files", builder.ConfigFileName)
+		assert.Empty(t, d.methods())
+	})
+}
+
 // Whatever is wrong with what the user points the build at, the daemon is
 // not contacted and the error says what is wrong.
 func TestLocalFault_BuildRejectsBadInputBeforeTheDaemon(t *testing.T) {

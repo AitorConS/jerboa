@@ -248,6 +248,44 @@ func TestBuildPolicyFiles(t *testing.T) {
 	require.Contains(t, buildPolicyFiles(src, other), other)
 }
 
+func TestBuildPolicySnapshotSeesChanges(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, builder.ConfigFileName)
+	unignore := filepath.Join(dir, builder.UnignoreFile)
+	require.NoError(t, os.WriteFile(cfgPath, []byte("[build]\n"), 0o600))
+	files := []string{cfgPath, unignore}
+
+	s := snapshotBuildPolicy(builder.Sandbox{}, files)
+	require.NoError(t, s.check(), "nothing changed")
+
+	require.NoError(t, os.WriteFile(unignore, []byte("!.env\n"), 0o600))
+	err := s.check()
+	require.ErrorContains(t, err, unignore+" (created; removed)")
+	require.NoFileExists(t, unignore)
+	require.NoError(t, s.check(), "the created file was removed")
+
+	require.NoError(t, os.WriteFile(cfgPath, []byte("[build]\nsandbox = false\n"), 0o600))
+	require.ErrorContains(t, s.check(), cfgPath)
+	require.FileExists(t, cfgPath, "a changed file that existed is reported, not removed")
+
+	// Unconfined steps may change anything.
+	require.NoError(t, snapshotBuildPolicy(builder.Sandbox{Off: true}, files).check())
+}
+
+func TestBuildPolicySnapshotSeesALinkInPlaceOfAFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, builder.ConfigFileName)
+	require.NoError(t, os.WriteFile(cfgPath, []byte("[build]\n"), 0o600))
+	s := snapshotBuildPolicy(builder.Sandbox{}, []string{cfgPath})
+	same := filepath.Join(t.TempDir(), "same.toml")
+	require.NoError(t, os.WriteFile(same, []byte("[build]\n"), 0o600))
+	require.NoError(t, os.Remove(cfgPath))
+	if err := os.Symlink(same, cfgPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	require.ErrorContains(t, s.check(), cfgPath, "a link to identical content is still a change")
+}
+
 func TestDescribeBuildSandboxReportsTheNetwork(t *testing.T) {
 	cfg := &builder.Config{Build: builder.BuildConfig{Network: true, Run: []string{"make"}}}
 	require.Contains(t, describeBuildSandbox(cfg, builder.Sandbox{}), "may reach the network")
