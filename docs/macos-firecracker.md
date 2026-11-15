@@ -165,9 +165,15 @@ rejects source spoofing, IPv6 and VLAN frames, validates framing before
 allocating, and bounds each link's pending output to 64 frames. The transport
 limit is 65536 bytes per frame; the stack MTU is 1500. Shared host connections
 (published and outbound, including pending dials) are capped at 64 per VM and
-256 per network. UDP flows expire after 30 seconds without response activity;
-TCP dials time out after five seconds. DNS has bounded query workers. Removing
-a VM cancels its pending dials and closes its live host connections.
+256 per network. A VM may have 16 outbound TCP connections being set up at a
+time, and a guest that does not finish its handshake within five seconds of
+the host dial loses the attempt. UDP flows expire after 30 seconds without
+response activity; TCP dials time out after five seconds. DNS has bounded
+query workers, at most 16 of them per VM. A link whose VMM drains its output
+too slowly to turn its queue over within 100 ms has frames dropped instead of
+holding up the rest of the network, and is closed if it sends nothing for that
+long. Removing a VM cancels its pending dials and closes its live host
+connections.
 
 - One IPv4 interface per VM. Custom IPs require a named network; TAP and
   multi-network attachments are explicitly rejected. The gateway is the first
