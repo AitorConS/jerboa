@@ -137,10 +137,16 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
-	if err := validateHostConfig(v.Cfg, m.kernelPath); err != nil {
+	// Until the transition below is won, another Start of the same VM may be
+	// past it and filling in the config (tap name, native socket), so the
+	// checks read a copy taken under the lock those writes hold.
+	v.mu.RLock()
+	cfg := v.Cfg
+	v.mu.RUnlock()
+	if err := validateHostConfig(cfg, m.kernelPath); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
-	if err := validatePortNetwork(v.Cfg); err != nil {
+	if err := validatePortNetwork(cfg); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
 	if err := v.transition(StateStarting); err != nil {
@@ -158,7 +164,9 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	// network (and its bridge), but a TAP can be enslaved to only one VM, so the
 	// device name must be per-VM rather than per-network.
 	if v.Cfg.NetworkName != "" && v.Cfg.TapName == "" {
+		v.mu.Lock()
 		v.Cfg.TapName = tapDeviceName(v.ID)
+		v.mu.Unlock()
 	}
 
 	cleanup, err := m.prepareHostVM(v)

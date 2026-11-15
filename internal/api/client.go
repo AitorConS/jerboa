@@ -819,9 +819,20 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) (
 		return fmt.Errorf("encode request: %w", err)
 	}
 	var resp Response
-	if err := c.dec.Decode(&resp); err != nil {
+	watch := c.watchReply()
+	decErr := c.dec.Decode(&resp)
+	stuck := watch()
+	if decErr != nil {
 		cut = true
-		return fmt.Errorf("decode response: %w", err)
+		if stuck != nil {
+			c.broken = fmt.Errorf("%s: %w", method, stuck)
+			return c.broken
+		}
+		return fmt.Errorf("decode response: %w", decErr)
+	}
+	if stuck != nil {
+		// The answer arrived as the watchdog gave up: nothing was lost.
+		_ = c.conn.SetDeadline(time.Time{})
 	}
 	if resp.Error != nil {
 		return resp.Error

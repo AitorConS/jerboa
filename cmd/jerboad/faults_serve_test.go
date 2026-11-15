@@ -349,9 +349,6 @@ func TestFaults_ServeReplacesAStaleSocket(t *testing.T) {
 }
 
 func TestFaults_SecondDaemonDoesNotTakeOverALiveSocket(t *testing.T) {
-	t.Skip("BUG: api.Listen (internal/api/endpoint.go) removes the socket file without checking that a daemon " +
-		"is listening on it, so a second jerboad on the same endpoint starts, and the first one keeps running " +
-		"unreachable with its VMs")
 	first := newDaemon(t)
 	c := first.start()
 

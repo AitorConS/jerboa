@@ -250,9 +250,6 @@ func TestFaults_LimitsThatCannotBeAppliedAbortTheStart(t *testing.T) {
 }
 
 func TestFaults_ConcurrentStartLaunchesOneHypervisor(t *testing.T) {
-	if raceDetector {
-		t.Skip("BUG: Start validates v.Cfg before it wins the transition to starting, while the Start that won writes v.Cfg (TapName, native socket) without a lock: a data race between two concurrent starts of one VM")
-	}
 	spawns := always("block")
 	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(spawns.cmd))
 	v, err := mgr.Create(context.Background(), faultCfg())

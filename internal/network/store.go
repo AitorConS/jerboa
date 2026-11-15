@@ -258,6 +258,11 @@ func (s *Store) ReserveIP(name, ip string) error {
 	if networkOrBroadcast(ipNet, parsed) {
 		return fmt.Errorf("reserve ip: %s is the network or broadcast address of %q subnet %s", ip, name, n.Subnet)
 	}
+	// Refused here and not only through the lease list, which a damaged
+	// state file may no longer hold the gateway in.
+	if n.Gateway != "" && parsed.Equal(net.ParseIP(n.Gateway)) {
+		return fmt.Errorf("reserve ip: %s is the gateway of network %q: %w", ip, name, ErrIPAlreadyAllocated)
+	}
 
 	st, err := s.readState(name)
 	if err != nil {
@@ -374,6 +379,12 @@ func (s *Store) ReleaseIP(name string, ip string) error {
 	}
 	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("network %q not found", name)
+	}
+
+	// The gateway is the network's own address, not a lease: giving it back
+	// would let a VM reserve it (--ip) and take the gateway's place.
+	if n, mErr := s.readMeta(name); mErr == nil && n.Gateway != "" && ip == n.Gateway {
+		return nil
 	}
 
 	st, err := s.readState(name)
