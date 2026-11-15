@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/durable"
+
 	"github.com/AitorConS/jerboa/internal/naming"
 )
 
@@ -88,7 +90,14 @@ func (s *Store) Create(name, subnet, driver string) (*Network, error) {
 		return nil, err
 	}
 	if _, err := os.Stat(dir); err == nil {
-		return nil, fmt.Errorf("network %q already exists", name)
+		if _, merr := os.Stat(filepath.Join(dir, metaFile)); !os.IsNotExist(merr) {
+			return nil, fmt.Errorf("network %q already exists", name)
+		}
+		// A directory without metadata is a creation that a crash cut short:
+		// it is no network, and must not hold the name forever.
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			return nil, fmt.Errorf("network create: clear incomplete %s: %w", dir, rerr)
+		}
 	}
 
 	if driver == "" {
@@ -249,6 +258,11 @@ func (s *Store) ReserveIP(name, ip string) error {
 	if networkOrBroadcast(ipNet, parsed) {
 		return fmt.Errorf("reserve ip: %s is the network or broadcast address of %q subnet %s", ip, name, n.Subnet)
 	}
+	// Refused here and not only through the lease list, which a damaged
+	// state file may no longer hold the gateway in.
+	if n.Gateway != "" && parsed.Equal(net.ParseIP(n.Gateway)) {
+		return fmt.Errorf("reserve ip: %s is the gateway of network %q: %w", ip, name, ErrIPAlreadyAllocated)
+	}
 
 	st, err := s.readState(name)
 	if err != nil {
@@ -314,9 +328,18 @@ func (s *Store) AllocateIP(name string) (net.IP, error) {
 	// otherwise re-hand-out a static address that happens to fall inside the
 	// dynamic range, producing the very duplicate-IP collision static reservation
 	// is meant to prevent.
-	allocated := make(map[string]bool, len(st.AllocatedIPs))
+	allocated := make(map[string]bool, len(st.AllocatedIPs)+1)
 	for _, a := range st.AllocatedIPs {
 		allocated[a] = true
+	}
+	// The gateway is never a VM's address, even when a lease file that lost
+	// its content (it parses, but lists nothing) no longer says so. Index 0
+	// is the network address and index 1 the gateway.
+	if n.Gateway != "" {
+		allocated[n.Gateway] = true
+	}
+	if st.NextIndex < 2 {
+		st.NextIndex = 2
 	}
 	var ip net.IP
 	for {
@@ -325,7 +348,9 @@ func (s *Store) AllocateIP(name string) (net.IP, error) {
 			return nil, fmt.Errorf("network %q: no available IPs in subnet %s", name, n.Subnet)
 		}
 		st.NextIndex++
-		if !allocated[candidate.String()] {
+		// The last address of the range is the directed broadcast address:
+		// like ReserveIP, never give it to a VM, which could not communicate.
+		if !allocated[candidate.String()] && !networkOrBroadcast(ipNet, candidate) {
 			ip = candidate
 			break
 		}
@@ -354,6 +379,12 @@ func (s *Store) ReleaseIP(name string, ip string) error {
 	}
 	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("network %q not found", name)
+	}
+
+	// The gateway is the network's own address, not a lease: giving it back
+	// would let a VM reserve it (--ip) and take the gateway's place.
+	if n, mErr := s.readMeta(name); mErr == nil && n.Gateway != "" && ip == n.Gateway {
+		return nil
 	}
 
 	st, err := s.readState(name)
@@ -408,9 +439,21 @@ func (s *Store) readMeta(name string) (*Network, error) {
 	if err := json.Unmarshal(data, &n); err != nil {
 		return nil, fmt.Errorf("network %q corrupt meta: %w", name, err)
 	}
+	// Metadata that parses but does not describe this network (a file holding
+	// "null", or another network's name) is as unreadable as garbage: callers
+	// use the name it carries, which must be the directory they asked for.
+	if n.Name != name {
+		return nil, fmt.Errorf("network %q corrupt meta: it names network %q", name, n.Name)
+	}
 	return &n, nil
 }
 
+// readState returns the address leases of a network. A state file that is
+// missing or unreadable (a power cut can empty a file that is rewritten on
+// every lease) is rebuilt holding only the gateway instead of failing: one
+// damaged file must not keep the daemon from starting or the network from
+// being used. The daemon puts the addresses of its VMs back right after
+// (ReclaimLeases), so nothing a VM holds is handed out twice.
 func (s *Store) readState(name string) (*networkState, error) {
 	dir, err := s.networkDir(name)
 	if err != nil {
@@ -418,14 +461,39 @@ func (s *Store) readState(name string) (*networkState, error) {
 	}
 	path := filepath.Join(dir, stateFile)
 	data, err := os.ReadFile(path)
-	if err != nil {
+	if err == nil {
+		var st networkState
+		if uerr := json.Unmarshal(data, &st); uerr == nil {
+			return &st, nil
+		} else {
+			err = uerr
+		}
+	}
+	n, merr := s.readMeta(name)
+	if merr != nil {
 		return nil, fmt.Errorf("network %q read state: %w", name, err)
 	}
-	var st networkState
-	if err := json.Unmarshal(data, &st); err != nil {
-		return nil, fmt.Errorf("network %q corrupt state: %w", name, err)
+	slog.Warn("network: lease state unreadable, rebuilding it", "network", name, "err", err)
+	st := &networkState{NextIndex: 2}
+	if n.Gateway != "" {
+		st.AllocatedIPs = append(st.AllocatedIPs, n.Gateway)
 	}
-	return &st, nil
+	return st, nil
+}
+
+// ReclaimLeases marks addresses as taken in their networks: leases maps a
+// network name to the addresses its VMs hold. The daemon calls it at start so
+// a lease state that had to be rebuilt knows every address still in use. An
+// address already recorded is left alone; one that cannot be recorded (its
+// network is gone, it left the subnet) is reported and skipped.
+func (s *Store) ReclaimLeases(leases map[string][]string) {
+	for name, ips := range leases {
+		for _, ip := range ips {
+			if err := s.ReserveIP(name, ip); err != nil && !errors.Is(err, ErrIPAlreadyAllocated) {
+				slog.Warn("network: could not reclaim a VM address", "network", name, "ip", ip, "err", err)
+			}
+		}
+	}
 }
 
 // allocatedNet pairs a parsed subnet with the network that owns it, so overlap
@@ -501,7 +569,7 @@ func writeNetworkMeta(dir string, n *Network) error {
 	if err != nil {
 		return fmt.Errorf("marshal network meta: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
+	if err := durable.WriteFile(filepath.Join(dir, metaFile), data, 0o600); err != nil {
 		return fmt.Errorf("write network meta: %w", err)
 	}
 	return nil
@@ -512,12 +580,10 @@ func writeNetworkState(dir string, st *networkState) error {
 	if err != nil {
 		return fmt.Errorf("marshal network state: %w", err)
 	}
-	tmp := filepath.Join(dir, stateFile+".tmp")
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return fmt.Errorf("write network state tmp: %w", err)
-	}
-	if err := os.Rename(tmp, filepath.Join(dir, stateFile)); err != nil {
-		return fmt.Errorf("rename network state: %w", err)
+	// Rewritten on every address a VM takes or returns, so it is not flushed
+	// each time; readState rebuilds a state a power cut left unreadable.
+	if err := durable.WriteFileNoSync(filepath.Join(dir, stateFile), data, 0o600); err != nil {
+		return fmt.Errorf("write network state: %w", err)
 	}
 	return nil
 }

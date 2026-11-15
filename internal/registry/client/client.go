@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/httpclient"
@@ -51,6 +52,10 @@ type Client struct {
 	// HTTP performs requests; nil means a client suited to large bodies.
 	HTTP      *http.Client
 	UserAgent string
+	// Backoff returns how long to wait before retry number attempt (1 is the
+	// first retry) of a request that failed in a way worth retrying; nil
+	// means half a second, doubling each time.
+	Backoff func(attempt int) time.Duration
 	// sleep waits between login polls; replaced in tests.
 	sleep func(context.Context, time.Duration) error
 }
@@ -69,11 +74,52 @@ func New(host string) *Client {
 	return &Client{Base: scheme + "://" + host, UserAgent: "jerboa"}
 }
 
-func (c *Client) http() *http.Client {
-	if c.HTTP != nil {
-		return c.HTTP
+func (c *Client) backoff(attempt int) time.Duration {
+	if c.Backoff != nil {
+		return c.Backoff(attempt)
 	}
-	return httpclient.Streaming
+	return time.Duration(1<<attempt) * 250 * time.Millisecond
+}
+
+func (c *Client) http() *http.Client {
+	hc := c.HTTP
+	if hc == nil {
+		hc = httpclient.Streaming
+	}
+	if !credentials.AccessConfigured() {
+		return hc
+	}
+	withAccess := *hc
+	withAccess.Transport = accessTransport{base: hc.Transport}
+	return &withAccess
+}
+
+// The headers a Cloudflare Access service token travels in.
+const (
+	accessClientIDHeader     = "CF-Access-Client-Id"
+	accessClientSecretHeader = "CF-Access-Client-Secret" //nolint:gosec // a header name, not a credential
+)
+
+// accessTransport adds the Cloudflare Access service token to requests for
+// the registry it is for. It decides per request, redirects included, so the
+// token does not follow a redirect to another host.
+type accessTransport struct{ base http.RoundTripper }
+
+func (t accessTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	req = req.Clone(req.Context())
+	req.Header.Del(accessClientIDHeader)
+	req.Header.Del(accessClientSecretHeader)
+	if req.URL.Scheme == "https" {
+		if id, secret, ok := credentials.AccessToken(req.URL.Hostname()); ok {
+			req.Header.Set(accessClientIDHeader, id)
+			req.Header.Set(accessClientSecretHeader, secret)
+		}
+	}
+	return base.RoundTrip(req) //nolint:wrapcheck // a RoundTripper passes its transport's error through; the caller wraps it
 }
 
 // LoginDevice is Discovery.Login of a registry that runs GitHub's device flow
@@ -106,8 +152,44 @@ func (d Discovery) Supports(feature string) bool {
 	return slices.Contains(d.Features, feature)
 }
 
-// Discover reads GET /v2/ and checks the protocol version.
+// discoveryTTL is how long a registry's self-description is reused: what the
+// registry itself says it may be cached for.
+const discoveryTTL = 5 * time.Minute
+
+type cachedDiscovery struct {
+	d     Discovery
+	until time.Time
+}
+
+// discoveries holds each registry's last self-description by base URL, for
+// this process: the daemon asks once every discoveryTTL, not once a pull,
+// and a command that needs it twice asks once.
+var discoveries sync.Map
+
+// ForgetDiscoveries drops every cached self-description, so the next
+// Discover asks the registry again.
+func ForgetDiscoveries() { discoveries.Clear() }
+
+// Discover returns the registry's self-description, from GET /v2/ or from
+// the answer of the last discoveryTTL, and checks the protocol version.
 func (c *Client) Discover(ctx context.Context) (Discovery, error) {
+	if v, ok := discoveries.Load(c.Base); ok {
+		if e := v.(cachedDiscovery); time.Now().Before(e.until) {
+			d := e.d
+			d.Features = slices.Clone(d.Features)
+			return d, nil
+		}
+	}
+	d, err := c.discover(ctx)
+	if err == nil {
+		e := cachedDiscovery{d: d, until: time.Now().Add(discoveryTTL)}
+		e.d.Features = slices.Clone(d.Features)
+		discoveries.Store(c.Base, e)
+	}
+	return d, err
+}
+
+func (c *Client) discover(ctx context.Context) (Discovery, error) {
 	var d Discovery
 	if err := c.do(ctx, http.MethodGet, c.Base+"/v2/", "", nil, "", &d); err != nil {
 		return d, err
@@ -468,33 +550,62 @@ func (c *Client) Locations(ctx context.Context, cdn, recipe string) (map[string]
 	return out.Blobs, err
 }
 
-// ReadRange reads length bytes of a pack starting at offset.
+// ReadRange reads length bytes of a pack starting at offset. A read the
+// network cut short, or the CDN answered with an error of its own, is tried
+// again, as do does for every other request.
 func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, length int64) ([]byte, error) {
 	if err := (pack.Location{Pack: packDigest, Offset: offset, Length: length}).Validate(); err != nil {
 		return nil, fmt.Errorf("registry: %w", err)
 	}
+	var last error
+	for attempt := range 4 {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("registry: %w", ctx.Err())
+			case <-time.After(c.backoff(attempt)):
+			}
+		}
+		data, retry, err := c.readRangeOnce(ctx, cdn, packDigest, offset, length)
+		if err == nil || !retry {
+			return data, err
+		}
+		// A context that ended during the attempt is reported by the wait
+		// above as what it is, not as the attempt's own failure.
+		last = err
+	}
+	return nil, last
+}
+
+// readRangeOnce is one attempt of ReadRange; retry says another may succeed.
+func (c *Client) readRangeOnce(ctx context.Context, cdn, packDigest string, offset, length int64) (data []byte, retry bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cdn+"/packs/"+strings.TrimPrefix(packDigest, "sha256:"), nil)
 	if err != nil {
-		return nil, fmt.Errorf("registry: %w", err)
+		return nil, false, fmt.Errorf("registry: %w", err)
 	}
 	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, offset+length-1))
 	req.Header.Set("User-Agent", c.UserAgent)
 	resp, err := c.http().Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("registry: read pack: %w", err)
+		return nil, true, fmt.Errorf("registry: read pack: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusPartialContent {
-		return nil, fmt.Errorf("registry: read pack %s: HTTP %d, want 206", packDigest, resp.StatusCode)
+		retry = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+		return nil, retry, fmt.Errorf("registry: read pack %s: HTTP %d, want 206", packDigest, resp.StatusCode)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, length+1))
+	data, err = io.ReadAll(io.LimitReader(resp.Body, length+1))
 	if err != nil {
-		return nil, fmt.Errorf("registry: read pack: %w", err)
+		return nil, true, fmt.Errorf("registry: read pack: %w", err)
+	}
+	if int64(len(data)) > length {
+		return nil, false, fmt.Errorf("registry: read pack %s: got more than the %d bytes asked for", packDigest, length)
 	}
 	if int64(len(data)) != length {
-		return nil, fmt.Errorf("registry: read pack %s: got %d bytes, want %d", packDigest, len(data), length)
+		// A connection closed early ends the body without an error.
+		return nil, true, fmt.Errorf("registry: read pack %s: got %d bytes, want %d", packDigest, len(data), length)
 	}
-	return data, nil
+	return data, false, nil
 }
 
 func jsonBody(v any) []byte {
@@ -515,7 +626,7 @@ func (c *Client) do(ctx context.Context, method, url, token string, body []byte,
 			select {
 			case <-ctx.Done():
 				return fmt.Errorf("registry: %w", ctx.Err())
-			case <-time.After(time.Duration(1<<attempt) * 250 * time.Millisecond):
+			case <-time.After(c.backoff(attempt)):
 			}
 		}
 		retry, err := c.once(ctx, method, url, token, body, contentType, out)

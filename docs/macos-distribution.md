@@ -19,10 +19,10 @@ immutable release inputs.
 The `release.yml` workflow builds a complete product candidate on explicit
 request. `build-macos` runs on the GitHub-hosted `macos-26` Apple Silicon
 runner and is required before candidate assembly. It installs ARM64 ELF
-binutils with Homebrew, Go 1.27.3 and Rust 1.97.0. The Desktop and Firecracker
+binutils with Homebrew, Go 1.27.4 and Rust 1.97.0. The Desktop and Firecracker
 commits are explicit immutable inputs recorded in the signed inventory.
-The default Firecracker revision is `6750fc374d4758a8181d75e5299e7137a110dd41`;
-validate the fork API before selecting a different revision. Native dependencies are built
+The Firecracker revision has no default: a release names the commit it ships,
+after that commit passed the fork's own validation. Native dependencies are built
 from the fork's SHA-256-locked sources and bundled with their licenses.
 
 The job builds the kernel, native tools and Firecracker, runs the Go tests and
@@ -169,8 +169,13 @@ without a timestamp. A Developer ID signature with a secure timestamp will
 differ between runs by design.
 
 `bin/tools/x86` is not rebuilt: no x86_64 guest cross toolchain is pinned. Its
-three files are copied from the signed release artifacts fetched by
-`scripts/fetch-x86-tools.go`, and the lock verifies their hashes.
+three files are copied from signed release artifacts, and the lock verifies their
+hashes. Locally `scripts/fetch-x86-tools.go` fetches them from the stable channel
+(pass the expected kernel version, or set `JERBOA_X86_KERNEL_VERSION` for
+`build-macos.sh`, to refuse any other). A release candidate instead stages
+`boot.img` and `kernel.img` of its own selected Linux toolset, the one it boots
+on QEMU/KVM and Firecracker and publishes, and checks the packaged bundle and app
+against it; the signed inventory records them as `macos_x86_tools`.
 
 The claim is bit-for-bit reproducibility on this pinned macOS ARM64 environment
 only. Other Macs, other Command Line Tools or SDK versions, and full Xcode are

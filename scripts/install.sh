@@ -20,23 +20,30 @@
 # Usage: sudo bash install.sh [--version latest|0.51.2|v0.51.2]
 # Piped: curl -fsSL https://jerboa.dev/install.sh | sudo bash -s -- --version 0.51.2
 #
+# Uninstall: sudo bash install.sh --uninstall [--keep-data]
+# removes everything this script installed, and all images, VMs, volumes,
+# credentials and settings unless --keep-data is given.
+#
 # Environment overrides:
 #   FIRECRACKER_VERSION   firecracker release tag       (default v1.17.0)
 #   FIRECRACKER_SHA256    sha256 of the firecracker archive; required when
 #                         FIRECRACKER_VERSION or FC_ARCH is not a default pin
 #   FC_ARCH               firecracker arch              (default x86_64)
 #   JERBOA_PORT           daemon loopback TCP port      (default 7890)
-#   HYPERVISOR            qemu or firecracker           (default firecracker)
+#   HYPERVISOR            auto, qemu or firecracker     (default auto: firecracker
+#                         where KVM is present, qemu otherwise)
 #   RELEASE_BASE          release origin (default https://releases.jerboa.dev)
 set -euo pipefail
 
 FIRECRACKER_VERSION="${FIRECRACKER_VERSION:-v1.17.0}"
 FC_ARCH="${FC_ARCH:-x86_64}"
 JERBOA_PORT="${JERBOA_PORT:-7890}"
-HYPERVISOR="${HYPERVISOR:-firecracker}"
+HYPERVISOR="${HYPERVISOR:-auto}"
 RELEASE_BASE="${RELEASE_BASE:-https://releases.jerboa.dev}"
 RELEASE_BASE="${RELEASE_BASE%/}"
 VERSION=latest
+UNINSTALL=0
+KEEP_DATA=0
 PUBLIC_KEY="RWQUeMEQrLXFcshAMUevjf6nlhsSB1PuZYt5dFhb0za9aypwSAUMorsH"
 # The release that publishes this script sets this to its manifest's
 # generation time: no older stable manifest is accepted.
@@ -86,14 +93,19 @@ record_fresh() {
 usage() {
 	cat <<'HELP'
 Usage: sudo bash install.sh [--version VERSION]
+       sudo bash install.sh --uninstall [--keep-data]
 
   --version VERSION  Install latest (default), 0.51.2 or v0.51.2.
+  --uninstall        Remove Jerboa: the daemon and its service, the binaries
+                     and all images, VMs, volumes, credentials and settings.
+  --keep-data        With --uninstall, keep the data and settings.
   -h, --help         Show this help without changing the system.
 
 Requires Debian/Ubuntu with systemd on x86_64 Linux, or macOS 26+ Apple Silicon.
 On macOS run without sudo; Homebrew supplies jq and minisign if missing.
 The signed native package uses Firecracker; sudo is requested for package installation.
-HYPERVISOR=qemu allows running without KVM (software emulation).
+Without KVM the installer sets up QEMU (software emulation, slower);
+HYPERVISOR=firecracker or HYPERVISOR=qemu forces one.
 HELP
 }
 
@@ -103,16 +115,20 @@ while [ "$#" -gt 0 ]; do
 			[ "$#" -ge 2 ] || die "--version requires a value"
 			VERSION="$2"; shift 2 ;;
 		--version=*) VERSION="${1#*=}"; shift ;;
+		--uninstall) UNINSTALL=1; shift ;;
+		--keep-data) KEEP_DATA=1; shift ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unknown argument: $1 (see --help)" ;;
 	esac
 done
+[ "${KEEP_DATA}" -eq 0 ] || [ "${UNINSTALL}" -eq 1 ] || die "--keep-data only applies to --uninstall"
+[ "${UNINSTALL}" -eq 0 ] || [ "${VERSION}" = latest ] || die "--uninstall does not take --version"
 if [ "${VERSION}" != latest ]; then
 	VERSION="v${VERSION#v}"
 	[[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid version: ${VERSION}"
 fi
 [[ "${RELEASE_BASE}" =~ ^https://[^[:space:]]+$ ]] || die "RELEASE_BASE must be an HTTPS origin"
-case "${HYPERVISOR}" in qemu|firecracker) ;; *) die "HYPERVISOR must be qemu or firecracker" ;; esac
+case "${HYPERVISOR}" in auto|qemu|firecracker) ;; *) die "HYPERVISOR must be auto, qemu or firecracker" ;; esac
 [[ "${JERBOA_PORT}" =~ ^[0-9]{1,5}$ ]] || die "JERBOA_PORT must be between 1 and 65535"
 JERBOA_PORT=$((10#${JERBOA_PORT}))
 [ "${JERBOA_PORT}" -ge 1 ] && [ "${JERBOA_PORT}" -le 65535 ] || die "JERBOA_PORT must be between 1 and 65535"
@@ -121,7 +137,8 @@ install_macos() {
 	[ "$(uname -m)" = arm64 ] || die "macOS requires Apple Silicon; run from a native ARM64 terminal (not Rosetta)"
 	macos_version="$(sw_vers -productVersion)"
 	[ "${macos_version%%.*}" -ge 26 ] || die "Firecracker requires macOS 26 or newer"
-	[ "${HYPERVISOR}" = firecracker ] || die "the macOS package installer supports HYPERVISOR=firecracker"
+	[ "${HYPERVISOR}" != qemu ] || die "the macOS package installer supports HYPERVISOR=firecracker"
+	HYPERVISOR=firecracker
 	[ "$(id -u)" -ne 0 ] || die "run the macOS installer without sudo; it requests elevation when installing the package"
 	for dependency in jq minisign; do
 		if ! command -v "${dependency}" >/dev/null 2>&1; then
@@ -176,11 +193,86 @@ install_macos() {
 	log "done. Jerboa ${VERSION} with native Firecracker is installed"
 	echo "    verify: /usr/local/bin/jerboa status"
 }
+# remove_user_data deletes one user's ~/.jerboa: images, volumes, snapshots,
+# registry credentials and settings.
+remove_user_data() {
+	local home="$1"
+	case "${home}" in
+		/?*) ;;
+		*) return 0 ;;
+	esac
+	[ ! -e "${home}/.jerboa" ] || { log "removing ${home}/.jerboa"; rm -rf "${home}/.jerboa"; }
+}
+
+uninstall_macos() {
+	[ "$(id -u)" -ne 0 ] || die "run the macOS uninstaller without sudo; it requests elevation when needed"
+	local desktop="/Applications/Jerboa Desktop.app" binary wrapper
+	if [ -d "${desktop}" ]; then
+		# Jerboa Desktop runs the same launchd service on the same ~/.jerboa.
+		log "Jerboa Desktop is installed: its engine and ~/.jerboa are left to it (uninstall it from its Settings)"
+		KEEP_DATA=1
+	else
+		log "stopping the daemon"
+		launchctl bootout "gui/$(id -u)/dev.jerboa.daemon" 2>/dev/null || true
+	fi
+	for binary in jerboa jerboad; do
+		wrapper="/usr/local/bin/${binary}"
+		# Only the wrappers this script wrote; Jerboa Desktop's and Homebrew's stay.
+		if [ -f "${wrapper}" ] && grep -q "exec /usr/local/libexec/jerboa/bin/${binary} " "${wrapper}"; then
+			sudo rm -f "${wrapper}"
+		fi
+	done
+	if [ -d /usr/local/libexec/jerboa ]; then
+		log "removing /usr/local/libexec/jerboa"
+		sudo rm -rf /usr/local/libexec/jerboa
+	fi
+	sudo pkgutil --forget dev.jerboa.firecracker >/dev/null 2>&1 || true
+	[ "${KEEP_DATA}" -eq 1 ] || remove_user_data "${HOME:-}"
+	log "done. Jerboa is uninstalled"
+}
+
+uninstall_linux() {
+	[ "$(id -u)" -eq 0 ] || die "run as root: sudo bash install.sh --uninstall"
+	if command -v systemctl >/dev/null 2>&1 && [ -e "${UNIT}" ]; then
+		log "stopping and removing jerboad.service"
+		# Stopping the daemon stops its VMs and removes its network devices.
+		systemctl disable --now jerboad.service 2>/dev/null || true
+		rm -f "${UNIT}"
+		systemctl daemon-reload || true
+	fi
+	log "removing binaries from ${PREFIX}"
+	rm -f "${PREFIX}/jerboa" "${PREFIX}/jerboad" "${PREFIX}/firecracker"
+	rm -f /etc/modules-load.d/jerboa-kvm.conf
+	if [ "${KEEP_DATA}" -eq 1 ]; then
+		log "keeping ${JERBOA_HOME}, ${ENV_DIR} and ~/.jerboa (--keep-data)"
+	else
+		log "removing ${JERBOA_HOME} and ${ENV_DIR}"
+		rm -rf "${JERBOA_HOME}" "${ENV_DIR}"
+		if id "${JERBOA_USER}" >/dev/null 2>&1; then
+			userdel "${JERBOA_USER}" 2>/dev/null || true
+		fi
+		if getent group "${JERBOA_USER}" >/dev/null 2>&1; then
+			groupdel "${JERBOA_USER}" 2>/dev/null || true
+		fi
+		# The CLI configuration of the user who ran sudo, as the installer wrote it.
+		remove_user_data "$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)"
+	fi
+	log "done. Jerboa is uninstalled"
+	echo "    The packages the installer added with apt (qemu, iptables, minisign…) are"
+	echo "    shared with the rest of the system and were left in place."
+}
+
 case "$(uname -s)" in
-	Darwin) install_macos; exit 0 ;;
+	Darwin)
+		if [ "${UNINSTALL}" -eq 1 ]; then uninstall_macos; else install_macos; fi
+		exit 0 ;;
 	Linux) ;;
 	*) die "supported platforms: Linux x86_64 and macOS Apple Silicon" ;;
 esac
+if [ "${UNINSTALL}" -eq 1 ]; then
+	uninstall_linux
+	exit 0
+fi
 
 [ "${FC_ARCH}" = x86_64 ] || die "only FC_ARCH=x86_64 is supported by the Linux daemon"
 [[ "${FIRECRACKER_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "invalid FIRECRACKER_VERSION"
@@ -191,6 +283,15 @@ esac
 command -v apt-get >/dev/null 2>&1 || die "this installer targets Debian/Ubuntu (apt-get not found)"
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
 [ -d /run/systemd/system ] || die "systemd must be running as the system manager"
+# Firecracker wherever the machine can run it; QEMU is the fallback.
+if [ "${HYPERVISOR}" = auto ]; then
+	if [ -e /dev/kvm ]; then
+		HYPERVISOR=firecracker
+	else
+		HYPERVISOR=qemu
+		log "/dev/kvm not present: installing with QEMU (software emulation, slower). Enable virtualization and reinstall to use Firecracker."
+	fi
+fi
 if [ "${HYPERVISOR}" = firecracker ] && [ ! -e /dev/kvm ]; then
 	die "/dev/kvm not present: enable virtualization or use HYPERVISOR=qemu"
 fi
@@ -381,6 +482,14 @@ systemctl daemon-reload
 systemctl enable jerboad.service
 systemctl restart jerboad.service
 systemctl is-active --quiet jerboad.service || die "jerboad failed to start; inspect journalctl -u jerboad"
+# systemd reports the service active as soon as it starts; the API listens
+# a moment later. Wait for it, so a script that runs jerboa next finds it.
+for _ in $(seq 60); do
+	(exec 3<>"/dev/tcp/127.0.0.1/${JERBOA_PORT}") 2>/dev/null && break
+	systemctl is-active --quiet jerboad.service || die "jerboad stopped while starting; inspect journalctl -u jerboad"
+	sleep 0.5
+done
+(exec 3<>"/dev/tcp/127.0.0.1/${JERBOA_PORT}") 2>/dev/null || die "jerboad does not listen on ${endpoint} after 30 seconds; inspect journalctl -u jerboad"
 record_fresh "${ENV_DIR}/release-state.json"
 
 # Point the invoking user's CLI at the daemon with the shared token. SUDO_USER

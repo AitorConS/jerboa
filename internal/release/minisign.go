@@ -57,62 +57,71 @@ func ParsePublicKey(s string) (PublicKey, error) {
 // the trusted comment, so neither the payload nor the trusted comment can be
 // swapped independently.
 func (pk PublicKey) Verify(message, sigFile []byte) error {
+	_, err := pk.VerifyComment(message, sigFile)
+	return err
+}
+
+// VerifyComment is Verify that also returns the authenticated trusted
+// comment. The same key signs several kinds of document (release manifests,
+// toolsets, the package index), distinguished by that comment, so a caller
+// that accepts only one kind checks it.
+func (pk PublicKey) VerifyComment(message, sigFile []byte) (string, error) {
 	if pk.key == nil {
-		return errors.New("release: no public key configured")
+		return "", errors.New("release: no public key configured")
 	}
 	lines := nonEmptyLines(string(sigFile))
 	if len(lines) < 4 {
-		return errors.New("release: malformed signature file (want 4 lines)")
+		return "", errors.New("release: malformed signature file (want 4 lines)")
 	}
 	// Line layout: [0] untrusted comment, [1] signature, [2] trusted comment,
 	// [3] global signature.
 	sigBin, err := base64.StdEncoding.DecodeString(lines[1])
 	if err != nil {
-		return fmt.Errorf("release: decode signature: %w", err)
+		return "", fmt.Errorf("release: decode signature: %w", err)
 	}
 	if len(sigBin) != sigLen {
-		return fmt.Errorf("release: signature length %d, want %d", len(sigBin), sigLen)
+		return "", fmt.Errorf("release: signature length %d, want %d", len(sigBin), sigLen)
 	}
 	alg := string(sigBin[0:2])
 	var keyID [8]byte
 	copy(keyID[:], sigBin[2:10])
 	if keyID != pk.keyID {
-		return errors.New("release: signature key id does not match public key")
+		return "", errors.New("release: signature key id does not match public key")
 	}
 	sig := sigBin[10:74]
 
 	switch alg {
 	case algLegacy:
 		if !ed25519.Verify(pk.key, message, sig) {
-			return errors.New("release: signature verification failed")
+			return "", errors.New("release: signature verification failed")
 		}
 	case algPrehashed:
-		return errors.New("release: prehashed signatures are not supported — " +
+		return "", errors.New("release: prehashed signatures are not supported — " +
 			"sign the manifest with legacy minisign (no -H flag)")
 	default:
-		return fmt.Errorf("release: unsupported signature algorithm %q", alg)
+		return "", fmt.Errorf("release: unsupported signature algorithm %q", alg)
 	}
 
 	// Global signature binds sig || trusted-comment text.
 	const tcPrefix = "trusted comment: "
 	if !strings.HasPrefix(lines[2], tcPrefix) {
-		return errors.New("release: missing trusted comment line")
+		return "", errors.New("release: missing trusted comment line")
 	}
 	tc := strings.TrimPrefix(lines[2], tcPrefix)
 	global, err := base64.StdEncoding.DecodeString(lines[3])
 	if err != nil {
-		return fmt.Errorf("release: decode global signature: %w", err)
+		return "", fmt.Errorf("release: decode global signature: %w", err)
 	}
 	if len(global) != ed25519.SignatureSize {
-		return fmt.Errorf("release: global signature length %d, want %d", len(global), ed25519.SignatureSize)
+		return "", fmt.Errorf("release: global signature length %d, want %d", len(global), ed25519.SignatureSize)
 	}
 	globalMsg := make([]byte, 0, len(sig)+len(tc))
 	globalMsg = append(globalMsg, sig...)
 	globalMsg = append(globalMsg, tc...)
 	if !ed25519.Verify(pk.key, globalMsg, global) {
-		return errors.New("release: global signature verification failed")
+		return "", errors.New("release: global signature verification failed")
 	}
-	return nil
+	return tc, nil
 }
 
 // nonEmptyLines splits s on newlines (CRLF-tolerant) and drops blank lines.

@@ -98,6 +98,55 @@ func TestReadRangeRefusesOutOfBoundsRanges(t *testing.T) {
 	require.ErrorContains(t, err, "invalid pack digest")
 }
 
+func TestReadRangeRetriesACutOrFailedRead(t *testing.T) {
+	p := "sha256:" + strings.Repeat("a", 64)
+	for name, first := range map[string]func(http.ResponseWriter){
+		"server error": func(w http.ResponseWriter) { w.WriteHeader(http.StatusBadGateway) },
+		"cut short": func(w http.ResponseWriter) {
+			// Promise four bytes, send two, and drop the connection.
+			w.Header().Set("Content-Length", "4")
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("ab"))
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = conn.Close()
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			requests := 0
+			var ranges []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				ranges = append(ranges, r.Header.Get("Range"))
+				if requests == 1 {
+					first(w)
+					return
+				}
+				w.WriteHeader(http.StatusPartialContent)
+				_, _ = w.Write([]byte("abcd"))
+			}))
+			defer srv.Close()
+			data, err := client.New(srv.URL).ReadRange(context.Background(), srv.URL, p, 8, 4)
+			require.NoError(t, err)
+			require.Equal(t, "abcd", string(data))
+			require.Equal(t, []string{"bytes=8-11", "bytes=8-11"}, ranges)
+		})
+	}
+}
+
+func TestReadRangeDoesNotRetryARefusal(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	_, err := client.New(srv.URL).ReadRange(context.Background(), srv.URL, "sha256:"+strings.Repeat("a", 64), 0, 4)
+	require.ErrorContains(t, err, "HTTP 404")
+	require.Equal(t, 1, requests)
+}
+
 func TestTokenScopesAndPATOptions(t *testing.T) {
 	var bodies []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,4 +174,43 @@ func TestTokenScopesAndPATOptions(t *testing.T) {
 		`/auth/token {"scopes":["repository:acme/web:push,delete"]}`,
 		`/auth/pats {"name":"ci","expires_in_days":30,"namespaces":["acme"],"delete":true}`,
 	}, bodies)
+}
+
+func TestDiscoverAsksTheRegistryOnceAWhile(t *testing.T) {
+	asked := 0
+	fail := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		if fail {
+			http.Error(w, `{"error":{"code":"INTERNAL","message":"down"}}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = io.WriteString(w, `{"api":1,"cdn":"https://cdn.example/","features":["index"]}`)
+	}))
+	defer srv.Close()
+	client.ForgetDiscoveries()
+	t.Cleanup(client.ForgetDiscoveries)
+	ctx := context.Background()
+	host := strings.TrimPrefix(srv.URL, "http://")
+
+	// A failure is not remembered.
+	_, err := client.New(host).Discover(ctx)
+	require.Error(t, err)
+	fail = false
+	first, err := client.New(host).Discover(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, asked)
+
+	// Another client of the same registry reuses the answer, and cannot change it.
+	first.Features[0] = "changed"
+	second, err := client.New(host).Discover(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, asked)
+	require.Equal(t, "https://cdn.example", second.CDN)
+	require.True(t, second.Supports(client.FeatureIndex))
+
+	client.ForgetDiscoveries()
+	_, err = client.New(host).Discover(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 3, asked)
 }

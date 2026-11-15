@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/config"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/spf13/cobra"
 )
@@ -129,8 +130,14 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	if hypervisor == "" {
 		hypervisor = cfg.Hypervisor
 	}
-	if hypervisor == "" {
-		hypervisor = "qemu"
+	if hypervisor == "" || hypervisor == hypervisorpkg.Auto {
+		// Firecracker wherever this Mac can run it: the VMM beside the
+		// daemon in a bundle, or the one JERBOA_FIRECRACKER_BIN names.
+		fc := "firecracker"
+		if env := os.Getenv("JERBOA_FIRECRACKER_BIN"); env != "" {
+			fc = env
+		}
+		hypervisor = hypervisorpkg.Default(fc, filepath.Dir(bin)).Name
 	}
 	hypervisorArgs, err := nativeHypervisorArgs(hypervisor, filepath.Dir(bin))
 	if err != nil {

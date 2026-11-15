@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/config"
 )
 
 // ErrNoDaemon reports that no running daemon was found to act on (e.g. by Stop).
@@ -129,7 +130,7 @@ func Stop(distro, user string) error {
 // LoadDaemonFile reads the token and endpoint persisted at path. A missing file
 // returns empty strings and a nil error.
 func LoadDaemonFile(path string) (token, endpoint string, err error) {
-	data, err := os.ReadFile(path)
+	data, err := config.ReadPrivateFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", "", nil
 	}
@@ -146,15 +147,12 @@ func LoadDaemonFile(path string) (token, endpoint string, err error) {
 // SaveDaemonFile persists the daemon's token and endpoint to path (mode 0600) so
 // every client run reaches the same daemon with the same secret.
 func SaveDaemonFile(path, token, endpoint string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("wslboot: create dir: %w", err)
-	}
 	out, err := json.MarshalIndent(daemonFile{Token: token, Endpoint: endpoint}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("wslboot: marshal daemon file: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		return fmt.Errorf("wslboot: write %s: %w", path, err)
+	if err := config.WritePrivateFile(path, out); err != nil {
+		return fmt.Errorf("wslboot: %w", err)
 	}
 	return nil
 }
@@ -365,7 +363,7 @@ type daemonFile struct {
 // a new random token (file mode 0600) if the file does not exist yet. The
 // client owns this secret and hands it to the daemon at launch.
 func LoadOrCreateToken(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := config.ReadPrivateFile(path)
 	switch {
 	case err == nil:
 		var f daemonFile
@@ -383,15 +381,12 @@ func LoadOrCreateToken(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", fmt.Errorf("wslboot: create dir: %w", err)
-	}
 	out, err := json.MarshalIndent(daemonFile{Token: token}, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("wslboot: marshal token: %w", err)
 	}
-	if err := os.WriteFile(path, out, 0o600); err != nil {
-		return "", fmt.Errorf("wslboot: write %s: %w", path, err)
+	if err := config.WritePrivateFile(path, out); err != nil {
+		return "", fmt.Errorf("wslboot: %w", err)
 	}
 	return token, nil
 }

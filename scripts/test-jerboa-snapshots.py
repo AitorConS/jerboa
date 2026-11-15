@@ -93,7 +93,7 @@ class RPC:
         self.sock.connect(path)
         self.file = self.sock.makefile('rwb')
         self.seq = 0
-        result = self.call('Auth.Hello', {'token': token, 'proto': 2})
+        result = self.call('Auth.Hello', {'token': token, 'proto': 3})
         assert result['status'] == 'ok', result
 
     def call(self, method, params):

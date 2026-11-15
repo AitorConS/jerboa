@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/client"
@@ -180,4 +181,23 @@ func TestRepoRmDeletesATagOrTheRepository(t *testing.T) {
 
 	_, err = run(host + "/acme/web@sha256:" + strings.Repeat("a", 64))
 	require.ErrorContains(t, err, "not a digest")
+}
+
+func TestPATCreateRejectsExpiryOutOfRange(t *testing.T) {
+	for _, days := range []string{"0", "-1", "366"} {
+		cmd := newRegistryCmd()
+		cmd.SetOut(io.Discard)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"pat", "create", "ci", "--expires-in", days})
+		err := cmd.Execute()
+		require.ErrorContains(t, err, "--expires-in must be from 1 to 365 days", days)
+	}
+}
+
+func TestPushTokenExpiredOnlyAfterTheTokenHadTimeToExpire(t *testing.T) {
+	expired := errors.New("client image push: registry: UNAUTHORIZED: push token is invalid or expired (HTTP 401)")
+	require.True(t, pushTokenExpired(expired, 16*time.Minute))
+	require.False(t, pushTokenExpired(expired, time.Second), "a token refused at once was never valid")
+	require.False(t, pushTokenExpired(errors.New("registry: DENIED: no (HTTP 403)"), time.Hour))
+	require.False(t, pushTokenExpired(nil, time.Hour))
 }

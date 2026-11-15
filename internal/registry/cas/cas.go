@@ -5,6 +5,7 @@
 package cas
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -14,9 +15,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/diskclone"
+	"github.com/AitorConS/jerboa/internal/durable"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 )
 
@@ -29,6 +32,11 @@ var ErrNotFound = errors.New("cas: blob not found")
 // Store keeps blobs as read-only files named by their hex digest.
 type Store struct {
 	root string
+	// mu orders Prune against the puts of this process: a put holds it
+	// shared while it decides a blob is already stored or moves a new one
+	// into place, and Prune holds it alone while it decides a blob is old
+	// and removes it, so a put never reports a blob that Prune is deleting.
+	mu sync.RWMutex
 }
 
 // New opens (creating if needed) a store rooted at root.
@@ -85,8 +93,7 @@ func (s *Store) PutFile(src string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cas: digest %s: %w", src, err)
 	}
-	if s.Has(digest) {
-		s.touch(digest)
+	if s.reuse(digest) {
 		return digest, nil
 	}
 	tmp, err := s.tempPath()
@@ -99,23 +106,33 @@ func (s *Store) PutFile(src string) (string, error) {
 	return s.commit(tmp, digest)
 }
 
-// PutBytes adds data and returns its digest.
+// PutBytes adds data and returns its digest. The blob is flushed to stable
+// storage before it takes its name, so a recipe survives a power cut whole or
+// not at all; a blob found under the digest with other bytes, as a power cut
+// or a failing disk leaves, is replaced.
 func (s *Store) PutBytes(data []byte) (string, error) {
 	sum := sha256.Sum256(data)
 	digest := Prefix + hex.EncodeToString(sum[:])
+	dst := filepath.Join(s.root, hex.EncodeToString(sum[:]))
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if s.Has(digest) {
-		s.touch(digest)
-		return digest, nil
+		if stored, err := os.ReadFile(dst); err == nil && bytes.Equal(stored, data) { //nolint:gosec // store-owned path
+			s.touch(digest)
+			return digest, nil
+		}
+		if err := removeBlob(dst); err != nil {
+			return "", fmt.Errorf("cas: replace damaged %s: %w", digest, err)
+		}
 	}
-	tmp, err := s.tempPath()
-	if err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		_ = os.Remove(tmp)
+	if err := durable.WriteFile(dst, data, 0o444); err != nil {
+		// Another writer storing the same bytes may have won the name.
+		if stored, rerr := os.ReadFile(dst); rerr == nil && bytes.Equal(stored, data) { //nolint:gosec // store-owned path
+			return digest, nil
+		}
 		return "", fmt.Errorf("cas: write: %w", err)
 	}
-	return s.commit(tmp, digest)
+	return digest, nil
 }
 
 // PutStream adds the blob write produces, which the caller expects to be
@@ -126,8 +143,7 @@ func (s *Store) PutStream(digest string, write func(io.Writer) error) (string, e
 	if _, err := s.Path(digest); err != nil {
 		return "", err
 	}
-	if s.Has(digest) {
-		s.touch(digest)
+	if s.reuse(digest) {
 		return digest, nil
 	}
 	tmp, err := s.tempPath()
@@ -189,9 +205,39 @@ func (s *Store) Verify(digest string) error {
 	return nil
 }
 
+// DiscardDamaged removes a stored blob whose bytes no longer match its
+// digest, so the next put stores it again instead of reusing the damaged
+// file. It reports whether it removed one; a blob that is intact or absent
+// is left alone. No put of the same blob runs between the check and the
+// removal.
+func (s *Store) DiscardDamaged(digest string) (bool, error) {
+	p, err := s.Path(digest)
+	if err != nil {
+		return false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.Has(digest) {
+		return false, nil
+	}
+	got, err := diskclone.HashFile(p)
+	if err != nil {
+		return false, fmt.Errorf("cas: hash %s: %w", digest, err)
+	}
+	if got == digest {
+		return false, nil
+	}
+	if err := removeBlob(p); err != nil {
+		return false, fmt.Errorf("cas: remove damaged %s: %w", digest, err)
+	}
+	return true, nil
+}
+
 // Prune removes blobs that keep rejects and that were added more than grace
 // ago. The grace period protects blobs a concurrent build or pull has stored
-// but not yet referenced from a recipe.
+// but not yet referenced from a recipe. It also removes the temporary files
+// of writes that a crash interrupted more than grace ago; those are not in
+// the list it returns.
 func (s *Store) Prune(keep func(digest string) bool, grace time.Duration) ([]string, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
@@ -201,19 +247,63 @@ func (s *Store) Prune(keep func(digest string) bool, grace time.Duration) ([]str
 	cutoff := time.Now().Add(-grace)
 	for _, e := range entries {
 		digest := Prefix + e.Name()
-		if _, ok := ParseDigest(digest); !ok || keep(digest) {
+		_, isBlob := ParseDigest(digest)
+		if !isBlob && !durable.IsTemp(e.Name()) {
 			continue
 		}
-		info, err := e.Info()
-		if err != nil || info.ModTime().After(cutoff) {
+		if isBlob && keep(digest) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(s.root, e.Name())); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return removed, fmt.Errorf("cas: remove %s: %w", digest, err)
+		gone, err := s.removeIfOld(filepath.Join(s.root, e.Name()), cutoff)
+		if err != nil {
+			return removed, fmt.Errorf("cas: remove %s: %w", e.Name(), err)
 		}
-		removed = append(removed, digest)
+		if gone && isBlob {
+			removed = append(removed, digest)
+		}
 	}
 	return removed, nil
+}
+
+// removeIfOld removes path unless it was written or reused after cutoff. It
+// looks at the file and removes it with no put in between.
+func (s *Store) removeIfOld(path string, cutoff time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	info, err := os.Lstat(path)
+	if err != nil || info.IsDir() || info.ModTime().After(cutoff) {
+		return false, nil //nolint:nilerr // a file that vanished or cannot be read is left for the next prune
+	}
+	if err := removeBlob(path); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// removeBlob deletes a file of the store; one already gone is not an error.
+func removeBlob(path string) error {
+	err := os.Remove(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		// Windows refuses to delete a read-only file.
+		_ = os.Chmod(path, 0o600) //nolint:gosec // store-owned path, about to be removed
+		err = os.Remove(path)
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err //nolint:wrapcheck // callers name the blob
+	}
+	return nil
+}
+
+// reuse reports whether the store already holds digest, marking it as
+// recently used when it does.
+func (s *Store) reuse(digest string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.Has(digest) {
+		return false
+	}
+	s.touch(digest)
+	return true
 }
 
 // touch marks a blob as recently used, restarting its prune grace period.
@@ -251,6 +341,8 @@ func (s *Store) commit(tmp, digest string) (string, error) {
 	// Touch so a blob reused by a new build is not pruned during its grace.
 	now := time.Now()
 	_ = os.Chtimes(tmp, now, now)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	if err := os.Rename(tmp, dst); err != nil {
 		if s.Has(digest) {
 			return digest, nil

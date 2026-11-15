@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"log"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -63,14 +64,20 @@ func newRunCmd(socketPath *string) *cobra.Command {
 				}
 			}
 
+			// The image is run by the name:tag given, so its own manifest
+			// supplies the run defaults; the digest that was verified is sent
+			// along and the daemon refuses to run any other disk. Running by
+			// the digest instead would take the defaults from the disk's
+			// shared manifest, which another tag of the same disk wrote.
+			expectedDigest := ""
 			if verify != "off" && imageRef != "" {
 				digest, err := imageDigest(cmd, socketPath, imageRef)
 				if err != nil {
 					return err
 				}
-				imageRef = digest
+				expectedDigest = digest
 			}
-			if err := verifyImageSignature(cmd, socketPath, imageRef, verify); err != nil {
+			if err := verifyImageSignature(cmd, socketPath, imageRef, expectedDigest, verify); err != nil {
 				return err
 			}
 
@@ -158,18 +165,20 @@ func newRunCmd(socketPath *string) *cobra.Command {
 			}
 
 			params := api.RunParams{
-				EmulateX86:  emulateX86,
-				Image:       imageRef,
-				ImagePath:   imagePath,
-				Memory:      reqMemory,
-				CPUs:        reqCPUs,
-				NetworkName: network,
-				Env:         env,
-				Name:        name,
-				AutoRemove:  rm,
-				Volumes:     volSpecs,
-				Attach:      !detach,
-				IPAddress:   ipAddr,
+				EmulateX86: emulateX86,
+				Image:      imageRef,
+				ImagePath:  imagePath,
+				// Set by --verify: the disk whose signature was checked.
+				ExpectedDigest: expectedDigest,
+				Memory:         reqMemory,
+				CPUs:           reqCPUs,
+				NetworkName:    network,
+				Env:            env,
+				Name:           name,
+				AutoRemove:     rm,
+				Volumes:        volSpecs,
+				Attach:         !detach,
+				IPAddress:      ipAddr,
 				// A user-supplied --ip is a static address the daemon must reserve
 				// and conflict-check. Dynamic addresses are allocated by the daemon.
 				StaticIP:   cmd.Flags().Changed("ip"),
@@ -426,9 +435,9 @@ func parseHealthCheck(s string) (api.HealthCheckSpec, error) { return api.ParseH
 func parseRestartPolicy(s string) (api.RestartSpec, error)   { return api.ParseRestartPolicy(s) }
 
 // verifyImageSignature checks the signature of a daemon-stored image (by its
-// disk digest) according to the policy. File-path runs (empty imageRef) have no
-// store reference to verify.
-func verifyImageSignature(cmd *cobra.Command, endpoint *string, imageRef, verifyFlag string) error {
+// disk digest, looked up when digest is empty) according to the policy.
+// File-path runs (empty imageRef) have no store reference to verify.
+func verifyImageSignature(cmd *cobra.Command, endpoint *string, imageRef, digest, verifyFlag string) error {
 	policy, err := signing.ParseVerifyPolicy(verifyFlag)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)
@@ -443,13 +452,15 @@ func verifyImageSignature(cmd *cobra.Command, endpoint *string, imageRef, verify
 		return nil
 	}
 
-	digest, err := imageDigest(cmd, endpoint, imageRef)
-	if err != nil {
-		if policy == signing.VerifyEnforce {
-			return fmt.Errorf("run: verify: %w", err)
+	if digest == "" {
+		digest, err = imageDigest(cmd, endpoint, imageRef)
+		if err != nil {
+			if policy == signing.VerifyEnforce {
+				return fmt.Errorf("run: verify: %w", err)
+			}
+			log.Printf("warning: verify: %v", err)
+			return nil
 		}
-		log.Printf("warning: verify: %v", err)
-		return nil
 	}
 
 	sigStore, err := signing.NewStore(signingStorePath())
@@ -509,6 +520,9 @@ func parseByteSize(flag, s string) (int64, error) {
 	}
 	if val <= 0 {
 		return 0, fmt.Errorf("%s: must be positive, got %d", flag, val)
+	}
+	if val > math.MaxInt64/multiplier {
+		return 0, fmt.Errorf("%s: %s is too large", flag, s)
 	}
 	return val * multiplier, nil
 }

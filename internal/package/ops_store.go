@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/naming"
 )
@@ -331,7 +332,7 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 					"entry", hdr.Name, "linkname", hdr.Linkname)
 				continue
 			}
-			if runtime.GOOS == "linux" {
+			if symlinksSupported {
 				if err := os.Symlink(hdr.Linkname, target); err != nil {
 					slog.Warn("ops extract: symlink failed", "target", target, "error", err)
 				}
@@ -345,9 +346,19 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 			pendingLinks = append(pendingLinks, pendingLink{path: target, resolved: linkTarget, linkname: hdr.Linkname})
 		}
 	}
-	materializeLinks(pendingLinks)
+	// Each copy counts against the same budget as the regular files: a few
+	// bytes of link entries pointing at one large file would otherwise expand
+	// to (links x file size) on disk.
+	if err := materializeLinks(pendingLinks, budget); err != nil {
+		return fmt.Errorf("ops extract %s: %w", name, err)
+	}
 	return nil
 }
+
+// symlinksSupported reports whether Extract creates tar symlinks as links;
+// elsewhere they are materialized as copies (see materializeLinks). A var so
+// tests on Linux can take the copying path.
+var symlinksSupported = runtime.GOOS == "linux"
 
 // discardExtracted removes everything Extract wrote into an ops package
 // directory, keeping the downloaded archive and the store metadata so a retry
@@ -555,8 +566,10 @@ type pendingLink struct {
 // materializeLinks turns recorded symlinks into real file copies. Soname links
 // such as libpq.so.5 -> libpq.so.5.11 must survive as regular files because the
 // image build only includes regular files on disk. Multiple passes resolve
-// chains where a link points at another link.
-func materializeLinks(links []pendingLink) {
+// chains where a link points at another link. The copies may write at most
+// budget bytes in all; past that it fails, as extraction of a regular file
+// does, and the caller discards the tree.
+func materializeLinks(links []pendingLink, budget int64) error {
 	remaining := links
 	for len(remaining) > 0 {
 		var next []pendingLink
@@ -570,7 +583,15 @@ func materializeLinks(links []pendingLink) {
 				next = append(next, l) // target not materialized yet; retry next pass
 				continue
 			}
-			if err := copyFileContents(src, l.path, info.Mode().Perm()); err != nil {
+			if info.Size() > budget {
+				return fmt.Errorf("archive expands beyond %d bytes once its symlinks are copied", maxExtractedBytes)
+			}
+			n, err := copyFileContents(src, l.path, info.Mode().Perm(), budget)
+			budget -= n
+			if errors.Is(err, errExtractBudget) {
+				return fmt.Errorf("archive expands beyond %d bytes once its symlinks are copied", maxExtractedBytes)
+			}
+			if err != nil {
 				slog.Warn("ops extract: link materialize failed", "target", l.path, "error", err)
 			}
 			progressed = true
@@ -593,34 +614,44 @@ func materializeLinks(links []pendingLink) {
 				slog.Warn("ops extract: skipped symlinks whose targets are outside the runtime tree (harmless — typically docs/assets)",
 					"count", len(next), "examples", strings.Join(examples, ", "))
 			}
-			return
+			return nil
 		}
 		remaining = next
 	}
+	return nil
 }
 
-// copyFileContents copies src to dst with the given permission bits.
-func copyFileContents(src, dst string, perm fs.FileMode) error {
+// errExtractBudget reports a copy that would write more than its limit.
+var errExtractBudget = errors.New("extraction size budget exceeded")
+
+// copyFileContents copies src to dst with the given permission bits, writing
+// at most limit bytes, and returns how many it wrote. A source longer than
+// limit (it grew since it was measured) fails with errExtractBudget.
+func copyFileContents(src, dst string, perm fs.FileMode, limit int64) (int64, error) {
 	in, err := os.Open(src)
 	if err != nil {
-		return fmt.Errorf("open link target %s: %w", src, err)
+		return 0, fmt.Errorf("open link target %s: %w", src, err)
 	}
 	defer func() { _ = in.Close() }()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return fmt.Errorf("mkdir for %s: %w", dst, err)
+		return 0, fmt.Errorf("mkdir for %s: %w", dst, err)
 	}
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm|0o200)
 	if err != nil {
-		return fmt.Errorf("create %s: %w", dst, err)
+		return 0, fmt.Errorf("create %s: %w", dst, err)
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	n, err := io.Copy(out, io.LimitReader(in, limit+1))
+	if err != nil {
 		_ = out.Close()
-		return fmt.Errorf("copy to %s: %w", dst, err)
+		return n, fmt.Errorf("copy to %s: %w", dst, err)
 	}
 	if err := out.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", dst, err)
+		return n, fmt.Errorf("close %s: %w", dst, err)
 	}
-	return nil
+	if n > limit {
+		return n, errExtractBudget
+	}
+	return n, nil
 }
 
 // File represents a file to be included in a unikernel image, with both
@@ -693,7 +724,7 @@ func (s *OpsStore) ExtractedFiles(namespace, name, version string) ([]File, erro
 		}
 		// The store's own digest index (and its temporary files) is not
 		// package content.
-		if rel == digestsFile || strings.HasPrefix(rel, ".digests-") {
+		if rel == digestsFile || strings.HasPrefix(rel, ".digests-") || durable.IsTemp(rel) {
 			return nil
 		}
 
@@ -790,26 +821,12 @@ func (s *OpsStore) Remove(namespace, name, version string) error {
 	return nil
 }
 
-// SaveManifest caches the ops manifest locally. It writes a temporary file and
-// renames it, so a concurrent build never reads a half-written manifest.
+// SaveManifest caches the ops manifest locally. The write is atomic and
+// flushed, so neither a concurrent build nor a power cut ever finds a
+// half-written manifest.
 func (s *OpsStore) SaveManifest(data []byte) error {
 	path := filepath.Join(s.root, "manifest.json")
-	tmp, err := os.CreateTemp(s.root, ".manifest-*.json")
-	if err != nil {
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return fmt.Errorf("ops save manifest %s: %w", path, err)
-	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
+	if err := durable.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("ops save manifest %s: %w", path, err)
 	}
 	return nil

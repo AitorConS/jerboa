@@ -1,0 +1,48 @@
+jerboa version v0.59.0
+jerboad version v0.59.0
+Firecracker 1.18.0-dev / experimental Darwin HVF backend
+Firecracker/HVF: 4 CPU, bind=omitted, HTTP/UDP, environment, volume count=1, port collision and guest exit OK
+Firecracker/HVF: 1 CPU, bind=127.0.0.1:, HTTP/UDP, environment, volume count=2, port collision and guest exit OK
+Firecracker/HVF: 1 CPU, bind=0.0.0.0:, HTTP/UDP, environment, volume count=3, port collision and guest exit OK
+Daemon recovery, failed-guest restart and forced stop OK
+PASS: two HVF VMs, static IP, service DNS, unpublished health, TCP/UDP, collisions, cross-network IP/DNS isolation, default-denied egress/DNS
+PASS: daemon SIGKILL/restart reconnects same VMs, probes and ports; teardown
+PASS: dotted alias wins over colliding service, qualified names resolve to exact IP
+PASS: Compose IPAM, dependencies, service/alias DNS, teardown and port reuse (HTTP fixture, not PostgreSQL)
+PASS: Compose implicit default network and service DNS
+PASS: explicit TCP/UDP host gateway and DNS permissions; controlled servers see zero requests when denied
+{
+  "ok": true,
+  "vm": "stats-vm",
+  "cpu_peak_api_pct": 405.09649284903077,
+  "cpu_peak_ps_pct": 402.8,
+  "ram_api": 258342912,
+  "ram_ps": 258342912
+}
+PASS setup_two_networks_three_vms: true
+PASS cli_create_resumes_guest_without_reboot: true
+PASS list_inspect_identity_mac_ip_aliases_ports: true
+PASS private_store_permissions_and_sidecar_without_paths: true
+PASS create_rejects_duplicate_invalid_name_and_slirp: true
+PASS create_rejects_volume_vm: true
+PASS count_quota_without_leftovers: true
+PASS restore_rejects_running_foreign_missing: true
+PASS restore_rejects_tampered_hash_and_permissions: true
+PASS restore_port_collision_rolls_back_without_orphans: true
+PASS restore_alias_collision_rejected: true
+PASS restore_rejects_removed_or_changed_network: true
+PASS rpc_restore_same_id_ip_no_reboot_ram_and_disk_state: true
+PASS restored_http_udp_tcp_dns_aliases_and_cross_network_denial: true
+PASS restored_health_and_stats: {"source": "darwin-libproc-tree", "mem_bytes": 94879744}
+PASS concurrent_restores_exactly_one_wins: ["6e520e1f8f74", "snapshot restore 6e520e1f8f74: vm is running; restore is in place and ", "snapshot restore 6e520e1f8f74: vm is running; restore is in place and "]
+PASS stop_during_create_refused_while_capturing: {"create": "ok", "stop_busy_rejections": 77, "stop_succeeded_after": false}
+PASS snapshot_rm_and_vm_rm_during_restore_refused: {"snapshot_rm_in_use_rejections": 1, "vm_rm_rejections": ["firecracker remove 6e520e1f8f74: vm is running, must be stop"]}
+PASS kill_during_restore: {"restore": "6e520e1f8f74", "kill": ["firecracker kill 6e520e1f8f74: vm lifecycle operation in pro"]}
+PASS daemon_sigkill_during_restore_recovers: {"supervisor-started": {"phase_killed": "supervisor-started", "journal_after": [], "staging_after": [], "state_after_recovery": "stopped"}, "loading": {"phase_killed": "loading", "journal_after": [], "staging_after": [], "state_after_recovery": "stopped"}, "resuming": {"phase_killed": "resuming", "journal_after": [], "staging_after": [], "state_after_recovery": "stopped"}}
+PASS daemon_sigkill_during_create_resumes_and_cleans_staging: {"phase_killed": "capturing", "journal_after": [], "staging_after": [], "published": false}
+PASS restored_vm_adopted_after_daemon_sigkill_and_stoppable: true
+PASS start_vs_restore_exactly_one_incarnation: {"restore": "firecracker get 6e520e1f8f74: vm \"6e520e1f8f74\" not found", "start": "1f13865d8cae"}
+PASS start_is_normal_boot_and_snapshot_not_retargetable: true
+PASS byte_quota_rejects_before_pausing: true
+PASS teardown_no_orphan_processes: true
+artifacts: /private/var/folders/ym/jn08psh92mz2dv1nj3mqwmqc0000gn/T/tmp.o9rdiJAqJX/snapshots/run-zzvl3b5t

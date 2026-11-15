@@ -167,6 +167,15 @@ Graceful stop by default. Idempotent: stopping a VM that is already stopped
 (for example a program that ran to completion and exited on its own) is a no-op
 that succeeds, matching `docker stop`.
 
+A graceful stop asks the guest to power down. Nanos sends `SIGTERM` to the
+program, waits up to 30 seconds for it to exit, and syncs its filesystems,
+including volumes, before powering off. The request reaches the guest as a
+power button press under QEMU and Firecracker on macOS, and over the VM's
+vsock device under Firecracker on Linux, where the daemon kills the VMM if the
+guest has not powered off within 40 seconds. A Linux Firecracker guest kernel
+without the vsock power-down handler cannot take the request; its VMM is
+terminated at once, without a guest-side sync.
+
 Flag:
 
 - `--force`: immediate kill
@@ -210,6 +219,8 @@ Key flags:
 | `--sbom <file>` | Also write the image's CycloneDX SBOM to `<file>`. Every build stores one with the image; `jerboa images sbom <ref>` prints it |
 | `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
+| `--allow-unsandboxed` | Honor `[build] sandbox = false` from `unikernel.toml`. Without it a project that sets it fails to build |
+| `--allow-build-network` | Honor `[build] network = true` from `unikernel.toml`. Without it a project that sets it (and has `[build] run` commands) fails to build |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
 `-f/--file`. Relevant `[build]` keys:
@@ -226,8 +237,8 @@ Key flags:
 | `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through. Node builds package `node_modules` (the production dependencies the driver installs); other languages ignore it by default, and `.unignore` can exclude it explicitly. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 | `install_scripts` | `true` lets `npm` run dependencies' install scripts (`preinstall`, `install`, `postinstall`) on the build machine. Off by default: `npm` runs with `--ignore-scripts` |
-| `sandbox` | `false` runs build steps directly on the build machine instead of confined (see below). Default `true` |
-| `network` | `true` lets `[build] run` commands reach the network. Off by default; `npm`, `pip`, `cargo` and `go build` always may, to fetch dependencies |
+| `sandbox` | `false` asks to run build steps directly on the build machine instead of confined (see below). Default `true`. Takes effect only with `--allow-unsandboxed` |
+| `network` | `true` asks to let `[build] run` commands reach the network. Off by default; `npm`, `pip`, `cargo` and `go build` always may, to fetch dependencies. Takes effect only with `--allow-build-network` |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from
 package files; the program is executed from its real in-image path, so binaries
@@ -285,7 +296,24 @@ Build driver behavior to know:
   `[build] run` commands have no network unless `[build] network = true`;
   the language tools keep it to fetch dependencies. A step that writes
   elsewhere (for example straight to `/tmp`) fails: write under `TMPDIR` or
-  the project, or set `[build] sandbox = false`. Without `bwrap` (install
+  the project, or set `[build] sandbox = false`. Confined steps cannot
+  change the project's `unikernel.toml` or `.unignore`; a build whose steps
+  changed or created one anyway (on Linux, a file that did not exist yet
+  cannot be made read-only) fails, and a file they created is removed.
+  Nor can they connect to the host services known
+  to act for whoever asks: the D-Bus session and system buses, the systemd
+  user manager, Docker, Podman, containerd, BuildKit, libvirt, LXD/Incus
+  and snapd, X11, tmux and screen, and the GnuPG agent, at their usual
+  socket paths (`DBUS_*_BUS_ADDRESS`, `DOCKER_HOST` and `CONTAINER_HOST`
+  are removed from their environment). On macOS they cannot send Apple
+  events. The SSH agent stays reachable, for dependencies fetched over SSH;
+  other local sockets do too.
+- `unikernel.toml` comes with the project, as do the commands the sandbox
+  confines, so it cannot switch the confinement off on its own:
+  `[build] sandbox = false` needs `--allow-unsandboxed` and
+  `[build] network = true` needs `--allow-build-network` on the command
+  line, or the build fails before running anything and names the flag.
+  Every build prints how its steps run. Without `bwrap` (install
   the `bubblewrap` package) or `sandbox-exec`, and on Windows, steps run
   directly with a private `TMPDIR`, and the build warns.
 - The build context leaves out common credential files by default: `.env`,
@@ -340,9 +368,13 @@ Resolve the image through the daemon and sign its disk digest with the default E
 ### `jerboa verify <image>`
 
 Resolve the image through the daemon, hash its actual disk contents, and verify the
-signature against that digest. `run --verify enforce` pins the verified digest;
-each hypervisor verifies the bytes while writing its private boot copy and starts
-the VM only if the digest matches. Signatures made before the `jerboa-ed25519-v1`
+signature against that digest. `run --verify enforce` pins the verified digest:
+the VM runs the named tag, with that tag's own defaults, and the daemon refuses
+it if the tag no longer names the verified disk; each hypervisor verifies the
+bytes while writing its private boot copy and starts the VM only if the digest
+matches. A digest reference (`run sha256:…`) takes its defaults from the first
+image stored with that disk; a later tag of the same disk (another repository's
+recipe for it, say) does not change them. Signatures made before the `jerboa-ed25519-v1`
 format are refused; run `jerboa sign <image>` again to replace them.
 
 ---
@@ -361,7 +393,7 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 | `logout [registry]` | Forget the stored credential |
 | `tag <image> <target>` | Give a stored image another name, e.g. the reference to push it as |
 | `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to. `push --index <target> <image>…` tags an image index of images already pushed, one per platform. A trusted publisher's push (GitHub Actions, with the job's OIDC token) is signed with Sigstore (provenance and SBOM attestations); `--sign=false` skips it (v0.57.0 and later) |
-| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store; for a tag published for several platforms, this host's, or `--platform linux/amd64\|linux/arm64`. Signed images are kept only if their signatures verify against `--identity <owner/repo[/workflow[@ref]]>`, the rule of `~/.jerboa/policy.json` for the namespace (always one for `jerboa/`), the signer remembered for the repository, or the workflow the registry recorded; the first verified pull remembers the signer, and later pulls refuse another one or an unsigned image. `--verify` also refuses unsigned images (v0.57.0 and later) |
+| `pull <[registry/]namespace/repository[:tag\|@digest]>` | Pull an image into the daemon's store; for a tag published for several platforms, this host's, or `--platform linux/amd64\|linux/arm64`. Signed images are pulled only if their signatures verify, which is checked before anything is downloaded, against `--identity <owner/repo[/workflow[@ref]]>`, the rule of `~/.jerboa/policy.json` for the namespace (always one for `jerboa/`), the signer remembered for the repository, or the workflow the registry recorded; the first verified pull remembers the signer, and later pulls refuse another one or an unsigned image. `--verify` also refuses unsigned images (v0.57.0 and later) |
 | `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host; `create` takes `--expires-in <days>`, `--namespace` and `--delete`) |
 | `registry verify <ref>` | Check an image's signatures as a pull does, without pulling or remembering anything, and show its attestations (`--identity`, `--platform` for a tag of several platforms; v0.57.0 and later) |
 | `registry signers` | List the signers pulls remember per repository (`~/.jerboa/signers.json`); `registry signers forget <repo>` forgets one, for a publisher that changed on purpose (v0.57.0 and later) |
@@ -394,7 +426,7 @@ Subcommands:
 | `pkg create <name>[:version] <binary>` | Create a local package |
 | `pkg from-docker <name>[:version] <image>` | Extract a binary and libraries from a Docker image |
 | `pkg push <name>:<version> <index-url>` | Push a local package to a remote index |
-| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` runs in the background) |
+| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` runs in the background; `--raw` keeps terminal control sequences in the console output) |
 
 Supported package sources (`--source`, default `ops`):
 
@@ -604,9 +636,13 @@ Current behavior to know:
 - `compose down` stops **and removes** the stack's service VMs (no stopped
   remnants left behind), and removes the networks it created
 - `compose down --volumes` additionally removes volumes created by that stack
-- each compose file has its own state, identified by its canonical path
+- each compose file has its own state, identified by its canonical path and
+  kept under `~/.jerboa/compose`; a state file found next to the compose file is
+  used only if it passes the checks in [compose.md](compose.md)
 - partial deployments retain state for cleanup; repeated `compose down` is safe
 - `compose logs` is snapshot-only; there is no follow mode today
+- `compose logs` removes terminal control sequences from guest output, as
+  `jerboa logs` does; `--raw` prints it unfiltered
 - a service `health_check` uses the same grammar as `run --health-check`:
   `tcp:PORT` or `http:PORT:/path` (e.g. `"tcp:8080"`, `"http:8080:/healthz"`)
 
@@ -631,6 +667,64 @@ These manage the cached toolchain (`mkfs`, `boot.img`, `kernel.img`) independent
 
 ---
 
+## Maintenance Commands
+
+### `jerboa doctor`
+
+Checks that this machine, the daemon and everything the daemon stores are in order, and says what to do about each problem. It changes nothing and exits non-zero when it finds a problem (warnings and information do not fail it), so it can run in scripts.
+
+```text
+[ ok ] cli             jerboa v0.60.0 on linux/amd64
+[ ok ] daemon          running v0.60.0
+[ ok ] hypervisor      firecracker (this host can run it)
+[warn] disk space      only 3.1GB free of 250.0GB in /var/lib/jerboa
+                       -> jerboa system df shows what takes the space; jerboa system prune frees it
+[FAIL] images          image web:latest is corrupt: its disk no longer matches its digest
+                       -> jerboa rmi web:latest, then build or pull it again
+```
+
+What it looks at: the CLI's config and credentials files, hardware virtualization, whether the daemon answers and runs the same version as the CLI, the hypervisor in use, free disk space, and the consistency of images, VMs, volumes, networks and snapshots (names that point at nothing, VMs whose image or volume is gone, records that cannot be read, leftovers of interrupted operations).
+
+| Flag | Meaning |
+|---|---|
+| `--deep` | Also re-reads every image disk and compares it with its digest. Finds silent corruption; reads every image, so it takes as long as that takes. |
+| `--output json` | `{"ok": bool, "findings": [{check, severity, message, hint}]}`. Severities are `ok`, `info`, `warning` and `error`. |
+
+When the daemon is not reachable, `doctor` still runs the local checks and reports the daemon as the problem, with the command that starts it on this platform.
+
+### `jerboa system df`
+
+Shows the disk space the daemon's data takes, by kind, and how much of it nothing uses.
+
+```text
+TYPE          TOTAL  ACTIVE  SIZE     RECLAIMABLE
+Images        12     3       4.1GB    2.6GB (63%)
+VMs           4      2       310.0MB  0B
+Volumes       3      2       1.2GB    80.0MB (6%)
+Build cache   418    260     900.0MB  310.0MB (34%)
+Kernel tools  6      6       96.0MB   0B
+```
+
+Sizes are what the files occupy on disk: a 10 GB volume holding 80 MB counts as 80 MB. Images are counted per stored disk, so two tags of the same build are one. An image counts as active while any VM, running or stopped, was created from it.
+
+### `jerboa system prune`
+
+Removes what nothing refers to any more: images left without a name by a rebuild, names whose disk is gone, boot disks of VMs that no longer exist, build cache no image needs, and what interrupted operations left behind (after an hour, so a pull or import still running is never touched).
+
+Nothing you can still name is removed unless you ask for it:
+
+| Flag | Also removes |
+|---|---|
+| `--vms` | every stopped VM |
+| `-a`, `--all` | every image that no VM uses |
+| `--volumes` | every volume that no VM mounts. **Their data is lost.** |
+| `--dry-run` | nothing: prints what would be removed |
+| `-y`, `--yes` | skips the confirmation |
+
+The command prints the exact list and asks before removing anything. `--dry-run` runs the same selection as the real command, so its list is what would go. With `--vms`, images and volumes that only stopped VMs were using become removable in the same run.
+
+---
+
 ## Version Command
 
 ### `jerboa version`
@@ -648,7 +742,19 @@ Add `--channel beta` to query the beta channel instead of stable.
 
 The command group currently exposes only one writable key:
 
-- `hypervisor`: `qemu` or `firecracker`
+- `hypervisor`: `auto`, `qemu` or `firecracker`
+
+Without a choice (`auto`, the default) the daemon runs Firecracker wherever
+the host can and QEMU otherwise, and logs which and why when it starts:
+
+| Host | Firecracker is used when |
+|---|---|
+| Linux, and Windows inside the WSL2 distro | `/dev/kvm` opens, a `firecracker` binary is found, and the daemon is root or has `CAP_NET_ADMIN` |
+| macOS | Apple Silicon, macOS 26 or newer, and the bundled `firecracker` is present |
+
+QEMU remains for hosts without KVM and for x86 emulation on Apple Silicon; set
+`hypervisor` to `qemu` for those. A config file that already names a
+hypervisor keeps it.
 
 The config file supports more fields than the CLI subcommand currently edits. The underlying schema in `~/.jerboa/config.toml` also includes:
 
@@ -694,7 +800,7 @@ Flags:
 
 - `--rootfs <tarball>` — use a local rootfs instead of downloading the release
 - `--keep-data` — preserve images, VMs, networks and volumes across the reimport
-- `--hypervisor <qemu|firecracker>` — hypervisor to run after restart
+- `--hypervisor <auto|qemu|firecracker>` — hypervisor to run after restart
 
 ### `jerboa daemon uninstall`
 ### `jerboa daemon start`
@@ -705,7 +811,7 @@ Flags:
 
 Daemon start/restart flag:
 
-- `--hypervisor qemu|firecracker`
+- `--hypervisor auto|qemu|firecracker`
 
 `jerboa daemon logs` flag:
 
@@ -726,7 +832,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--auth-token` | Deprecated: a token on the command line is visible to other local users in `ps`. Use `--auth-token-file` or `JERBOA_AUTH_TOKEN` |
 | `--insecure` | Allow serving a TCP endpoint without an auth token (unsafe). A TCP endpoint with no token is rejected at startup otherwise; a Unix socket needs no token (it is restricted to the owning user with `0600` permissions) |
 | `--qemu` | QEMU binary path (default `qemu-system-x86_64`) |
-| `--hypervisor` | `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`) |
+| `--hypervisor` | `auto`, `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`; default `auto`: Firecracker where the host can run it, QEMU otherwise) |
 | `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
 | `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
 | `--fc-metrics-dir` | Linux only: write each Firecracker VM's device metrics (per-drive bytes, operations, flushes, latency) as JSON lines to `fc-<id>-metrics.json` in this directory, for storage profiling |
@@ -760,6 +866,7 @@ Root commands currently exposed by the built CLI:
 - `config`
 - `daemon` (Windows only)
 - `dns`
+- `doctor`
 - `exec`
 - `images`
 - `init`
@@ -782,6 +889,7 @@ Root commands currently exposed by the built CLI:
 - `stats`
 - `status`
 - `stop`
+- `system`
 - `tag`
 - `verify`
 - `version`

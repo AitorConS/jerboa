@@ -36,6 +36,30 @@ static inline int memcmp_8(const void *a, const void *b, bytes len)
     return 0;
 }
 
+#if defined(__x86_64__)
+/* String instructions move whole cache lines per step on every x86-64 CPU,
+   whatever the mutual alignment of the buffers; the word loops below need a
+   shift and an OR per word when source and destination are not aligned alike. */
+#define MEMOPS_STRING_MIN 64
+
+static inline void memcpy_string(void *dst, const void *src, bytes len)
+{
+    bytes words = len >> 3;
+    bytes tail = len & 7;
+    __asm__ volatile("rep movsq" : "+D"(dst), "+S"(src), "+c"(words) : : "memory");
+    __asm__ volatile("rep movsb" : "+D"(dst), "+S"(src), "+c"(tail) : : "memory");
+}
+
+static inline void memset_string(void *dst, u8 b, bytes len)
+{
+    unsigned long word = b * 0x0101010101010101ul;
+    bytes words = len >> 3;
+    bytes tail = len & 7;
+    __asm__ volatile("rep stosq" : "+D"(dst), "+c"(words) : "a"(word) : "memory");
+    __asm__ volatile("rep stosb" : "+D"(dst), "+c"(tail) : "a"(word) : "memory");
+}
+#endif
+
 void runtime_memcpy(void *a, const void *b, bytes len)
 {
     unsigned int src_cnt, dest_cnt;
@@ -45,6 +69,14 @@ void runtime_memcpy(void *a, const void *b, bytes len)
     unsigned long long_word1;
     unsigned long long_word2;
 
+#if defined(__x86_64__)
+    /* a forward copy is safe unless the destination starts inside the source */
+    if (len >= MEMOPS_STRING_MIN &&
+        ((unsigned long)a <= (unsigned long)b || (unsigned long)a - (unsigned long)b >= len)) {
+        memcpy_string(a, b, len);
+        return;
+    }
+#endif
     if ((unsigned long)a < (unsigned long)b) {
         if (len < sizeof(long)) {
             memcpyf_8(a, b, len);
@@ -126,6 +158,12 @@ void runtime_memcpy(void *a, const void *b, bytes len)
 
 void runtime_memset(u8 *a, u8 b, bytes len)
 {
+#if defined(__x86_64__)
+    if (len >= MEMOPS_STRING_MIN) {
+        memset_string(a, b, len);
+        return;
+    }
+#endif
     if (len < sizeof(long)) {
         memset_8(a, b, len);
         return;

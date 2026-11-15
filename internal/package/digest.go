@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 // Package files are hashed by several checks in one build (package
@@ -144,19 +146,9 @@ func SaveDigests(dir string, files []File, verifiedArchive string) error {
 	if err != nil {
 		return fmt.Errorf("save digests: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, ".digests-*")
-	if err != nil {
-		return fmt.Errorf("save digests: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("save digests: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("save digests: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), filepath.Join(dir, digestsFile)); err != nil {
+	// The index is a cache that is rebuilt when unreadable and rewritten by
+	// every build, so it is replaced atomically but not flushed.
+	if err := durable.WriteFileNoSync(filepath.Join(dir, digestsFile), data, 0o600); err != nil {
 		return fmt.Errorf("save digests: %w", err)
 	}
 	return nil
@@ -170,6 +162,7 @@ func archiveVerified(dir, sha string, files []File) bool {
 		return false
 	}
 	n := 0
+	seen := make(map[string]bool, len(files))
 	for _, f := range files {
 		if f.IsDir {
 			continue
@@ -185,7 +178,18 @@ func archiveVerified(dir, sha string, files []File) bool {
 		if id, err := statID(f.HostPath); err != nil || id != rec.ID {
 			return false
 		}
+		seen[filepath.ToSlash(rel)] = true
 		n++
+	}
+	// A file that was there when the extraction was verified and is gone
+	// now makes the extraction incomplete, however intact the rest is.
+	for rel := range idx.Files {
+		if seen[rel] {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+			return false
+		}
 	}
 	return n > 0
 }

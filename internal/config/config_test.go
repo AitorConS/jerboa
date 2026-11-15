@@ -90,7 +90,7 @@ func TestResolveToken_Empty(t *testing.T) {
 func TestLoad_MissingFileReturnsDefaults(t *testing.T) {
 	cfg, err := Load(filepath.Join(t.TempDir(), "does-not-exist.toml"))
 	require.NoError(t, err)
-	require.Equal(t, "qemu", cfg.Hypervisor)
+	require.Empty(t, cfg.Hypervisor, "no choice: the daemon picks what the host can run")
 }
 
 func TestLoad_InvalidTOML(t *testing.T) {
@@ -138,12 +138,24 @@ func TestSaveTightensExistingPermissions(t *testing.T) {
 	require.Equal(t, os.FileMode(0o600), fileInfo.Mode().Perm())
 }
 
-func TestLoad_EmptyHypervisorDefaultsToQEMU(t *testing.T) {
+func TestLoad_UnsetOrAutoHypervisorLeavesTheChoiceToTheDaemon(t *testing.T) {
+	for _, content := range []string{"hypervisor = \"\"\n", "hypervisor = \"auto\"\n", "hypervisor = \"Auto\"\n", ""} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		cfg, err := Load(path)
+		require.NoError(t, err)
+		require.Empty(t, cfg.Hypervisor, content)
+		// Saving a config for another reason must not turn that into a choice.
+		require.NoError(t, Save(path, cfg))
+		saved, err := os.ReadFile(path)
+		require.NoError(t, err)
+		require.NotContains(t, string(saved), "hypervisor", content)
+	}
 	path := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(path, []byte("hypervisor = \"\"\n"), 0o600))
+	require.NoError(t, os.WriteFile(path, []byte("hypervisor = \"qemu\"\n"), 0o600))
 	cfg, err := Load(path)
 	require.NoError(t, err)
-	require.Equal(t, "qemu", cfg.Hypervisor)
+	require.Equal(t, "qemu", cfg.Hypervisor, "an explicit choice is kept")
 }
 
 // TestSave_OmitsEmptyDaemonTable is the F-002 regression: setting an unrelated

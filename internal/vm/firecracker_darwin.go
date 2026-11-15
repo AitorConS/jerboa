@@ -29,7 +29,7 @@ const (
 func platformInitFC(m *FirecrackerManager) {
 	m.vmSockPath = nativeFCSocketPath
 	m.shutdownAPI = nativeFCShutdown
-	m.guestShutdown = true // the native VMM raises a power button Nanos handles
+	m.shutdownPath = nativeFCSocketPath // the native VMM raises a power button Nanos handles
 	m.shutdownGrace = nativeFCStopGracePeriod
 }
 
@@ -121,6 +121,33 @@ func nativeFCShutdown(socket string) error {
 		return fmt.Errorf("HVF shutdown: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// preflightFCConfig asks the VMM about a config before starting it only when
+// the answer changes what is started: a config that offers a direct VM-to-VM
+// link to a VMM too old to declare its capabilities, until that VMM has
+// accepted or refused one. Every other config is checked by the VMM as it
+// starts, and explainFCStart reports a rejection.
+func (m *FirecrackerManager) preflightFCConfig(ctx context.Context, cfg Config, path string) error {
+	if cfg.nativeControl == "" || m.fcCapabilities().declared || m.noPeerControl.Load() || m.peerControlOK.Load() {
+		return nil
+	}
+	if err := m.checkFCConfig(ctx, path); err != nil {
+		return err
+	}
+	if !m.noPeerControl.Load() {
+		m.peerControlOK.Store(true)
+	}
+	return nil
+}
+
+// explainFCStart is the error of a VMM that did not start the guest: the
+// VMM's own account of its config when it rejects it, otherwise err.
+func (m *FirecrackerManager) explainFCStart(ctx context.Context, path string, err error) error {
+	if cerr := m.checkFCConfig(context.WithoutCancel(ctx), path); cerr != nil {
+		return cerr
+	}
+	return err
 }
 
 func (m *FirecrackerManager) checkFCConfig(ctx context.Context, path string) error {
@@ -224,7 +251,7 @@ func awaitFCReachable(ctx context.Context, socket string) error {
 	}
 }
 
-func awaitFCReady(ctx context.Context, socket string) error {
+func awaitFCReady(ctx context.Context, socket string, exit *fcExit) error {
 	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 	client, transport := nativeFCStateClient(socket)
@@ -246,6 +273,10 @@ func awaitFCReady(ctx context.Context, socket string) error {
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("waiting for HVF boot: %w", ctx.Err())
+		case <-exit.done:
+			// The supervisor outlives its guest: gone this early, it never
+			// started one, and nothing will answer on the socket.
+			return fmt.Errorf("HVF boot failed: the VMM exited before the guest started: %v", exit.err)
 		case <-ticker.C:
 		}
 	}
@@ -253,9 +284,7 @@ func awaitFCReady(ctx context.Context, socket string) error {
 
 // The API supervisor outlives the guest. Reap it after guest exit and retain
 // the guest's result so RestartOnFailure does not use the supervisor's status.
-func waitFCProcess(cmd *exec.Cmd, socket string) error {
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+func waitFCProcess(cmd *exec.Cmd, exit *fcExit, socket string) error {
 	// Short-lived guests often exit just after readiness. Observe their result
 	// promptly, then return to the normal cadence for long-running services.
 	started := time.Now()
@@ -268,11 +297,11 @@ func waitFCProcess(cmd *exec.Cmd, socket string) error {
 	terminal := false
 	for {
 		select {
-		case err := <-done:
+		case <-exit.done:
 			if terminal {
 				return guestErr
 			}
-			return err
+			return exit.err
 		case <-ticker.C:
 			if fastPolling && time.Since(started) >= 250*time.Millisecond {
 				ticker.Reset(50 * time.Millisecond)
@@ -342,11 +371,13 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if cfg.CPUs > 4 || mem < 64 || mem > 2048 {
-		return fmt.Errorf("Firecracker/HVF requires 1-4 CPUs and 64-2048 MiB RAM")
+	// The bounds are the VMM's, not Jerboa's: a newer VMM raises them alone.
+	caps := m.fcCapabilities()
+	if cfg.CPUs > caps.MaxVCPUs || mem < caps.MemoryMiB[0] || mem > caps.MemoryMiB[1] {
+		return fmt.Errorf("Firecracker/HVF requires 1-%d CPUs and %d-%d MiB RAM", caps.MaxVCPUs, caps.MemoryMiB[0], caps.MemoryMiB[1])
 	}
-	if len(cfg.Volumes) > 3 {
-		return fmt.Errorf("Firecracker/HVF supports at most three volumes plus the root disk")
+	if len(cfg.Volumes) > caps.MaxDrives-1 {
+		return fmt.Errorf("Firecracker/HVF supports at most %d volumes plus the root disk", caps.MaxDrives-1)
 	}
 	if cfg.NetworkName == "" && cfg.IPAddress != "" {
 		return fmt.Errorf("custom guest IP requires a named network")
@@ -404,6 +435,8 @@ type nativeFCNetwork struct {
 	SocketPath string            `json:"socket_path,omitempty"`
 	GuestMAC   string            `json:"guest_mac"`
 	Forwards   []nativeFCForward `json:"forwards,omitempty"`
+	// MTU of a slirp link; 0 leaves the VMM's 1500.
+	MTU int `json:"mtu,omitempty"`
 }
 
 type nativeFCConfig struct {
@@ -467,6 +500,15 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		}
 	}
 	netcfg := "10.0.2.15/24,10.0.2.2"
+	// A VM outside a Jerboa network talks through slirp, in the VMM. With
+	// the networks' MTU instead of 1500 a published port carries two to four
+	// times as much. The VMM and the guest must agree, so it is used only
+	// with a VMM that declares it; the guest reads it from here.
+	slirpMTU := 0
+	if cfg.NetworkName == "" && m.fcCapabilities().SlirpMTUMax >= netconst.NativeMTU {
+		slirpMTU = netconst.NativeMTU
+		netcfg += "," + strconv.Itoa(slirpMTU)
+	}
 	if cfg.NetworkName != "" {
 		mask := cfg.SubnetMask
 		if mask == "" {
@@ -486,7 +528,7 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		}
 		c.Firmware["opt/uni/"+name] = p
 	}
-	n := nativeFCNetwork{IfaceID: "eth0", Backend: "slirp", GuestMAC: guestMACFromIP("10.0.2.15")}
+	n := nativeFCNetwork{IfaceID: "eth0", Backend: "slirp", GuestMAC: guestMACFromIP("10.0.2.15"), MTU: slirpMTU}
 	c.Security = map[string]json.RawMessage{"version": json.RawMessage("1")}
 	if len(m.fcSecurity) > 0 {
 		if err := json.Unmarshal(m.fcSecurity, &c.Security); err != nil {
@@ -494,6 +536,15 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 		}
 		if c.Security == nil {
 			return "", fmt.Errorf("HVF security must be a JSON object")
+		}
+	} else if m.fcCapabilities().PublicEgress {
+		// No policy was supplied: the guest reaches public addresses through
+		// the daemon's resolver. A VMM that predates the rule keeps every
+		// outbound connection closed.
+		p := m.defaultFCPolicy()
+		c.Security["public_egress"] = json.RawMessage("true")
+		if p.DNS != nil {
+			c.Security["dns"], _ = json.Marshal(p.DNS)
 		}
 	}
 	var listeners []nativeFCListener

@@ -140,6 +140,31 @@ func TestResolverDottedAliasPriority(t *testing.T) {
 	}
 }
 
+func TestResolverQualifiesNamesWithTheComposeFilesNetworkName(t *testing.T) {
+	const scoped = "compose-0123456789ab-app"
+	r := NewResolver(&fakeSource{vms: []*vm.VM{
+		{ID: "pg", State: vm.StateRunning, Cfg: vm.Config{Name: "postgres", NetworkName: scoped, IPAddress: "172.25.0.2", NetworkAliases: []string{"database.app"}}},
+		{ID: "db", State: vm.StateRunning, Cfg: vm.Config{Name: "database", NetworkName: scoped, IPAddress: "172.25.0.3"}},
+		{ID: "plain", State: vm.StateRunning, Cfg: vm.Config{Name: "postgres", NetworkName: "app", IPAddress: "172.26.0.2"}},
+	}})
+	for name, id := range map[string]string{
+		"postgres.app": "pg", "database.app": "pg", "database.app.app": "pg", "database": "db",
+		"postgres." + scoped: "pg",
+	} {
+		rec, err := r.Resolve(name, scoped)
+		require.NoError(t, err, name)
+		require.Equal(t, id, rec.VMID, name)
+	}
+	// The short name reaches only the caller's own network.
+	rec, err := r.Resolve("postgres.app", "app")
+	require.NoError(t, err)
+	require.Equal(t, "plain", rec.VMID)
+	_, err = r.Resolve("database.app", "app")
+	require.Error(t, err)
+	_, err = r.Resolve("postgres.other", scoped)
+	require.Error(t, err)
+}
+
 func TestResolverScopesStartingGuestWithoutPublishingIt(t *testing.T) {
 	for _, state := range []vm.State{vm.StateCreated, vm.StateStarting, vm.StateRunning, vm.StateStopped} {
 		t.Run(string(state), func(t *testing.T) {
@@ -161,4 +186,26 @@ func TestResolverScopesStartingGuestWithoutPublishingIt(t *testing.T) {
 			require.Empty(t, r.NetworkForIP("10.200.0.3"))
 		})
 	}
+}
+
+// DNS names have no letter case: names, IDs, aliases and the network suffix
+// match in any case, while the network filter stays exact.
+func TestResolverIgnoresLetterCase(t *testing.T) {
+	source := &fakeSource{vms: []*vm.VM{
+		{ID: "pg", State: vm.StateRunning, Cfg: vm.Config{Name: "Postgres", NetworkName: "app", IPAddress: "10.100.0.2", NetworkAliases: []string{"DB.internal"}}},
+		{ID: "w1", State: vm.StateRunning, Cfg: vm.Config{Name: "web-1", NetworkName: "app", IPAddress: "10.100.0.3", NetworkAliases: []string{"web"}}},
+		{ID: "w2", State: vm.StateRunning, Cfg: vm.Config{Name: "web-2", NetworkName: "app", IPAddress: "10.100.0.4", NetworkAliases: []string{"WEB"}}},
+		{ID: "x", State: vm.StateRunning, Cfg: vm.Config{Name: "other", NetworkName: "App", IPAddress: "10.200.0.2"}},
+	}}
+	r := NewResolver(source)
+	for _, name := range []string{"postgres", "POSTGRES", "PG", "db.INTERNAL", "postgres.APP", "pOsTgReS.app"} {
+		rec, err := r.Resolve(name, "app")
+		require.NoError(t, err, name)
+		require.Equal(t, "pg", rec.VMID, name)
+	}
+	recs, err := r.ResolveAll("Web", "app")
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	_, err = r.ResolveAll("other", "app")
+	require.Error(t, err, "a network differing in case is another network")
 }

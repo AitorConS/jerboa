@@ -102,6 +102,36 @@ static void test_memcmp(long *buf, unsigned long buf_size)
     test_assert(runtime_memcmp(buf, buf, buf_size * sizeof(long)) == 0);
 }
 
+/* Every length around the point where the copy and fill routines switch
+   strategy, at every alignment, with the bytes on both sides checked. */
+static void test_lengths(u8 *src, u8 *dst)
+{
+    for (int i = 0; i < 256; i++) {
+        src[i] = i + 1;
+    }
+    for (int len = 0; len <= 200; len++) {
+        for (int soff = 0; soff < 8; soff++) {
+            for (int doff = 0; doff < 8; doff++) {
+                runtime_memset(dst, 0x55, 256);
+                runtime_memcpy(dst + 8 + doff, src + soff, len);
+                for (int i = 0; i < 256; i++) {
+                    int k = i - 8 - doff;
+                    u8 want = (k >= 0 && k < len) ? src[soff + k] : 0x55;
+                    test_assert(dst[i] == want);
+                }
+            }
+        }
+        for (int doff = 0; doff < 8; doff++) {
+            runtime_memset(dst, 0x55, 256);
+            runtime_memset(dst + 8 + doff, 0xEE, len);
+            for (int i = 0; i < 256; i++) {
+                int k = i - 8 - doff;
+                test_assert(dst[i] == ((k >= 0 && k < len) ? 0xEE : 0x55));
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[])
 {
     long buf1[MEM_BUF_SIZE], buf2[MEM_BUF_SIZE];
@@ -112,5 +142,6 @@ int main(int argc, char *argv[])
     test_memcpy_overlap(buf1, MEM_BUF_SIZE);
     test_memset(buf1, MEM_BUF_SIZE);
     test_memcmp(buf1, MEM_BUF_SIZE);
+    test_lengths((u8 *)buf1, (u8 *)buf2);
     return 0;
 }

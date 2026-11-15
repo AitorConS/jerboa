@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -93,5 +94,45 @@ func TestFreshnessIsTrackedPerOrigin(t *testing.T) {
 	_, err := a.FetchManifest(context.Background(), ChannelStable)
 	require.NoError(t, err)
 	_, err = b.FetchManifest(context.Background(), ChannelStable)
+	require.NoError(t, err)
+}
+
+func TestFetchManifestHonorsTheBuildFloorWithoutState(t *testing.T) {
+	c, current := rotatingOrigin(t, newTestSigner(t))
+	c.StateDir = ""
+	c.MinGenerated = "2026-10-20T10:00:00Z"
+	ctx := context.Background()
+
+	current.Store(stableManifest("2026-10-19T10:00:00Z"))
+	_, err := c.FetchManifest(ctx, ChannelStable)
+	require.ErrorContains(t, err, "older than this build allows")
+	current.Store(stableManifest(""))
+	_, err = c.FetchManifest(ctx, ChannelStable)
+	require.ErrorContains(t, err, "no generation time")
+	current.Store(stableManifest("2026-10-20T10:00:00Z"))
+	_, err = c.FetchManifest(ctx, ChannelStable)
+	require.NoError(t, err)
+}
+
+func TestFetchManifestHonorsTheInstallerRecord(t *testing.T) {
+	c, current := rotatingOrigin(t, newTestSigner(t))
+	seed := filepath.Join(t.TempDir(), "release-state.json")
+	require.NoError(t, os.WriteFile(seed, []byte(fmt.Sprintf(`{%q:"2026-10-25T00:00:00Z"}`, c.base()+" stable")), 0o600))
+	c.SeedStateFiles = []string{seed, filepath.Join(t.TempDir(), "missing.json")}
+	c.MinGenerated = "2026-10-01T00:00:00Z"
+
+	current.Store(stableManifest("2026-10-24T00:00:00Z"))
+	_, err := c.FetchManifest(context.Background(), ChannelStable)
+	require.ErrorContains(t, err, "installer's record")
+	current.Store(stableManifest("2026-10-26T00:00:00Z"))
+	_, err = c.FetchManifest(context.Background(), ChannelStable)
+	require.NoError(t, err)
+}
+
+func TestDefaultCarriesTheBuildFloor(t *testing.T) {
+	c, err := Default()
+	require.NoError(t, err)
+	require.Equal(t, MinStableGenerated, c.MinGenerated)
+	_, err = time.Parse(time.RFC3339, MinStableGenerated)
 	require.NoError(t, err)
 }

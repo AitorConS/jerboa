@@ -97,3 +97,28 @@ func SafeJoin(root, name string) (string, error) {
 	}
 	return joined, nil
 }
+
+// composeScopeLen is the length of the hex project digest in a scoped name.
+const composeScopeLen = 12
+
+// ComposeScopedPrefix is what a compose project puts before the names of the
+// networks and volumes it owns; digest identifies the project.
+func ComposeScopedPrefix(digest []byte) string {
+	return fmt.Sprintf("compose-%x-", digest[:composeScopeLen/2])
+}
+
+// ComposeLocalName is the name a compose file gives a resource whose scoped
+// name is given: "app" for "compose-0123456789ab-app". Any other name is
+// returned unchanged.
+func ComposeLocalName(scoped string) string {
+	rest, ok := strings.CutPrefix(scoped, "compose-")
+	if !ok || len(rest) <= composeScopeLen+1 || rest[composeScopeLen] != '-' {
+		return scoped
+	}
+	for _, c := range rest[:composeScopeLen] {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return scoped
+		}
+	}
+	return rest[composeScopeLen+1:]
+}

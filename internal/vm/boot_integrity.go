@@ -138,6 +138,34 @@ func SweepBootDisks(dir string, s Store) {
 	}
 }
 
+// OrphanBootDisks returns the private boot disks in dir that belong to no VM
+// that is running or about to: what SweepBootDisks would remove. dir must be a
+// directory dedicated to boot disks.
+func OrphanBootDisks(dir string, vms []*VM) []string {
+	if dir == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	live := make(map[string]bool)
+	for _, v := range vms {
+		switch v.GetState() {
+		case StateStopped, StateCreated:
+		default:
+			live[v.ID] = true
+		}
+	}
+	var out []string
+	for _, e := range entries {
+		if id, ok := bootDiskVMID(e.Name()); ok && !e.IsDir() && !live[id] {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out
+}
+
 // bootDiskVMID extracts the VM ID from a private boot disk file name.
 func bootDiskVMID(name string) (string, bool) {
 	for _, affix := range [][2]string{{qemuBootDiskPrefix, qemuBootDiskSuffix}, {fcRootfsPrefix, fcRootfsSuffix}} {

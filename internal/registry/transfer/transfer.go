@@ -4,6 +4,7 @@ package transfer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"github.com/AitorConS/jerboa/internal/registry/pack"
 	"github.com/AitorConS/jerboa/internal/registry/recipe"
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sync/errgroup"
+	"golang.org/x/sync/semaphore"
 )
 
 // MkfsFor returns the mkfs binary of a toolset version.
@@ -35,6 +38,59 @@ type PushOptions struct {
 	Mkfs   MkfsFor
 	// WorkDir holds the dry-run disk; empty means the system temp dir.
 	WorkDir string
+}
+
+// pushInFlightBytes bounds the compressed bytes being uploaded at once: three
+// packs of the usual size (pack.TargetSize), or one large pack alone.
+const pushInFlightBytes = 3 * pack.TargetSize
+
+// packUploader uploads packs concurrently. What is in flight is bounded in
+// bytes, not in requests: a registry verifies each pack in memory, so a pack
+// near the size limit travels alone.
+type packUploader struct {
+	group    *errgroup.Group
+	ctx      context.Context
+	cancel   context.CancelFunc
+	inFlight *semaphore.Weighted
+	put      func(context.Context, pack.Pack) error
+}
+
+func newPackUploader(ctx context.Context, put func(context.Context, pack.Pack) error) *packUploader {
+	ctx, cancel := context.WithCancel(ctx)
+	group, ctx := errgroup.WithContext(ctx)
+	return &packUploader{group: group, ctx: ctx, cancel: cancel, inFlight: semaphore.NewWeighted(pushInFlightBytes), put: put}
+}
+
+// Add starts uploading packs, waiting while the bytes in flight are at their
+// bound. It returns the error of an upload that already failed.
+func (u *packUploader) Add(packs []pack.Pack) error {
+	for _, p := range packs {
+		weight := min(int64(len(p.Data)), pushInFlightBytes)
+		if err := u.inFlight.Acquire(u.ctx, weight); err != nil {
+			return u.Abandon(fmt.Errorf("push: %w", err))
+		}
+		u.group.Go(func() error {
+			defer u.inFlight.Release(weight)
+			return u.put(u.ctx, p)
+		})
+	}
+	return nil
+}
+
+// Wait returns once every pack is uploaded, or the first error.
+func (u *packUploader) Wait() error {
+	defer u.cancel()
+	return u.group.Wait() //nolint:wrapcheck // put wraps its own errors
+}
+
+// Abandon stops the uploads and returns the error of one that failed, which
+// explains a canceled push better than err; otherwise err.
+func (u *packUploader) Abandon(err error) error {
+	u.cancel()
+	if uerr := u.group.Wait(); uerr != nil && !errors.Is(uerr, context.Canceled) {
+		return uerr //nolint:wrapcheck // put wraps its own errors
+	}
+	return err
 }
 
 // PushResult reports what a push uploaded.
@@ -78,34 +134,41 @@ func Push(ctx context.Context, o PushOptions) (PushResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("push: %w", err)
 	}
-	upload := func(packs []pack.Pack) error {
-		for _, p := range packs {
-			if err := o.Client.PutPack(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, p); err != nil {
-				return fmt.Errorf("push: pack: %w", err)
-			}
-			res.PacksUploaded++
-			res.BlobsUploaded += len(p.Entries)
-			res.BytesUploaded += int64(len(p.Data))
+	// Packs upload while the next ones are compressed.
+	var mu sync.Mutex
+	up := newPackUploader(ctx, func(ctx context.Context, p pack.Pack) error {
+		if err := o.Client.PutPack(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, p); err != nil {
+			return fmt.Errorf("push: pack: %w", err)
 		}
+		mu.Lock()
+		defer mu.Unlock()
+		res.PacksUploaded++
+		res.BlobsUploaded += len(p.Entries)
+		res.BytesUploaded += int64(len(p.Data))
 		return nil
-	}
+	})
 	for _, d := range missing {
 		// Upload only this recipe's blobs, whatever the registry asks for.
 		if _, ok := sizes[d]; !ok {
-			return res, fmt.Errorf("push: the registry asked for blob %s, which this image does not use", d)
+			return res, up.Abandon(fmt.Errorf("push: the registry asked for blob %s, which this image does not use", d))
 		}
 		path, err := o.Store.Path(d)
 		if err != nil {
-			return res, fmt.Errorf("push: %w", err)
+			return res, up.Abandon(fmt.Errorf("push: %w", err))
 		}
 		if err := w.Add(pack.Blob{Digest: d, Size: sizes[d], Open: func() (io.ReadCloser, error) { return os.Open(path) }}); err != nil {
-			return res, fmt.Errorf("push: %w", err)
+			return res, up.Abandon(fmt.Errorf("push: %w", err))
 		}
-		if err := upload(w.Take()); err != nil {
+		if err := up.Add(w.Take()); err != nil {
 			return res, err
 		}
 	}
-	if err := upload(w.Close()); err != nil {
+	if err := up.Add(w.Close()); err != nil {
+		return res, err
+	}
+	// The recipe and the tag follow every pack: a tag never names a recipe
+	// whose blobs are still on their way.
+	if err := up.Wait(); err != nil {
 		return res, err
 	}
 	if err := o.Client.PutRecipe(ctx, o.Token, o.Ref.Namespace, o.Ref.Repository, o.Recipe, data); err != nil {
@@ -145,6 +208,15 @@ type PullOptions struct {
 	Parallel int
 	// NoCount skips reporting the pull to the hub's counter.
 	NoCount bool
+	// Recipe is the recipe to pull under Ref's tag, when the caller already
+	// resolved the tag, and checked the recipe's signatures: the pull fetches
+	// that recipe, which the repository must hold, whatever the tag names
+	// by now.
+	Recipe string
+	// Have reports whether the caller already holds, intact, the assembled
+	// disk with this digest. When it does and the store lacks none of the
+	// recipe's blobs, the pull assembles nothing (PullResult.AlreadyCached).
+	Have func(diskDigest string) bool
 	// Platform is the platform to pull, such as linux/arm64: a tag naming an
 	// image index pulls that platform's recipe, and any other pull fails
 	// unless its recipe is for it. Empty means the host's, for an index.
@@ -155,13 +227,18 @@ type PullOptions struct {
 type PullResult struct {
 	Recipe string `json:"recipe"`
 	// Index is the image index the recipe was chosen from, if the tag named one.
-	Index         string         `json:"index,omitempty"`
-	Parsed        *recipe.Recipe `json:"-"`
-	Blobs         int            `json:"blobs"`
-	BlobsFetched  int            `json:"blobs_fetched"`
-	Requests      int            `json:"requests"`
-	BytesFetched  int64          `json:"bytes_fetched"`
-	AlreadyCached bool           `json:"-"`
+	Index        string         `json:"index,omitempty"`
+	Parsed       *recipe.Recipe `json:"-"`
+	Blobs        int            `json:"blobs"`
+	BlobsFetched int            `json:"blobs_fetched"`
+	Requests     int            `json:"requests"`
+	BytesFetched int64          `json:"bytes_fetched"`
+	// AlreadyCached says nothing was fetched or assembled, and nothing is
+	// at PullOptions.Out: the caller holds the recipe's disk
+	// (PullOptions.Have) and the store every blob.
+	AlreadyCached bool `json:"-"`
+	// Repaired counts blobs the store held damaged, fetched again by this pull.
+	Repaired int `json:"repaired,omitempty"`
 }
 
 // maxRangeGap merges frames of a pack closer than this into one request.
@@ -176,6 +253,12 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		return res, fmt.Errorf("pull: %w", err)
 	}
 	digest := o.Ref.Digest
+	if o.Recipe != "" {
+		if digest != "" && digest != o.Recipe {
+			return res, fmt.Errorf("pull: %s does not name recipe %s", o.Ref, o.Recipe)
+		}
+		digest = o.Recipe
+	}
 	if digest == "" {
 		tag, err := o.Client.Tag(ctx, d.CDN, o.Ref.Namespace, o.Ref.Repository, o.Ref.Tag)
 		if err != nil {
@@ -215,6 +298,13 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 			missing = append(missing, b.Digest)
 		}
 	}
+	// Nothing to fetch and the disk already assembled: the recipe, checked
+	// against its digest, names that disk, so building it again would only
+	// reproduce it. Not counted as a pull either: nothing was downloaded.
+	if len(missing) == 0 && o.Have != nil && o.Have(r.DiskDigest) {
+		res.AlreadyCached = true
+		return res, nil
+	}
 	if len(missing) > 0 {
 		if err := fetch(ctx, o, d.CDN, digest, missing, sizes, &res); err != nil {
 			return res, err
@@ -225,7 +315,25 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		return res, fmt.Errorf("pull: mkfs %s: %w", r.Toolset.Version, err)
 	}
 	if err := recipe.Assemble(ctx, r, o.Store, mkfs, o.Out); err != nil {
-		return res, fmt.Errorf("pull: %w", err)
+		// The blobs just downloaded were checked as they arrived; the ones
+		// already in the store were only looked up by name. If one of those
+		// went bad on disk, fetch it again and assemble once more, instead
+		// of failing every pull of the image until the file is removed by
+		// hand. Checking them costs a hash of each, so it is done only here.
+		damaged, derr := discardDamaged(o.Store, r)
+		if derr != nil {
+			return res, fmt.Errorf("pull: %w (and checking the stored blobs failed: %w)", err, derr)
+		}
+		if len(damaged) == 0 {
+			return res, fmt.Errorf("pull: %w", err)
+		}
+		if ferr := fetch(ctx, o, d.CDN, digest, damaged, sizes, &res); ferr != nil {
+			return res, ferr
+		}
+		if err := recipe.Assemble(ctx, r, o.Store, mkfs, o.Out); err != nil {
+			return res, fmt.Errorf("pull: %w", err)
+		}
+		res.Repaired = len(damaged)
 	}
 	// The hub's pull counter: best effort, bounded, never fails the pull.
 	if !o.NoCount {
@@ -422,4 +530,20 @@ func fetch(ctx context.Context, o PullOptions, cdn, digest string, missing []str
 	}
 	wg.Wait()
 	return firstErr
+}
+
+// discardDamaged removes the recipe's blobs that no longer match their
+// digests and returns them, for the caller to fetch again.
+func discardDamaged(store *cas.Store, r *recipe.Recipe) ([]string, error) {
+	var damaged []string
+	for _, b := range r.Blobs {
+		gone, err := store.DiscardDamaged(b.Digest)
+		if err != nil {
+			return damaged, fmt.Errorf("check blob: %w", err)
+		}
+		if gone {
+			damaged = append(damaged, b.Digest)
+		}
+	}
+	return damaged, nil
 }

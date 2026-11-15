@@ -17,6 +17,8 @@ import (
 	"net"
 	"runtime/debug"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -29,8 +31,28 @@ const upstreamTimeout = 3 * time.Second
 
 // maxConcurrentQueries caps the number of queries handled in parallel. It backs
 // a semaphore so a UDP flood cannot spawn unbounded goroutines; excess packets
-// are dropped (DNS clients retry) rather than exhausting host memory/CPU.
+// are dropped (DNS clients retry) rather than exhausting host memory/CPU. A
+// question that is forwarded gives its slot up while it waits for the
+// upstream resolver, so these slots only do work that needs no upstream.
 const maxConcurrentQueries = 64
+
+// maxConcurrentForwards caps the questions waiting for the upstream resolver,
+// each for up to upstreamTimeout.
+const maxConcurrentForwards = 64
+
+// maxForwardsPerSource caps the forwarded questions one source address has
+// outstanding, so a guest that keeps the upstream busy (names it never
+// answers) holds a fraction of maxConcurrentForwards and the other guests'
+// questions still go out. Past it the guest's forwarded questions are
+// dropped; names of its network are still answered.
+const maxForwardsPerSource = 8
+
+// errForwardBusy reports a forwarded question dropped for lack of a slot.
+var errForwardBusy = errors.New("too many forwarded questions outstanding")
+
+// maxUpstreamResponse is the largest answer relayed from the upstream
+// resolver, the most a UDP datagram carries.
+const maxUpstreamResponse = 65535
 
 // Server answers guest DNS queries from the daemon's in-memory VM state.
 type Server struct {
@@ -38,9 +60,19 @@ type Server struct {
 	// upstream is the "host:port" of a fallback resolver for names the daemon
 	// does not own. Empty disables forwarding (unknown names return NXDOMAIN).
 	upstream string
-	conn     *net.UDPConn
+	// mu guards conn: Close runs on another goroutine than ListenAndServe.
+	mu   sync.Mutex
+	conn *net.UDPConn
 	// sem bounds concurrent query handlers (see maxConcurrentQueries).
 	sem chan struct{}
+	// fwd bounds questions waiting for the upstream (maxConcurrentForwards),
+	// and fwdBySrc counts them per source address (maxForwardsPerSource),
+	// guarded by fwdMu.
+	fwd      chan struct{}
+	fwdMu    sync.Mutex
+	fwdBySrc map[string]int
+	// turn rotates the order of the addresses a shared name answers with.
+	turn atomic.Uint32
 }
 
 // New creates a Server backed by resolver, forwarding unknown names to upstream
@@ -50,6 +82,8 @@ func New(resolver *scheduler.Resolver, upstream string) *Server {
 		resolver: resolver,
 		upstream: upstream,
 		sem:      make(chan struct{}, maxConcurrentQueries),
+		fwd:      make(chan struct{}, maxConcurrentForwards),
+		fwdBySrc: make(map[string]int),
 	}
 }
 
@@ -64,7 +98,9 @@ func (s *Server) ListenAndServe(addr string) error {
 	if err != nil {
 		return fmt.Errorf("dnsserver: listen %s: %w", addr, err)
 	}
+	s.mu.Lock()
 	s.conn = conn
+	s.mu.Unlock()
 	slog.Info("guest dns server listening", "addr", addr)
 
 	buf := make([]byte, 512)
@@ -86,8 +122,10 @@ func (s *Server) ListenAndServe(addr string) error {
 		select {
 		case s.sem <- struct{}{}:
 			go func() {
-				defer func() { <-s.sem }()
-				s.handle(query, src)
+				var once sync.Once
+				release := func() { once.Do(func() { <-s.sem }) }
+				defer release()
+				s.handle(conn, query, src, release)
 			}()
 		default:
 			slog.Debug("dnsserver: worker pool saturated, dropping query", "src", src.IP)
@@ -97,26 +135,32 @@ func (s *Server) ListenAndServe(addr string) error {
 
 // Close stops the server.
 func (s *Server) Close() error {
-	if s.conn != nil {
-		if err := s.conn.Close(); err != nil {
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn != nil {
+		if err := conn.Close(); err != nil {
 			return fmt.Errorf("dnsserver: close: %w", err)
 		}
 	}
 	return nil
 }
 
-func (s *Server) handle(query []byte, src *net.UDPAddr) {
+// handle answers one packet. release gives up the handler slot; it is called
+// once the question is forwarded, so waiting for the upstream does not hold
+// the slot.
+func (s *Server) handle(conn *net.UDPConn, query []byte, src *net.UDPAddr, release func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("dnsserver: recovered panic", "src", src.IP, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
-	resp, err := s.buildResponse(query, src.IP.String())
+	resp, err := s.respond(query, src.IP.String(), release)
 	if err != nil {
 		slog.Debug("dnsserver: handle", "src", src.IP, "err", err)
 		return
 	}
-	if _, err := s.conn.WriteToUDP(resp, src); err != nil {
+	if _, err := conn.WriteToUDP(resp, src); err != nil {
 		slog.Debug("dnsserver: write", "src", src.IP, "err", err)
 	}
 }
@@ -125,9 +169,15 @@ func (s *Server) Answer(query []byte, srcIP string) ([]byte, error) {
 	return s.buildResponse(query, srcIP)
 }
 
-// buildResponse parses a query, answers A questions the daemon owns from
-// srcIP's network, and forwards everything else upstream.
+// buildResponse parses a query, answers the names srcIP's network owns, and
+// forwards everything else upstream.
 func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
+	return s.respond(query, srcIP, nil)
+}
+
+// respond is buildResponse; a non-nil release is called once the question
+// holds a forwarding slot, before it waits for the upstream.
+func (s *Server) respond(query []byte, srcIP string, release func()) ([]byte, error) {
 	var p dnsmessage.Parser
 	hdr, err := p.Start(query)
 	if err != nil {
@@ -138,32 +188,82 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 		return nil, fmt.Errorf("parse question: %w", err)
 	}
 
-	if q.Type == dnsmessage.TypeA {
-		// Scope the lookup to the caller's own network. An empty network (source
-		// IP not held by any running VM) must NOT fall through to Resolve, which
-		// would search across every network and leak names between them; treat
-		// it as not-owned and forward/NXDOMAIN below instead.
-		if network := s.resolver.NetworkForIP(srcIP); network != "" {
-			name := strings.TrimSuffix(q.Name.String(), ".")
-			if rec, rErr := s.resolver.Resolve(name, network); rErr == nil {
-				if ip := net.ParseIP(rec.IP).To4(); ip != nil {
-					return s.answerA(hdr.ID, q, [4]byte{ip[0], ip[1], ip[2], ip[3]})
+	// Scope the lookup to the caller's own network. An empty network (source
+	// IP not held by any running VM) must NOT fall through to Resolve, which
+	// would search across every network and leak names between them; treat
+	// it as not-owned and forward/NXDOMAIN below instead.
+	if network := s.resolver.NetworkForIP(srcIP); network != "" {
+		name := strings.TrimSuffix(q.Name.String(), ".")
+		// Ownership is decided once, from every record of the network that
+		// answers to the name (in any letter case), whatever the question's
+		// type: the replicas of a service share an alias, and asking for
+		// exactly one would fail on them. A name of the network stays on the
+		// host. Forwarded, a public domain of the same name would answer (an
+		// AAAA for "db.app"), and the upstream resolver would learn the
+		// network's service names.
+		if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
+			if q.Type == dnsmessage.TypeA {
+				if ips := ipv4s(recs); len(ips) > 0 {
+					return s.answerA(hdr.ID, q, rotate(ips, int(s.turn.Add(1))))
 				}
 			}
+			// The network has only IPv4 addresses, and this name none it
+			// can tell: there is no such record, and the question stays
+			// here.
+			return s.empty(hdr.ID, q, dnsmessage.RCodeSuccess)
 		}
 	}
 
-	// Not an A record we own (or an AAAA/other query): forward upstream so
+	// Not a name this network owns: forward upstream so
 	// ordinary internet name resolution still works for the guest.
 	if s.upstream != "" {
-		if resp, fErr := s.forward(query); fErr == nil {
+		done, ok := s.takeForward(srcIP)
+		if !ok {
+			return nil, errForwardBusy
+		}
+		if release != nil {
+			release()
+		}
+		resp, fErr := s.forward(query)
+		done()
+		if fErr == nil {
 			return resp, nil
 		}
 	}
-	return s.nxdomain(hdr.ID, q)
+	return s.empty(hdr.ID, q, dnsmessage.RCodeNameError)
 }
 
-func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, error) {
+// maxAnswers bounds the addresses in one answer so it fits the 512 bytes
+// every resolver accepts over UDP. With the order rotating, a larger set
+// is still reached over successive questions.
+const maxAnswers = 16
+
+// ipv4s returns the IPv4 addresses of recs, leaving out records that hold
+// none.
+func ipv4s(recs []scheduler.Record) [][4]byte {
+	ips := make([][4]byte, 0, len(recs))
+	for _, rec := range recs {
+		if ip := net.ParseIP(rec.IP).To4(); ip != nil {
+			ips = append(ips, [4]byte{ip[0], ip[1], ip[2], ip[3]})
+		}
+	}
+	return ips
+}
+
+// rotate returns ips starting at position turn, so successive answers lead
+// with a different address and clients that take the first one spread out.
+func rotate(ips [][4]byte, turn int) [][4]byte {
+	start := turn % len(ips)
+	out := make([][4]byte, 0, len(ips))
+	out = append(out, ips[start:]...)
+	out = append(out, ips[:start]...)
+	if len(out) > maxAnswers {
+		out = out[:maxAnswers]
+	}
+	return out
+}
+
+func (s *Server) answerA(id uint16, q dnsmessage.Question, ips [][4]byte) ([]byte, error) {
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
 		ID:                 id,
 		Response:           true,
@@ -181,14 +281,16 @@ func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, 
 	if err := b.StartAnswers(); err != nil {
 		return nil, fmt.Errorf("start answers: %w", err)
 	}
-	err := b.AResource(dnsmessage.ResourceHeader{
-		Name:  q.Name,
-		Type:  dnsmessage.TypeA,
-		Class: dnsmessage.ClassINET,
-		TTL:   30,
-	}, dnsmessage.AResource{A: ip})
-	if err != nil {
-		return nil, fmt.Errorf("add A resource: %w", err)
+	for _, ip := range ips {
+		err := b.AResource(dnsmessage.ResourceHeader{
+			Name:  q.Name,
+			Type:  dnsmessage.TypeA,
+			Class: dnsmessage.ClassINET,
+			TTL:   30,
+		}, dnsmessage.AResource{A: ip})
+		if err != nil {
+			return nil, fmt.Errorf("add A resource: %w", err)
+		}
 	}
 	resp, err := b.Finish()
 	if err != nil {
@@ -197,13 +299,16 @@ func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, 
 	return resp, nil
 }
 
-func (s *Server) nxdomain(id uint16, q dnsmessage.Question) ([]byte, error) {
+// empty answers a question with no records: NXDOMAIN (RCodeNameError) for a
+// name nobody has, NOERROR for a name that has no record of the asked type.
+func (s *Server) empty(id uint16, q dnsmessage.Question, rcode dnsmessage.RCode) ([]byte, error) {
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
 		ID:                 id,
 		Response:           true,
+		Authoritative:      rcode == dnsmessage.RCodeSuccess,
 		RecursionDesired:   true,
 		RecursionAvailable: true,
-		RCode:              dnsmessage.RCodeNameError,
+		RCode:              rcode,
 	})
 	if err := b.StartQuestions(); err != nil {
 		return nil, fmt.Errorf("start questions: %w", err)
@@ -216,6 +321,31 @@ func (s *Server) nxdomain(id uint16, q dnsmessage.Question) ([]byte, error) {
 		return nil, fmt.Errorf("finish response: %w", err)
 	}
 	return resp, nil
+}
+
+// takeForward takes a forwarding slot for src, and returns the function that
+// gives it back. It fails without waiting when every slot, or every slot src
+// may hold, is taken.
+func (s *Server) takeForward(src string) (done func(), ok bool) {
+	s.fwdMu.Lock()
+	defer s.fwdMu.Unlock()
+	if s.fwdBySrc[src] >= maxForwardsPerSource {
+		return nil, false
+	}
+	select {
+	case s.fwd <- struct{}{}:
+	default:
+		return nil, false
+	}
+	s.fwdBySrc[src]++
+	return func() {
+		s.fwdMu.Lock()
+		defer s.fwdMu.Unlock()
+		if s.fwdBySrc[src]--; s.fwdBySrc[src] <= 0 {
+			delete(s.fwdBySrc, src)
+		}
+		<-s.fwd
+	}, true
 }
 
 // forward relays the raw query to the upstream resolver and returns its raw
@@ -234,7 +364,10 @@ func (s *Server) forward(query []byte) ([]byte, error) {
 	if _, err := conn.Write(query); err != nil {
 		return nil, fmt.Errorf("write upstream: %w", err)
 	}
-	resp := make([]byte, 512)
+	// Room for the largest UDP answer: a guest that announces a bigger buffer
+	// (EDNS0) gets answers over 512 bytes, and one read into a smaller buffer
+	// would cut them short without the truncation flag that makes it retry.
+	resp := make([]byte, maxUpstreamResponse)
 	n, err := conn.Read(resp)
 	if err != nil {
 		return nil, fmt.Errorf("read upstream: %w", err)

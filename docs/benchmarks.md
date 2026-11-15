@@ -130,3 +130,31 @@ queries, so keep the initialization step (`pgbench -i`) in the command.
   the same randomized schedule.
 - `jerboa build --size-report` shows which programs, packages, npm modules
   and Python distributions make up an interpreted-language image.
+
+## Comparing two builds
+
+`scripts/benchmark-compare.py` answers "did this change make anything
+slower?". It runs `scripts/benchmark-regressions.py` for a base build and a
+new build, alternating which goes first, and compares the medians:
+
+```sh
+scripts/benchmark-compare.py --packages PACKAGES \
+  --base-bin BASE/dist/macos-arm64 --base-firecracker BASE/firecracker \
+  --new-bin  NEW/dist/macos-arm64  --new-firecracker  NEW/firecracker \
+  --rounds 3
+```
+
+It reports start-up, VM-to-VM TCP, random read and random write, and exits
+with status 1 when the new build is worse than the base by more than the
+metric's threshold (10%, and 20% for random write) and, with two or more
+rounds, no new round is as good as the worst base round. `--base` and `--new`
+compare `results.json` files that already exist.
+
+It needs a host that can run guests, so it is not part of the hosted CI:
+GitHub's macOS runners have no Hypervisor.framework. Run it before merging a
+change to the kernel, the daemon's VM path or the VMM. Quit Docker Desktop
+first: it lowers random write.
+
+What was tried on macOS, what was kept and what was rejected is in
+[the macOS performance log](benchmarks/macos-performance-log.md). Read it
+before repeating an experiment.

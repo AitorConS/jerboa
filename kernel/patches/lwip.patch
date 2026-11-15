@@ -152,10 +152,25 @@ index 8eb938d..8573ad8 100644
      /* As initial send MSS, we use TCP_MSS but limit it to 536.
         The send MSS is updated when an MSS option is received. */
 diff --git a/src/core/tcp_in.c b/src/core/tcp_in.c
-index 5735603..7c19f9c 100644
+index 5735603..154f735 100644
 --- a/src/core/tcp_in.c
 +++ b/src/core/tcp_in.c
-@@ -819,6 +819,8 @@ tcp_listen_new_conn(struct tcp_pcb_listen *pcb, struct tcp_hdr *tcphdr, struct t
+@@ -163,8 +163,12 @@ tcp_input(struct pbuf *p, struct ip_globals *ip_data)
+ #if CHECKSUM_CHECK_TCP
+   IF__NETIF_CHECKSUM_ENABLED(inp, NETIF_CHECKSUM_CHECK_TCP) {
+     /* Verify TCP checksum. */
+-    u16_t chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
+-                                    &ip_data->current_iphdr_src, &ip_data->current_iphdr_dest);
++    u16_t chksum = 0;
++#ifdef PBUF_FLAG_CSUM_VALID
++    if (!(p->flags & PBUF_FLAG_CSUM_VALID))
++#endif
++      chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
++                                &ip_data->current_iphdr_src, &ip_data->current_iphdr_dest);
+     if (chksum != 0) {
+       LWIP_DEBUGF(TCP_INPUT_DEBUG, ("tcp_input: packet discarded due to failing checksum 0x%04"X16_F"\n",
+                                     chksum));
+@@ -819,6 +823,8 @@ tcp_listen_new_conn(struct tcp_pcb_listen *pcb, struct tcp_hdr *tcphdr, struct t
    ip_addr_copy(npcb->local_ip, ip_data->current_iphdr_dest);
    ip_addr_copy(npcb->remote_ip, ip_data->current_iphdr_src);
    npcb->local_port = pcb->local_port;
@@ -164,7 +179,7 @@ index 5735603..7c19f9c 100644
    npcb->remote_port = tcphdr->src;
    npcb->state = SYN_RCVD;
    npcb->rcv_nxt = client_seqno + 1;
-@@ -834,6 +836,7 @@ tcp_listen_new_conn(struct tcp_pcb_listen *pcb, struct tcp_hdr *tcphdr, struct t
+@@ -834,6 +840,7 @@ tcp_listen_new_conn(struct tcp_pcb_listen *pcb, struct tcp_hdr *tcphdr, struct t
  
    /* Parse any options in the incoming packet. */
    tcp_parseopt(npcb, tcphdr, tcp_data);
@@ -172,7 +187,7 @@ index 5735603..7c19f9c 100644
    npcb->snd_wnd = tcphdr->wnd;
    npcb->snd_wnd_max = npcb->snd_wnd;
  
-@@ -2249,9 +2252,9 @@ tcp_parseopt(struct tcp_pcb *pcb, struct tcp_hdr *tcphdr, struct tcp_input_parse
+@@ -2249,9 +2256,9 @@ tcp_parseopt(struct tcp_pcb *pcb, struct tcp_hdr *tcphdr, struct tcp_input_parse
              pcb->rcv_scale = TCP_RCV_SCALE;
              tcp_set_flags(pcb, TF_WND_SCALE);
              /* window scaling is enabled, we can use the full receive window */
@@ -186,7 +201,7 @@ index 5735603..7c19f9c 100644
            break;
  #endif /* LWIP_WND_SCALE */
 diff --git a/src/core/tcp_out.c b/src/core/tcp_out.c
-index dff8498..d34f184 100644
+index dff8498..2fc1886 100644
 --- a/src/core/tcp_out.c
 +++ b/src/core/tcp_out.c
 @@ -1318,6 +1318,11 @@ tcp_output(struct tcp_pcb *pcb)
@@ -221,7 +236,17 @@ index dff8498..d34f184 100644
    netif_unref(netif);
  #if TCP_OVERSIZE
    if (pcb->unsent == NULL) {
-@@ -1605,6 +1616,12 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb, struct netif *netif
+@@ -1561,6 +1572,9 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb, struct netif *netif
+   LWIP_ASSERT("options not filled", (u8_t *)opts == ((u8_t *)(seg->tcphdr + 1)) + LWIP_TCP_OPT_LENGTH_SEGMENT(seg->flags, pcb));
+ 
+ #if CHECKSUM_GEN_TCP
++#ifdef NETIF_FLAG_TCP_CSUM_OFFLOAD
++  if (!(netif->flags & NETIF_FLAG_TCP_CSUM_OFFLOAD))
++#endif
+   IF__NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) {
+ #if TCP_CHECKSUM_ON_COPY
+     u32_t acc;
+@@ -1605,6 +1619,12 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb, struct netif *netif
                       pcb->tos, IP_PROTO_TCP, ip_dont_fragment(pcb), netif);
    NETIF_RESET_HINTS(netif);
  
@@ -234,7 +259,17 @@ index dff8498..d34f184 100644
  #if TCP_CHECKSUM_ON_COPY
    if (seg_chksum_was_swapped) {
      /* if data is added to this segment later, chksum needs to be swapped,
-@@ -2035,7 +2052,7 @@ tcp_synack(const struct tcp_pcb_listen *pcb, u32_t seqno, u32_t ackno,
+@@ -1929,6 +1949,9 @@ tcp_output_control_segment(const struct tcp_pcb *pcb, struct pbuf *p,
+   } else {
+     u8_t ttl, tos;
+ #if CHECKSUM_GEN_TCP
++#ifdef NETIF_FLAG_TCP_CSUM_OFFLOAD
++    if (!(netif->flags & NETIF_FLAG_TCP_CSUM_OFFLOAD))
++#endif
+     IF__NETIF_CHECKSUM_ENABLED(netif, NETIF_CHECKSUM_GEN_TCP) {
+       struct tcp_hdr *tcphdr = (struct tcp_hdr *)p->payload;
+       tcphdr->chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
+@@ -2035,7 +2058,7 @@ tcp_synack(const struct tcp_pcb_listen *pcb, u32_t seqno, u32_t ackno,
  
    optlen = LWIP_TCP_OPT_LENGTH(TF_SEG_OPTS_MSS);
    p = tcp_output_alloc_header_common(ackno, optlen, 0, lwip_htonl(seqno), local_port,

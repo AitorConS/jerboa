@@ -121,7 +121,7 @@ The identity is a GitHub repository (`owner/repo`), optionally narrowed to a wor
 ]}
 ```
 
-The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`. A workflow that pushes through a reusable workflow is certified by Fulcio as the reusable one; such signatures do not match the recorded workflow, so pull them with `--identity` or a policy rule.
+The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`. The certificate must also say the job ran in that repository (its source repository claim), and the signed statement must name the repository being pulled. A workflow that pushes through a reusable workflow of another repository is certified by Fulcio as the reusable one while its source repository is the caller, so such signatures match no identity and are refused.
 
 ### What a pull checks
 
@@ -149,7 +149,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: AitorConS/jerboa/.github/actions/setup-jerboa@main
         with:
-          version: 0.57.0
+          version: 0.59.0
       - run: jerboa build -t aitorcons/web:${{ github.sha }} .
       - run: jerboa push aitorcons/web:${{ github.sha }}
 ```
@@ -179,6 +179,19 @@ Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
 ```
 
 `JERBOA_REGISTRY_TOKEN` is only sent to `registry.jerboa.dev`. For another registry, also set `JERBOA_REGISTRY_HOST` to its host.
+
+### A registry behind Cloudflare Access
+
+A private deployment (a staging registry, say) can sit behind Cloudflare Access, which answers only requests that carry a service token. Set all three:
+
+```yaml
+env:
+  JERBOA_REGISTRY_ACCESS_HOST: staging.registry.example
+  JERBOA_REGISTRY_ACCESS_CLIENT_ID: ${{ secrets.REGISTRY_ACCESS_CLIENT_ID }}
+  JERBOA_REGISTRY_ACCESS_CLIENT_SECRET: ${{ secrets.REGISTRY_ACCESS_CLIENT_SECRET }}
+```
+
+The token travels in the `CF-Access-Client-Id` and `CF-Access-Client-Secret` headers, over HTTPS, to that host and its subdomains (its CDN) and to no other host, redirects included. It is separate from the registry credential: `JERBOA_REGISTRY_TOKEN` or a login is still needed to push. A daemon that pulls from such a registry needs the same variables in its own environment.
 
 `jerboa registry pat ls` lists your tokens; `jerboa registry pat rm <id>` revokes one.
 

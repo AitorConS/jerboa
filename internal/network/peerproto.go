@@ -69,7 +69,9 @@ func decodePeerMessage(b []byte) (peerMessage, error) {
 		return m, nil
 	}
 	if b[30] != 0 || b[31] != 0 {
-		return m, errPeerMessage
+		// A refused message carries nothing: no caller may act on a type or
+		// epoch read from bytes that were not a message.
+		return peerMessage{}, errPeerMessage
 	}
 	m.Value = uint64(binary.LittleEndian.Uint32(b[16:20]))
 	copy(m.MAC[:], b[20:26])

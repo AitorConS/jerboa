@@ -70,6 +70,12 @@ typedef struct pagecache_node {
     boolean truncating;
     u64 length;
 
+    /* background writeback; protected by pages_lock */
+    u64 bg_dirty_bytes;         /* dirtied sequentially since the last commit */
+    u64 bg_seq_end;             /* file offset where the last write ended */
+    boolean bg_queued;
+    closure_struct(thunk, bg_writeback);
+
     /* shared and private mappings associated with this node; protected by pagecache global lock */
     struct rangemap mappings;
 

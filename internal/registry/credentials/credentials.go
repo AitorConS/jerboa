@@ -6,6 +6,7 @@
 package credentials
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 )
@@ -36,6 +39,36 @@ const (
 	EnvActionsTokenURL = "ACTIONS_ID_TOKEN_REQUEST_URL"
 	EnvActionsToken    = "ACTIONS_ID_TOKEN_REQUEST_TOKEN" //nolint:gosec // the name of an environment variable, not a credential
 )
+
+// A registry behind Cloudflare Access (a private staging deployment) answers
+// only requests that carry a service token. These name the token and the one
+// registry it is for; all three must be set.
+const (
+	EnvAccessHost         = "JERBOA_REGISTRY_ACCESS_HOST"
+	EnvAccessClientID     = "JERBOA_REGISTRY_ACCESS_CLIENT_ID"
+	EnvAccessClientSecret = "JERBOA_REGISTRY_ACCESS_CLIENT_SECRET" //nolint:gosec // the name of an environment variable, not a credential
+)
+
+// AccessToken returns the Cloudflare Access service token to send to host:
+// the registry EnvAccessHost names, or a subdomain of it (its CDN). The token
+// is never sent to any other host.
+func AccessToken(host string) (id, secret string, ok bool) {
+	want := strings.ToLower(strings.TrimSpace(os.Getenv(EnvAccessHost)))
+	id, secret = os.Getenv(EnvAccessClientID), os.Getenv(EnvAccessClientSecret)
+	if want == "" || id == "" || secret == "" {
+		return "", "", false
+	}
+	host = strings.ToLower(host)
+	if host != want && !strings.HasSuffix(host, "."+want) {
+		return "", "", false
+	}
+	return id, secret, true
+}
+
+// AccessConfigured reports whether a service token is set for some registry.
+func AccessConfigured() bool {
+	return os.Getenv(EnvAccessHost) != "" && os.Getenv(EnvAccessClientID) != "" && os.Getenv(EnvAccessClientSecret) != ""
+}
 
 // InGitHubActions reports whether the process runs in a GitHub Actions job
 // that may request OIDC tokens.
@@ -77,7 +110,13 @@ func Load() (File, error) {
 	if err != nil {
 		return f, fmt.Errorf("credentials: %w", err)
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		// What a power cut leaves of a file that was being created: no
+		// logins, not a file that blocks every later login.
+		return f, nil
+	}
 	if err := json.Unmarshal(data, &f); err != nil {
+		f.Registries = map[string]Entry{}
 		return f, fmt.Errorf("credentials: %s: %w", p, err)
 	}
 	if f.Registries == nil {
@@ -99,23 +138,7 @@ func (f File) Save() error {
 	if err != nil {
 		return fmt.Errorf("credentials: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(p), ".credentials-*")
-	if err != nil {
-		return fmt.Errorf("credentials: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("credentials: %w", err)
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("credentials: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("credentials: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), p); err != nil {
+	if err := durable.WriteFile(p, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("credentials: %w", err)
 	}
 	return nil

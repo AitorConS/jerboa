@@ -76,7 +76,8 @@ requirements; Jerboa does not rebuild or re-sign it.
 
 ## Supported behavior
 
-ARM64 ELF guests can use 1-4 vCPUs, 64-2048 MiB of RAM, an ephemeral root disk,
+ARM64 ELF guests can use 1-8 vCPUs, 64-8192 MiB of RAM (1-4 and 64-2048 with a
+VMM that does not answer `--capabilities`: Jerboa asks the VMM for its bounds), an ephemeral root disk,
 and up to three persistent volumes. Environment, static network configuration and
 mount labels are delivered through `opt/uni/*` firmware files. Root disk writes
 never modify the image-store copy.
@@ -114,11 +115,24 @@ Jerboa's existing adoption behavior. Console history is not recovered.
 
 ## Network policy and limits
 
-Outbound traffic and external DNS are denied by default. Joining a named
-network explicitly enables communication and service DNS inside that network.
-Supply a JSON
-security object with `jerboad --fc-security /absolute/path/policy.json`, or set
-`JERBOA_FIRECRACKER_SECURITY` when starting the managed service. For example:
+By default a guest reaches the public Internet and nothing nearer:
+
+- **Allowed:** TCP and UDP to public IPv4 addresses, and external DNS through
+  the daemon's resolver (`1.1.1.1:53`, or `JERBOA_DNS_UPSTREAM`; an empty value
+  leaves guests without external DNS).
+- **Refused:** the host itself (its loopback, through the guest's gateway) and
+  private (`10/8`, `172.16/12`, `192.168/16`), shared (`100.64/10`),
+  link-local (`169.254/16`), multicast and reserved addresses.
+
+This is the policy QEMU guests have. Joining a named network adds
+communication and service DNS inside that network; names of the network are
+answered locally and never forwarded.
+
+To state the permissions yourself, supply a JSON security object with
+`jerboad --fc-security /absolute/path/policy.json`, or set
+`JERBOA_FIRECRACKER_SECURITY` when starting the managed service. It replaces
+the default entirely: `{"version": 1}` closes every outbound connection and
+external DNS, as releases up to 0.58 did by default. For example:
 
 ```json
 {
@@ -128,11 +142,14 @@ security object with `jerboad --fc-security /absolute/path/policy.json`, or set
 }
 ```
 
+Add `"public_egress": true` to keep public addresses reachable beside the
+exact rules, for instance to also open one address of the local network.
+
 Replace the example destination with the actual endpoint needed by the guest.
 Policy is shared by this daemon's Firecracker VMs. Slirp receives these rules
 in the VMM and adds published listener permissions. For shared networks,
 Jerboa enforces exact IPv4/protocol/port egress rules and uses only `dns` as its
-external resolver. `JERBOA_DNS_UPSTREAM` does not override Firecracker's policy.
+external resolver. `JERBOA_DNS_UPSTREAM` does not override a supplied policy.
 Service DNS is answered locally. Access through the network gateway to the
 host is translated to `127.0.0.1`, so authorize that address and the required
 port explicitly. Granting DNS does not authorize TCP/UDP to resolved addresses.
@@ -148,9 +165,15 @@ rejects source spoofing, IPv6 and VLAN frames, validates framing before
 allocating, and bounds each link's pending output to 64 frames. The transport
 limit is 65536 bytes per frame; the stack MTU is 1500. Shared host connections
 (published and outbound, including pending dials) are capped at 64 per VM and
-256 per network. UDP flows expire after 30 seconds without response activity;
-TCP dials time out after five seconds. DNS has bounded query workers. Removing
-a VM cancels its pending dials and closes its live host connections.
+256 per network. A VM may have 16 outbound TCP connections being set up at a
+time, and a guest that does not finish its handshake within five seconds of
+the host dial loses the attempt. UDP flows expire after 30 seconds without
+response activity; TCP dials time out after five seconds. DNS has bounded
+query workers, at most 16 of them per VM. A link whose VMM drains its output
+too slowly to turn its queue over within 100 ms has frames dropped instead of
+holding up the rest of the network, and is closed if it sends nothing for that
+long. Removing a VM cancels its pending dials and closes its live host
+connections.
 
 - One IPv4 interface per VM. Custom IPs require a named network; TAP and
   multi-network attachments are explicitly rejected. The gateway is the first

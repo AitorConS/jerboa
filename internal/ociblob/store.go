@@ -3,7 +3,9 @@ package ociblob
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path/filepath"
@@ -59,13 +61,12 @@ func (s *Store) Put(r io.Reader) (string, int64, error) {
 		return "", 0, fmt.Errorf("blob store put mkdir: %w", err)
 	}
 
-	if _, err := os.Stat(dst); err == nil {
+	// A blob already stored is kept only if it still is that blob: one
+	// damaged on disk since is replaced by the copy just checked.
+	if intact(dst, digest) {
 		return digest, size, nil
 	}
 	if err := os.Rename(tmp.Name(), dst); err != nil {
-		if _, statErr := os.Stat(dst); statErr == nil {
-			return digest, size, nil
-		}
 		return "", 0, fmt.Errorf("blob store put move blob: %w", err)
 	}
 
@@ -84,7 +85,14 @@ func (s *Store) Exists(digest string) bool {
 	return err == nil
 }
 
-// Open opens digest for reading.
+// ErrCorrupt is returned when reading a blob whose bytes no longer match
+// its digest.
+var ErrCorrupt = errors.New("blob does not match its digest")
+
+// Open opens digest for reading. The bytes are checked against the digest
+// as they are read: a blob damaged on disk fails with ErrCorrupt where its
+// end would be, so a reader that consumes it whole never takes it for
+// intact. A caller that stops early has checked nothing.
 func (s *Store) Open(digest string) (io.ReadCloser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -100,7 +108,45 @@ func (s *Store) Open(digest string) (io.ReadCloser, error) {
 		}
 		return nil, fmt.Errorf("open blob %s: %w", digest, err)
 	}
-	return f, nil
+	return &verifiedBlob{f: f, h: sha256.New(), digest: digest}, nil
+}
+
+// verifiedBlob reads a blob's file and reports ErrCorrupt in place of the
+// end of a file that does not hash to its digest.
+type verifiedBlob struct {
+	f      *os.File
+	h      hash.Hash
+	digest string
+}
+
+func (b *verifiedBlob) Read(p []byte) (int, error) {
+	n, err := b.f.Read(p)
+	b.h.Write(p[:n])
+	if errors.Is(err, io.EOF) && "sha256:"+hex.EncodeToString(b.h.Sum(nil)) != b.digest {
+		return n, fmt.Errorf("blob %s: %w", b.digest, ErrCorrupt)
+	}
+	return n, err //nolint:wrapcheck // io.EOF and read errors pass through as a reader's do
+}
+
+func (b *verifiedBlob) Close() error {
+	if err := b.f.Close(); err != nil {
+		return fmt.Errorf("close blob %s: %w", b.digest, err)
+	}
+	return nil
+}
+
+// intact reports whether path holds exactly the blob digest names.
+func intact(path, digest string) bool {
+	f, err := os.Open(path) //nolint:gosec // a store path derived from a validated digest
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return false
+	}
+	return "sha256:"+hex.EncodeToString(h.Sum(nil)) == digest
 }
 
 // Delete removes digest from the store.

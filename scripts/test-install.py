@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 
@@ -12,6 +13,11 @@ MOCK = '''#!/usr/bin/env python3
 import hashlib, json, os, pathlib, shutil, sys, subprocess
 name=pathlib.Path(sys.argv[0]).name; args=sys.argv[1:]; root=pathlib.Path(os.environ['FIXTURE'])
 with (root/'calls').open('a') as log: log.write(name+' '+ ' '.join(args)+'\\n')
+# systemctl is-active: with DAEMON_STOPS set, jerboad is active for its first
+# check only, as a daemon that exits while starting.
+if name=='systemctl' and args[:1]==['is-active'] and os.environ.get('DAEMON_STOPS'):
+    n=root/'is-active-calls'; c=int(n.read_text() or 0) if n.exists() else 0; n.write_text(str(c+1))
+    sys.exit(0 if c==0 else 3)
 if name=='uname': print(os.environ.get('OS','Linux') if args==['-s'] else os.environ.get('ARCH','x86_64'))
 elif name=='id':
     if args==['-u']: print(os.environ.get('UID_MOCK','0'))
@@ -40,7 +46,7 @@ elif name=='sw_vers': print(os.environ.get('MACOS_VERSION','26.0'))
 elif name in ['pkgutil','spctl']:
     sys.exit(1 if os.environ.get('BAD_PACKAGE_SIGNATURE') else 0)
 elif name=='sudo':
-    if args[0]=='install': sys.exit(subprocess.call(args))
+    if args[0] in ['install','rm']: sys.exit(subprocess.call(args))
     if args[0]=='installer':
         native=root/'usr/local/libexec/jerboa/bin'; native.mkdir(parents=True,exist_ok=True)
         for binary in ['jerboa','jerboad']:
@@ -64,10 +70,10 @@ elif name=='install':
 
 with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     root=Path(tmp); bin=root/'mocks'; bin.mkdir()
-    for name in ['uname','id','getent','curl','zstd','minisign','sha256sum','install','apt-get','systemctl','modprobe','useradd','usermod','groupadd','chown','tar','sw_vers','shasum','pkgutil','spctl','sudo','brew']:
+    for name in ['uname','id','getent','curl','zstd','minisign','sha256sum','install','apt-get','systemctl','modprobe','useradd','usermod','groupadd','chown','tar','sw_vers','shasum','pkgutil','spctl','sudo','brew','userdel','groupdel','launchctl']:
         p=bin/name; p.write_text(MOCK); p.chmod(0o755)
     script=source.read_text()
-    for path in ['/usr/local/bin','/usr/local/libexec/jerboa','/var/lib/jerboa','/etc/jerboa','/etc/systemd/system','/etc/modules-load.d','/run/systemd/system','/dev/kvm']:
+    for path in ['/Applications','/usr/local/bin','/usr/local/libexec/jerboa','/var/lib/jerboa','/etc/jerboa','/etc/systemd/system','/etc/modules-load.d','/run/systemd/system','/dev/kvm']:
         script=script.replace(path,str(root)+path)
     (root/'etc/systemd/system').mkdir(parents=True)
     (root/'run/systemd/system').mkdir(parents=True)
@@ -77,6 +83,10 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     (root/'manifest').write_text(json.dumps(manifest))
     env={**os.environ,'PATH':str(bin)+os.pathsep+os.environ['PATH'],'FIXTURE':str(root),'HYPERVISOR':'qemu','SUDO_USER':'tester'}
     for key in ['RELEASE_BASE','JERBOA_PORT','FC_ARCH','FIRECRACKER_VERSION','FIRECRACKER_SHA256']: env.pop(key,None)
+    # The installer waits for jerboad to listen on its port: a listener
+    # stands in for it.
+    daemon=socket.socket(); daemon.bind(('127.0.0.1',0)); daemon.listen(64)
+    env['JERBOA_PORT']=str(daemon.getsockname()[1])
     def run(*args, ok=True, **overrides):
         result=subprocess.run(['bash',str(runner),*args],env={**env,**overrides},capture_output=True,text=True)
         assert (result.returncode==0)==ok,result.stdout+result.stderr
@@ -87,6 +97,11 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run(ok=False,JERBOA_PORT='99999')
     run(ok=False,HYPERVISOR='invalid')
     run(ok=False,HYPERVISOR='firecracker')
+    # A daemon that exits before it listens: nothing on its port.
+    closed=socket.socket(); closed.bind(('127.0.0.1',0)); closed_port=str(closed.getsockname()[1]); closed.close()
+    result=run(ok=False,DAEMON_STOPS='1',JERBOA_PORT=closed_port)
+    assert 'jerboad stopped while starting' in result.stderr+result.stdout
+    (root/'is-active-calls').unlink()
     run()
     unit=(root/'etc/systemd/system/jerboad.service').read_text()
     for key in ['AmbientCapabilities', 'CapabilityBoundingSet']:
@@ -167,6 +182,33 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     serve(generated='2026-10-22T10:00:00Z')
     result=subprocess.run(['bash',str(released)],env=env,capture_output=True,text=True)
     assert result.returncode==0,result.stderr
+    # Uninstall: --keep-data removes the programs and the service only; a plain
+    # uninstall removes the data, the service user and the CLI configuration.
+    for args in [('--keep-data',),('--uninstall','--version','0.51.2')]: run(*args,ok=False)
+    run('--uninstall',ok=False,UID_MOCK='1000')
+    assert (root/'usr/local/bin/jerboa').exists()
+    (root/'var/lib/jerboa/.jerboa/images').mkdir(parents=True)
+    (root/'home/other').mkdir(); (root/'home/other/file').write_text('keep')
+    (root/'calls').write_text('')
+    run('--uninstall','--keep-data')
+    calls=(root/'calls').read_text()
+    assert 'systemctl disable --now jerboad.service' in calls and 'userdel' not in calls
+    for gone in ['usr/local/bin/jerboa','usr/local/bin/jerboad','usr/local/bin/firecracker','etc/systemd/system/jerboad.service','etc/modules-load.d/jerboa-kvm.conf']:
+        assert not (root/gone).exists(),gone
+    for kept in ['var/lib/jerboa/.jerboa/images','etc/jerboa/daemon.env','home/.jerboa/config.toml']:
+        assert (root/kept).exists(),kept
+    run(HYPERVISOR='firecracker',FIRECRACKER_SHA256=digest)
+    assert (root/'etc/jerboa/daemon.env').read_text()==token
+    (root/'calls').write_text('')
+    run('--uninstall')
+    calls=(root/'calls').read_text()
+    assert 'userdel jerboa' in calls and 'apt-get' not in calls and 'curl' not in calls
+    for gone in ['usr/local/bin/jerboa','usr/local/bin/jerboad','usr/local/bin/firecracker','etc/systemd/system/jerboad.service','var/lib/jerboa','etc/jerboa','home/.jerboa']:
+        assert not (root/gone).exists(),gone
+    assert (root/'home/other/file').read_text()=='keep'
+    assert (root/'usr/local/bin').is_dir()
+    run('--uninstall')
+    print('PASS: uninstall with and without data, twice, and root required.')
     print('PASS: version parsing, latest/pinned URLs, signed historical manifests, zstd variants with fallback, platform checks, QEMU without KVM, upgrades, token preservation, signature/checksum/download failures, firecracker checksum, channel and freshness.')
 
     manifest['components']['macos']={'version':'v0.51.2','platforms':{'darwin-arm64':{
@@ -203,4 +245,27 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     manifest['components'].pop('macos')
     (root/'manifest').write_text(json.dumps(manifest))
     run(ok=False)
+    # Uninstall removes this script's wrappers, bundle and data, but leaves
+    # commands it did not write and, with Jerboa Desktop installed, the data.
+    serve(); manifest['components']['macos']={'version':'v0.51.2','platforms':{'darwin-arm64':{
+        'sha256':digest,'url':'https://releases.jerboa.dev/macos/v0.51.2/jerboa-0.51.2-macos-arm64.pkg'}}}
+    (root/'manifest').write_text(json.dumps(manifest))
+    run()
+    run('--uninstall',ok=False,UID_MOCK='0')
+    (root/'Applications/Jerboa Desktop.app').mkdir(parents=True)
+    foreign=root/'usr/local/bin/jerboad'; foreign.write_text("#!/bin/sh\n# Managed by Jerboa Desktop\nexec '/Applications/Jerboa Desktop.app/Contents/Resources/bin/jerboad' \"$@\"\n")
+    (root/'calls').write_text('')
+    run('--uninstall')
+    calls=(root/'calls').read_text()
+    assert 'launchctl' not in calls and 'pkgutil --forget dev.jerboa.firecracker' in calls
+    assert not (root/'usr/local/bin/jerboa').exists() and foreign.exists()
+    assert not (root/'usr/local/libexec/jerboa').exists()
+    assert (root/'home/.jerboa').exists()
+    (root/'Applications/Jerboa Desktop.app').rmdir()
+    (root/'calls').write_text('')
+    run('--uninstall')
+    assert 'launchctl bootout gui/501/dev.jerboa.daemon' in (root/'calls').read_text()
+    assert not (root/'home/.jerboa').exists() and foreign.exists()
+    assert (root/'home/other/file').read_text()=='keep'
+    print('PASS: macOS uninstall, Jerboa Desktop left alone.')
     print('PASS: macOS platform/version detection, signed latest/pinned package, native wrappers, fail-closed verification before installation.')

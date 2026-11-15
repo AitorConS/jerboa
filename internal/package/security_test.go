@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,6 +289,55 @@ func TestOpsStore_Extract_DecompressionBudget(t *testing.T) {
 	require.False(t, store.IsExtracted("eyberg", "fat", "1.0"))
 	_, statErr := os.Stat(archivePath)
 	require.NoError(t, statErr, "the downloaded archive must survive the cleanup")
+}
+
+// TestOpsStore_Extract_LinkCopiesCountAgainstTheBudget checks that on hosts
+// that copy tar symlinks instead of creating them, the copies are charged to
+// the same budget: one file and many links to it must not expand past it.
+func TestOpsStore_Extract_LinkCopiesCountAgainstTheBudget(t *testing.T) {
+	origBudget, origLinks := maxExtractedBytes, symlinksSupported
+	maxExtractedBytes, symlinksSupported = 1500, false
+	t.Cleanup(func() { maxExtractedBytes, symlinksSupported = origBudget, origLinks })
+
+	write := func(store *OpsStore, name string, links int) string {
+		pkgDir := store.PackageDir("eyberg", name, "1.0")
+		require.NoError(t, os.MkdirAll(pkgDir, 0o755))
+		var buf bytes.Buffer
+		gw := gzip.NewWriter(&buf)
+		tw := tar.NewWriter(gw)
+		add := func(name, body string) {
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))}))
+			_, err := tw.Write([]byte(body))
+			require.NoError(t, err)
+		}
+		add("package.manifest", `{"Program":"`+name+`"}`)
+		add(name, "#!")
+		add("big", strings.Repeat("A", 600))
+		for i := range links {
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: fmt.Sprintf("link%d", i), Typeflag: tar.TypeSymlink, Linkname: "big", Mode: 0o777}))
+		}
+		require.NoError(t, tw.Close())
+		require.NoError(t, gw.Close())
+		archivePath := filepath.Join(pkgDir, ArchSlug()+".tar.gz")
+		require.NoError(t, os.WriteFile(archivePath, buf.Bytes(), 0o644))
+		return pkgDir
+	}
+
+	store, err := NewOpsStore(t.TempDir())
+	require.NoError(t, err)
+	pkgDir := write(store, "links", 10)
+	err = store.Extract("eyberg", "links", "1.0")
+	require.ErrorContains(t, err, "expands beyond")
+	require.False(t, store.IsExtracted("eyberg", "links", "1.0"))
+	_, statErr := os.Stat(filepath.Join(pkgDir, "big"))
+	require.True(t, os.IsNotExist(statErr), "the oversized tree is discarded")
+
+	// A link whose copy fits is still materialized.
+	pkgDir = write(store, "one", 1)
+	require.NoError(t, store.Extract("eyberg", "one", "1.0"))
+	got, err := os.ReadFile(filepath.Join(pkgDir, "link0"))
+	require.NoError(t, err)
+	require.Len(t, got, 600)
 }
 
 // TestExtract_ReadOnlyDirEntry checks that a read-only directory entry does not

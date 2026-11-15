@@ -3,7 +3,7 @@
 import os,subprocess
 from pathlib import Path
 name=os.environ['PACKAGE_NAME'];version=os.environ['PACKAGE_VERSION']
-binaries={'python':'python3','redis':'redis-server','sqlite':'sqlite3'}
+binaries={'python':'python3','redis':'redis-server','sqlite':'sqlite3','valkey':'valkey-server'}
 root=Path('dist/pkg')/name/version
 binary=root/binaries.get(name,name)
 if not binary.is_file():raise SystemExit('Missing built executable: '+str(binary))

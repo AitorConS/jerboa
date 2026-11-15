@@ -29,6 +29,13 @@ KERNEL_FILES = {'mkfs': 'mkfs-linux-amd64', 'dump': 'dump-linux-amd64',
 TOOLSET_MKFS = {'linux-arm64': Path('mkfs-linux-arm64') / 'mkfs',
                 'darwin-arm64': Path('mkfs-darwin-arm64') / 'mkfs'}
 
+# Candidates are signed for their own channel. No client fetches it, and the
+# Go client and install.sh refuse a manifest whose channel is not the one they
+# asked for, so an assembled but unpromoted (or rejected) candidate is never
+# accepted as stable. promote() signs the stable manifest once its checks pass.
+CANDIDATE_CHANNEL = 'candidate'
+STABLE_CHANNEL = 'stable'
+
 REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64'},
             'daemon': {'linux-amd64', 'darwin-arm64'},
             'desktop': {'windows-amd64', 'darwin-arm64'}}
@@ -36,6 +43,15 @@ REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64
 
 def run(*args, **kwargs):
     return subprocess.check_output([str(a) for a in args], **kwargs)
+
+
+def built_binary_env():
+    """Environment for running a downloaded release binary.
+
+    assemble runs in the step that holds the signing seed; the binaries it
+    executes to check their version do not need it, or any other credential."""
+    return {k: v for k, v in os.environ.items()
+            if k != 'JERBOA_MINISIGN_SEED' and not re.search(r'TOKEN|SECRET|PASSWORD|_KEY$', k)}
 
 
 def write_json(path, value):
@@ -111,7 +127,7 @@ def lock():
              'runtime_sha': sha(os.environ['RUNTIME_SHA']),
              'kernel_version': version(os.environ['KERNEL_VERSION']),
              'run_id': os.environ['GITHUB_RUN_ID'], 'repository': os.environ['GITHUB_REPOSITORY'],
-             'toolchains': {'go': '1.27.3', 'node': '22', 'rust': '1.97.0'}}
+             'toolchains': {'go': '1.27.4', 'node': '22', 'rust': '1.97.0'}}
     write_json('release-lock.json', value)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
         for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source']:
@@ -180,7 +196,7 @@ def verify_linux_versions(manifest, payload, expected):
         asset = manifest['components'][name]['platforms']['linux-amd64']
         binary = payload / asset['url'][len(BASE)+1:]
         binary.chmod(0o755)
-        output = run(binary.resolve(), '--version', text=True)
+        output = run(binary.resolve(), '--version', text=True, env=built_binary_env())
         if expected not in output.split():
             raise ValueError('Binary version mismatch: ' + output)
     distro = manifest['components']['distro']['url'][len(BASE)+1:]
@@ -202,7 +218,7 @@ def verify_linux_versions(manifest, payload, expected):
         with archive.extractfile(members[0]) as source:
             binary.write_bytes(source.read())
         binary.chmod(0o755)
-        output=run(binary,'--version',text=True)
+        output=run(binary,'--version',text=True,env=built_binary_env())
         if expected not in output.split():
             raise ValueError('Distro binary version mismatch: ' + output)
 
@@ -312,7 +328,10 @@ def kernel():
         download(BASE + '/channels/stable.json', manifest)
         download(BASE + '/channels/stable.json.minisig', str(manifest) + '.minisig')
         verify_signature(manifest)
-        component = json.loads(manifest.read_text())['components']['kernel']
+        published = json.loads(manifest.read_text())
+        if published.get('channel') != STABLE_CHANNEL:
+            raise ValueError('Published manifest is not signed for the stable channel')
+        component = published['components']['kernel']
         if component['version'] != spec['kernel_version'] or set(component['files']) != set(KERNEL_FILES):
             raise ValueError('Published kernel does not match requested toolset')
         provenance = {'stable_manifest': digest(manifest)}
@@ -334,6 +353,44 @@ def kernel():
     verify_kernel_toolset(root, spec)
 
 
+# The Mac app's guest boot files for explicitly emulated linux/amd64 images:
+# the candidate's own selected x86 toolset, never whatever stable serves.
+X86_TOOLS = ('boot.img', 'kernel.img')
+
+
+def x86_tools_record(kernel_record):
+    return {'version': kernel_record['kernel_version'],
+            'files': {name: kernel_record['files'][name] for name in X86_TOOLS}}
+
+
+def check_x86_tools(directory, expected):
+    directory = Path(directory)
+    names = {p.name for p in directory.iterdir()} if directory.is_dir() else set()
+    if names != {*X86_TOOLS, 'kernel-version.txt'}:
+        raise ValueError(f'Unexpected x86 guest tools in {directory}: {sorted(names)}')
+    if (directory / 'kernel-version.txt').read_text() != expected['version'] + '\n':
+        raise ValueError('x86 guest kernel version differs from the candidate')
+    for name, want in expected['files'].items():
+        file = directory / name
+        if file.is_symlink() or not file.is_file() or digest(file) != want:
+            raise ValueError('x86 guest file differs from the candidate toolset: ' + name)
+
+
+def x86(args):
+    """Stage (or, with --check, re-check) the Mac x86 guest boot files in --out."""
+    spec = json.loads(Path('release-lock.json').read_text())
+    record, _ = verify_kernel_toolset('kernel-selected', spec)
+    expected = x86_tools_record(record)
+    dest = Path(args.out)
+    if not args.check:
+        dest.mkdir(parents=True, exist_ok=False)
+        for name in X86_TOOLS:
+            shutil.copyfile(Path('kernel-selected') / name, dest / name)
+        (dest / 'kernel-version.txt').write_text(expected['version'] + '\n')
+    check_x86_tools(dest, expected)
+    print('x86 guest tools match candidate kernel', expected['version'], 'in', dest)
+
+
 def assemble():
     spec = json.loads(Path('release-lock.json').read_text())
     v = version(spec['version']); n = v[1:]
@@ -341,7 +398,7 @@ def assemble():
     payload = root / 'payload'
     # Clients refuse a manifest generated before one they already accepted, so
     # an older signed manifest cannot be replayed to them.
-    manifest = {'channel': 'stable', 'generated': generated_now(), 'components': {}}
+    manifest = {'channel': CANDIDATE_CHANNEL, 'generated': generated_now(), 'components': {}}
     components = manifest['components']
     def stage(source, key):
         key = safe_path(key); target = payload / key
@@ -385,9 +442,11 @@ def assemble():
     write_json(root / 'manifest.json', manifest)
     record = {**spec, 'kernel_toolset': kernel_record, 'kernel_boot': kernel_boot, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
-              'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip')}
+              'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip'),
+              # build-macos stages these exact selected files as tools/x86.
+              'macos_x86_tools': x86_tools_record(kernel_record)}
     write_json(root / 'inventory.json', record)
-    sign(root / 'manifest.json', f'release:{v}')
+    sign(root / 'manifest.json', f'candidate-manifest:{v}')
     sign(root / 'inventory.json', f'candidate:{spec["run_id"]} version:{v}')
 
 
@@ -421,6 +480,10 @@ def verify_candidate(root):
     verify_signature(root / 'inventory.json'); verify_signature(root / 'manifest.json')
     inv = json.loads((root / 'inventory.json').read_text())
     manifest = json.loads((root / 'manifest.json').read_text())
+    if manifest.get('channel') != CANDIDATE_CHANNEL:
+        # Candidates assembled before stable signing moved to promotion carry
+        # a stable signature of their own; rebuild them instead.
+        raise ValueError('Candidate manifest is not signed for the candidate channel; rebuild the candidate')
     assert_manifest(manifest, inv['version'])
     if digest(root/'manifest.json') != inv['manifest'] or digest(root/'latest.yml') != inv['feed']:
         raise ValueError('Candidate metadata hash mismatch')
@@ -512,12 +575,26 @@ def put(path, key, immutable=True, content_type='application/octet-stream'):
         '--content-type', content_type, '--cache-control', 'public, max-age=31536000, immutable' if immutable else 'no-cache')
 
 
+def stable_manifest(manifest, path):
+    """Write the stable manifest for a verified candidate manifest.
+
+    Only the channel changes. The generation time stays the candidate's, so a
+    retried promotion re-creates identical bytes (and, Ed25519 being
+    deterministic, an identical signature) and the installer pinned at assembly
+    still accepts it."""
+    if manifest.get('channel') != CANDIDATE_CHANNEL:
+        raise ValueError('Only a candidate manifest can be promoted')
+    write_json(path, {**manifest, 'channel': STABLE_CHANNEL})
+    return Path(path)
+
+
 def promote():
     root = Path('candidate');inv, manifest = verify_candidate(root)
     authorized = json.loads(Path('authorized-run.json').read_text())
     if inv['run_id'] != authorized['run_id'] or inv['engine_sha'] != authorized['engine_sha']:
         raise ValueError('Artifact provenance does not match authorized run')
     v = inv['version'];before = Path('previous-stable.json')
+    stable = stable_manifest(manifest, 'stable-manifest.json')
     # Read origin directly; a previous promotion may have failed between the
     # manifest and its detached signature. Same-version resume is allowed only
     # when the manifest bytes match this signed candidate exactly.
@@ -531,17 +608,25 @@ def promote():
             raise ValueError('Refusing a kernel downgrade')
         if old['components']['kernel']['version'] == manifest['components']['kernel']['version'] and old['components']['kernel'] != manifest['components']['kernel']:
             raise ValueError('Kernel version already published with different bytes; bump kernel/VERSION')
-        if old_v == v and digest(previous) != digest(root/'manifest.json'):
+        if old_v == v and digest(previous) != digest(stable):
             raise ValueError('Version already published with another manifest; cut a new release')
         check_generation(old, manifest)
     # Persist a signed promotion record before changing channel pointers.
     promotion = {'version': v, 'candidate_run': inv['run_id'], 'inventory': inv,
                  'macos_evidence': os.environ['MACOS_EVIDENCE']}
     write_json('promotion.json', promotion);sign('promotion.json', f'promotion:{v}')
+    # The stable signature is made here, after every promotion check, and is
+    # the only one clients accept for the stable channel.
+    sign(stable, f'release:{v}')
     for key in sorted(inv['assets']):
         put(root/'payload'/key, key)
-    for name in ['manifest.json', 'manifest.json.minisig', 'inventory.json', 'inventory.json.minisig', 'latest.yml']:
+    for name in ['inventory.json', 'inventory.json.minisig', 'latest.yml']:
         put(root/name, f'releases/{v}/{name}')
+    # The candidate manifest stays inspectable beside the inventory naming its
+    # digest; clients refuse it as stable because of its channel.
+    for name in ['manifest.json', 'manifest.json.minisig']:
+        put(root/name, f'releases/{v}/candidate-{name}')
+    put(stable, f'releases/{v}/manifest.json');put(str(stable)+'.minisig', f'releases/{v}/manifest.json.minisig')
     # Immutable record is candidate-specific; re-approval may supply a different
     # evidence URL, so keep promotion receipts per workflow run.
     receipt = f'releases/{v}/promotions/{os.environ["GITHUB_RUN_ID"]}'
@@ -551,14 +636,14 @@ def promote():
         for key, expected in inv['assets'].items():
             p = Path(tmp)/'asset';download(BASE+'/'+key,p)
             if digest(p) != expected:raise ValueError('Public download mismatch: '+key)
-    put(root/'manifest.json', 'channels/stable.json', False, 'application/json')
-    put(root/'manifest.json.minisig', 'channels/stable.json.minisig', False, 'text/plain')
+    put(stable, 'channels/stable.json', False, 'application/json')
+    put(str(stable)+'.minisig', 'channels/stable.json.minisig', False, 'text/plain')
     put(root/'latest.yml', 'desktop/latest.yml', False, 'text/yaml')
     # Read-back pointer verification is separate from artifact verification.
     with tempfile.TemporaryDirectory() as tmp:
-        for remote,local in [('channels/stable.json','manifest.json'),('channels/stable.json.minisig','manifest.json.minisig'),('desktop/latest.yml','latest.yml')]:
+        for remote,local in [('channels/stable.json',stable),('channels/stable.json.minisig',str(stable)+'.minisig'),('desktop/latest.yml',root/'latest.yml')]:
             p=Path(tmp)/'pointer';download(BASE+'/'+remote,p)
-            if digest(p)!=digest(root/local):raise ValueError('Pointer mismatch: '+remote)
+            if digest(p)!=digest(local):raise ValueError('Pointer mismatch: '+remote)
     # Website release date is the first completed promotion, not build time.
     published_key=f'releases/{v}/published.json'
     with tempfile.TemporaryDirectory() as tmp:
@@ -569,7 +654,8 @@ def promote():
                 raise ValueError('Publication record belongs to another candidate')
         else:
             published={'version':v,'date':datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
-                       'inventory_sha256':digest(root/'inventory.json')['sha256']}
+                       'inventory_sha256':digest(root/'inventory.json')['sha256'],
+                       'manifest_sha256':digest(stable)['sha256']}
         write_json('published.json',published);sign('published.json',f'published:{v}')
         put('published.json',published_key,content_type='application/json')
         put('published.json.minisig',published_key+'.minisig',content_type='text/plain')
@@ -625,6 +711,6 @@ def summary():
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','assemble','kernel','selected','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');a=p.parse_args()
-    if a.command=='cli':cli(a)
+    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','x86','assemble','kernel','selected','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');p.add_argument('--check',action='store_true');a=p.parse_args()
+    if a.command in ('cli','x86'):globals()[a.command](a)
     else:globals()[a.command]()

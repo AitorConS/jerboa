@@ -109,7 +109,7 @@ class ProtocolTests(unittest.TestCase):
             old=os.getcwd();os.chdir(td)
             try:
                 Path('authorized-run.json').write_text(json.dumps({'run_id':'123','engine_sha':'a'*40}))
-                with patch.object(c,'verify_candidate',return_value=(inv,{})),patch.object(c,'existing',return_value=None),patch.object(c,'sign'),patch.object(c,'put',side_effect=lambda *a,**k:calls.append(a[1])),patch.object(c,'download',side_effect=RuntimeError('network failed')),patch.dict(os.environ,{'MACOS_EVIDENCE':'https://example.org/report','GITHUB_RUN_ID':'456'}):
+                with patch.object(c,'verify_candidate',return_value=(inv,{'channel':'candidate'})),patch.object(c,'existing',return_value=None),patch.object(c,'sign'),patch.object(c,'put',side_effect=lambda *a,**k:calls.append(a[1])),patch.object(c,'download',side_effect=RuntimeError('network failed')),patch.dict(os.environ,{'MACOS_EVIDENCE':'https://example.org/report','GITHUB_RUN_ID':'456'}):
                     with self.assertRaisesRegex(RuntimeError,'network'):c.promote()
                 self.assertFalse(any(k.startswith('channels/') or k=='desktop/latest.yml' for k in calls))
             finally:os.chdir(old)
@@ -122,7 +122,7 @@ class ProtocolTests(unittest.TestCase):
             try:
                 root=Path('candidate');payload=root/'payload/cli/v1.0.0/a'
                 payload.parent.mkdir(parents=True);payload.write_bytes(b'verified release bytes')
-                m=self.manifest()
+                m=self.manifest();m['channel']='candidate'
                 for asset in c.assets(m):asset.update(c.digest(payload))
                 c.write_json(root/'manifest.json',m)
                 (root/'latest.yml').write_text('version: 1.0.0\n')
@@ -149,12 +149,30 @@ class ProtocolTests(unittest.TestCase):
                     self.assertIn('channels/stable.json',store)
                     self.assertNotIn('desktop/latest.yml',store)
                     c.promote()
-                    self.assertEqual(store['channels/stable.json'],(root/'manifest.json').read_bytes())
+                    # Stable is the candidate re-signed for its channel at promotion.
+                    stable=json.loads(store['channels/stable.json'])
+                    self.assertEqual(stable,{**m,'channel':'stable'})
+                    self.assertEqual(store['channels/stable.json.minisig'],b'signed:'+store['channels/stable.json'])
+                    self.assertEqual(store['releases/v1.0.0/manifest.json'],store['channels/stable.json'])
+                    self.assertEqual(store['releases/v1.0.0/candidate-manifest.json'],(root/'manifest.json').read_bytes())
                     self.assertEqual(store['desktop/latest.yml'],(root/'latest.yml').read_bytes())
                     published=store['releases/v1.0.0/published.json']
+                    self.assertEqual(json.loads(published)['manifest_sha256'],c.digest(Path('stable-manifest.json'))['sha256'])
                     c.promote()
                     self.assertEqual(store['releases/v1.0.0/published.json'],published)
                     self.assertEqual(writes.count('cli/v1.0.0/a'),1)
             finally:os.chdir(old)
+
+    def test_candidate_is_never_signed_as_stable(self):
+        with tempfile.TemporaryDirectory() as td:
+            m=self.manifest();m['channel']='candidate';m['generated']='2026-10-26T10:00:00Z'
+            stable=c.stable_manifest(m,Path(td)/'stable.json')
+            self.assertEqual(json.loads(stable.read_text()),{**m,'channel':'stable'})
+            # Deterministic: a retried promotion re-creates the same bytes.
+            again=c.stable_manifest(m,Path(td)/'again.json')
+            self.assertEqual(stable.read_bytes(),again.read_bytes())
+            for channel in ['stable',None,'beta']:
+                with self.subTest(channel=channel),self.assertRaisesRegex(ValueError,'candidate manifest'):
+                    c.stable_manifest({**m,'channel':channel},Path(td)/'x.json')
 
 if __name__=='__main__':unittest.main()

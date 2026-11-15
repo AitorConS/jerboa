@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
+	"gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
 	"gvisor.dev/gvisor/pkg/tcpip/stack"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
@@ -28,7 +30,10 @@ type nativeEgressPool struct {
 	egressTotal     int
 	publishedTotal  int
 	sources         map[string]bool
-	closed          bool
+	// pending bounds each VM's TCP connection attempts that are still being
+	// set up; the forwarder admits a network-wide number of them.
+	pending *sourceBudget
+	closed  bool
 }
 
 const (
@@ -36,7 +41,17 @@ const (
 	maxEgressFlows         = 256
 	maxPublishedFlowsPerVM = 512
 	maxPublishedFlows      = 1024
+	// A connection attempt holds a forwarder slot from the guest's SYN until
+	// the host dial and the guest's handshake are done. One VM may hold a
+	// sixteenth of the network's attempts, so a guest that leaves its
+	// handshakes unanswered cannot keep the other VMs from connecting.
+	maxEgressPendingPerVM = maxEgressFlows / 16
 )
+
+// egressHandshakeWait bounds how long an attempt waits for the guest's final
+// ACK after the host dial; gVisor alone retransmits the SYN-ACK for about two
+// minutes.
+var egressHandshakeWait = 5 * time.Second
 
 type nativeFlow struct {
 	pool   *nativeEgressPool
@@ -51,7 +66,7 @@ type nativeFlow struct {
 }
 
 func newEgressPool() *nativeEgressPool {
-	return &nativeEgressPool{flows: map[*nativeFlow]bool{}, counts: map[string]int{}, publishedCounts: map[string]int{}, sources: map[string]bool{}}
+	return &nativeEgressPool{flows: map[*nativeFlow]bool{}, counts: map[string]int{}, publishedCounts: map[string]int{}, sources: map[string]bool{}, pending: newSourceBudget(maxEgressPendingPerVM)}
 }
 func (p *nativeEgressPool) activateSource(source string) {
 	p.mu.Lock()
@@ -164,30 +179,42 @@ func (p *nativeEgressPool) install(s *stack.Stack, gateway string, permitted fun
 		}
 		return net.JoinHostPort(ip, strconv.Itoa(int(id.LocalPort)))
 	}
-	tf := tcp.NewForwarder(s, 0, 64, func(r *tcp.ForwarderRequest) {
-		f := p.reserve(r.ID().RemoteAddress.String())
+	tf := tcp.NewForwarder(s, 0, maxEgressFlows, func(r *tcp.ForwarderRequest) {
+		source := r.ID().RemoteAddress.String()
+		if !p.pending.acquire(source) {
+			// Like a full forwarder: drop the SYN, the guest retransmits it.
+			r.Complete(false)
+			return
+		}
+		// The VM's pending share is released with the forwarder slot, not
+		// when the connection ends: duplex below runs for its whole life.
+		complete := func(reset bool) {
+			r.Complete(reset)
+			p.pending.release(source)
+		}
+		f := p.reserve(source)
 		if f == nil {
-			r.Complete(true)
+			complete(true)
 			return
 		}
 		host, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(f.ctx, "tcp4", destination(r.ID()))
 		if err != nil {
-			r.Complete(true)
+			complete(true)
 			f.close()
 			return
 		}
 		if !f.add(host) {
-			r.Complete(true)
+			complete(true)
 			return
 		}
 		var wq waiter.Queue
-		ep, e := r.CreateEndpoint(&wq)
+		ep, e := createEndpointWithin(s, r, &wq, egressHandshakeWait)
 		if e != nil {
-			r.Complete(true)
+			complete(true)
 			f.close()
 			return
 		}
-		r.Complete(false)
+		complete(false)
 		guest := gonet.NewTCPConn(&wq, ep)
 		if !f.add(guest) {
 			return
@@ -236,6 +263,25 @@ func (p *nativeEgressPool) install(s *stack.Stack, gateway string, permitted fun
 		}
 		return uf.HandlePacket(id, pkt)
 	})
+}
+
+// createEndpointWithin completes the guest's handshake for r, aborting it if
+// the guest has not sent its final ACK within wait. gVisor blocks in
+// CreateEndpoint until the handshake ends and has no deadline of its own
+// shorter than its SYN-ACK retransmissions.
+func createEndpointWithin(s *stack.Stack, r *tcp.ForwarderRequest, wq *waiter.Queue, wait time.Duration) (tcpip.Endpoint, tcpip.Error) {
+	id := r.ID()
+	timer := time.AfterFunc(wait, func() {
+		// While the handshake runs, its endpoint is registered under the
+		// request's ID. Only an endpoint still in SYN-RCVD is aborted, so a
+		// handshake that completed at the deadline keeps its connection.
+		ep, ok := s.FindTransportEndpoint(ipv4.ProtocolNumber, tcp.ProtocolNumber, id, 1).(*tcp.Endpoint)
+		if ok && tcp.EndpointState(ep.State()) == tcp.StateSynRecv {
+			ep.Abort()
+		}
+	})
+	defer timer.Stop()
+	return r.CreateEndpoint(wq)
 }
 
 func (p *nativeEgressPool) closeTag(tag string) {

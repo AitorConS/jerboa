@@ -29,6 +29,8 @@ class WorkflowContracts(unittest.TestCase):
    self.assertIn('name: validated-kernel',part)
   self.assertIn('JERBOA_KERNEL_TOOLSET: kernel-candidate',text)
   self.assertNotIn('default: v0.2.0',text)
+  # A release names the hypervisor commit it ships: a default goes stale.
+  self.assertNotIn('default:',text.split('      runtime_sha:',1)[1].split('      kernel_version:',1)[0])
  def test_self_hosted_jobs_never_run_fork_code(self):
   workflows=ROOT/'.github/workflows'
   fork="github.event.pull_request.head.repo.full_name == github.repository"
@@ -80,7 +82,10 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('bin/jerboa-sign -in dist/publish/packages.json',publish)
   self.assertIn('packages.json.minisig',publish)
   # The existing index is verified before it is extended and signed again.
-  verify=publish.index('bin/jerboa-verify dist/publish/packages.json')
+  # Only a signature made for the package index counts, and the base
+  # index may not be older than the last publication.
+  verify=publish.index('bin/jerboa-verify -purpose packages dist/publish/packages.json')
+  self.assertIn('PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL }}',publish)
   self.assertLess(publish.index('--pattern packages.json.minisig'),verify)
   self.assertLess(verify,publish.index('scripts/package-index.py'))
  def test_package_index_is_immutable(self):
@@ -117,6 +122,36 @@ class WorkflowContracts(unittest.TestCase):
      r=subprocess.run([sys.executable,str(script),src,dst,'o/r'],capture_output=True,text=True)
      self.assertEqual(r.returncode==0,ok,r.stderr)
      if not ok:self.assertIn('points outside the package index',r.stderr)
+ def test_package_index_serial_and_floor(self):
+  script=ROOT/'scripts/package-index.py'
+  def stage(root,version):
+   d=Path(root)/version;d.mkdir(parents=True)
+   data=version.encode()
+   (d/'files.tar.gz').write_bytes(data)
+   (d/'meta.json').write_text(json.dumps({'name':'pkg','version':version,'platform':'linux/amd64','sha256':hashlib.sha256(data).hexdigest(),'size':len(data)}))
+  def publish(src,dst,floor=''):
+   env=dict(os.environ,PKG_INDEX_MIN_SERIAL=floor)
+   return subprocess.run([sys.executable,str(script),src,dst,'o/r'],capture_output=True,text=True,env=env)
+  def index(dst):return json.loads((Path(dst)/'packages.json').read_text())
+  with tempfile.TemporaryDirectory() as src,tempfile.TemporaryDirectory() as dst:
+   stage(src,'1.0.0')
+   r=publish(src,dst);self.assertEqual(r.returncode,0,r.stderr)
+   first=index(dst)
+   self.assertEqual((first['purpose'],first['serial']),('jerboa-package-index',1))
+   self.assertRegex(first['generated'],r'^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+   # Nothing new: the index, serial included, is unchanged.
+   r=publish(src,dst,'1');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(index(dst),first)
+   stage(src,'2.0.0')
+   r=publish(src,dst,'1');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(index(dst)['serial'],2)
+   # A base older than the last publication is refused, as is a legacy one
+   # once a floor is set, and a document that is not a package index.
+   (Path(dst)/'packages.json').write_text(json.dumps(first))
+   r=publish(src,dst,'2');self.assertNotEqual(r.returncode,0);self.assertIn('older than the last publication',r.stderr)
+   (Path(dst)/'packages.json').write_text(json.dumps({'packages':{}}))
+   r=publish(src,dst,'2');self.assertNotEqual(r.returncode,0);self.assertIn('older than the last publication',r.stderr)
+   for bad in [{'purpose':'stable','serial':3,'packages':{}},{'serial':3,'packages':{}},{'purpose':'jerboa-package-index','serial':'3','packages':{}}]:
+    (Path(dst)/'packages.json').write_text(json.dumps(bad))
+    r=publish(src,dst);self.assertNotEqual(r.returncode,0,bad)
  def test_distro_inputs_are_pinned(self):
   # The WSL rootfs is signed into releases: its base image and Firecracker
   # are pinned and checked, Firecracker to the same digest install.sh uses.

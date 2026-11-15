@@ -289,6 +289,13 @@ func sourceFiles(dir string, lang builder.Lang, include *builder.IncludeMatcher)
 	var files []pkg.File
 	err = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			// A directory the project ignores is skipped even when it cannot
+			// be read (a database's data directory owned by another user).
+			if info != nil && info.IsDir() {
+				if rel, rerr := filepath.Rel(dir, path); rerr == nil && ignore.Match(filepath.ToSlash(rel), true) {
+					return filepath.SkipDir
+				}
+			}
 			return err
 		}
 		rel, rerr := filepath.Rel(dir, path)

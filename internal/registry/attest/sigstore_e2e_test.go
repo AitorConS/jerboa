@@ -55,7 +55,7 @@ func TestSigstoreRoundTrip(t *testing.T) {
 		id, err = ParseIdentity(path)
 	}
 	require.NoError(t, err)
-	results, err := Verify(trust.Root, digest, id, []verify.SignedEntity{b})
+	results, err := Verify(trust.Root, "registry.jerboa.dev/jerboa-e2e/sigstore", digest, id, []verify.SignedEntity{b})
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.Equal(t, ProvenanceType, results[0].PredicateType)
@@ -65,8 +65,8 @@ func TestSigstoreRoundTrip(t *testing.T) {
 
 	other, err := ParseIdentity("AitorConS/somewhere-else")
 	require.NoError(t, err)
-	_, err = Verify(trust.Root, digest, other, []verify.SignedEntity{b})
+	_, err = Verify(trust.Root, "registry.jerboa.dev/jerboa-e2e/sigstore", digest, other, []verify.SignedEntity{b})
 	require.Error(t, err)
-	_, err = Verify(trust.Root, "sha256:"+strings.Repeat("0", 64), id, []verify.SignedEntity{b})
+	_, err = Verify(trust.Root, "registry.jerboa.dev/jerboa-e2e/sigstore", "sha256:"+strings.Repeat("0", 64), id, []verify.SignedEntity{b})
 	require.Error(t, err)
 }

@@ -28,7 +28,8 @@ func newConfigSetCmd() *cobra.Command {
 
 Available keys:
 
-  hypervisor   VM backend to use: qemu (default) or firecracker`,
+  hypervisor   VM backend to use: auto (default: Firecracker where this
+               host can run it, else QEMU), qemu or firecracker`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], strings.ToLower(args[1])
@@ -39,10 +40,12 @@ Available keys:
 			}
 			switch strings.ToLower(key) {
 			case "hypervisor":
-				if value != "qemu" && value != "firecracker" {
-					return fmt.Errorf("hypervisor must be qemu or firecracker, got %q", value)
+				if value != "qemu" && value != "firecracker" && value != "auto" {
+					return fmt.Errorf("hypervisor must be auto, qemu or firecracker, got %q", value)
 				}
-				cfg.Hypervisor = value
+				// auto is stored as no choice: the daemon then runs
+				// Firecracker wherever the host can.
+				cfg.Hypervisor = strings.TrimPrefix(value, "auto")
 			default:
 				return fmt.Errorf("unknown config key %q", key)
 			}
@@ -68,6 +71,10 @@ func newConfigGetCmd() *cobra.Command {
 			}
 			switch key {
 			case "hypervisor":
+				if cfg.Hypervisor == "" {
+					fmt.Fprintln(cmd.OutOrStdout(), "auto")
+					break
+				}
 				fmt.Fprintln(cmd.OutOrStdout(), cfg.Hypervisor)
 			default:
 				return fmt.Errorf("unknown config key %q", key)

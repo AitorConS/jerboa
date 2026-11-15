@@ -6,13 +6,17 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -41,13 +45,86 @@ type Member struct {
 // lines, or an unbounded blob that would bloat the member table — is dropped.
 var memberIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
-// maxGossipBody bounds the request body accepted by the gossip handler, which
-// is unauthenticated unless a cluster token is configured.
+// maxGossipBody bounds every gossip message this node decodes: requests to the
+// gossip handler and the replies to its own gossip and join requests alike. The
+// limit applies to the decoded stream, after the HTTP transport has inflated a
+// gzip-encoded reply, so a small compressed body cannot expand past it.
 const maxGossipBody = 1 << 20 // 1 MiB
 
+// errGossipTooLarge reports a gossip message over maxGossipBody bytes or with
+// more entries than the member table can hold.
+var errGossipTooLarge = errors.New("cluster: gossip message too large")
+
+// decodeGossip decodes one gossip message from r, reading at most
+// maxGossipBody bytes, and rejects a message carrying more than maxMembers
+// entries: no honest node sends more entries than its own table can hold.
+func decodeGossip(r io.Reader) (gossipPayload, error) {
+	var p gossipPayload
+	lr := &io.LimitedReader{R: r, N: maxGossipBody + 1}
+	err := json.NewDecoder(lr).Decode(&p)
+	if lr.N <= 0 || (err == nil && len(p.Members) > maxMembers) {
+		return gossipPayload{}, errGossipTooLarge
+	}
+	if err != nil {
+		return gossipPayload{}, fmt.Errorf("cluster: decode gossip: %w", err)
+	}
+	return p, nil
+}
+
+// validEntries returns the well-formed entries of one gossip message. It reads
+// only fields fixed at construction, so callers run it before taking c.mu, and
+// it logs dropped entries once per message rather than once per entry, so a
+// message full of junk costs one log line. A message with more entries than the
+// member table can hold is rejected whole (ok is false).
+func (c *SwimCluster) validEntries(entries []memberEntry) (valid []memberEntry, ok bool) {
+	if len(entries) > maxMembers {
+		slog.Warn("cluster: dropping oversized gossip message", "entries", len(entries))
+		return nil, false
+	}
+	valid = make([]memberEntry, 0, len(entries))
+	for _, e := range entries {
+		if validEntry(e, c.allowLoopback) {
+			valid = append(valid, e)
+		}
+	}
+	if dropped := len(entries) - len(valid); dropped > 0 {
+		// Counted rather than logged verbatim: the entries are unauthenticated
+		// wire data unless a cluster token is configured.
+		slog.Warn("cluster: dropping malformed gossip entries", "count", dropped)
+	}
+	return valid, true
+}
+
+// hostNamePattern is the shape a non-IP member host must have: DNS name
+// characters only. It keeps "user@169.254.169.254" and "host/path" out of the
+// gossip URL, where they would change which host is dialed.
+var hostNamePattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,253}$`)
+
+// blockedGossipIP reports whether this node must never send gossip to ip:
+// link-local (cloud metadata), unspecified, multicast, and loopback unless
+// allowLoopback is set. The net.IP predicates also match the IPv4-mapped IPv6
+// form of each IPv4 address.
+func blockedGossipIP(ip net.IP, allowLoopback bool) bool {
+	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || (ip.IsLoopback() && !allowLoopback)
+}
+
+// isLoopbackHost reports whether host is a loopback IP literal or the name
+// localhost.
+func isLoopbackHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
 // validEntry reports whether a member entry received over gossip is well-formed
-// enough to merge into the member table.
-func validEntry(e memberEntry) bool {
+// enough to merge into the member table. allowLoopback is the node's loopback
+// policy (see SwimCluster.allowLoopback). This is an early filter only: a host
+// name can resolve to anything, so the gossip client checks every address it
+// actually connects to as well (gossipDialControl).
+func validEntry(e memberEntry, allowLoopback bool) bool {
 	if !memberIDPattern.MatchString(e.ID) {
 		return false
 	}
@@ -57,9 +134,16 @@ func validEntry(e memberEntry) bool {
 	if err != nil || host == "" || port == "" {
 		return false
 	}
-	// Never gossip to link-local (cloud metadata) or unspecified addresses:
-	// a member entry decides where this node sends requests.
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()) {
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return false
+	}
+	// A member entry decides where this node sends requests, so never accept
+	// one that points at an address the gossip client would refuse to dial.
+	if ip := net.ParseIP(host); ip != nil {
+		if blockedGossipIP(ip, allowLoopback) {
+			return false
+		}
+	} else if !hostNamePattern.MatchString(host) || (!allowLoopback && isLoopbackHost(host)) {
 		return false
 	}
 	switch e.Status {
@@ -125,6 +209,49 @@ type SwimCluster struct {
 	// a stranger who can merely reach the port cannot inject membership updates.
 	// It is set once at construction and never mutated, so it is read lock-free.
 	token string
+	// allowLoopback lets gossip reach loopback addresses. It is set only when
+	// this node itself advertises a loopback address (a single-host or test
+	// cluster, e.g. --cluster-addr :7946), since such a node can only cluster
+	// with nodes on the same host anyway. Fixed at construction; read lock-free.
+	allowLoopback bool
+}
+
+// gossipDialControl is the net.Dialer Control hook of the gossip client. It
+// runs for every connection attempt, after DNS resolution, so a member host
+// name that resolves to a blocked address is refused just like the literal.
+func gossipDialControl(allowLoopback bool) func(network, address string, _ syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return fmt.Errorf("cluster: gossip address %q: %w", address, err)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || blockedGossipIP(ip, allowLoopback) {
+			return fmt.Errorf("cluster: refusing to gossip to %s", host)
+		}
+		return nil
+	}
+}
+
+// newGossipClient builds the HTTP client used for gossip and join requests. It
+// never follows redirects (a 3xx reply is simply not a gossip reply), ignores
+// proxy environment variables (a proxy would hide the real destination from
+// the dial check) and checks every address it connects to.
+func newGossipClient(allowLoopback bool) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	tr.DialContext = (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   gossipDialControl(allowLoopback),
+	}).DialContext
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // Option configures a SwimCluster at construction time.
@@ -155,11 +282,14 @@ func NewSwimCluster(addr string, vmCount int, cpuCap int, memCap int64, opts ...
 			MemCap:  memCap,
 		},
 		members:     make(map[string]*Member),
-		httpClient:  &http.Client{Timeout: 5 * time.Second},
 		period:      5 * time.Second,
 		suspTimeout: 15 * time.Second,
 		deadTimeout: 30 * time.Second,
 	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		c.allowLoopback = isLoopbackHost(host)
+	}
+	c.httpClient = newGossipClient(c.allowLoopback)
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -181,18 +311,22 @@ func (c *SwimCluster) LocalID() string {
 	return c.local.ID
 }
 
+// Join contacts each seed in turn and merges its reply. The HTTP exchange runs
+// without holding c.mu, so a slow or hostile seed cannot stall the gossip
+// handler or member listing; only the merge of an already validated reply takes
+// the lock.
 func (c *SwimCluster) Join(ctx context.Context, seedAddrs ...string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	for _, addr := range seedAddrs {
+		c.mu.RLock()
 		if addr == c.local.Addr {
+			c.mu.RUnlock()
 			continue
 		}
 		payload := gossipPayload{
 			MemberID: c.local.ID,
 			Members:  c.toEntriesLocked(),
 		}
+		c.mu.RUnlock()
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return fmt.Errorf("cluster join marshal: %w", err)
@@ -211,10 +345,7 @@ func (c *SwimCluster) Join(ctx context.Context, seedAddrs ...string) error {
 			continue
 		}
 		if resp.StatusCode == http.StatusOK {
-			var remote gossipPayload
-			if decErr := json.NewDecoder(resp.Body).Decode(&remote); decErr == nil {
-				c.mergeEntriesLocked(remote.MemberID, remote.Members)
-			}
+			c.mergeReply(resp.Body, addr)
 		}
 		resp.Body.Close()
 	}
@@ -277,16 +408,20 @@ func (c *SwimCluster) UpdateLocal(vmCount int, cpuCap int, memCap int64) {
 }
 
 func (c *SwimCluster) HandleGossip(payload gossipPayload) gossipPayload {
+	entries, ok := c.validEntries(payload.Members)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.mergeEntriesLocked(payload.MemberID, payload.Members)
+	if ok {
+		c.mergeEntriesLocked(payload.MemberID, "", entries)
 
-	if m, ok := c.members[payload.MemberID]; ok {
-		m.LastSeen = time.Now()
-		if m.Status == StatusSuspect {
-			m.Status = StatusAlive
-			slog.Debug("cluster member recovered from suspicion", "member", m.ID)
+		if m, found := c.members[payload.MemberID]; found {
+			m.LastSeen = time.Now()
+			if m.Status == StatusSuspect {
+				m.Status = StatusAlive
+				slog.Debug("cluster member recovered from suspicion", "member", m.ID)
+			}
 		}
 	}
 
@@ -350,15 +485,29 @@ func (c *SwimCluster) doGossip(ctx context.Context) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		var remote gossipPayload
-		if decErr := json.NewDecoder(resp.Body).Decode(&remote); decErr == nil {
-			c.mu.Lock()
-			c.mergeEntriesLocked(remote.MemberID, remote.Members)
-			if m, ok := c.members[remote.MemberID]; ok {
-				m.LastSeen = time.Now()
-			}
-			c.mu.Unlock()
-		}
+		c.mergeReply(resp.Body, target)
+	}
+}
+
+// mergeReply decodes and validates a gossip reply read from peer (the address
+// this node dialed) without holding c.mu, then merges it. A reply that is too
+// large, malformed or carries too many entries changes no state.
+func (c *SwimCluster) mergeReply(body io.Reader, peer string) {
+	remote, err := decodeGossip(body)
+	if err != nil {
+		// The decode error is not logged: it can quote reply bytes.
+		slog.Warn("cluster: discarding gossip reply", "peer", stripLogControl(peer), "too_large", errors.Is(err, errGossipTooLarge))
+		return
+	}
+	entries, ok := c.validEntries(remote.Members)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mergeEntriesLocked(remote.MemberID, peer, entries)
+	if m, found := c.members[remote.MemberID]; found {
+		m.LastSeen = time.Now()
 	}
 }
 
@@ -417,19 +566,29 @@ const maxMembers = 1024
 // later one is clamped to now, so an entry cannot pin itself as fresh forever.
 const maxClockSkew = time.Minute
 
-// mergeEntriesLocked folds gossiped entries from sender into the table. Only a
-// member itself may change its address or announce that it left; others can
-// relay its liveness and declare it dead.
-func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
+// mergeEntriesLocked folds gossiped entries from sender into the table.
+// entries must already have passed validEntries, which callers run before
+// taking c.mu.
+//
+// Every node holds the same cluster token, so the token proves membership but
+// not identity, and sender (the member_id in the message body) is only a claim.
+// The rules below therefore never let that claim alone change what this node
+// records about another member:
+//
+//   - A known member's address never changes over gossip. Member IDs are
+//     random per process and a node's advertised address is fixed for the life
+//     of the process, so an honest node never moves; a restarted node joins
+//     under a new ID and its old entry ages out.
+//   - "left" is accepted only from the member itself, and only on a reply to a
+//     request this node sent to the member's recorded address (dialed is that
+//     address; it is empty for inbound gossip). The claim is then bound to
+//     whoever answers at that address, not to a body field any peer can set.
+//   - Any peer may still relay liveness and newer capacity figures, introduce
+//     members this node has not seen, and declare a member dead, as before.
+func (c *SwimCluster) mergeEntriesLocked(sender, dialed string, entries []memberEntry) {
 	now := time.Now()
 	for _, e := range entries {
 		if e.ID == c.local.ID {
-			continue
-		}
-		if !validEntry(e) {
-			// Dropped rather than logged verbatim: the entry is unauthenticated
-			// wire data unless a cluster token is configured.
-			slog.Warn("cluster: dropping malformed gossip entry")
 			continue
 		}
 		existing, ok := c.members[e.ID]
@@ -437,8 +596,6 @@ func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
 		if entryTime.After(now.Add(maxClockSkew)) {
 			entryTime = now
 		}
-		self := e.ID == sender
-
 		if !ok {
 			if len(c.members) >= maxMembers {
 				slog.Warn("cluster: member table full; ignoring new member")
@@ -458,12 +615,12 @@ func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
 			continue
 		}
 
-		if e.Status == StatusDead || (e.Status == StatusLeft && self) {
+		// The member answered at its recorded address and speaks for itself.
+		firstHand := e.ID == sender && dialed != "" && existing.Addr == dialed
+
+		if e.Status == StatusDead || (e.Status == StatusLeft && firstHand) {
 			existing.Status = e.Status
 		} else if entryTime.After(existing.LastSeen) {
-			if self {
-				existing.Addr = e.Addr
-			}
 			existing.VMCount = e.VMCount
 			existing.CPUCap = e.CPUCap
 			existing.MemCap = e.MemCap
@@ -517,8 +674,8 @@ func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		var payload gossipPayload
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxGossipBody)).Decode(&payload); err != nil {
+		payload, err := decodeGossip(http.MaxBytesReader(w, r.Body, maxGossipBody))
+		if err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}

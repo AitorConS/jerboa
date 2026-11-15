@@ -82,9 +82,13 @@ jerboad --ui-addr 127.0.0.1:8080 --observability-token-file /etc/jerboa/observab
 
 The dashboard needs the token even on loopback, since every local user can
 reach `127.0.0.1` and it shows VM names, addresses and serial logs. A browser
-is sent to `/ui/login`, which stores the
-token in an HttpOnly cookie. The dashboard lists which environment variables a
-VM has, not their values.
+is sent to `/ui/login`, which checks the token and sets an HttpOnly session
+cookie named after the dashboard's port (`jerboa_ui_8080`). The cookie never
+holds the token: browsers send a cookie to every port of a host, so it only
+opens this dashboard, for 12 hours or until the daemon restarts, and is not
+accepted by `/metrics`, which takes the token only as
+`Authorization: Bearer`. The dashboard lists which environment variables a VM
+has, not their values.
 
 Routes:
 
@@ -100,6 +104,20 @@ Routes:
 needs the same token, from `--cluster-token-file` or `JERBOA_CLUSTER_TOKEN`; the
 daemon refuses to serve gossip without one unless you pass `--insecure-cluster`.
 Gossip is plain HTTP, so keep it on a private network.
+
+The token proves that a caller belongs to the cluster, not which node it is,
+so a node never lets a peer's claim rewrite another member's record. A known
+member's address does not change over gossip (a restarted node joins under a
+new ID), and a member is marked `left` only when it says so itself in a reply
+from its recorded address. Any member can still mark another one dead.
+
+A node only sends gossip, including `--join` requests, to addresses that pass a
+fixed policy, checked again on every connection after DNS resolution:
+link-local (cloud metadata), unspecified and multicast addresses are refused,
+and so is loopback unless the node itself advertises a loopback address (as
+`--cluster-addr :7946` does, for a single-host cluster). Gossip requests never
+follow redirects and ignore `HTTP_PROXY`/`HTTPS_PROXY`. Gossip messages and
+replies are limited to 1 MiB and 1024 members.
 
 ## VM Stats
 

@@ -27,7 +27,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: Run unit tests
       run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1
@@ -63,7 +63,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: false
     - name: Check KVM
       run: |
@@ -87,7 +87,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: false
     - name: Run benchmarks
       run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
@@ -110,7 +110,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: false
     - name: Check KVM
       run: |
@@ -198,6 +198,15 @@ jobs:
           bench-summary.txt
           ${{ env.BENCH_ROOT }}/fc-metrics/
         if-no-files-found: ignore
+    # The KVM runner is persistent: without this each night leaves its images,
+    # VM disks and logs in /tmp.
+    - name: Remove the benchmark directory
+      if: always()
+      run: |
+        # Only the directory this job made: it holds both daemons' homes.
+        if [ -n "${BENCH_ROOT:-}" ] && [ -d "${BENCH_ROOT}/qemu" ] && [ -d "${BENCH_ROOT}/fc" ]; then
+          rm -rf -- "${BENCH_ROOT}"
+        fi
     if: inputs.suite != 'kernel'
   fuzz-extended:
     name: Fuzz (extended)
@@ -209,7 +218,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: Fuzz every target for several minutes
       run: |
@@ -239,7 +248,7 @@ jobs:
         persist-credentials: false
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
-        go-version: 1.27.3
+        go-version: 1.27.4
         cache: true
     - name: govulncheck
       run: |

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -114,7 +115,7 @@ func TestAwaitFCReadyReusesSupervisorConnection(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	require.NoError(t, awaitFCReady(ctx, socket))
+	require.NoError(t, awaitFCReady(ctx, socket, &fcExit{done: make(chan struct{})}))
 	require.EqualValues(t, 3, requests.Load())
 	require.EqualValues(t, 1, connections.Load())
 }
@@ -131,8 +132,124 @@ func TestAwaitFCReadyReportsBootFailure(t *testing.T) {
 	})}
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
-	err = awaitFCReady(context.Background(), socket)
+	err = awaitFCReady(context.Background(), socket, &fcExit{done: make(chan struct{})})
 	require.ErrorContains(t, err, "BOOT_FAILED")
+}
+
+func TestAwaitFCReadyReportsVMMGoneBeforeBoot(t *testing.T) {
+	cmd := exec.Command("/usr/bin/false")
+	require.NoError(t, cmd.Start())
+	// Nothing ever listens on the socket: only the exit can end the wait.
+	start := time.Now()
+	err := awaitFCReady(context.Background(), filepath.Join(t.TempDir(), "s"), watchFCExit(cmd))
+	require.ErrorContains(t, err, "exited before the guest started")
+	require.Less(t, time.Since(start), 5*time.Second)
+}
+
+// fcCheckScript is a VMM too old to declare capabilities, whose
+// --check-config counts its calls in dir and answers with the given exit
+// status.
+func fcCheckScript(t *testing.T, dir string, status int) (m *FirecrackerManager, calls func() int) {
+	t.Helper()
+	return fcScript(t, dir, status, "")
+}
+
+// fcScript is fcCheckScript for a VMM that answers --capabilities with the
+// given JSON, or refuses the option when it is empty.
+func fcScript(t *testing.T, dir string, status int, capabilities string) (m *FirecrackerManager, calls func() int) {
+	t.Helper()
+	log := filepath.Join(dir, "calls")
+	script := `case "$*" in *--capabilities*) [ -n "$CAPS" ] || exit 1; echo "$CAPS"; exit 0;; esac; echo x >> ` + log + "; echo unknown field; exit " + strconv.Itoa(status)
+	m = NewFirecrackerManager("fc", "/kernel", WithFCCommandFunc(func(ctx context.Context, _ string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", script, "fc"}, args...)...)
+		cmd.Env = append(os.Environ(), "CAPS="+capabilities)
+		return cmd
+	}))
+	return m, func() int {
+		data, _ := os.ReadFile(log)
+		return len(data) / 2
+	}
+}
+
+func TestPreflightFCConfigOnlyForAnUnansweredPeerControl(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{"security":{"version":1}}`), 0o600))
+	m, calls := fcCheckScript(t, dir, 0)
+
+	require.NoError(t, m.preflightFCConfig(context.Background(), Config{}, path))
+	require.Zero(t, calls(), "a config without a direct link is checked by the VMM as it starts")
+
+	linked := Config{nativeControl: "/control.sock"}
+	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
+	require.Equal(t, 1, calls())
+	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
+	require.Equal(t, 1, calls(), "once the VMM accepted a direct link it is not asked again")
+}
+
+func TestFCCapabilitiesComeFromTheVMM(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	linked := Config{nativeControl: "/control.sock"}
+
+	m, calls := fcScript(t, dir, 0, `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true}`)
+	require.Equal(t, fcCapabilities{MaxVCPUs: 8, MemoryMiB: [2]int{64, 8192}, MaxDrives: 4, PeerControl: true, declared: true}, m.fcCapabilities())
+	require.NoError(t, m.preflightFCConfig(context.Background(), linked, path))
+	require.Zero(t, calls(), "a VMM that declares direct links is not asked about a config")
+	require.False(t, m.noPeerControl.Load())
+
+	without, calls := fcScript(t, dir, 0, `{"max_vcpus":4,"memory_mib":[64,2048],"max_drives":4}`)
+	require.NoError(t, without.preflightFCConfig(context.Background(), linked, path))
+	require.Zero(t, calls())
+	require.True(t, without.noPeerControl.Load(), "a VMM that declares no direct links is never offered one")
+
+	for name, answer := range map[string]string{"no option": "", "not JSON": "usage", "nonsense": `{"max_vcpus":0}`} {
+		old, _ := fcScript(t, dir, 0, answer)
+		require.Equal(t, legacyFCCapabilities, old.fcCapabilities(), name)
+	}
+}
+
+func TestSlirpLinkUsesTheNetworkMTUOnlyWithAVMMThatDeclaresIt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		capabilities string
+		network      string
+		mtu          int
+	}{
+		"declared": {`{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"slirp_mtu_max":9000}`, "10.0.2.15/24,10.0.2.2,9000", 9000},
+		"smaller":  {`{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"slirp_mtu_max":4000}`, "10.0.2.15/24,10.0.2.2", 0},
+		"old VMM":  {"", "10.0.2.15/24,10.0.2.2", 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, _ := fcScript(t, t.TempDir(), 0, tc.capabilities)
+			p, err := m.writeFCConfig("test", Config{Memory: "256M", CPUs: 1}, "/private-root.img")
+			require.NoError(t, err)
+			t.Cleanup(func() { cleanupFCConfig(p) })
+			data, err := os.ReadFile(p)
+			require.NoError(t, err)
+			var c nativeFCConfig
+			require.NoError(t, json.Unmarshal(data, &c))
+			require.Equal(t, tc.mtu, c.Networks[0].MTU)
+			guest, err := os.ReadFile(c.Firmware["opt/uni/network"])
+			require.NoError(t, err)
+			require.Equal(t, tc.network, string(guest), "the guest and the VMM are given the same MTU")
+		})
+	}
+}
+
+func TestExplainFCStartPrefersTheVMMsRejection(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	require.NoError(t, os.WriteFile(path, []byte(`{}`), 0o600))
+	boot := errors.New("HVF boot failed: port in use")
+
+	accepts, _ := fcCheckScript(t, dir, 0)
+	require.Equal(t, boot, accepts.explainFCStart(context.Background(), path, boot))
+
+	rejects, _ := fcCheckScript(t, dir, 1)
+	err := rejects.explainFCStart(context.Background(), path, boot)
+	require.ErrorContains(t, err, "HVF configuration rejected")
+	require.ErrorContains(t, err, "unknown field")
 }
 
 func TestNativeFCNetStatsWithoutNetwork(t *testing.T) {
@@ -388,12 +505,101 @@ func TestWaitFCProcessPreservesGuestExit(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, "/bin/sleep", "30")
 			require.NoError(t, cmd.Start())
-			err = waitFCProcess(cmd, socket)
+			err = waitFCProcess(cmd, watchFCExit(cmd), socket)
 			if code == 0 {
 				require.NoError(t, err)
 			} else {
 				require.ErrorContains(t, err, "code 7")
 			}
 		})
+	}
+}
+
+func TestNativeFCDefaultPolicyReachesPublicAddressesOnly(t *testing.T) {
+	const caps = `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true,"public_egress":true}`
+	m, _ := fcScript(t, t.TempDir(), 0, caps)
+	WithFCDefaultDNS("1.1.1.1:53")(m)
+
+	// On a network the daemon enforces it.
+	p, err := m.sharedPolicy()
+	require.NoError(t, err)
+	for address, want := range map[string]bool{
+		"93.184.216.34": true, "1.1.1.1": true,
+		"127.0.0.1": false, "10.0.0.5": false, "172.16.0.1": false, "192.168.1.1": false,
+		"169.254.169.254": false, "100.64.0.1": false, "224.0.0.1": false, "not-an-ip": false,
+	} {
+		require.Equal(t, want, p.permits(address, 443, false), address)
+		require.Equal(t, want, p.permits(address, 53, true), address)
+	}
+	require.False(t, p.permits("1.1.1.1", 0, false))
+	upstream, err := m.GuestDNSUpstream()
+	require.NoError(t, err)
+	require.Equal(t, "1.1.1.1:53", upstream)
+
+	// Off a network the VMM does, from its security object.
+	path, err := m.writeFCConfig("default", Config{Memory: "128M"}, "/root")
+	require.NoError(t, err)
+	t.Cleanup(func() { cleanupFCConfig(path) })
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var c nativeFCConfig
+	require.NoError(t, json.Unmarshal(data, &c))
+	require.JSONEq(t, `true`, string(c.Security["public_egress"]))
+	require.JSONEq(t, `{"address":"1.1.1.1","port":53}`, string(c.Security["dns"]))
+	require.Empty(t, c.Security["egress"])
+}
+
+func TestNativeFCSuppliedPolicyReplacesTheDefault(t *testing.T) {
+	const caps = `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true,"public_egress":true}`
+	m, _ := fcScript(t, t.TempDir(), 0, caps)
+	WithFCDefaultDNS("1.1.1.1:53")(m)
+	WithFCSecurity([]byte(`{"version":1}`))(m)
+
+	p, err := m.sharedPolicy()
+	require.NoError(t, err)
+	require.False(t, p.permits("1.1.1.1", 443, false), "an empty policy closes everything")
+	upstream, err := m.GuestDNSUpstream()
+	require.NoError(t, err)
+	require.Empty(t, upstream)
+
+	path, err := m.writeFCConfig("closed", Config{Memory: "128M"}, "/root")
+	require.NoError(t, err)
+	t.Cleanup(func() { cleanupFCConfig(path) })
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var c nativeFCConfig
+	require.NoError(t, json.Unmarshal(data, &c))
+	require.Empty(t, c.Security["public_egress"])
+	require.Empty(t, c.Security["dns"])
+
+	// A policy may ask for public addresses beside its own rules.
+	WithFCSecurity([]byte(`{"version":1,"public_egress":true,"egress":[{"protocol":"tcp","address":"192.168.1.10","port":5432}]}`))(m)
+	p, err = m.sharedPolicy()
+	require.NoError(t, err)
+	require.True(t, p.permits("1.1.1.1", 443, false))
+	require.True(t, p.permits("192.168.1.10", 5432, false))
+	require.False(t, p.permits("192.168.1.10", 5433, false))
+}
+
+func TestNativeFCDefaultPolicyWithAVMMThatPredatesIt(t *testing.T) {
+	m, _ := fcScript(t, t.TempDir(), 0, `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true}`)
+	WithFCDefaultDNS("1.1.1.1:53")(m)
+	path, err := m.writeFCConfig("old", Config{Memory: "128M"}, "/root")
+	require.NoError(t, err)
+	t.Cleanup(func() { cleanupFCConfig(path) })
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var c nativeFCConfig
+	require.NoError(t, json.Unmarshal(data, &c))
+	require.Empty(t, c.Security["public_egress"], "an older VMM would refuse the field")
+	require.Empty(t, c.Security["dns"])
+}
+
+func TestNativeFCDefaultDNSMustBeAnAddress(t *testing.T) {
+	for upstream, want := range map[string]string{"9.9.9.9:53": "9.9.9.9:53", "192.168.1.1:5353": "192.168.1.1:5353", "": "", "dns.example:53": "", "1.1.1.1": "", "1.1.1.1:0": ""} {
+		m := NewFirecrackerManager("fc", "/kernel", WithFCDefaultDNS(upstream))
+		got, err := m.GuestDNSUpstream()
+		require.NoError(t, err)
+		require.Equal(t, want, got, upstream)
 	}
 }

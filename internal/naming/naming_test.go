@@ -139,3 +139,24 @@ func FuzzValidateResourceName(f *testing.F) {
 		}
 	})
 }
+
+func TestComposeLocalName(t *testing.T) {
+	t.Parallel()
+	prefix := ComposeScopedPrefix([]byte{1, 2, 3, 4, 5, 6, 7, 8})
+	if prefix != "compose-010203040506-" {
+		t.Fatalf("prefix = %q", prefix)
+	}
+	for scoped, want := range map[string]string{
+		prefix + "app":              "app",
+		prefix + "back-end":         "back-end",
+		"app":                       "app",
+		"compose-app":               "compose-app",
+		"compose-010203040506-":     "compose-010203040506-",
+		"compose-01020304050g-app":  "compose-01020304050g-app",
+		"compose-0102030405060-app": "compose-0102030405060-app",
+	} {
+		if got := ComposeLocalName(scoped); got != want {
+			t.Errorf("ComposeLocalName(%q) = %q, want %q", scoped, got, want)
+		}
+	}
+}

@@ -5,6 +5,7 @@ package vm
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,8 +25,23 @@ type SQLiteStore struct {
 
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	dir := filepath.Dir(dsn)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// The database persists every VM's full config, including any environment
+	// passed with -e (which may hold secrets), so keep it owner-only, as the
+	// file backend does with state.json.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("sqlite mkdir: %w", err)
+	}
+	// Only take access away from group and other: a directory the operator
+	// made read-only stays read-only, and the open below fails as before.
+	if info, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("sqlite stat dir: %w", err)
+	} else if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		if err := os.Chmod(dir, perm&^0o077); err != nil {
+			return nil, fmt.Errorf("sqlite chmod dir: %w", err)
+		}
+	}
+	if err := restrictSQLiteFiles(dsn); err != nil {
+		return nil, err
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -41,6 +57,37 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("sqlite schema: %w", err)
 	}
 	return s, nil
+}
+
+// restrictSQLiteFiles creates the database file 0600 before the driver opens
+// it, and takes group and other access away from a database and journal files
+// a previous run left with wider permissions (owner bits are kept, so a
+// database the operator made read-only stays so). SQLite creates its
+// -journal, -wal and -shm files with the main database file's permissions, so
+// they stay owner-only from then on.
+func restrictSQLiteFiles(path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("sqlite create db: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("sqlite create db: %w", err)
+	}
+	for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("sqlite stat db%s: %w", suffix, err)
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			if err := os.Chmod(path+suffix, perm&^0o077); err != nil {
+				return fmt.Errorf("sqlite chmod db%s: %w", suffix, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) Close() error {
@@ -62,6 +109,15 @@ const sqlCreateSchema = `
 		health_status   TEXT DEFAULT '',
 		restart_count   INTEGER DEFAULT 0,
 		pid             INTEGER DEFAULT 0
+	)
+`
+
+// sqlCreateMigrated records the VMs already taken over from the file
+// registry. The record outlives the VM's own row, so a VM removed later is
+// not migrated a second time from the state.json it left behind.
+const sqlCreateMigrated = `
+	CREATE TABLE IF NOT EXISTS migrated_vms (
+		id TEXT PRIMARY KEY
 	)
 `
 
@@ -89,6 +145,9 @@ func (s *SQLiteStore) createSchema() error {
 		!strings.Contains(err.Error(), "duplicate column name") {
 		return fmt.Errorf("add pid column: %w", err)
 	}
+	if _, err := s.db.Exec(sqlCreateMigrated); err != nil { //nolint:noctx // schema creation at startup; no per-request context
+		return fmt.Errorf("create migration table: %w", err)
+	}
 	return nil
 }
 
@@ -107,14 +166,16 @@ func (s *SQLiteStore) Create(cfg Config) (*VM, error) {
 func (s *SQLiteStore) Remove(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.MemoryStore.Remove(id); err != nil {
-		return err
+	if _, err := s.Get(id); err != nil {
+		return fmt.Errorf("vm %q not found", id)
 	}
+	// Delete the row first: a VM whose row could not be deleted stays
+	// registered, instead of vanishing now and coming back at the next start.
 	_, err := s.db.Exec("DELETE FROM vms WHERE id = ?", id) //nolint:noctx // store Remove has no context parameter
 	if err != nil {
 		return fmt.Errorf("delete vm %s: %w", id, err)
 	}
-	return nil
+	return s.MemoryStore.Remove(id)
 }
 
 func (s *SQLiteStore) Save(v *VM) error {
@@ -161,12 +222,13 @@ func (s *SQLiteStore) Restore() error {
 		}
 
 		v := &VM{
-			ID:           id,
-			Cfg:          cfg,
-			State:        State(stateStr),
-			CreatedAt:    createdAt,
-			RestartCount: restartCount,
-			done:         make(chan struct{}),
+			ID:              id,
+			Cfg:             cfg,
+			State:           State(stateStr),
+			CreatedAt:       createdAt,
+			RestartCount:    restartCount,
+			DaemonRecovered: daemonRecovered != 0,
+			done:            make(chan struct{}),
 		}
 
 		if startedAtStr.Valid {
@@ -254,6 +316,40 @@ func (s *SQLiteStore) writeVM(v *VM) error {
 
 	if dbErr != nil {
 		return fmt.Errorf("upsert vm %s: %w", v.ID, dbErr)
+	}
+	return nil
+}
+
+// hasRow reports whether the database holds a row for id, whether or not the
+// VM is loaded in memory.
+func (s *SQLiteStore) hasRow(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM vms WHERE id = ?", id).Scan(&n); err != nil { //nolint:noctx // startup migration; no per-request context
+		return false, fmt.Errorf("look up vm %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// wasMigrated reports whether the VM was already taken over from the file
+// registry by this or an earlier start.
+func (s *SQLiteStore) wasMigrated(id string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM migrated_vms WHERE id = ?", id).Scan(&n); err != nil { //nolint:noctx // startup migration; no per-request context
+		return false, fmt.Errorf("look up migration of vm %s: %w", id, err)
+	}
+	return n > 0, nil
+}
+
+// markMigrated records that the VM needs no further migration.
+func (s *SQLiteStore) markMigrated(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.db.Exec("INSERT OR IGNORE INTO migrated_vms (id) VALUES (?)", id); err != nil { //nolint:noctx // startup migration; no per-request context
+		return fmt.Errorf("record migration of vm %s: %w", id, err)
 	}
 	return nil
 }

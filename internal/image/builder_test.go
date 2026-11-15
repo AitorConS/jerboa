@@ -535,8 +535,9 @@ func TestBuild_StorePutFailure(t *testing.T) {
 
 	lockedFile := filepath.Join(readonlyDir, "refs.json")
 	require.NoError(t, os.WriteFile(lockedFile, []byte("{}"), 0o644))
-	os.Chmod(lockedFile, 0o444)
-	defer os.Chmod(lockedFile, 0o644)
+	// refs.json is replaced, not rewritten: what stops that is its directory.
+	os.Chmod(readonlyDir, 0o555)
+	defer os.Chmod(readonlyDir, 0o755)
 
 	b := NewBuilder(sBad)
 	binPath := writeELF(t, dir)

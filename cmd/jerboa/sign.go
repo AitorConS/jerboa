@@ -77,6 +77,11 @@ func imageDigest(cmd *cobra.Command, endpoint *string, ref string) (string, erro
 	if err != nil {
 		return "", err
 	}
+	// Signing or verifying an empty digest would bind the signature to
+	// nothing: every image without a digest would then verify.
+	if res.DiskDigest == "" {
+		return "", fmt.Errorf("the daemon reported no disk digest for %s", ref)
+	}
 	return res.DiskDigest, nil
 }
 

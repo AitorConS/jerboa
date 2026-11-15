@@ -40,10 +40,83 @@ result, and `scripts/package-index.py` publishes it.
 | `source_url`, `sha256` | The source the build starts from. The workflow downloads it and refuses to build if the SHA-256 differs. |
 | `build_script` | The script that builds it. |
 | `arches` | Optional. Architectures to build, default `["amd64", "arm64"]`. Use `["amd64"]` for a recipe whose upstream only ships an x86-64 binary. |
-| `amd64`, `arm64` | Optional. Per-architecture overrides of `source_url` and `sha256`, for recipes that download a prebuilt binary rather than compile one. |
+| `amd64`, `arm64` | Optional. Per-architecture overrides of `source_url`, `sha256` and `member`, for recipes that download a prebuilt binary rather than compile one. |
+| `member` | For `scripts/build-prebuilt.sh`: the program's path inside the downloaded archive, or empty when the download is the program. |
+
+### Upstream release binaries
+
+Many servers, most of them written in Go or Rust, publish their own build
+for each Linux architecture. `scripts/build-prebuilt.sh` packages one as it
+is: the recipe pins each architecture's download and its SHA-256, checked
+against the project's published checksums when the recipe is added, and
+`member` names the program inside the archive. The program is installed
+under the package's name.
+
+```json
+{
+  "package": "nats-server",
+  "version": "2.15.1",
+  "build_script": "scripts/build-prebuilt.sh",
+  "amd64": {
+    "source_url": "https://github.com/nats-io/nats-server/releases/download/v2.15.1/nats-server-v2.15.1-linux-amd64.tar.gz",
+    "sha256": "…",
+    "member": "nats-server-v2.15.1-linux-amd64/nats-server"
+  },
+  "arm64": { "…": "…" }
+}
+```
 
 Each architecture builds on a native runner (`ubuntu-24.04` or
 `ubuntu-24.04-arm`); nothing is cross-compiled.
+
+### Go programs built from source
+
+A release binary carries the Go toolchain and module versions upstream built
+it with, and keeps their known vulnerabilities until upstream releases again.
+`scripts/build-go.sh` builds the program from its source release instead,
+with the toolchain the script pins and with every module listed in
+`scripts/release/go-floor.txt` raised to at least that version. The package
+version adds a revision to the upstream one (`3.15.1-1`), raised whenever
+the package is rebuilt with newer floors.
+
+```json
+{
+  "package": "prometheus",
+  "version": "3.15.1-1",
+  "upstream_version": "3.15.1",
+  "source_url": "https://github.com/prometheus/prometheus/archive/refs/tags/v3.15.1.tar.gz",
+  "sha256": "…",
+  "build_script": "scripts/build-go.sh",
+  "go": {
+    "main": "./cmd/prometheus",
+    "ldflags": "-X github.com/prometheus/common/version.Version={version}",
+    "tags": "netgo,builtinassets",
+    "assets": [{"url": "https://github.com/prometheus/prometheus/releases/download/v3.15.1/prometheus-web-ui-3.15.1.tar.gz", "sha256": "…", "dest": "web/ui"}],
+    "prepare": ["scripts/compress_assets.sh"]
+  }
+}
+```
+
+| `go` field | Meaning |
+|---|---|
+| `main` | The package to build, relative to `dir` (default `.`). |
+| `dir` | The module directory, relative to the source root (default `.`). |
+| `ldflags` | Linker flags; `{version}` is the upstream version. Set them as upstream's release build does, so the program reports the same version. |
+| `tags` | Build tags, comma-separated. |
+| `cgo` | `true` to build with cgo (default `false`). |
+| `env` | More build environment, such as `GOEXPERIMENT`. |
+| `assets` | Archives added to the source before building, each pinned by `sha256`: a web UI upstream publishes prebuilt, for example. Prefer one to building the UI with Node.js. |
+| `node` | `true` when `prepare` builds a web UI with Node.js; the script installs the Node.js release it pins. |
+| `prepare` | Shell commands run in the source root before the build, with `VERSION` set. |
+
+`source_strip` (default 1) is how many leading path parts to drop when
+extracting the source archive.
+
+A floor applies only to programs that already require the module. A module
+with fixes on several release lines lists one version per line; a program
+on one of those lines gets that line's fix, so a program is never moved to a
+new minor release of a module it already pins the older line of. Every
+floor must be at least two weeks old when it is added.
 
 ## The build script contract
 
@@ -121,7 +194,8 @@ real package size.
 
 Builds run on every push to `main` that touches a recipe, its entry,
 `archive-package.py` or the workflow. Publishing is manual: run the workflow
-with `publish` enabled and a package name (or `all`).
+with `publish` enabled and a package name, several separated by commas,
+`name@version` for one version of a recipe, or `all`.
 
 Published versions are immutable. `package-index.py` compares each built
 package with the index entry for the same version and platform:
@@ -140,6 +214,23 @@ reviewer, and signs `packages.json` with the release key into
 embeds before it reads the index, and refuses an index without one. An
 index served from this machine (`file://`, or http on loopback, as for a
 local mirror) may be unsigned; it is then accepted with a warning.
+
+The signature's trusted comment must be `packages` or `packages:<run id>`:
+the release key also signs release manifests and toolsets, and none of those
+is accepted as the index. `packages.json` carries a `purpose`
+(`jerboa-package-index`), a `generated` time and a `serial` that
+`package-index.py` raises by one with every publication that adds an entry.
+`jerboa` records the newest serial it accepted per index URL in
+`index-state.json` beside its cached `index.json` and refuses an older index,
+keeping the cached copy, so a superseded `packages.json` restored on the
+release with its original signature is not used. An index without a serial
+(the format before serials) is still accepted, with a deprecation warning,
+until an index with a serial has been accepted from that URL.
+
+The publish job extends only a base index that is not older than the
+repository variable `PKG_INDEX_MIN_SERIAL`; raise it to the serial shown in
+the job summary after each publish. A base without a serial is refused once
+the variable is set.
 
 ## Example: adding memcached
 

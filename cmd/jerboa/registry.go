@@ -59,7 +59,7 @@ stores a personal access token, as CI does.`,
 				return err
 			}
 			if entry.Login != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s as %s\n", registry, entry.Login)
+				fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s as %s\n", registry, termField(entry.Login))
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "Stored a token for %s\n", registry)
 			}
@@ -81,7 +81,7 @@ func githubLogin(ctx context.Context, w io.Writer, registry string, cl *client.C
 		if err != nil {
 			return "", "", err
 		}
-		fmt.Fprintf(w, "Open %s and enter the code %s to log in to %s\n", l.VerificationURI, l.UserCode, registry)
+		fmt.Fprintf(w, "Open %s and enter the code %s to log in to %s\n", termField(l.VerificationURI), termField(l.UserCode), registry)
 		return cl.WaitLogin(ctx, l)
 	}
 	clientID, err := githubClientID(ctx, registry, d, official)
@@ -93,7 +93,7 @@ func githubLogin(ctx context.Context, w io.Writer, registry string, cl *client.C
 	if err != nil {
 		return "", "", err
 	}
-	fmt.Fprintf(w, "Open %s and enter the code %s\n", dc.VerificationURI, dc.UserCode)
+	fmt.Fprintf(w, "Open %s and enter the code %s\n", termField(dc.VerificationURI), termField(dc.UserCode))
 	gh, err := flow.Wait(ctx, clientID, dc)
 	if err != nil {
 		return "", "", err
@@ -259,12 +259,24 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 				return fmt.Errorf("push: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
+			// A push token lasts 15 minutes and a large image can take longer.
+			// The registry keeps what was uploaded, so with a new token the
+			// push carries on from there.
+			issued := time.Now()
 			res, err := c.ImagePush(cmd.Context(), api.ImagePushParams{Reference: args[0], Token: token})
+			for attempt := 0; pushTokenExpired(err, time.Since(issued)) && attempt < 8; attempt++ {
+				fmt.Fprintln(cmd.ErrOrStderr(), "note: the push token expired; continuing with a new one")
+				if token, err = cl.PushToken(cmd.Context(), cred, ref.Namespace, ref.Repository); err != nil {
+					return fmt.Errorf("push: %w", err)
+				}
+				issued = time.Now()
+				res, err = c.ImagePush(cmd.Context(), api.ImagePushParams{Reference: args[0], Token: token})
+			}
 			if err != nil {
 				return fmt.Errorf("push: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: uploaded %d of %d files (%s) in %d packs\n%s\n",
-				res.Reference, res.BlobsUploaded, res.Blobs, humanBytes(res.BytesUploaded), res.PacksUploaded, res.Recipe)
+				termField(res.Reference), res.BlobsUploaded, res.Blobs, humanBytes(res.BytesUploaded), res.PacksUploaded, termField(res.Recipe))
 			if !signed {
 				return nil
 			}
@@ -281,6 +293,14 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 	cmd.Flags().BoolVar(&index, "index", false, "tag an image index of the images named after the target, one per platform")
 	cmd.Flags().BoolVar(&sign, "sign", false, "sign the push with Sigstore (default: in GitHub Actions jobs that may request OIDC tokens)")
 	return cmd
+}
+
+// pushTokenExpired reports whether a push failed because its token ran out
+// while it was uploading. The daemon reports the registry's error as text. A
+// token refused within minutes of being issued was never valid: asking for
+// another would only repeat the refusal.
+func pushTokenExpired(err error, age time.Duration) bool {
+	return err != nil && age > 5*time.Minute && strings.Contains(err.Error(), "push token is invalid or expired")
 }
 
 // pushIndex tags ref as an image index of the images sources name, and
@@ -302,7 +322,7 @@ func pushIndex(cmd *cobra.Command, cl *client.Client, token string, ref naming.I
 	for i, e := range res.Manifests {
 		platforms[i] = e.Platform
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: an index for %s\n%s\n", ref, strings.Join(platforms, ", "), res.Index)
+	fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: an index for %s\n%s\n", ref, termField(strings.Join(platforms, ", ")), termField(res.Index))
 	return res.Index, nil
 }
 
@@ -317,14 +337,15 @@ func newPullCmd(endpoint *string) *cobra.Command {
 A tag published for several platforms pulls the image for this host, or the
 one --platform names.
 
-A signed image is kept only if its Sigstore signatures verify, signed by:
+A signed image is pulled only if its Sigstore signatures verify, signed by:
 --identity, else the rule of the policy file (~/.jerboa/policy.json) for its
 namespace (official images under jerboa/ always have one), else the signer
 remembered for its repository, else the workflow the registry recorded as
 their uploader. The first pull of a repository that verifies remembers its
 signer (~/.jerboa/signers.json): later pulls refuse another signer, or an
-unsigned image. --verify refuses unsigned images too. A pull that fails the
-check removes what it pulled. See jerboa registry verify and signers.`,
+unsigned image. --verify refuses unsigned images too. The check comes first:
+a pull that fails it downloads nothing and leaves the image store as it was.
+See jerboa registry verify and signers.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if platform != "" {
@@ -345,28 +366,40 @@ check removes what it pulled. See jerboa registry verify and signers.`,
 				return fmt.Errorf("pull: connect to daemon: %w", err)
 			}
 			defer func() { _ = c.Close() }()
-			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack(), Platform: platform})
+			// Verified before the daemon fetches anything, and the daemon pulls
+			// the recipe that verified, not what the tag names a moment later:
+			// an image that fails the check never reaches the store.
+			subject, err := resolveSubject(cmd.Context(), ref, platform)
 			if err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
-			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, res.Recipe, v)
+			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, subject, v)
 			if err != nil {
+				return fmt.Errorf("pull: %w; nothing was pulled", err)
+			}
+			if results != nil {
+				printVerified(cmd.OutOrStdout(), subject, results)
+			}
+			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack(), Platform: platform, Recipe: subject})
+			if err != nil {
+				return fmt.Errorf("pull: %w", err)
+			}
+			// A daemon older than this CLI resolves the tag itself.
+			if res.Recipe != subject {
+				err := fmt.Errorf("the daemon pulled %s, not %s, the recipe that was checked: update the daemon", res.Recipe, subject)
 				if rmErr := c.ImageRemove(cmd.Context(), res.Image.Name+":"+res.Image.Tag); rmErr != nil {
 					return fmt.Errorf("pull: %w (and removing the pulled image failed: %w)", err, rmErr)
 				}
 				return fmt.Errorf("pull: %w; the pulled image was removed", err)
 			}
-			if results != nil {
-				printVerified(cmd.OutOrStdout(), res.Recipe, results)
-			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s (%s): fetched %d of %d files (%s) in %d requests\n%s\n",
-				res.Image.Name, res.Image.Tag, res.Image.Platform, res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, res.Image.DiskDigest)
+				termField(res.Image.Name), termField(res.Image.Tag), termField(res.Image.Platform), res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, termField(res.Image.DiskDigest))
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&platform, "platform", "", "the platform to pull, linux/amd64 or linux/arm64 (default: this host's)")
-	cmd.Flags().BoolVar(&verify, "verify", false, "keep the image only if it is signed, even the first pull of a repository")
-	cmd.Flags().StringVar(&identity, "identity", "", "keep the image only if it is signed from this GitHub repository[/workflow[@ref]] (implies --verify)")
+	cmd.Flags().BoolVar(&verify, "verify", false, "pull the image only if it is signed, even the first pull of a repository")
+	cmd.Flags().StringVar(&identity, "identity", "", "pull the image only if it is signed from this GitHub repository[/workflow[@ref]] (implies --verify)")
 	return cmd
 }
 
@@ -386,6 +419,11 @@ func newRegistryCmd() *cobra.Command {
   jerboa registry pat create release --namespace acme --expires-in 30`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// 0 would be dropped from the request and get the registry's
+			// default, not what was asked for.
+			if cmd.Flags().Changed("expires-in") && (patOpts.ExpiresInDays < 1 || patOpts.ExpiresInDays > 365) {
+				return fmt.Errorf("pat create: --expires-in must be from 1 to 365 days, got %d", patOpts.ExpiresInDays)
+			}
 			cred, err := credentials.For(registry)
 			if err != nil {
 				return err
@@ -396,8 +434,13 @@ func newRegistryCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("pat create: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", token)
-			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], id, credentials.EnvToken)
+			// The token is shown once: an answer without one must not read as
+			// a token created, with an empty line for CI to store.
+			if token == "" {
+				return fmt.Errorf("pat create: the registry at %s answered without a token", registry)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", termField(token))
+			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], termField(id), credentials.EnvToken)
 			return nil
 		},
 	}
@@ -431,7 +474,7 @@ func newRegistryCmd() *cobra.Command {
 				if p.Delete {
 					scope += " +delete"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\texpires %s\t%s\n", p.ID, p.Name, expires, scope)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\texpires %s\t%s\n", termField(p.ID), termField(p.Name), expires, termField(scope))
 			}
 			return nil
 		},

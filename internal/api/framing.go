@@ -31,25 +31,46 @@ type frameWriter struct {
 func NewFrameWriter(w io.Writer) *frameWriter { return &frameWriter{w: w} }
 
 func (fw *frameWriter) Write(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
+	written := 0
+	// A payload above maxFrameSize goes out as several frames: the reader
+	// refuses a longer one, and a source that hands its whole content over in
+	// one Write (io.Copy from a bytes.Reader does) must not produce a stream
+	// its peer rejects.
+	for len(p) > 0 {
+		chunk := p[:min(len(p), maxFrameSize)]
+		var hdr [4]byte
+		binary.BigEndian.PutUint32(hdr[:], uint32(len(chunk)))
+		if err := writeFull(fw.w, hdr[:]); err != nil {
+			return written, fmt.Errorf("frame write header: %w", err)
+		}
+		if err := writeFull(fw.w, chunk); err != nil {
+			return written, fmt.Errorf("frame write payload: %w", err)
+		}
+		written += len(chunk)
+		p = p[len(chunk):]
 	}
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(p)))
-	if _, err := fw.w.Write(hdr[:]); err != nil {
-		return 0, fmt.Errorf("frame write header: %w", err)
+	return written, nil
+}
+
+// writeFull writes all of b. A writer that takes fewer bytes without saying
+// why would leave the stream cut inside a frame with nobody told, so that is
+// an error here.
+func writeFull(w io.Writer, b []byte) error {
+	n, err := w.Write(b)
+	if err != nil {
+		return err //nolint:wrapcheck // wrapped by the caller, which names the part of the frame
 	}
-	if _, err := fw.w.Write(p); err != nil {
-		return 0, fmt.Errorf("frame write payload: %w", err)
+	if n < len(b) {
+		return io.ErrShortWrite
 	}
-	return len(p), nil
+	return nil
 }
 
 // Close writes the zero-length terminator frame. It does not close the
 // underlying writer.
 func (fw *frameWriter) Close() error {
 	var hdr [4]byte // length 0
-	if _, err := fw.w.Write(hdr[:]); err != nil {
+	if err := writeFull(fw.w, hdr[:]); err != nil {
 		return fmt.Errorf("frame write terminator: %w", err)
 	}
 	return nil

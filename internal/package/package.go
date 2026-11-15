@@ -32,6 +32,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/naming"
 )
@@ -85,13 +86,49 @@ type Package struct {
 type Index struct {
 	// Packages maps package name to its available versions.
 	Packages map[string][]Package `json:"packages"`
+	// Purpose is IndexPurpose for an index that carries a Serial.
+	Purpose string `json:"purpose,omitempty"`
+	// Generated is the RFC3339 time the index was published.
+	Generated string `json:"generated,omitempty"`
+	// Serial grows by one with every publication; a client refuses an index
+	// whose serial is below the newest it accepted (see checkIndexFresh).
+	Serial uint64 `json:"serial,omitempty"`
 }
 
 // Store manages locally cached packages under a root directory.
 type Store struct {
 	root     string
 	platform string
-	mu       sync.RWMutex
+	// mu is shared by every view of the store (ForPlatform): they write the
+	// same directories, so two downloads of one package must not run at once.
+	mu *sync.RWMutex
+	// verifying serializes Verify per package directory: it extracts the
+	// archive and then reads the result, which a second Verify of the same
+	// package would otherwise catch half written.
+	verifying *keyedLocks
+}
+
+// keyedLocks hands out one mutex per key. Keys are package directories, of
+// which a store has few, so entries are never dropped.
+type keyedLocks struct {
+	mu sync.Mutex
+	m  map[string]*sync.Mutex
+}
+
+// lock takes the mutex of key and returns the function that releases it.
+func (k *keyedLocks) lock(key string) func() {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = map[string]*sync.Mutex{}
+	}
+	l := k.m[key]
+	if l == nil {
+		l = &sync.Mutex{}
+		k.m[key] = l
+	}
+	k.mu.Unlock()
+	l.Lock()
+	return l.Unlock
 }
 
 // NewStore creates a Store rooted at dir, creating it if needed.
@@ -99,7 +136,7 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("package store mkdir %s: %w", dir, err)
 	}
-	return &Store{root: dir}, nil
+	return &Store{root: dir, mu: &sync.RWMutex{}, verifying: &keyedLocks{}}, nil
 }
 
 // PackageDir returns the local directory for a package version.
@@ -195,6 +232,12 @@ func (s *Store) Remove(name, version string) error {
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("package remove %s: %w", name, err)
 	}
+	if s.platform != "" {
+		// The version directory, once its last platform is gone, would be
+		// listed as a package without metadata or archive; removing it
+		// fails harmlessly while another platform is still there.
+		_ = os.Remove(filepath.Dir(dir))
+	}
 	return nil
 }
 
@@ -270,7 +313,8 @@ func (s *Store) Extract(pkg Package) (err error) {
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(gz)
+	end := &endChecked{r: gz}
+	tr := tar.NewReader(end)
 	budget := maxExtractedBytes
 	for {
 		hdr, err := tr.Next()
@@ -346,6 +390,9 @@ func (s *Store) Extract(pkg Package) (err error) {
 				return fmt.Errorf("package extract %s: archive expands beyond %d bytes", pkg.Name, maxExtractedBytes)
 			}
 		}
+	}
+	if err := end.complete(); err != nil {
+		return fmt.Errorf("package extract %s: %w", pkg.Name, err)
 	}
 	return nil
 }
@@ -458,7 +505,15 @@ func (s *Store) List() ([]Package, error) {
 				}
 				meta := Package{Name: name.Name(), Version: version.Name()}
 				if err == nil {
-					_ = json.Unmarshal(data, &meta)
+					err = json.Unmarshal(data, &meta)
+				}
+				// A platform directory whose metadata is missing or damaged
+				// (a download cut before it was recorded) is not a legacy
+				// package: listing it as one would make every later resolve
+				// look for its archive in the wrong place. It is left for
+				// the index to describe again.
+				if dir != base && (err != nil || meta.Platform == "") {
+					continue
 				}
 				if err := validatePackageRef(meta.Name, meta.Version); err != nil {
 					return nil, err
@@ -494,7 +549,7 @@ func (s *Store) SaveMeta(pkg Package) error {
 		return fmt.Errorf("package meta marshal: %w", err)
 	}
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
+	if err := durable.WriteFile(metaPath, data, 0o644); err != nil {
 		return fmt.Errorf("package meta write %s: %w", metaPath, err)
 	}
 	return nil
@@ -502,15 +557,16 @@ func (s *Store) SaveMeta(pkg Package) error {
 
 // FetchIndex downloads and parses the remote package index.
 func FetchIndex() (*Index, error) {
-	idx, _, err := fetchIndexRaw()
+	idx, _, err := fetchIndexRaw("")
 	return idx, err
 }
 
 // fetchIndexRaw downloads the remote package index, returning both the parsed
 // index and the raw JSON bytes (for cache writes). The index names the SHA-256
 // of every archive, so it is verified against its minisign signature before it
-// is parsed (see verifyIndex).
-func fetchIndexRaw() (*Index, []byte, error) {
+// is parsed (see verifyIndex). A stateDir that is not empty holds the newest
+// accepted serial, and an index older than it is refused (see checkIndexFresh).
+func fetchIndexRaw(stateDir string) (*Index, []byte, error) {
 	data, err := readIndexURL(IndexURL, maxIndexSize)
 	if err != nil {
 		return nil, nil, err
@@ -526,6 +582,9 @@ func fetchIndexRaw() (*Index, []byte, error) {
 	if err := checkIndex(&idx); err != nil {
 		return nil, nil, err
 	}
+	if err := checkIndexFresh(stateDir, IndexURL, &idx); err != nil {
+		return nil, nil, err
+	}
 	return &idx, data, nil
 }
 
@@ -538,10 +597,14 @@ func fetchIndexRaw() (*Index, []byte, error) {
 func (s *Store) FetchIndexCached() (*Index, error) {
 	cachePath := filepath.Join(s.root, "index.json")
 
-	idx, raw, fetchErr := fetchIndexRaw()
+	// An index older than the newest accepted one is refused like an
+	// unreachable one, so the cached copy below (that newer index) is kept.
+	idx, raw, fetchErr := fetchIndexRaw(s.root)
 	if fetchErr == nil {
 		// Best-effort cache write: a failure only degrades offline behavior.
-		_ = os.WriteFile(cachePath, raw, 0o644)
+		// It is replaced atomically so a build that dies here leaves the
+		// previous copy, not a truncated one, for the next offline build.
+		_ = durable.WriteFile(cachePath, raw, 0o644)
 		return s.mergeLocalIndex(idx), nil
 	}
 
@@ -667,6 +730,11 @@ func (s *Store) CreateFromFiles(name, version string, files []File, description,
 	}
 
 	if err := s.writeMeta(dir, meta); err != nil {
+		// An archive without its metadata would refuse the retry as
+		// "already exists".
+		if !errors.Is(err, durable.ErrCrash) {
+			_ = os.Remove(archivePath)
+		}
 		return fmt.Errorf("pkg create meta: %w", err)
 	}
 
@@ -1214,7 +1282,7 @@ func (s *Store) writeMeta(dir string, meta Package) error {
 		return fmt.Errorf("meta marshal: %w", err)
 	}
 	metaPath := filepath.Join(dir, "meta.json")
-	if err := os.WriteFile(metaPath, data, 0o644); err != nil {
+	if err := durable.WriteFile(metaPath, data, 0o644); err != nil {
 		return fmt.Errorf("meta write %s: %w", metaPath, err)
 	}
 	return nil

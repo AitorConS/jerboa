@@ -7,12 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 // Store is a content-addressable local image store.
@@ -74,7 +78,11 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 		return Manifest{}, fmt.Errorf("image store put mkdir: %w", err)
 	}
 	dst := filepath.Join(imgDir, "disk.img")
-	if _, err := os.Stat(dst); err == nil {
+	// A disk already here is kept only if it really is this disk: a copy that
+	// an older daemon left half-written (the disk filled up, the machine lost
+	// power) sits under the right name with the wrong content, and must be
+	// replaced instead of being recorded as the image.
+	if _, err := os.Stat(dst); err == nil && s.Trusted(dst, digest) {
 		// The same disk is already stored (a reproducible rebuild or another
 		// tag): keep the existing file, which VMs may be cloning from.
 		if move {
@@ -98,14 +106,60 @@ func (s *Store) put(name, tag string, m Manifest, diskPath string, move bool) (M
 			_ = s.verifyDisk(imgDir, digest)
 		}
 	}
+	return s.record(imgDir, digest, m)
+}
+
+// PutStored tags the disk the store already holds for m.DiskDigest as
+// name:tag with m's metadata, without another copy of the disk: what a pull
+// of an image whose disk is already here needs. ok is false when the store
+// does not hold that disk, intact.
+func (s *Store) PutStored(name, tag string, m Manifest) (stored Manifest, ok bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sha := stripPrefix(m.DiskDigest)
+	if !isSHA256Hex(sha) {
+		return Manifest{}, false, nil
+	}
+	imgDir := filepath.Join(s.root, sha)
+	if !s.Trusted(filepath.Join(imgDir, "disk.img"), m.DiskDigest) {
+		return Manifest{}, false, nil
+	}
+	m.Name, m.Tag = name, tag
+	stored, err = s.record(imgDir, m.DiskDigest, m)
+	return stored, err == nil, err
+}
+
+// Has reports whether the store holds the disk with this digest, intact.
+func (s *Store) Has(diskDigest string) bool {
+	sha := stripPrefix(diskDigest)
+	if !isSHA256Hex(sha) {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.Trusted(filepath.Join(s.root, sha, "disk.img"), diskDigest)
+}
+
+// record writes m as the manifest of m.Name:m.Tag on the disk in imgDir and
+// points that ref at the disk. The disk's shared manifest.json, which digest
+// references resolve to, is written only when the disk has none yet: config
+// and recipe are not part of the disk digest, so a later tag of the same
+// disk (a pull of another repository's recipe for it, say) must not change
+// the defaults an existing image is run with by digest. The caller holds s.mu.
+func (s *Store) record(imgDir, digest string, m Manifest) (Manifest, error) {
 	data, err := Marshal(m)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
 	}
-	if err := writeFileAtomic(filepath.Join(imgDir, "manifest.json"), data); err != nil {
-		return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
+	shared := filepath.Join(imgDir, "manifest.json")
+	if _, err := os.Stat(shared); errors.Is(err, os.ErrNotExist) {
+		if err := writeFileAtomic(shared, data); err != nil {
+			return Manifest{}, fmt.Errorf("image store put write manifest: %w", err)
+		}
+	} else if err != nil {
+		return Manifest{}, fmt.Errorf("image store put manifest: %w", err)
 	}
-	ref := name + ":" + tag
+	ref := m.Name + ":" + m.Tag
 	if err := os.MkdirAll(filepath.Join(imgDir, "tags"), 0o755); err != nil {
 		return Manifest{}, fmt.Errorf("image store put mkdir: %w", err)
 	}
@@ -245,8 +299,17 @@ func (s *Store) List() ([]Manifest, error) {
 	out := make([]Manifest, 0, len(names))
 	for _, ref := range names {
 		m, err := s.readRefManifest(refs[ref], ref)
+		if errors.Is(err, os.ErrNotExist) {
+			// The image this ref names was deleted from disk behind the
+			// store. One stale ref must not hide every other image; the next
+			// prune drops it.
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("image store list: %w", err)
+			// A manifest that no longer parses names one broken image; the
+			// rest of the store is still there and must stay listed.
+			slog.Warn("image store: skipping an image whose manifest is unreadable", "ref", ref, "err", err)
+			continue
 		}
 		out = append(out, m)
 	}
@@ -486,25 +549,10 @@ func (s *Store) readRefManifest(sha, ref string) (Manifest, error) {
 	return m, nil
 }
 
-// writeFileAtomic writes data to path through a temporary file and a rename,
-// so readers never see a partial manifest.
+// writeFileAtomic replaces path with data so that readers, a crash and a
+// power cut all see either the previous file or the whole new one.
 func writeFileAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
-	if err != nil {
-		return err //nolint:wrapcheck // callers add context
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err //nolint:wrapcheck // callers add context
-	}
-	if err := tmp.Close(); err != nil {
-		return err //nolint:wrapcheck // callers add context
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return err //nolint:wrapcheck // callers add context
-	}
-	return os.Rename(tmp.Name(), path) //nolint:wrapcheck // callers add context
+	return durable.WriteFile(path, data, 0o644) //nolint:wrapcheck // callers add context
 }
 
 func (s *Store) findBySHA(refs map[string]string, ref string) (string, bool) {
@@ -538,8 +586,17 @@ func (s *Store) addRef(ref, sha string) error {
 	if err != nil {
 		return err
 	}
+	old, moved := refs[ref]
 	refs[ref] = sha
-	return s.writeRefs(refs)
+	if err := s.writeRefs(refs); err != nil {
+		return err
+	}
+	// The tag now names another disk: the manifest it had on the old one is
+	// stale, and rebuildRefs must not find it there.
+	if moved && old != sha {
+		_ = os.Remove(tagManifestPath(filepath.Join(s.root, old), ref))
+	}
+	return nil
 }
 
 func (s *Store) readRefs() (map[string]string, error) {
@@ -552,9 +609,82 @@ func (s *Store) readRefs() (map[string]string, error) {
 		return nil, fmt.Errorf("read refs.json: %w", err)
 	}
 	var refs map[string]string
-	if err := json.Unmarshal(data, &refs); err != nil {
-		return nil, fmt.Errorf("parse refs.json: %w", err)
+	if err := json.Unmarshal(data, &refs); err != nil || refs == nil {
+		// One unreadable index must not take every image with it: each image
+		// directory records the tags it carries, so the index is rebuilt.
+		slog.Warn("image store: refs.json is unreadable, rebuilding it from the stored images", "err", err)
+		return s.rebuildRefs(data)
 	}
+	return refs, nil
+}
+
+// rebuildRefs reconstructs the name index from the per-tag manifests kept in
+// every image directory, sets the unreadable index aside as refs.json.corrupt
+// and writes the rebuilt one. A tag found on two disks goes to the one whose
+// manifest was written last, which is where a rebuild of that tag left it.
+func (s *Store) rebuildRefs(corrupt []byte) (map[string]string, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("rebuild refs.json: %w", err)
+	}
+	refs := make(map[string]string)
+	newest := make(map[string]time.Time)
+	claim := func(ref, sha string, at time.Time) {
+		if prev, ok := newest[ref]; ok && !at.After(prev) {
+			return
+		}
+		refs[ref], newest[ref] = sha, at
+	}
+	for _, e := range entries {
+		sha := e.Name()
+		if !e.IsDir() || !isSHA256Hex(sha) {
+			continue
+		}
+		imgDir := filepath.Join(s.root, sha)
+		if _, err := os.Stat(filepath.Join(imgDir, "disk.img")); err != nil {
+			continue
+		}
+		tags, _ := os.ReadDir(filepath.Join(imgDir, "tags"))
+		found := false
+		for _, t := range tags {
+			name, ok := strings.CutSuffix(t.Name(), ".json")
+			if !ok || t.IsDir() {
+				continue
+			}
+			ref, err := url.PathUnescape(name)
+			if err != nil || !strings.Contains(ref, ":") {
+				continue
+			}
+			m, err := s.readRefManifest(sha, ref)
+			if err != nil || m.DiskDigest != "sha256:"+sha {
+				continue
+			}
+			var at time.Time
+			if info, err := t.Info(); err == nil {
+				at = info.ModTime()
+			}
+			claim(ref, sha, at)
+			found = true
+		}
+		if found {
+			continue
+		}
+		// Stored before per-tag manifests: the image's own manifest names it.
+		if m, err := s.readManifest(sha); err == nil && m.Name != "" && m.Tag != "" && m.DiskDigest == "sha256:"+sha {
+			var at time.Time
+			if info, err := os.Stat(filepath.Join(imgDir, "manifest.json")); err == nil {
+				at = info.ModTime()
+			}
+			claim(m.Name+":"+m.Tag, sha, at)
+		}
+	}
+	if len(corrupt) > 0 {
+		_ = os.WriteFile(filepath.Join(s.root, "refs.json.corrupt"), corrupt, 0o600)
+	}
+	if err := s.writeRefs(refs); err != nil {
+		return nil, fmt.Errorf("rebuild refs.json: %w", err)
+	}
+	slog.Info("image store: rebuilt refs.json", "images", len(refs))
 	return refs, nil
 }
 
@@ -563,8 +693,9 @@ func (s *Store) writeRefs(refs map[string]string) error {
 	if err != nil {
 		return fmt.Errorf("marshal refs: %w", err)
 	}
-	path := filepath.Join(s.root, "refs.json")
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// Every image name lives in this one file: a crash while it is being
+	// rewritten must leave the old one, not half of the new.
+	if err := writeFileAtomic(filepath.Join(s.root, "refs.json"), data); err != nil {
 		return fmt.Errorf("write refs.json: %w", err)
 	}
 	return nil
@@ -587,30 +718,49 @@ func fileSHA256(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func copyFile(src, dst string) error {
+// copyFile copies src to dst so that dst only ever exists complete: the bytes
+// go to a temporary file beside it, are flushed, and are renamed into place. A
+// full disk or a crash half-way leaves no dst rather than a truncated one that
+// a later Put would take for the image.
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("open src %s: %w", src, err)
 	}
-	defer func() {
-		if err := in.Close(); err != nil {
-			_ = err // best effort
-		}
-	}()
-	out, err := os.Create(dst)
+	defer func() { _ = in.Close() }()
+	tmp := dst + partialSuffix
+	_ = os.Remove(tmp)
+	out, err := os.Create(tmp)
 	if err != nil {
 		return fmt.Errorf("create dst %s: %w", dst, err)
 	}
 	defer func() {
-		if err := out.Close(); err != nil {
-			_ = err // best effort
+		if err != nil {
+			_ = out.Close()
+			_ = os.Remove(tmp)
 		}
 	}()
-	if _, err := io.Copy(out, in); err != nil {
+	if _, err := copyDisk(out, in); err != nil {
 		return fmt.Errorf("copy %s→%s: %w", src, dst, err)
 	}
+	if err := out.Sync(); err != nil {
+		return fmt.Errorf("flush %s: %w", dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		return fmt.Errorf("place %s: %w", dst, err)
+	}
+	durable.SyncDir(filepath.Dir(dst))
 	return nil
 }
+
+// partialSuffix marks a disk that is still being copied into the store.
+const partialSuffix = ".partial"
+
+// copyDisk is io.Copy, replaceable so tests can make the copy fail half-way.
+var copyDisk = io.Copy
 
 func stripPrefix(digest string) string {
 	return strings.TrimPrefix(digest, "sha256:")
@@ -632,15 +782,57 @@ func (s *Store) PruneUnreferenced(inUse func(digest string) bool) ([]string, err
 	if err != nil {
 		return nil, fmt.Errorf("image store prune: %w", err)
 	}
+	// A ref whose image directory is gone names nothing: drop it, so a store
+	// that lost images outside jerboa heals instead of failing on them.
+	dangling := false
+	for ref, sha := range refs {
+		if _, err := os.Stat(filepath.Join(s.root, sha)); os.IsNotExist(err) {
+			delete(refs, ref)
+			dangling = true
+		}
+	}
+	if dangling {
+		if err := s.writeRefs(refs); err != nil {
+			return nil, fmt.Errorf("image store prune: %w", err)
+		}
+	}
+	unreferenced, err := s.unreferencedLocked(refs, inUse)
+	if err != nil {
+		return nil, fmt.Errorf("image store prune: %w", err)
+	}
+	var removed []string
+	for _, digest := range unreferenced {
+		if err := os.RemoveAll(filepath.Join(s.root, stripPrefix(digest))); err != nil {
+			return removed, fmt.Errorf("image store prune %s: %w", digest, err)
+		}
+		removed = append(removed, digest)
+	}
+	return removed, nil
+}
+
+// Unreferenced returns the digests ("sha256:<hex>") of the stored images that
+// PruneUnreferenced would delete: no ref names them and inUse does not claim
+// them. Nothing is changed.
+func (s *Store) Unreferenced(inUse func(digest string) bool) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	refs, err := s.readRefs()
+	if err != nil {
+		return nil, fmt.Errorf("image store: %w", err)
+	}
+	return s.unreferencedLocked(refs, inUse)
+}
+
+func (s *Store) unreferencedLocked(refs map[string]string, inUse func(digest string) bool) ([]string, error) {
 	referenced := make(map[string]bool, len(refs))
 	for _, sha := range refs {
 		referenced[sha] = true
 	}
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
-		return nil, fmt.Errorf("image store prune: %w", err)
+		return nil, err //nolint:wrapcheck // callers add context
 	}
-	var removed []string
+	var out []string
 	for _, e := range entries {
 		sha := e.Name()
 		if !e.IsDir() || !isSHA256Hex(sha) || referenced[sha] {
@@ -650,12 +842,58 @@ func (s *Store) PruneUnreferenced(inUse func(digest string) bool) ([]string, err
 		if inUse != nil && inUse(digest) {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(s.root, sha)); err != nil {
-			return removed, fmt.Errorf("image store prune %s: %w", digest, err)
-		}
-		removed = append(removed, digest)
+		out = append(out, digest)
 	}
-	return removed, nil
+	return out, nil
+}
+
+// Root returns the directory the store keeps its images in.
+func (s *Store) Root() string { return s.root }
+
+// Refs returns every name in the store and the digest ("sha256:<hex>") of the
+// disk it points at, whether or not that disk is still there.
+func (s *Store) Refs() (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	refs, err := s.readRefs()
+	if err != nil {
+		return nil, fmt.Errorf("image store: %w", err)
+	}
+	out := make(map[string]string, len(refs))
+	for ref, sha := range refs {
+		out[ref] = "sha256:" + sha
+	}
+	return out, nil
+}
+
+// Digests returns the digest of every image directory in the store, named or
+// not.
+func (s *Store) Digests() ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, fmt.Errorf("image store: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && isSHA256Hex(e.Name()) {
+			out = append(out, "sha256:"+e.Name())
+		}
+	}
+	return out, nil
+}
+
+// VerifyDisk hashes the disk stored for digest, ignoring any earlier
+// verification, and reports whether it still is that disk.
+func (s *Store) VerifyDisk(digest string) error {
+	sha := stripPrefix(digest)
+	if !isSHA256Hex(sha) {
+		return fmt.Errorf("image store: %q is not a digest", digest)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.verifyDisk(filepath.Join(s.root, sha), digest)
 }
 
 func isSHA256Hex(s string) bool {
