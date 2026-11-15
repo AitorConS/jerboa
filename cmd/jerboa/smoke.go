@@ -78,7 +78,7 @@ func runSmokeTest(cmd *cobra.Command, client *api.Client, ref string) error {
 	}
 
 	if hints := scanNanosHints(logs); len(hints) > 0 {
-		fmt.Fprintf(errW, "Smoke test failed — guest output:\n%s\n", indentLines(tailLines(logs, 20)))
+		fmt.Fprintf(errW, "Smoke test failed — guest output:\n%s\n", indentLines(tailLines(sanitizeTerminal(logs), 20)))
 		printNanosHints(errW, logs)
 		return fmt.Errorf("build: smoke test: the image booted but the program failed (see hints above)")
 	}

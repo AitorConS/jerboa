@@ -86,6 +86,13 @@ type Package struct {
 type Index struct {
 	// Packages maps package name to its available versions.
 	Packages map[string][]Package `json:"packages"`
+	// Purpose is IndexPurpose for an index that carries a Serial.
+	Purpose string `json:"purpose,omitempty"`
+	// Generated is the RFC3339 time the index was published.
+	Generated string `json:"generated,omitempty"`
+	// Serial grows by one with every publication; a client refuses an index
+	// whose serial is below the newest it accepted (see checkIndexFresh).
+	Serial uint64 `json:"serial,omitempty"`
 }
 
 // Store manages locally cached packages under a root directory.
@@ -550,15 +557,16 @@ func (s *Store) SaveMeta(pkg Package) error {
 
 // FetchIndex downloads and parses the remote package index.
 func FetchIndex() (*Index, error) {
-	idx, _, err := fetchIndexRaw()
+	idx, _, err := fetchIndexRaw("")
 	return idx, err
 }
 
 // fetchIndexRaw downloads the remote package index, returning both the parsed
 // index and the raw JSON bytes (for cache writes). The index names the SHA-256
 // of every archive, so it is verified against its minisign signature before it
-// is parsed (see verifyIndex).
-func fetchIndexRaw() (*Index, []byte, error) {
+// is parsed (see verifyIndex). A stateDir that is not empty holds the newest
+// accepted serial, and an index older than it is refused (see checkIndexFresh).
+func fetchIndexRaw(stateDir string) (*Index, []byte, error) {
 	data, err := readIndexURL(IndexURL, maxIndexSize)
 	if err != nil {
 		return nil, nil, err
@@ -574,6 +582,9 @@ func fetchIndexRaw() (*Index, []byte, error) {
 	if err := checkIndex(&idx); err != nil {
 		return nil, nil, err
 	}
+	if err := checkIndexFresh(stateDir, IndexURL, &idx); err != nil {
+		return nil, nil, err
+	}
 	return &idx, data, nil
 }
 
@@ -586,7 +597,9 @@ func fetchIndexRaw() (*Index, []byte, error) {
 func (s *Store) FetchIndexCached() (*Index, error) {
 	cachePath := filepath.Join(s.root, "index.json")
 
-	idx, raw, fetchErr := fetchIndexRaw()
+	// An index older than the newest accepted one is refused like an
+	// unreachable one, so the cached copy below (that newer index) is kept.
+	idx, raw, fetchErr := fetchIndexRaw(s.root)
 	if fetchErr == nil {
 		// Best-effort cache write: a failure only degrades offline behavior.
 		// It is replaced atomically so a build that dies here leaves the

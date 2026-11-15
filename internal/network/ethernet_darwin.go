@@ -53,8 +53,17 @@ type ethernetConn struct {
 	writes      chan []byte
 	space       chan struct{}
 	queuedBytes atomic.Int64
-	done        chan struct{}
-	once        sync.Once
+	// Backpressure episode: the switch first had to wait on this port at
+	// stallAt (0: not waiting). It ends when the writer has sent the frames
+	// queued then (stallMark); until then the switch may wait on the port for
+	// ethernetWriteWait in total, not per frame.
+	sent      atomic.Uint64 // frames handed to the VMM
+	stallAt   atomic.Int64
+	stallMu   sync.Mutex
+	stallMark uint64 // guarded by stallMu
+	stallSent uint64 // guarded by stallMu: sent when the episode began
+	done      chan struct{}
+	once      sync.Once
 	// observe, when set, is told about destinations this port keeps sending
 	// unicast frames to (direct-link promotion). Only the reader touches flows.
 	observe  func(dst [6]byte)
@@ -258,9 +267,15 @@ func (e *ethernetConn) Write(b []byte) (int, error) {
 	}
 	// Reserve before copying so concurrent switch writers share one byte limit.
 	// A full queue must push back on the switch rather than silently dropping
-	// TCP frames. The wait is bounded so a stalled guest cannot stop the switch.
+	// TCP frames. The switch calls Write under its network-wide lock, so the
+	// wait is bounded per backpressure episode, not per frame: a port that
+	// frees a slot now and then would otherwise delay every frame on the
+	// network by up to a full wait. A port that sent nothing for the whole
+	// bound is closed; one that drains, but too slowly to turn its queue over
+	// within it, has its frames dropped until it catches up.
 	size := int64(len(b))
 	var timer *time.Timer
+	var began uint64
 	defer func() {
 		if timer != nil {
 			timer.Stop()
@@ -268,9 +283,18 @@ func (e *ethernetConn) Write(b []byte) (int, error) {
 	}()
 	wait := func() <-chan time.Time {
 		if timer == nil {
-			timer = time.NewTimer(ethernetWriteWait)
+			var deadline time.Time
+			deadline, began = e.backpressure()
+			timer = time.NewTimer(time.Until(deadline))
 		}
 		return timer.C
+	}
+	expired := func() (int, error) {
+		if e.sent.Load() == began {
+			_ = e.Close()
+			return 0, fmt.Errorf("Ethernet link write queue stalled")
+		}
+		return len(b), nil // dropped
 	}
 	for {
 		queued := e.queuedBytes.Load()
@@ -282,8 +306,7 @@ func (e *ethernetConn) Write(b []byte) (int, error) {
 		case <-e.done:
 			return 0, net.ErrClosed
 		case <-wait():
-			_ = e.Close()
-			return 0, fmt.Errorf("Ethernet link write queue stalled")
+			return expired()
 		}
 	}
 	frame := append([]byte(nil), b...)
@@ -295,9 +318,39 @@ func (e *ethernetConn) Write(b []byte) (int, error) {
 		return 0, net.ErrClosed
 	case <-wait():
 		e.queuedBytes.Add(-size)
-		_ = e.Close()
-		return 0, fmt.Errorf("Ethernet link write queue stalled")
+		return expired()
 	}
+}
+
+// backpressure starts a backpressure episode unless one is running, and
+// returns when its wait budget ends and how many frames had been sent when
+// it began.
+func (e *ethernetConn) backpressure() (time.Time, uint64) {
+	e.stallMu.Lock()
+	defer e.stallMu.Unlock()
+	if at := e.stallAt.Load(); at != 0 {
+		return time.Unix(0, at).Add(ethernetWriteWait), e.stallSent
+	}
+	now := time.Now()
+	e.stallSent = e.sent.Load()
+	// One more than is queued: the writer may hold a frame it took out.
+	e.stallMark = e.stallSent + uint64(len(e.writes)) + 1
+	e.stallAt.Store(now.UnixNano())
+	return now.Add(ethernetWriteWait), e.stallSent
+}
+
+// sentFrame counts a frame the writer delivered and ends the backpressure
+// episode once the frames queued at its start are out.
+func (e *ethernetConn) sentFrame() {
+	n := e.sent.Add(1)
+	if e.stallAt.Load() == 0 {
+		return
+	}
+	e.stallMu.Lock()
+	if n >= e.stallMark {
+		e.stallAt.Store(0)
+	}
+	e.stallMu.Unlock()
 }
 func (e *ethernetConn) writer() {
 	defer e.Close()
@@ -315,6 +368,7 @@ func (e *ethernetConn) writer() {
 				}
 				b = b[n:]
 			}
+			e.sentFrame()
 			e.queuedBytes.Add(-size)
 			select {
 			case e.space <- struct{}{}:

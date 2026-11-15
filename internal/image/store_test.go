@@ -482,6 +482,52 @@ func TestStore_TagsSharingDiskKeepOwnManifest(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// A pull of another repository's recipe for a disk already stored (a cached
+// pull, PutStored) or a later build of the same disk must not change what a
+// digest reference resolves to: config and recipe are not part of the disk
+// digest. Each tag keeps its own manifest either way.
+func TestStore_DigestReferenceKeepsTheFirstManifest(t *testing.T) {
+	for _, laterStored := range []bool{true, false} {
+		s := makeStore(t)
+		write := func() string {
+			p := filepath.Join(t.TempDir(), "disk.img")
+			require.NoError(t, os.WriteFile(p, []byte("one disk, two recipes"), 0o600))
+			return p
+		}
+		own := validManifest()
+		own.Config.Memory, own.Config.Ports, own.Recipe = "128M", []string{"8080:80"}, "sha256:"+strings.Repeat("a", 64)
+		a, err := s.PutMove("registry.jerboa.dev/acme/app", "v1", own, write())
+		require.NoError(t, err)
+
+		foreign := validManifest()
+		foreign.Config.Memory, foreign.Config.Ports, foreign.Recipe = "8G", []string{"22:22"}, "sha256:"+strings.Repeat("b", 64)
+		foreign.Config.MinDiskSize = 1 << 40
+		if laterStored {
+			foreign.DiskDigest = a.DiskDigest
+			_, ok, err := s.PutStored("registry.example.com/evil/app", "v1", foreign)
+			require.NoError(t, err)
+			require.True(t, ok)
+		} else {
+			_, err := s.PutMove("registry.example.com/evil/app", "v1", foreign, write())
+			require.NoError(t, err)
+		}
+
+		byDigest, _, err := s.Resolve(a.DiskDigest)
+		require.NoError(t, err)
+		require.Equal(t, "128M", byDigest.Config.Memory)
+		require.Equal(t, []string{"8080:80"}, byDigest.Config.Ports)
+		require.Equal(t, own.Recipe, byDigest.Recipe)
+		require.Zero(t, byDigest.Config.MinDiskSize)
+
+		m, _, err := s.Resolve("registry.jerboa.dev/acme/app:v1")
+		require.NoError(t, err)
+		require.Equal(t, "128M", m.Config.Memory)
+		m, _, err = s.Resolve("registry.example.com/evil/app:v1")
+		require.NoError(t, err)
+		require.Equal(t, "8G", m.Config.Memory, "the other tag keeps its own manifest")
+	}
+}
+
 // Images stored before per-tag manifests existed still resolve.
 func TestStore_ResolvesLegacyImageWithoutTagManifest(t *testing.T) {
 	s := makeStore(t)

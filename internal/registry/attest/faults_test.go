@@ -61,7 +61,8 @@ func newAttested(t *testing.T) *attested {
 	cl := client.New(reg.Host())
 	cl.Backoff = noWait
 	return &attested{reg: reg, cl: cl, cdn: reg.URL + "/cdn",
-		ref: naming.ImageReference{Registry: reg.Host(), Namespace: "acme", Repository: "app", Tag: "v1"}}
+		// The statements below name the repository under registry.jerboa.dev.
+		ref: naming.ImageReference{Registry: "registry.jerboa.dev", Namespace: "acme", Repository: "app", Tag: "v1"}}
 }
 
 type listedBundle struct {

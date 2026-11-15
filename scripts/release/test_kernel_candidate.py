@@ -120,11 +120,19 @@ class KernelCandidateTests(unittest.TestCase):
             for name, filename in c.KERNEL_FILES.items()}}
         def download(url, target):
             if url.endswith('stable.json'):
-                c.write_json(target, {'components': {'kernel': component}})
+                c.write_json(target, {'channel': channel, 'components': {'kernel': component}})
             elif url.endswith('.minisig'):
                 Path(target).write_bytes(b'signature')
             else:
                 shutil.copyfile(file, target)
+        # A validly signed manifest of another channel (an unpromoted
+        # candidate) is not the published toolset.
+        channel = 'candidate'
+        with patch.object(c, 'download', side_effect=download), patch.object(c, 'verify_signature'):
+            with self.assertRaisesRegex(ValueError, 'stable channel'):
+                c.kernel()
+        shutil.rmtree('kernel-candidate')
+        channel = 'stable'
         with patch.object(c, 'download', side_effect=download), patch.object(c, 'verify_signature') as verify:
             c.kernel()
             verify.assert_called_once()
@@ -181,6 +189,8 @@ class KernelCandidateTests(unittest.TestCase):
         self.assertIn('kernel/v0.2.1/toolset.json', inv['assets'])
         self.assertIn('kernel/v0.2.1/mkfs-darwin-arm64', inv['assets'])
         self.assertEqual(inv['kernel_toolset'], self.record)
+        self.assertEqual(inv['macos_x86_tools'], {'version': 'v0.2.1', 'files': {
+            name: self.record['files'][name] for name in c.X86_TOOLS}})
         self.assertEqual(manifest['components']['distro']['kernel'], 'v0.2.1')
         # The released installer refuses stable manifests older than this one.
         installer = Path('candidate/payload/releases/v1.0.0/install.sh').read_text()
@@ -225,12 +235,53 @@ class KernelCandidateTests(unittest.TestCase):
                 patch.object(c, 'sign', side_effect=sign), \
                 patch.dict(os.environ, {'MACOS_EVIDENCE': 'https://example.org/report', 'GITHUB_RUN_ID': '456'}):
             c.promote()
-        self.assertEqual(json.loads(store['channels/stable.json'])['components']['kernel'], manifest['components']['kernel'])
+        self.assertEqual(manifest['channel'], 'candidate')
+        stable = json.loads(store['channels/stable.json'])
+        self.assertEqual(stable, {**manifest, 'channel': 'stable'})
+        self.assertEqual(stable['components']['kernel'], manifest['components']['kernel'])
         switch = events.index(('put', 'channels/stable.json'))
         for filename in c.KERNEL_FILES.values():
             key = 'kernel/v0.2.1/' + filename
             self.assertEqual(store[key], Path('kernel-candidate', filename).read_bytes())
             self.assertLess(events.index(('get', key)), switch)
+
+    def test_mac_x86_guest_files_are_the_selected_toolset(self):
+        from types import SimpleNamespace
+        self.stage()
+        dest = Path('dist/macos-arm64/tools/x86')
+        c.x86(SimpleNamespace(out=str(dest), check=False))
+        self.assertEqual((dest / 'kernel-version.txt').read_text(), 'v0.2.1\n')
+        for name in c.X86_TOOLS:
+            self.assertEqual(c.digest(dest / name), self.record['files'][name])
+        c.x86(SimpleNamespace(out=str(dest), check=True))
+        # Staging never overwrites, and a changed, extra or missing file fails.
+        with self.assertRaises(FileExistsError):
+            c.x86(SimpleNamespace(out=str(dest), check=False))
+        (dest / 'kernel.img').write_bytes(b'stable kernel')
+        with self.assertRaisesRegex(ValueError, 'differs from the candidate toolset'):
+            c.x86(SimpleNamespace(out=str(dest), check=True))
+        shutil.copyfile('kernel-selected/kernel.img', dest / 'kernel.img')
+        (dest / 'kernel-version.txt').write_text('v0.2.0\n')
+        with self.assertRaisesRegex(ValueError, 'version differs'):
+            c.x86(SimpleNamespace(out=str(dest), check=True))
+        (dest / 'kernel-version.txt').write_text('v0.2.1\n')
+        (dest / 'extra').write_bytes(b'')
+        with self.assertRaisesRegex(ValueError, 'Unexpected x86'):
+            c.x86(SimpleNamespace(out=str(dest), check=True))
+        # The selected toolset itself is checked against the lock first.
+        Path('kernel-selected/boot.img').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'bytes changed'):
+            c.x86(SimpleNamespace(out='other', check=False))
+
+    def test_candidate_signed_for_stable_is_not_promotable(self):
+        self.assemble()
+        m = json.loads(Path('candidate/manifest.json').read_text()); m['channel'] = 'stable'
+        c.write_json('candidate/manifest.json', m)
+        inv = json.loads(Path('candidate/inventory.json').read_text())
+        inv['manifest'] = c.digest('candidate/manifest.json')
+        c.write_json('candidate/inventory.json', inv)
+        with patch.object(c, 'verify_signature'), self.assertRaisesRegex(ValueError, 'candidate channel'):
+            c.verify_candidate('candidate')
 
     def test_rootfs_cannot_ship_another_kernel(self):
         _, manifest = self.assemble()

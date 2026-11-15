@@ -52,8 +52,15 @@ type Client struct {
 	// HTTP is the client used for downloads. Nil means httpclient.Default.
 	HTTP *http.Client
 	// StateDir is where the generation time of the newest accepted manifest
-	// is kept, to refuse older ones (see checkFresh). Empty disables the check.
+	// is kept, to refuse older ones (see checkFresh). Empty disables that
+	// record, but not MinGenerated or SeedStateFiles.
 	StateDir string
+	// MinGenerated (RFC 3339) is the oldest stable manifest accepted without
+	// any local state. Empty means no such floor.
+	MinGenerated string
+	// SeedStateFiles are further state files, written by someone else (the
+	// installer), whose stable entry for this origin raises the floor.
+	SeedStateFiles []string
 }
 
 // NewClient builds a Client from a base URL and an embedded minisign public key.

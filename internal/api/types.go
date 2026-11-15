@@ -82,7 +82,11 @@ type RunParams struct {
 	// ImagePath is a direct path to a bootable disk image on the daemon's
 	// filesystem. Used for file-based runs when Image is empty. The daemon
 	// accepts it only from a local client that owns the file.
-	ImagePath      string            `json:"image_path"`
+	ImagePath string `json:"image_path"`
+	// ExpectedDigest, when set, is the disk digest Image must resolve to
+	// (the one whose signature run --verify checked); the daemon refuses to
+	// run another disk.
+	ExpectedDigest string            `json:"expected_digest,omitempty"`
 	Memory         string            `json:"memory"`
 	CPUs           int               `json:"cpus"`
 	NetworkAliases []string          `json:"network_aliases,omitempty"`
