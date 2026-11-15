@@ -5,6 +5,7 @@ package vm
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -24,8 +25,23 @@ type SQLiteStore struct {
 
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 	dir := filepath.Dir(dsn)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// The database persists every VM's full config, including any environment
+	// passed with -e (which may hold secrets), so keep it owner-only, as the
+	// file backend does with state.json.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("sqlite mkdir: %w", err)
+	}
+	// Only take access away from group and other: a directory the operator
+	// made read-only stays read-only, and the open below fails as before.
+	if info, err := os.Stat(dir); err != nil {
+		return nil, fmt.Errorf("sqlite stat dir: %w", err)
+	} else if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		if err := os.Chmod(dir, perm&^0o077); err != nil {
+			return nil, fmt.Errorf("sqlite chmod dir: %w", err)
+		}
+	}
+	if err := restrictSQLiteFiles(dsn); err != nil {
+		return nil, err
 	}
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
@@ -41,6 +57,37 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("sqlite schema: %w", err)
 	}
 	return s, nil
+}
+
+// restrictSQLiteFiles creates the database file 0600 before the driver opens
+// it, and takes group and other access away from a database and journal files
+// a previous run left with wider permissions (owner bits are kept, so a
+// database the operator made read-only stays so). SQLite creates its
+// -journal, -wal and -shm files with the main database file's permissions, so
+// they stay owner-only from then on.
+func restrictSQLiteFiles(path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("sqlite create db: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("sqlite create db: %w", err)
+	}
+	for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
+		info, err := os.Stat(path + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("sqlite stat db%s: %w", suffix, err)
+		}
+		if perm := info.Mode().Perm(); perm&0o077 != 0 {
+			if err := os.Chmod(path+suffix, perm&^0o077); err != nil {
+				return fmt.Errorf("sqlite chmod db%s: %w", suffix, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (s *SQLiteStore) Close() error {
