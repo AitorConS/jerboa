@@ -319,6 +319,58 @@ func TestPeeringCap(t *testing.T) {
 	require.Zero(t, f.pairs())
 }
 
+func openFDs(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/dev/fd")
+	require.NoError(t, err)
+	return len(entries)
+}
+
+// A pair whose first peerAdd overflows the source VMM's control queue is
+// torn down inside observe. The destination must not then be handed a
+// descriptor by the number the torn-down pair held, which the process may
+// already have given to something else.
+func TestPeeringOverflowDuringPairingSendsNoStaleDescriptor(t *testing.T) {
+	f := newPeerFixture(t)
+	a, pa := f.member(t, 1)
+	b, pb := f.member(t, 2)
+	connect(t, a, pa) // A's VMM stops reading after its welcome
+	vb, _ := connect(t, b, pb)
+	before := openFDs(t)
+
+	s := f.session(a)
+	require.NotNil(t, s)
+	// Fill A's socket buffer and then its control queue, until the queue
+	// stays full: the writer is then blocked on the socket (for up to its
+	// write deadline) and cannot free a slot before observe runs.
+	full := func() bool {
+		f.p.mu.Lock()
+		defer f.p.mu.Unlock()
+		return len(s.out) == cap(s.out)
+	}
+	for {
+		f.p.mu.Lock()
+		for len(s.out) < cap(s.out) {
+			f.p.enqueueLocked(s, peerMessage{Type: peerDel, Epoch: s.epoch}, -1)
+		}
+		f.p.mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		if full() {
+			break
+		}
+	}
+	f.p.observe(a, b.mac)
+
+	require.Zero(t, f.pairs())
+	require.Nil(t, f.session(a), "the session that could not keep up is ended")
+	require.Zero(t, f.memberPairs(a))
+	require.Zero(t, f.memberPairs(b))
+	m, fd := vb.expect(peerDel)
+	require.Equal(t, -1, fd, "withdrawal of pair %d carries no descriptor", m.Value)
+	vb.silent()
+	waitFor(t, func() bool { return openFDs(t) <= before-1 }) // A's session socket closed, nothing leaked
+}
+
 func TestEthernetConnObservesUnicastFlows(t *testing.T) {
 	var seen [][6]byte
 	e := &ethernetConn{observe: func(dst [6]byte) { seen = append(seen, dst) }}

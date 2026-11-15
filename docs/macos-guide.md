@@ -224,8 +224,10 @@ Things to know:
   Mac's `localhost` and private, shared and link-local ranges (`10.0.0.0/8`,
   `172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`) are
   refused. To restore access, start the daemon with
-  `JERBOA_GUEST_HOST_ACCESS=1 jerboa daemon restart`. Firecracker VMs use the
-  policy file below instead.
+  `JERBOA_GUEST_HOST_ACCESS=1 jerboa daemon restart`. It widens the addresses
+  only: link-local addresses stay refused, and each VM keeps its limits on
+  host connections and DNS queries. Firecracker VMs use the policy file below
+  instead.
 - A VM can join one network at a time.
 - With Firecracker, health checks on a VM without `--network` need a published
   TCP port. On a named network, health checks work on any port.
