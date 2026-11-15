@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -83,12 +84,21 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 			}
 			defer func() { _ = client.Close() }()
 
-			if _, err := os.Stat(stateFilePath(composeFile)); err == nil {
+			// A state file of a project brought up by an earlier version is
+			// taken over only if it is this project's; one that is not was put
+			// there by someone else and is reported as such, not as a stack
+			// to take down.
+			if existing, legacy, err := loadState(composeFile); err == nil {
+				if legacy {
+					if _, err := openState(cmd.Context(), client, composeFile, existing, legacy); err != nil {
+						return fmt.Errorf("compose up: %w", err)
+					}
+				}
 				return fmt.Errorf("compose project already has state; run down first")
-			} else if !os.IsNotExist(err) {
-				return fmt.Errorf("compose: %w", err)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("compose up: %w", err)
 			}
-			state := compose.State{Project: stateFilePath(composeFile), Services: map[string]string{}, ServiceNetworks: map[string]string{}, ServiceIPs: map[string]string{}}
+			state := compose.State{Project: composeProject(composeFile), Services: map[string]string{}, ServiceNetworks: map[string]string{}, ServiceIPs: map[string]string{}}
 			if err := writeState(composeFile, state); err != nil {
 				return fmt.Errorf("compose: %w", err)
 			}
@@ -197,7 +207,7 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 				if err := writeState(composeFile, state); err != nil {
 					return fmt.Errorf("compose: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "started %s → %s\n", name, info.ID)
+				fmt.Fprintf(cmd.OutOrStdout(), "started %s → %s\n", termField(name), termField(info.ID))
 
 				if svc.HealthCheck != "" {
 					if err := waitForHealthy(cmd, client, info.ID, name, 60*time.Second); err != nil {
@@ -238,7 +248,7 @@ func newComposeDownCmd(socketPath *string) *cobra.Command {
 		Short: "Stop all services from a compose file",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, err := readState(args[0])
+			state, legacy, err := loadState(args[0])
 			if err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					return nil
@@ -256,10 +266,15 @@ func newComposeDownCmd(socketPath *string) *cobra.Command {
 				}
 			}()
 
+			// Every VM is checked before any is stopped.
+			vms, err := openState(cmd.Context(), client, args[0], state, legacy)
+			if err != nil {
+				return fmt.Errorf("compose down: %w", err)
+			}
 			var failures []error
 			for _, name := range stateServiceNames(state) {
 				id := state.Services[name]
-				if _, err := client.Get(cmd.Context(), id); err != nil {
+				if err := vms[name].err; err != nil {
 					if !strings.Contains(err.Error(), "not found") {
 						failures = append(failures, err)
 						continue
@@ -274,7 +289,7 @@ func newComposeDownCmd(socketPath *string) *cobra.Command {
 						continue
 					}
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", name)
+				fmt.Fprintf(cmd.OutOrStdout(), "stopped %s\n", termField(name))
 				delete(state.Services, name)
 				delete(state.ServiceIPs, name)
 				delete(state.ServiceNetworks, name)
@@ -322,7 +337,7 @@ func newComposePsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 		Short: "List services and their VM state",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, err := readState(args[0])
+			state, legacy, err := loadState(args[0])
 			if err != nil {
 				return fmt.Errorf("compose ps: %w", err)
 			}
@@ -336,6 +351,10 @@ func newComposePsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
 				}
 			}()
+			vms, err := openState(cmd.Context(), client, args[0], state, legacy)
+			if err != nil {
+				return fmt.Errorf("compose ps: %w", err)
+			}
 
 			type row struct {
 				Service string `json:"service"`
@@ -345,13 +364,11 @@ func newComposePsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 
 			rows := make([]row, 0, len(state.Services))
 			for _, name := range stateServiceNames(state) {
-				id := state.Services[name]
-				info, getErr := client.Get(cmd.Context(), id)
 				vmState := "unknown"
-				if getErr == nil {
-					vmState = info.State
+				if vm := vms[name]; vm.err == nil {
+					vmState = vm.info.State
 				}
-				rows = append(rows, row{Service: name, ID: id, State: vmState})
+				rows = append(rows, row{Service: name, ID: state.Services[name], State: vmState})
 			}
 
 			if *outputFmt == "json" {
@@ -361,7 +378,7 @@ func newComposePsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "SERVICE\tID\tSTATE")
 			for _, r := range rows {
-				fmt.Fprintf(w, "%s\t%s\t%s\n", r.Service, r.ID, r.State)
+				fmt.Fprintf(w, "%s\t%s\t%s\n", termField(r.Service), termField(r.ID), termField(r.State))
 			}
 			return w.Flush()
 		},
@@ -369,12 +386,13 @@ func newComposePsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 }
 
 func newComposeLogsCmd(socketPath *string) *cobra.Command {
-	return &cobra.Command{
+	var raw bool
+	cmd := &cobra.Command{
 		Use:   "logs <compose-file> <service>",
 		Short: "Print captured serial output for a compose service",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, err := readState(args[0])
+			state, legacy, err := loadState(args[0])
 			if err != nil {
 				return fmt.Errorf("compose logs: %w", err)
 			}
@@ -392,20 +410,30 @@ func newComposeLogsCmd(socketPath *string) *cobra.Command {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: close client: %v\n", closeErr)
 				}
 			}()
+			if _, err := openState(cmd.Context(), client, args[0], state, legacy); err != nil {
+				return fmt.Errorf("compose logs: %w", err)
+			}
 
 			resp, err := client.Logs(cmd.Context(), id)
 			if err != nil {
 				return fmt.Errorf("compose logs: %w", err)
 			}
-			fmt.Fprint(cmd.OutOrStdout(), resp.Logs)
+			fmt.Fprint(guestOutput(cmd.OutOrStdout(), raw), resp.Logs)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&raw, "raw", false,
+		"print the output unfiltered, terminal control sequences included")
+	return cmd
 }
 
 // --- state helpers ---
 
-func stateFilePath(composeFile string) string {
+// errForeignState marks a state file that compose up did not write for the
+// project it is found for. Nothing it names may be stopped or removed.
+var errForeignState = errors.New("not written by compose up for this project")
+
+func canonicalComposePath(composeFile string) string {
 	canonical, err := filepath.Abs(composeFile)
 	if err != nil {
 		canonical = filepath.Clean(composeFile)
@@ -413,16 +441,56 @@ func stateFilePath(composeFile string) string {
 	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
 		canonical = resolved
 	}
+	return canonical
+}
+
+// composeProject identifies a compose project. It is the path where earlier
+// versions kept the state, next to the compose file; it is recorded as
+// State.Project and hashed into the names of the project's networks and
+// volumes, so it must not change.
+func composeProject(composeFile string) string {
+	canonical := canonicalComposePath(composeFile)
 	sum := sha256.Sum256([]byte(canonical))
 	return filepath.Join(filepath.Dir(canonical), fmt.Sprintf(".jerboa-compose-%x.json", sum[:16]))
 }
 
+// legacyStateFilePath is where earlier versions kept a project's state: in
+// the project directory, where whoever wrote the project can put one too.
+func legacyStateFilePath(composeFile string) string { return composeProject(composeFile) }
+
+// composeScopePrefix is what the project puts before the names of the
+// networks and volumes it owns.
+func composeScopePrefix(composeFile string) string {
+	sum := sha256.Sum256([]byte(composeProject(composeFile)))
+	return naming.ComposeScopedPrefix(sum[:])
+}
+
+// composeStateDir holds the state of every compose project of this user,
+// where project content cannot put a file.
+func composeStateDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".jerboa", "compose")
+	}
+	return filepath.Join(home, ".jerboa", "compose")
+}
+
+// stateFilePath is where compose keeps a project's state.
+func stateFilePath(composeFile string) string {
+	sum := sha256.Sum256([]byte(canonicalComposePath(composeFile)))
+	return filepath.Join(composeStateDir(), fmt.Sprintf("%x.json", sum[:16]))
+}
+
 func writeState(composeFile string, state compose.State) error {
+	state.Project = composeProject(composeFile)
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return fmt.Errorf("compose: marshal state: %w", err)
 	}
 	target := stateFilePath(composeFile)
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return fmt.Errorf("compose: %w", err)
+	}
 	f, err := os.CreateTemp(filepath.Dir(target), ".compose-state-*")
 	if err != nil {
 		return fmt.Errorf("compose: %w", err)
@@ -445,16 +513,163 @@ func writeState(composeFile string, state compose.State) error {
 	return nil
 }
 
+// readState reads a project's state, see loadState.
 func readState(composeFile string) (compose.State, error) {
-	data, err := os.ReadFile(stateFilePath(composeFile))
+	state, _, err := loadState(composeFile)
+	return state, err
+}
+
+// loadState reads a project's state from the user's compose state
+// directory or, for a project brought up by an earlier version, from the
+// state file next to the compose file; legacy reports the latter. Either
+// file must pass checkStateFile. A legacy state is taken over (moved to the
+// state directory) only once its VMs have passed checkStateVMs too.
+func loadState(composeFile string) (state compose.State, legacy bool, err error) {
+	state, err = readStateFile(stateFilePath(composeFile), composeFile)
+	if !errors.Is(err, os.ErrNotExist) {
+		return state, false, err
+	}
+	state, err = readStateFile(legacyStateFilePath(composeFile), composeFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return compose.State{}, false, fmt.Errorf("no state for %s (run 'jerboa compose up' first): %w", composeFile, os.ErrNotExist)
+	}
 	if err != nil {
-		return compose.State{}, fmt.Errorf("read state (run 'jerboa compose up' first): %w", err)
+		return compose.State{}, false, err
+	}
+	return state, true, nil
+}
+
+func readStateFile(path, composeFile string) (compose.State, error) {
+	foreign := func(reason string) error {
+		return fmt.Errorf("state file %s is %w: %s; remove it if you did not create it", path, errForeignState, reason)
+	}
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return compose.State{}, fmt.Errorf("read state: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return compose.State{}, foreign("it is not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return compose.State{}, fmt.Errorf("read state: %w", err)
+	}
+	defer func() { _ = f.Close() }()
+	// Check the file that was opened, not one swapped in after the Lstat.
+	opened, err := f.Stat()
+	if err != nil {
+		return compose.State{}, fmt.Errorf("read state: %w", err)
+	}
+	if !os.SameFile(fi, opened) {
+		return compose.State{}, foreign("it changed while being read")
+	}
+	if err := checkStateFileOwner(opened); err != nil {
+		return compose.State{}, foreign(err.Error())
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return compose.State{}, fmt.Errorf("read state: %w", err)
 	}
 	var state compose.State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return compose.State{}, fmt.Errorf("parse state: %w", err)
 	}
+	if err := checkState(composeFile, state); err != nil {
+		return compose.State{}, foreign(err.Error())
+	}
 	return state, nil
+}
+
+// checkState accepts a state only if it records this project and names no
+// network or volume outside the project's scope, so that compose down cannot
+// be pointed at another project's resources.
+func checkState(composeFile string, state compose.State) error {
+	if state.Project != composeProject(composeFile) {
+		return fmt.Errorf("it records project %q", state.Project)
+	}
+	prefix := composeScopePrefix(composeFile)
+	scoped := func(kind string, names []string) error {
+		for _, name := range names {
+			if !strings.HasPrefix(name, prefix) || len(name) == len(prefix) || naming.ValidateResourceName(kind, name) != nil {
+				return fmt.Errorf("%s %q is not one of this project's", kind, name)
+			}
+		}
+		return nil
+	}
+	if err := scoped("volume", state.CreatedVolumes); err != nil {
+		return err
+	}
+	if err := scoped("network", state.CreatedNetworks); err != nil {
+		return err
+	}
+	for name, id := range state.Services {
+		if id == "" {
+			return fmt.Errorf("service %q has no VM", name)
+		}
+	}
+	return nil
+}
+
+// stateVM is what the daemon answered for a VM a state names.
+type stateVM struct {
+	info api.VMInfo
+	err  error
+}
+
+// checkStateVMs asks the daemon about each VM the state names. compose up
+// records the full ID of a VM it named after a service of the compose file;
+// a reference that is anything else (another VM's name or an ID prefix, or a
+// service the file does not have) means the state was not written by
+// compose up for this project, and nothing in it may be acted on. A VM the
+// daemon does not answer for is returned with the error.
+func checkStateVMs(ctx context.Context, client *api.Client, f compose.File, path string, state compose.State) (map[string]stateVM, error) {
+	vms := make(map[string]stateVM, len(state.Services))
+	for _, name := range stateServiceNames(state) {
+		id := state.Services[name]
+		if _, ok := f.Services[name]; !ok {
+			return nil, fmt.Errorf("state file %s is %w: service %q is not in the compose file", path, errForeignState, name)
+		}
+		info, err := client.Get(ctx, id)
+		if err == nil && (info.ID != id || info.Name != name) {
+			return nil, fmt.Errorf("state file %s is %w: %q is not the ID of the VM of service %q", path, errForeignState, id, name)
+		}
+		vms[name] = stateVM{info: info, err: err}
+	}
+	return vms, nil
+}
+
+// openState checks the VMs a state loaded by loadState names against the
+// compose file and the daemon. A legacy state that passes is moved to the
+// state directory.
+func openState(ctx context.Context, client *api.Client, composeFile string, state compose.State, legacy bool) (map[string]stateVM, error) {
+	f, err := readComposeFile(composeFile)
+	if err != nil {
+		return nil, err
+	}
+	path := stateFilePath(composeFile)
+	if legacy {
+		path = legacyStateFilePath(composeFile)
+	}
+	vms, err := checkStateVMs(ctx, client, f, path, state)
+	if err != nil {
+		return nil, err
+	}
+	if legacy {
+		if err := writeState(composeFile, state); err != nil {
+			return nil, err
+		}
+		_ = os.Remove(legacyStateFilePath(composeFile))
+	}
+	return vms, nil
+}
+
+// readComposeFile reads and parses a compose file.
+func readComposeFile(composeFile string) (compose.File, error) {
+	data, err := os.ReadFile(composeFile)
+	if err != nil {
+		return compose.File{}, fmt.Errorf("read file: %w", err)
+	}
+	return compose.Parse(data)
 }
 
 func removeState(composeFile string) error {
@@ -566,8 +781,7 @@ func resolveComposeImages(f *compose.File, path string) {
 // file cannot attach a volume or join a network of another project by naming
 // it. Only entries marked external keep their name and must already exist.
 func scopeComposeResources(f *compose.File, path string) error {
-	sum := sha256.Sum256([]byte(stateFilePath(path)))
-	prefix := naming.ComposeScopedPrefix(sum[:])
+	prefix := composeScopePrefix(path)
 	scoped := func(kind, name string) (string, error) {
 		n := prefix + name
 		if err := naming.ValidateResourceName(kind, n); err != nil {

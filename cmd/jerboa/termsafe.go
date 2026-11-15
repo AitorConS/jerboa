@@ -100,3 +100,21 @@ func guestOutput(w io.Writer, raw bool) io.Writer {
 	}
 	return sanitizingWriter{w}
 }
+
+// termField makes a string the CLI did not author (a registry answer, a
+// package index or manifest field, a compose file or stored VM name) safe to
+// print inside one line of terminal output: control sequences are removed as
+// for guest output, and newlines and tabs become spaces so the string cannot
+// break a table row or forge another line.
+func termField(s string) string {
+	s = sanitizeTerminal(s)
+	if !strings.ContainsAny(s, "\n\t") {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' {
+			return ' '
+		}
+		return r
+	}, s)
+}

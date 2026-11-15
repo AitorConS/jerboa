@@ -209,7 +209,7 @@ flags) unless later custom build args override them.
 
 ```bash
 jerboa build examples/flaskapp --name flaskapp --port 8080
-jerboa build examples/nextapp --name nextapp --port 3000
+jerboa build examples/nextapp --name nextapp --port 3000 --allow-build-network
 ```
 
 Supported build modes:

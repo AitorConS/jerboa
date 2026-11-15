@@ -185,7 +185,10 @@ jerboa pkg list                   # locally cached packages
 ```
 
 Node and Python builds resolve their runtime package **automatically**
-(`node:20`, `python:3.12`) — you only declare extra packages.
+(`node:20`, `python:3.12`) — you only declare extra packages. With the ops
+source the runtime comes from the `eyberg` namespace only; when it has no
+package for that version or architecture the build fails rather than take
+another publisher's, and `--pkg <namespace>/node:20` picks one explicitly.
 
 If a file from your project and a file from a package land at the same path in
 the image (for example, both ship a `README.md` at the root), **your project's
@@ -367,8 +370,10 @@ include = ["server.js", "lib", "node_modules"]  # optional allowlist of project 
                          # (node/python/raw); `jerboa build --size-report` shows what is left
 dirs = ["/data"]         # empty directories to create (mount points, scratch paths)
 install_scripts = false  # let npm run dependencies' install scripts (off by default)
-sandbox = true           # confine build steps on the build machine (default true)
-network = false          # let `run` commands reach the network (off by default)
+sandbox = true           # confine build steps on the build machine (default true;
+                         # false needs `jerboa build --allow-unsandboxed`)
+network = false          # let `run` commands reach the network (off by default;
+                         # true needs `jerboa build --allow-build-network`)
 
 [program]                # raw builds only
 path = "/usr/local/pgsql/bin/postgres"  # full in-image path of the program

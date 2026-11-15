@@ -328,13 +328,29 @@ volumes:
     size: 64M
 `
 
-// fdComposeProject writes a compose file and returns its path.
+// fdComposeProject writes a compose file and returns its path. Compose
+// keeps project state in the user's home, so it also isolates the home once
+// for the test, and the test runs commands with fdRunHere to keep it.
 func fdComposeProject(t *testing.T, content string) string {
 	t.Helper()
+	fdIsolate(t)
 	path := filepath.Join(t.TempDir(), "compose.yaml")
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 	return path
 }
+
+// fdComposeVM answers VM.Get as the daemon does for the VMs compose up
+// started: the VM with ID "vm-<service>" is named after its service.
+func fdComposeVM(state string) fdHandler {
+	return func(_ int, req api.Request) fdReply {
+		var p api.IDParams
+		_ = json.Unmarshal(req.Params, &p)
+		return fdReply{result: api.VMInfo{ID: p.ID, Name: strings.TrimPrefix(p.ID, "vm-"), State: state}}
+	}
+}
+
+// fdScoped is the name compose up gives a network or volume of file.
+func fdScoped(file, name string) string { return composeScopePrefix(file) + name }
 
 func fdComposeState(t *testing.T, file string) compose.State {
 	t.Helper()
@@ -368,7 +384,7 @@ func TestDaemonFault_ComposeUpFailsHalfway(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			file := fdComposeProject(t, fdComposeFile)
 			d := fdComposeDaemon(t, fdSeq(fdOK(api.VMInfo{ID: "vm-db", State: "running"}), second))
-			res := fdRun(t, d.endpoint, "compose", "up", file)
+			res := fdRunHere(t, d.endpoint, "compose", "up", file)
 			fdRequireCleanFailure(t, res, `service "web"`)
 
 			state := fdComposeState(t, file)
@@ -380,13 +396,13 @@ func TestDaemonFault_ComposeUpFailsHalfway(t *testing.T) {
 
 			// A second up must not start the stack again on top of the half.
 			again := fdComposeDaemon(t, fdOK(api.VMInfo{ID: "vm-x"}))
-			res = fdRun(t, again.endpoint, "compose", "up", file)
+			res = fdRunHere(t, again.endpoint, "compose", "up", file)
 			fdRequireCleanFailure(t, res, "run down first")
 			assert.Zero(t, again.count("VM.Run"))
 
 			// down removes what the failed up created and then the state.
-			down := fdNew(t).all(fdOK(nil)).on("VM.Get", fdOK(api.VMInfo{ID: "vm-db", State: "running"}))
-			res = fdRun(t, down.endpoint, "compose", "down", "--volumes", file)
+			down := fdNew(t).all(fdOK(nil)).on("VM.Get", fdComposeVM("running"))
+			res = fdRunHere(t, down.endpoint, "compose", "down", "--volumes", file)
 			require.NoError(t, res.err)
 			assert.Equal(t, 1, down.count("VM.Stop"))
 			assert.Equal(t, 1, down.count("VM.Remove"))
@@ -415,7 +431,7 @@ func TestDaemonFault_ComposeUpRejectsBadFilesBeforeTheDaemon(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			file := fdComposeProject(t, content)
 			d := fdNew(t).all(fdOK(nil))
-			res := fdRun(t, d.endpoint, "compose", "up", file)
+			res := fdRunHere(t, d.endpoint, "compose", "up", file)
 			// The YAML library reports the offending line on a line of its
 			// own, so these errors may span two lines.
 			fdRequireNoCrashText(t, res)
@@ -441,7 +457,7 @@ func TestDaemonFault_ComposeUpBadServiceSettings(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			file := fdComposeProject(t, "version: \"1\"\nservices:\n  web:\n    image: web:latest\n"+setting)
 			d := fdNew(t).all(fdOK(nil))
-			res := fdRun(t, d.endpoint, "compose", "up", file)
+			res := fdRunHere(t, d.endpoint, "compose", "up", file)
 			fdRequireCleanFailure(t, res, `service "web"`)
 			assert.Empty(t, d.methods())
 			_, err := os.Stat(stateFilePath(file))
@@ -457,17 +473,17 @@ func TestDaemonFault_ComposeDownKeepsWhatItCouldNotStop(t *testing.T) {
 	file := fdComposeProject(t, fdComposeFile)
 	require.NoError(t, writeState(file, compose.State{
 		Services:        map[string]string{"db": "vm-db", "web": "vm-web"},
-		CreatedNetworks: []string{"p-back"},
+		CreatedNetworks: []string{fdScoped(file, "back")},
 	}))
 	d := fdNew(t).all(fdOK(nil)).
-		on("VM.Get", fdOK(api.VMInfo{State: "running"})).
+		on("VM.Get", fdComposeVM("running")).
 		on("VM.Stop", func(_ int, req api.Request) fdReply {
 			if strings.Contains(string(req.Params), "vm-db") {
 				return fdReply{rpcErr: &api.RPCError{Code: -32000, Message: "vm vm-db: hypervisor does not answer"}}
 			}
 			return fdReply{}
 		})
-	res := fdRun(t, d.endpoint, "compose", "down", file)
+	res := fdRunHere(t, d.endpoint, "compose", "down", file)
 	require.Nil(t, res.panicked)
 	require.ErrorContains(t, res.err, "hypervisor does not answer")
 	assert.Contains(t, res.stdout, "stopped web")
@@ -478,19 +494,23 @@ func TestDaemonFault_ComposeDownKeepsWhatItCouldNotStop(t *testing.T) {
 // compose down when the daemon is gone or dies: the state file is what lets
 // the user retry, so it must survive, complete.
 func TestDaemonFault_ComposeDownKeepsStateWhenTheDaemonIsGone(t *testing.T) {
-	want := compose.State{Services: map[string]string{"db": "vm-db", "web": "vm-web"}, CreatedVolumes: []string{"p-data"}, CreatedNetworks: []string{"p-back"}}
+	stateFor := func(file string) compose.State {
+		return compose.State{Project: composeProject(file), Services: map[string]string{"db": "vm-db", "web": "vm-web"}, CreatedVolumes: []string{fdScoped(file, "data")}, CreatedNetworks: []string{fdScoped(file, "back")}}
+	}
 	t.Run("unreachable", func(t *testing.T) {
 		file := fdComposeProject(t, fdComposeFile)
+		want := stateFor(file)
 		require.NoError(t, writeState(file, want))
-		res := fdRun(t, "unix://"+filepath.Join(fdShortDir(t), "absent.sock"), "compose", "down", "--volumes", file)
+		res := fdRunHere(t, "unix://"+filepath.Join(fdShortDir(t), "absent.sock"), "compose", "down", "--volumes", file)
 		fdRequireCleanFailure(t, res, "connect to daemon")
 		assert.Equal(t, want, fdComposeState(t, file))
 	})
 	t.Run("dies", func(t *testing.T) {
 		file := fdComposeProject(t, fdComposeFile)
+		want := stateFor(file)
 		require.NoError(t, writeState(file, want))
 		d := fdNew(t).all(fdHangup())
-		res := fdRun(t, d.endpoint, "compose", "down", "--volumes", file)
+		res := fdRunHere(t, d.endpoint, "compose", "down", "--volumes", file)
 		require.Nil(t, res.panicked)
 		require.Error(t, res.err)
 		assert.Equal(t, want, fdComposeState(t, file))
@@ -498,9 +518,9 @@ func TestDaemonFault_ComposeDownKeepsStateWhenTheDaemonIsGone(t *testing.T) {
 	})
 	t.Run("vm already gone", func(t *testing.T) {
 		file := fdComposeProject(t, fdComposeFile)
-		require.NoError(t, writeState(file, want))
+		require.NoError(t, writeState(file, stateFor(file)))
 		d := fdNew(t).all(fdOK(nil)).on("VM.Get", fdFail(-32000, "vm not found"))
-		res := fdRun(t, d.endpoint, "compose", "down", file)
+		res := fdRunHere(t, d.endpoint, "compose", "down", file)
 		require.NoError(t, res.err)
 		assert.Zero(t, d.count("VM.Stop"))
 		_, err := readState(file)
@@ -508,7 +528,7 @@ func TestDaemonFault_ComposeDownKeepsStateWhenTheDaemonIsGone(t *testing.T) {
 	})
 	t.Run("never brought up", func(t *testing.T) {
 		// Nothing to do, so no daemon is needed either.
-		res := fdRun(t, "unix://"+filepath.Join(fdShortDir(t), "absent.sock"), "compose", "down", fdComposeProject(t, fdComposeFile))
+		res := fdRunHere(t, "unix://"+filepath.Join(fdShortDir(t), "absent.sock"), "compose", "down", fdComposeProject(t, fdComposeFile))
 		require.NoError(t, res.err)
 	})
 }
@@ -520,13 +540,14 @@ func TestDaemonFault_ComposeDamagedState(t *testing.T) {
 		for _, args := range [][]string{{"compose", "ps"}, {"compose", "down"}, {"compose", "logs"}} {
 			t.Run(name+"/"+args[1], func(t *testing.T) {
 				file := fdComposeProject(t, fdComposeFile)
+				require.NoError(t, os.MkdirAll(filepath.Dir(stateFilePath(file)), 0o700))
 				require.NoError(t, os.WriteFile(stateFilePath(file), []byte(content), 0o600))
 				d := fdNew(t).all(fdOK(nil))
 				argv := append(append([]string{}, args...), file)
 				if args[1] == "logs" {
 					argv = append(argv, "web")
 				}
-				res := fdRun(t, d.endpoint, argv...)
+				res := fdRunHere(t, d.endpoint, argv...)
 				fdRequireCleanFailure(t, res, "parse state")
 				assert.Empty(t, d.methods())
 				data, err := os.ReadFile(stateFilePath(file))
@@ -542,8 +563,8 @@ func TestDaemonFault_ComposeDamagedState(t *testing.T) {
 func TestDaemonFault_ComposePsWithLostVMs(t *testing.T) {
 	file := fdComposeProject(t, fdComposeFile)
 	require.NoError(t, writeState(file, compose.State{Services: map[string]string{"db": "vm-db", "web": "vm-web"}}))
-	d := fdNew(t).on("VM.Get", fdSeq(fdFail(-32000, "vm vm-db not found"), fdOK(api.VMInfo{ID: "vm-web", State: "running"})))
-	res := fdRun(t, d.endpoint, "--output", "json", "compose", "ps", file)
+	d := fdNew(t).on("VM.Get", fdSeq(fdFail(-32000, "vm vm-db not found"), fdComposeVM("running")))
+	res := fdRunHere(t, d.endpoint, "--output", "json", "compose", "ps", file)
 	require.NoError(t, res.err)
 	rows, ok := fdRequireJSON(t, res).([]any)
 	require.True(t, ok)
@@ -551,7 +572,7 @@ func TestDaemonFault_ComposePsWithLostVMs(t *testing.T) {
 	assert.Equal(t, map[string]any{"service": "db", "id": "vm-db", "state": "unknown"}, rows[0])
 	assert.Equal(t, map[string]any{"service": "web", "id": "vm-web", "state": "running"}, rows[1])
 
-	res = fdRun(t, d.endpoint, "compose", "logs", file, "ghost")
+	res = fdRunHere(t, d.endpoint, "compose", "logs", file, "ghost")
 	fdRequireCleanFailure(t, res, `service "ghost" not found`)
 }
 

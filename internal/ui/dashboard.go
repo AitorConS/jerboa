@@ -299,30 +299,37 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 }
 
 // NewServer returns the dashboard's HTTP handler: the pages and JSON API behind
-// the token (when set), a sign-in form that stores the token in a cookie for
-// browsers, and a Host check when bound to loopback.
+// the token (when set), a sign-in form that gives browsers a session cookie,
+// and a Host check when bound to loopback.
 func NewServer(addr, token string, mgr vm.Manager, version string) http.Handler {
 	h := NewHandler(mgr, addr, version)
-	protected := httpauth.Bearer(token, h)
+	s := newSessions(addr)
+	authorized := func(r *http.Request) bool {
+		return token == "" || httpauth.Authorized(token, r) || s.valid(r)
+	}
 	mux := http.NewServeMux()
-	mux.Handle("/ui/login", loginHandler(token))
+	mux.Handle("/ui/login", loginHandler(token, s))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if authorized(r) {
+			h.ServeHTTP(w, r)
+			return
+		}
 		// Send a browser without the token to the sign-in form instead of a
 		// bare 401; API clients still get the 401.
-		if token != "" && !httpauth.Authorized(token, r) && r.Method == http.MethodGet &&
-			!strings.HasPrefix(r.URL.Path, "/ui/api/") && strings.Contains(r.Header.Get("Accept"), "text/html") {
+		if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/ui/api/") && strings.Contains(r.Header.Get("Accept"), "text/html") {
 			http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
 			return
 		}
-		protected.ServeHTTP(w, r)
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}))
 	return httpauth.LoopbackHost(addr, mux)
 }
 
-// loginHandler serves a form that checks the observability token and stores
-// it in an HttpOnly, SameSite=Strict cookie for the dashboard's page loads
-// and fetches.
-func loginHandler(token string) http.Handler {
+// loginHandler serves a form that checks the observability token and, when it
+// is right, gives the browser a session cookie for the dashboard's page loads
+// and fetches (see sessions; the cookie never holds the token itself).
+func loginHandler(token string, s *sessions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			http.Redirect(w, r, "/ui", http.StatusSeeOther)
@@ -334,10 +341,7 @@ func loginHandler(token string) http.Handler {
 			got := r.PostFormValue("token")
 			probe := &http.Request{Header: http.Header{"Authorization": {"Bearer " + got}}}
 			if httpauth.Authorized(token, probe) {
-				// Secure only over TLS: the dashboard is usually served over
-				// plain HTTP on loopback, where a Secure cookie is never sent.
-				http.SetCookie(w, &http.Cookie{Name: httpauth.CookieName, Value: got, Path: "/", //nolint:gosec // see above
-					HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
+				s.issue(w, r)
 				http.Redirect(w, r, "/ui", http.StatusSeeOther)
 				return
 			}
