@@ -138,7 +138,7 @@ func pkgListJerboa(cmd *cobra.Command, outputJSON bool) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAME\tVERSION\tPLATFORM\tRUNTIME\tDESCRIPTION")
 	for _, p := range pkgs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Platform, p.Runtime, p.Description)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", termField(p.Name), termField(p.Version), termField(p.Platform), termField(p.Runtime), termField(p.Description))
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("pkg list jerboa: %w", err)
@@ -187,7 +187,7 @@ func pkgListOps(cmd *cobra.Command, outputJSON bool) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAMESPACE\tNAME\tVERSION\tLANGUAGE\tARCH")
 	for _, p := range pkgs {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.Namespace, p.Name, p.Version, p.Language, p.Arch)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", termField(p.Namespace), termField(p.Name), termField(p.Version), termField(p.Language), termField(p.Arch))
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("pkg list ops: %w", err)
@@ -237,7 +237,7 @@ func newPkgSearchCmd() *cobra.Command {
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			fmt.Fprintln(w, "NAME\tVERSION\tPLATFORM\tRUNTIME\tDESCRIPTION")
 			for _, p := range results {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.Name, p.Version, p.Platform, p.Runtime, p.Description)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", termField(p.Name), termField(p.Version), termField(p.Platform), termField(p.Runtime), termField(p.Description))
 			}
 			return w.Flush()
 		},
@@ -267,7 +267,7 @@ func pkgSearchOps(cmd *cobra.Command, query string, outputJSON bool) error {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "NAMESPACE\tNAME\tVERSION\tLANGUAGE\tARCH\tDESCRIPTION")
 	for _, p := range results {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Namespace, p.Name, p.Version, p.Language, p.Arch, p.Description)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", termField(p.Namespace), termField(p.Name), termField(p.Version), termField(p.Language), termField(p.Arch), termField(p.Description))
 	}
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("pkg search ops: %w", err)
@@ -299,7 +299,7 @@ func newPkgGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s (%s) installed.\n", identity.Name, identity.Version, identity.Platform)
+			fmt.Fprintf(cmd.OutOrStdout(), "Package %s %s (%s) installed.\n", termField(identity.Name), termField(identity.Version), termField(identity.Platform))
 			return nil
 		},
 	}
@@ -329,7 +329,7 @@ func pkgGetOps(cmd *cobra.Command, ref string) error {
 	}
 
 	if opsStore.IsDownloaded(target.Namespace, target.Name, target.Version) {
-		fmt.Fprintf(cmd.OutOrStdout(), "Ops package %s/%s %s already downloaded.\n", target.Namespace, target.Name, target.Version)
+		fmt.Fprintf(cmd.OutOrStdout(), "Ops package %s/%s %s already downloaded.\n", termField(target.Namespace), termField(target.Name), termField(target.Version))
 		return nil
 	}
 
@@ -340,7 +340,7 @@ func pkgGetOps(cmd *cobra.Command, ref string) error {
 		return fmt.Errorf("pkg get ops: extract: %w", err)
 	}
 
-	fmt.Fprintf(cmd.OutOrStdout(), "Ops package %s/%s %s installed.\n", target.Namespace, target.Name, target.Version)
+	fmt.Fprintf(cmd.OutOrStdout(), "Ops package %s/%s %s installed.\n", termField(target.Namespace), termField(target.Name), termField(target.Version))
 	return nil
 }
 
@@ -695,7 +695,7 @@ Example:
 
 func newPkgLoadCmd(endpoint *string) *cobra.Command {
 	var source string
-	var detach bool
+	var detach, raw bool
 	cmd := &cobra.Command{
 		Use:   "load <package>",
 		Short: "Download, build, and run a package in one step",
@@ -786,11 +786,12 @@ Examples:
 				fmt.Fprintln(cmd.OutOrStdout(), info.ID)
 				return nil
 			}
-			return client.Attach(cmd.Context(), info.ID, cmd.OutOrStdout())
+			return client.Attach(cmd.Context(), info.ID, guestOutput(cmd.OutOrStdout(), raw))
 		},
 	}
 	cmd.Flags().StringVar(&source, "source", "ops", "package source: \"ops\" (default) or \"jerboa\"")
 	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "run in the background")
+	cmd.Flags().BoolVar(&raw, "raw", false, "print the serial console unfiltered, terminal control sequences included")
 	return cmd
 }
 
