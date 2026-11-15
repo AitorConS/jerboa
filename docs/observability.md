@@ -107,6 +107,14 @@ member's address does not change over gossip (a restarted node joins under a
 new ID), and a member is marked `left` only when it says so itself in a reply
 from its recorded address. Any member can still mark another one dead.
 
+A node only sends gossip, including `--join` requests, to addresses that pass a
+fixed policy, checked again on every connection after DNS resolution:
+link-local (cloud metadata), unspecified and multicast addresses are refused,
+and so is loopback unless the node itself advertises a loopback address (as
+`--cluster-addr :7946` does, for a single-host cluster). Gossip requests never
+follow redirects and ignore `HTTP_PROXY`/`HTTPS_PROXY`. Gossip messages and
+replies are limited to 1 MiB and 1024 members.
+
 ## VM Stats
 
 CLI command:

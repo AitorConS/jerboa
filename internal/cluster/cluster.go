@@ -13,8 +13,10 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -70,18 +72,18 @@ func decodeGossip(r io.Reader) (gossipPayload, error) {
 }
 
 // validEntries returns the well-formed entries of one gossip message. It reads
-// no cluster state, so callers run it before taking c.mu, and it logs dropped
-// entries once per message rather than once per entry, so a message full of
-// junk costs one log line. A message with more entries than the member table
-// can hold is rejected whole (ok is false).
-func validEntries(entries []memberEntry) (valid []memberEntry, ok bool) {
+// only fields fixed at construction, so callers run it before taking c.mu, and
+// it logs dropped entries once per message rather than once per entry, so a
+// message full of junk costs one log line. A message with more entries than the
+// member table can hold is rejected whole (ok is false).
+func (c *SwimCluster) validEntries(entries []memberEntry) (valid []memberEntry, ok bool) {
 	if len(entries) > maxMembers {
 		slog.Warn("cluster: dropping oversized gossip message", "entries", len(entries))
 		return nil, false
 	}
 	valid = make([]memberEntry, 0, len(entries))
 	for _, e := range entries {
-		if validEntry(e) {
+		if validEntry(e, c.allowLoopback) {
 			valid = append(valid, e)
 		}
 	}
@@ -93,9 +95,36 @@ func validEntries(entries []memberEntry) (valid []memberEntry, ok bool) {
 	return valid, true
 }
 
+// hostNamePattern is the shape a non-IP member host must have: DNS name
+// characters only. It keeps "user@169.254.169.254" and "host/path" out of the
+// gossip URL, where they would change which host is dialed.
+var hostNamePattern = regexp.MustCompile(`^[A-Za-z0-9.-]{1,253}$`)
+
+// blockedGossipIP reports whether this node must never send gossip to ip:
+// link-local (cloud metadata), unspecified, multicast, and loopback unless
+// allowLoopback is set. The net.IP predicates also match the IPv4-mapped IPv6
+// form of each IPv4 address.
+func blockedGossipIP(ip net.IP, allowLoopback bool) bool {
+	return ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() ||
+		ip.IsUnspecified() || ip.IsMulticast() || (ip.IsLoopback() && !allowLoopback)
+}
+
+// isLoopbackHost reports whether host is a loopback IP literal or the name
+// localhost.
+func isLoopbackHost(host string) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	h := strings.ToLower(strings.TrimSuffix(host, "."))
+	return h == "localhost" || strings.HasSuffix(h, ".localhost")
+}
+
 // validEntry reports whether a member entry received over gossip is well-formed
-// enough to merge into the member table.
-func validEntry(e memberEntry) bool {
+// enough to merge into the member table. allowLoopback is the node's loopback
+// policy (see SwimCluster.allowLoopback). This is an early filter only: a host
+// name can resolve to anything, so the gossip client checks every address it
+// actually connects to as well (gossipDialControl).
+func validEntry(e memberEntry, allowLoopback bool) bool {
 	if !memberIDPattern.MatchString(e.ID) {
 		return false
 	}
@@ -105,9 +134,16 @@ func validEntry(e memberEntry) bool {
 	if err != nil || host == "" || port == "" {
 		return false
 	}
-	// Never gossip to link-local (cloud metadata) or unspecified addresses:
-	// a member entry decides where this node sends requests.
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast()) {
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return false
+	}
+	// A member entry decides where this node sends requests, so never accept
+	// one that points at an address the gossip client would refuse to dial.
+	if ip := net.ParseIP(host); ip != nil {
+		if blockedGossipIP(ip, allowLoopback) {
+			return false
+		}
+	} else if !hostNamePattern.MatchString(host) || (!allowLoopback && isLoopbackHost(host)) {
 		return false
 	}
 	switch e.Status {
@@ -173,6 +209,49 @@ type SwimCluster struct {
 	// a stranger who can merely reach the port cannot inject membership updates.
 	// It is set once at construction and never mutated, so it is read lock-free.
 	token string
+	// allowLoopback lets gossip reach loopback addresses. It is set only when
+	// this node itself advertises a loopback address (a single-host or test
+	// cluster, e.g. --cluster-addr :7946), since such a node can only cluster
+	// with nodes on the same host anyway. Fixed at construction; read lock-free.
+	allowLoopback bool
+}
+
+// gossipDialControl is the net.Dialer Control hook of the gossip client. It
+// runs for every connection attempt, after DNS resolution, so a member host
+// name that resolves to a blocked address is refused just like the literal.
+func gossipDialControl(allowLoopback bool) func(network, address string, _ syscall.RawConn) error {
+	return func(_, address string, _ syscall.RawConn) error {
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return err
+		}
+		ip := net.ParseIP(host)
+		if ip == nil || blockedGossipIP(ip, allowLoopback) {
+			return fmt.Errorf("cluster: refusing to gossip to %s", host)
+		}
+		return nil
+	}
+}
+
+// newGossipClient builds the HTTP client used for gossip and join requests. It
+// never follows redirects (a 3xx reply is simply not a gossip reply), ignores
+// proxy environment variables (a proxy would hide the real destination from
+// the dial check) and checks every address it connects to.
+func newGossipClient(allowLoopback bool) *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil
+	tr.DialContext = (&net.Dialer{
+		Timeout:   5 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Control:   gossipDialControl(allowLoopback),
+	}).DialContext
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: tr,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 // Option configures a SwimCluster at construction time.
@@ -203,11 +282,14 @@ func NewSwimCluster(addr string, vmCount int, cpuCap int, memCap int64, opts ...
 			MemCap:  memCap,
 		},
 		members:     make(map[string]*Member),
-		httpClient:  &http.Client{Timeout: 5 * time.Second},
 		period:      5 * time.Second,
 		suspTimeout: 15 * time.Second,
 		deadTimeout: 30 * time.Second,
 	}
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		c.allowLoopback = isLoopbackHost(host)
+	}
+	c.httpClient = newGossipClient(c.allowLoopback)
 	for _, opt := range opts {
 		opt(c)
 	}
@@ -326,7 +408,7 @@ func (c *SwimCluster) UpdateLocal(vmCount int, cpuCap int, memCap int64) {
 }
 
 func (c *SwimCluster) HandleGossip(payload gossipPayload) gossipPayload {
-	entries, ok := validEntries(payload.Members)
+	entries, ok := c.validEntries(payload.Members)
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -417,7 +499,7 @@ func (c *SwimCluster) mergeReply(body io.Reader, peer string) {
 		slog.Warn("cluster: discarding gossip reply", "peer", stripLogControl(peer), "too_large", errors.Is(err, errGossipTooLarge))
 		return
 	}
-	entries, ok := validEntries(remote.Members)
+	entries, ok := c.validEntries(remote.Members)
 	if !ok {
 		return
 	}

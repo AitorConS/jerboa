@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,10 +106,76 @@ func TestGossip_LeftNeedsTheMemberAtItsAddress(t *testing.T) {
 	require.Equal(t, StatusLeft, m.Status)
 }
 
-func TestGossip_RejectsLinkLocalAddresses(t *testing.T) {
-	require.False(t, validEntry(entry("node-x", "169.254.169.254:80", time.Now())))
-	require.False(t, validEntry(entry("node-x", "0.0.0.0:7946", time.Now())))
-	require.True(t, validEntry(entry("node-x", "10.0.0.2:7946", time.Now())))
+func TestGossip_RejectsBlockedAddresses(t *testing.T) {
+	for _, addr := range []string{
+		"169.254.169.254:80",
+		"[::ffff:169.254.169.254]:80",
+		"[fe80::1]:80",
+		"0.0.0.0:7946",
+		"[::]:7946",
+		"224.0.0.1:80",
+		"127.0.0.1:7946",
+		"[::1]:7946",
+		"[::ffff:127.0.0.1]:7946",
+		"localhost:7946",
+		"LOCALHOST.:7946",
+		"api.localhost:7946",
+		"user@10.0.0.2:7946",
+		"10.0.0.2/x:7946",
+		"10.0.0.2:0",
+		"10.0.0.2:99999",
+		"10.0.0.2:http",
+	} {
+		require.False(t, validEntry(entry("node-x", addr, time.Now()), false), addr)
+	}
+	require.True(t, validEntry(entry("node-x", "10.0.0.2:7946", time.Now()), false))
+	require.True(t, validEntry(entry("node-x", "node-1.lan:7946", time.Now()), false))
+
+	// A node that itself advertises loopback (single-host or test cluster)
+	// accepts loopback peers, but nothing else on the list.
+	require.True(t, validEntry(entry("node-x", "127.0.0.1:7946", time.Now()), true))
+	require.True(t, validEntry(entry("node-x", "localhost:7946", time.Now()), true))
+	require.False(t, validEntry(entry("node-x", "169.254.169.254:80", time.Now()), true))
+}
+
+func TestGossip_DialGuardChecksResolvedAddress(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+	require.NoError(t, err)
+
+	// A node advertising a routable address never dials loopback, whether the
+	// target is a literal or a name that resolves to it (seeds are not
+	// filtered by validEntry, so only the dial-time check stands in the way).
+	c := NewSwimCluster("10.0.0.1:7946", 0, 0, 0)
+	require.NoError(t, c.Join(context.Background(), srv.Listener.Addr().String(), net.JoinHostPort("localhost", port)))
+	require.Zero(t, hits.Load())
+
+	ctl := gossipDialControl(false)
+	require.Error(t, ctl("tcp4", "169.254.169.254:80", nil))
+	require.Error(t, ctl("tcp6", "[::ffff:169.254.169.254]:80", nil))
+	require.Error(t, ctl("tcp4", "127.0.0.1:80", nil))
+	require.NoError(t, ctl("tcp4", "10.0.0.2:80", nil))
+	require.NoError(t, gossipDialControl(true)("tcp4", "127.0.0.1:80", nil))
+}
+
+func TestGossip_RedirectsAreNotFollowed(t *testing.T) {
+	var followed atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { followed.Store(true) }))
+	defer target.Close()
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/internal/admin", http.StatusTemporaryRedirect)
+	}))
+	defer redirector.Close()
+
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	c.mu.Lock()
+	c.members["peer"] = &Member{ID: "peer", Addr: redirector.Listener.Addr().String(), Status: StatusAlive, LastSeen: time.Now()}
+	c.mu.Unlock()
+	c.doGossip(context.Background())
+	require.NoError(t, c.Join(context.Background(), redirector.Listener.Addr().String()))
+	require.False(t, followed.Load())
 }
 
 // gzipJSONServer answers every request with body, gzip-encoded, so the Go
