@@ -83,7 +83,12 @@ func (b *backend) done(t *testing.T) {
 // forwarder and the published address.
 func publish(t *testing.T, guestPort uint16) (*Forwarder, string) {
 	t.Helper()
+	// The kernel may hand out the port a test has just released for its
+	// guest; a forwarder listening on its own target would dial itself.
 	hostPort := freeTCPPort(t)
+	for hostPort == guestPort {
+		hostPort = freeTCPPort(t)
+	}
 	f, err := StartForwarder("127.0.0.1", []PortForward{{HostPort: hostPort, GuestPort: guestPort, Protocol: "tcp", BindAddr: "127.0.0.1"}})
 	require.NoError(t, err)
 	t.Cleanup(f.Close)
