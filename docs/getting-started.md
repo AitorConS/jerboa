@@ -357,8 +357,15 @@ How it works:
   daemon owns; guests reach it through their default gateway
 - queries are scoped by source IP, so `db` resolves to the `db` VM **on the
   caller's own network**
+- names match in any letter case (`DB`, `db.APP`), as DNS names do; a name of
+  the caller's network (VM name, ID or alias, shared aliases included) is
+  answered by the daemon for every record type and never forwarded: a type
+  the VM has no record of gets an empty answer
 - names the daemon does not own are forwarded to an upstream resolver, so
-  ordinary internet lookups still work
+  ordinary internet lookups still work. A guest can have a limited number of
+  forwarded questions outstanding; beyond that its further forwarded questions
+  are dropped (DNS clients retry), while names of its network are still
+  answered
 - the same mechanism powers `compose` — services connect to each other by
   service name (see [Compose]({% link compose.md %}))
 

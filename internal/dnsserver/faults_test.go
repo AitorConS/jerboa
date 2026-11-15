@@ -530,6 +530,90 @@ func TestFaults_ConcurrentQueries(t *testing.T) {
 	}
 }
 
+// One guest keeps the upstream resolver busy with names it never answers. It
+// holds no more than its share of the forwarding slots: names of its own
+// network are still answered, and guests of another network are answered and
+// forwarded as before.
+func TestFaults_OneGuestCannotStarveTheOthers(t *testing.T) {
+	addr, asked := scriptedUpstream(t, func([]byte) []byte { return nil })
+	guests := vms{
+		{ID: "noisy", State: vm.StateRunning, Cfg: vm.Config{Name: "noisy", NetworkName: "neta", IPAddress: "127.0.0.1"}},
+		{ID: "quiet", State: vm.StateRunning, Cfg: vm.Config{Name: "quiet", NetworkName: "netb", IPAddress: "127.0.0.2"}},
+		{ID: "db", State: vm.StateRunning, Cfg: vm.Config{Name: "db", NetworkName: "netb", IPAddress: "172.25.0.20"}},
+	}
+	s := New(scheduler.NewResolver(guests), addr)
+	first := serving(t, s)
+	server := first.RemoteAddr().(*net.UDPAddr)
+	from := func(ip string) *net.UDPConn {
+		conn, err := net.DialUDP("udp", &net.UDPAddr{IP: net.ParseIP(ip)}, server)
+		if err != nil {
+			t.Skipf("no loopback address %s: %v", ip, err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		return conn
+	}
+
+	noisy := from("127.0.0.1")
+	for range maxConcurrentQueries + maxConcurrentForwards {
+		_, err := noisy.Write(question(t, "slow.example", dnsmessage.TypeA))
+		require.NoError(t, err)
+	}
+	require.Eventually(t, func() bool { return asked.Load() == maxForwardsPerSource }, 10*time.Second, 5*time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	require.EqualValues(t, maxForwardsPerSource, asked.Load(), "one source took more than its share")
+
+	// Its own network's names need no upstream.
+	resp, ok := exchange(t, from("127.0.0.1"), question(t, "noisy", dnsmessage.TypeA), 2*time.Second)
+	require.True(t, ok, "a local name waited behind forwarded questions")
+	hdr, answers := parse(t, resp)
+	require.Equal(t, dnsmessage.RCodeSuccess, hdr.RCode)
+	require.Len(t, answers, 1)
+
+	// A guest of another network is answered, and its questions still go
+	// out.
+	quiet := from("127.0.0.2")
+	resp, ok = exchange(t, quiet, question(t, "db", dnsmessage.TypeA), 2*time.Second)
+	require.True(t, ok, "another network's guest was starved")
+	_, answers = parse(t, resp)
+	require.Len(t, answers, 1)
+	require.Equal(t, [4]byte{172, 25, 0, 20}, answers[0].Body.(*dnsmessage.AResource).A)
+	_, err := quiet.Write(question(t, "other.example", dnsmessage.TypeA))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return asked.Load() == maxForwardsPerSource+1 }, 2*time.Second, 5*time.Millisecond,
+		"another guest's forwarded question was dropped")
+}
+
+// The forwarding slots: a source holds at most its share, every source
+// together at most the pool, and a slot given back is free again.
+func TestTakeForwardLimits(t *testing.T) {
+	s := New(scheduler.NewResolver(vms{}), "")
+	var dones []func()
+	for range maxForwardsPerSource {
+		done, ok := s.takeForward("10.0.0.1")
+		require.True(t, ok)
+		dones = append(dones, done)
+	}
+	_, ok := s.takeForward("10.0.0.1")
+	require.False(t, ok, "past the per-source share")
+	for i := 0; len(dones) < maxConcurrentForwards; i++ {
+		done, ok := s.takeForward(fmt.Sprintf("10.0.1.%d", i/maxForwardsPerSource))
+		require.True(t, ok)
+		dones = append(dones, done)
+	}
+	_, ok = s.takeForward("10.0.2.1")
+	require.False(t, ok, "past the pool")
+
+	dones[0]()
+	done, ok := s.takeForward("10.0.0.1")
+	require.True(t, ok, "a slot given back is free again")
+	done()
+	for _, d := range dones[1:] {
+		d()
+	}
+	require.Empty(t, s.fwdBySrc)
+	require.Len(t, s.fwd, 0) //nolint:testifylint // a channel's length, not a collection's
+}
+
 // The address cannot be bound: ListenAndServe says so instead of serving
 // nothing, and a server that never listened closes without error.
 func TestFaults_ListenFailures(t *testing.T) {
