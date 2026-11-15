@@ -451,6 +451,13 @@ func fdRun(t *testing.T, endpoint string, args ...string) fdResult {
 	return fdExec(t, "", append([]string{"--host", endpoint}, args...)...)
 }
 
+// fdRunHere is fdRun in the home the test has already isolated, for
+// commands that must see what an earlier one left there.
+func fdRunHere(t *testing.T, endpoint string, args ...string) fdResult {
+	t.Helper()
+	return fdExec(t, "", append([]string{"--host", endpoint}, args...)...)
+}
+
 // fdExec runs the CLI with exactly args, feeding it stdin, in whatever
 // environment the test has prepared.
 func fdExec(t *testing.T, stdin string, args ...string) (res fdResult) {

@@ -403,7 +403,7 @@ Subcommands:
 | `pkg create <name>[:version] <binary>` | Create a local package |
 | `pkg from-docker <name>[:version] <image>` | Extract a binary and libraries from a Docker image |
 | `pkg push <name>:<version> <index-url>` | Push a local package to a remote index |
-| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` runs in the background) |
+| `pkg load <package>` | Download a package, build an image from it, and run it in one step (`-d/--detach` runs in the background; `--raw` keeps terminal control sequences in the console output) |
 
 Supported package sources (`--source`, default `ops`):
 
@@ -613,9 +613,13 @@ Current behavior to know:
 - `compose down` stops **and removes** the stack's service VMs (no stopped
   remnants left behind), and removes the networks it created
 - `compose down --volumes` additionally removes volumes created by that stack
-- each compose file has its own state, identified by its canonical path
+- each compose file has its own state, identified by its canonical path and
+  kept under `~/.jerboa/compose`; a state file found next to the compose file is
+  used only if it passes the checks in [compose.md](compose.md)
 - partial deployments retain state for cleanup; repeated `compose down` is safe
 - `compose logs` is snapshot-only; there is no follow mode today
+- `compose logs` removes terminal control sequences from guest output, as
+  `jerboa logs` does; `--raw` prints it unfiltered
 - a service `health_check` uses the same grammar as `run --health-check`:
   `tcp:PORT` or `http:PORT:/path` (e.g. `"tcp:8080"`, `"http:8080:/healthz"`)
 
