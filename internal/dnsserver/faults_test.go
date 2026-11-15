@@ -5,6 +5,7 @@ package dnsserver
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -228,14 +229,59 @@ func TestFaults_SharedAliasResolves(t *testing.T) {
 		{ID: "w2", State: vm.StateRunning, Cfg: vm.Config{Name: "web-2", NetworkName: "app", IPAddress: "172.25.0.12", NetworkAliases: []string{"web"}}},
 	}
 	s := New(scheduler.NewResolver(guests), addr)
-	hdr, answers := mustAnswer(t, s, question(t, "web", dnsmessage.TypeA), clientIP)
-	if asked.Load() != 0 || len(answers) == 0 {
-		t.Skip("BUG: an A question for a name two running VMs of the network share (replicas behind one alias) " +
-			"is not answered from the network: Resolver.Resolve fails on more than one match, so buildResponse " +
-			"forwards the private name to the upstream resolver and the guest gets its answer or NXDOMAIN")
+	first := map[string]int{}
+	for range 6 {
+		hdr, answers := mustAnswer(t, s, question(t, "web", dnsmessage.TypeA), clientIP)
+		require.Equal(t, dnsmessage.RCodeSuccess, hdr.RCode)
+		require.True(t, hdr.Authoritative)
+		require.Len(t, answers, 2, "both replicas answer to the alias")
+		got := map[string]bool{}
+		for i, a := range answers {
+			res, ok := a.Body.(*dnsmessage.AResource)
+			require.True(t, ok)
+			ip := net.IP(res.A[:]).String()
+			got[ip] = true
+			if i == 0 {
+				first[ip]++
+			}
+		}
+		require.Equal(t, map[string]bool{"172.25.0.11": true, "172.25.0.12": true}, got)
 	}
+	require.Zero(t, asked.Load(), "a private name was sent to the upstream resolver")
+	// The order rotates, so clients that take the first address spread out.
+	require.Equal(t, map[string]int{"172.25.0.11": 3, "172.25.0.12": 3}, first)
+
+	// A name with no IPv4 record of its own stays here too.
+	hdr, answers := mustAnswer(t, s, question(t, "web", dnsmessage.TypeAAAA), clientIP)
 	require.Equal(t, dnsmessage.RCodeSuccess, hdr.RCode)
+	require.Empty(t, answers)
 	require.Zero(t, asked.Load())
+}
+
+// More replicas than one UDP answer holds: the answer stays within what any
+// resolver accepts, and every replica is reached over successive questions.
+func TestFaults_SharedAliasWithManyReplicas(t *testing.T) {
+	guests := vms{{ID: "client", State: vm.StateRunning, Cfg: vm.Config{Name: "client", NetworkName: "app", IPAddress: clientIP}}}
+	const replicas = 40
+	for i := range replicas {
+		guests = append(guests, &vm.VM{ID: fmt.Sprintf("w%d", i), State: vm.StateRunning, Cfg: vm.Config{
+			Name: fmt.Sprintf("web-%d", i), NetworkName: "app", IPAddress: fmt.Sprintf("172.25.1.%d", i+1), NetworkAliases: []string{"web"}}})
+	}
+	s := New(scheduler.NewResolver(guests), "")
+	seen := map[string]bool{}
+	for range replicas {
+		resp, err := s.buildResponse(question(t, "web", dnsmessage.TypeA), clientIP)
+		require.NoError(t, err)
+		require.LessOrEqual(t, len(resp), 512)
+		_, answers := mustAnswer(t, s, question(t, "web", dnsmessage.TypeA), clientIP)
+		require.Len(t, answers, maxAnswers)
+		for _, a := range answers {
+			res, ok := a.Body.(*dnsmessage.AResource)
+			require.True(t, ok)
+			seen[net.IP(res.A[:]).String()] = true
+		}
+	}
+	require.Len(t, seen, replicas)
 }
 
 // The upstream resolver is unreachable in every way it can be: the guest gets

@@ -206,10 +206,11 @@ func TestHandlers_ReleaseIPThatIsNotLeased(t *testing.T) {
 		require.Nil(t, rpcErr)
 		got, ok := res.(map[string]string)
 		require.True(t, ok)
-		if got["ip"] == faultGateway {
-			t.Skip("BUG: Network.ReleaseIP accepts the gateway address, after which Network.AllocateIP and VM.Run hand the gateway's address to a VM")
-		}
+		require.NotEqual(t, faultGateway, got["ip"], "the gateway's address was handed out")
 	}
+	// Nor can a VM ask for it by name.
+	_, rpcErr = e.run(api.RunParams{Name: "squatter", NetworkName: faultNet, IPAddress: faultGateway})
+	require.NotNil(t, rpcErr, "a VM was started on the gateway's address")
 }
 
 // A daemon started without a store answers "disabled" for what needs it and
