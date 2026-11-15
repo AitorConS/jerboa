@@ -215,6 +215,23 @@ embeds before it reads the index, and refuses an index without one. An
 index served from this machine (`file://`, or http on loopback, as for a
 local mirror) may be unsigned; it is then accepted with a warning.
 
+The signature's trusted comment must be `packages` or `packages:<run id>`:
+the release key also signs release manifests and toolsets, and none of those
+is accepted as the index. `packages.json` carries a `purpose`
+(`jerboa-package-index`), a `generated` time and a `serial` that
+`package-index.py` raises by one with every publication that adds an entry.
+`jerboa` records the newest serial it accepted per index URL in
+`index-state.json` beside its cached `index.json` and refuses an older index,
+keeping the cached copy, so a superseded `packages.json` restored on the
+release with its original signature is not used. An index without a serial
+(the format before serials) is still accepted, with a deprecation warning,
+until an index with a serial has been accepted from that URL.
+
+The publish job extends only a base index that is not older than the
+repository variable `PKG_INDEX_MIN_SERIAL`; raise it to the serial shown in
+the job summary after each publish. A base without a serial is refused once
+the variable is set.
+
 ## Example: adding memcached
 
 1. Pin the source in `scripts/release/packages.json`:

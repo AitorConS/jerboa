@@ -47,6 +47,12 @@ func validate(f File) error {
 		if name == "" {
 			return fmt.Errorf("compose: service name must not be empty")
 		}
+		// The service name becomes the VM's name, which every listing
+		// prints: no control characters, the same rule as networks and
+		// volumes.
+		if err := naming.ValidateResourceName("service", name); err != nil {
+			return fmt.Errorf("compose: %w", err)
+		}
 		if svc.Image == "" {
 			return fmt.Errorf("compose: service %q missing image", name)
 		}

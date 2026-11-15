@@ -225,6 +225,18 @@ field once a dated one was seen. A restored old manifest is therefore refused by
 clients that saw a newer one: an emergency rollback means re-signing the old content
 as a new candidate, not republishing the old manifest bytes.
 
+Clients with no state of their own (a first run, or `~/.jerboa` lost) still have a
+floor for the stable channel: `release.MinStableGenerated`, compiled into the binary,
+and the generation time `install.sh` recorded in `/etc/jerboa/release-state.json`,
+whichever is newer. A stable manifest older than that floor, or without
+`generated`, is refused. `MinStableGenerated` is the engine commit time of a release
+known to be promoted (no stable manifest of that release or a later one can be older);
+when preparing a candidate, raise it to the engine commit time of the newest
+promoted release (`TZ=UTC git log -1 --date=iso-strict-local --format=%cd <sha>`).
+Never set it later than the live stable manifest's `generated`, or every client
+built from that source refuses stable. There is no maximum age: releases are
+irregular and a floor that expired would stop offline mirrors and old installs.
+
 Mac continues to use ad-hoc signatures and the documented preview installation flow.
 Production Developer ID/notarization requires a certificate and Apple credentials;
 `sign-notarize-macos.sh` contains the runtime signing procedure. Windows uses

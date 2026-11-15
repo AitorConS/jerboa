@@ -13,13 +13,16 @@ import (
 )
 
 // virtualSigstore returns a private Sigstore instance to sign and verify
-// with. It issues no certificate transparency entries, so the verifier is
-// told not to ask for them for the length of the test.
+// with. It issues no certificate transparency entries and its certificates
+// carry no source repository claim, so the verifier is told not to ask for
+// either for the length of the test (TestSourceRepositoryClaim covers the
+// claim).
 func virtualSigstore(t *testing.T) *ca.VirtualSigstore {
 	t.Helper()
-	saved := verifierOptions
+	saved, savedRepo := verifierOptions, requireSourceRepository
 	verifierOptions = []verify.VerifierOption{verify.WithTransparencyLog(1), verify.WithObserverTimestamps(1)}
-	t.Cleanup(func() { verifierOptions = saved })
+	requireSourceRepository = false
+	t.Cleanup(func() { verifierOptions, requireSourceRepository = saved, savedRepo })
 	vs, err := ca.NewVirtualSigstore()
 	require.NoError(t, err)
 	return vs
@@ -92,7 +95,7 @@ func TestBundleHelperRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	id, err := ParseIdentity("acme/app")
 	require.NoError(t, err)
-	got, err := Verify(vs, subject, id, []verify.SignedEntity{b})
+	got, err := Verify(vs, testName, subject, id, []verify.SignedEntity{b})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, workflow, got[0].Signer)

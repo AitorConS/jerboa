@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,8 @@ func TestSandboxConfinesSteps(t *testing.T) {
 	secret := filepath.Join(home, ".aws", "credentials")
 	require.NoError(t, os.WriteFile(secret, []byte("x"), 0o600))
 	t.Setenv("HOME", home)
+	policy := filepath.Join(work, ConfigFileName)
+	require.NoError(t, os.WriteFile(policy, []byte("[build]\n"), 0o600))
 
 	local, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -82,7 +85,7 @@ func TestSandboxConfinesSteps(t *testing.T) {
 	// run reports whether the confined helper succeeded, and how long it took.
 	run := func(action, target string) (bool, time.Duration) {
 		st := Step{Dir: work, Env: append(os.Environ(), "JERBOA_SANDBOX_HELPER="+action, "TARGET="+target)}
-		sb := Sandbox{Sockets: []string{filepath.Join(sockDir, "d.sock")}}
+		sb := Sandbox{Sockets: []string{filepath.Join(sockDir, "d.sock")}, ReadOnly: []string{policy}}
 		cmd, done, err := sb.Command(context.Background(), st, os.Args[0], "-test.run=^TestSandboxHelper$", "-test.count=1")
 		require.NoError(t, err)
 		defer done()
@@ -96,6 +99,11 @@ func TestSandboxConfinesSteps(t *testing.T) {
 
 	ok, _ := run("write", filepath.Join(work, "ok"))
 	require.True(t, ok, "writing to the project")
+	ok, _ = run("write", policy)
+	require.False(t, ok, "rewriting the build's policy file")
+	data, err := os.ReadFile(policy)
+	require.NoError(t, err)
+	require.Equal(t, "[build]\n", string(data))
 	ok, _ = run("write", filepath.Join(outside, "no"))
 	require.False(t, ok, "writing outside the project")
 	require.NoFileExists(t, filepath.Join(outside, "no"))
@@ -129,4 +137,14 @@ func TestSandboxConfinesSteps(t *testing.T) {
 		ok, _ = run("dial", local.Addr().String())
 		require.True(t, ok, "dialing the host's loopback")
 	}
+}
+
+func TestSeatbeltProfileKeepsThePolicyReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, UnignoreFile)
+	st := Step{Dir: dir, ReadOnly: []string{missing}}
+	p := seatbeltProfile(st, nil, nil, nil)
+	deny := `(deny file-write* (literal "` + filepath.Join(realPath(dir), UnignoreFile) + `"))`
+	require.Contains(t, p, deny, "a file that does not exist yet must not be creatable either")
+	require.Greater(t, strings.Index(p, deny), strings.Index(p, "(allow file-write*"), "the deny must come after the allow it overrides")
 }

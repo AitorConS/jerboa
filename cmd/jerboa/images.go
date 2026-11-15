@@ -32,10 +32,10 @@ func newImagesCmd(endpoint *string, outputFmt *string) *cobra.Command {
 			fmt.Fprintln(w, "DIGEST\tNAME\tTAG\tCREATED\tSIZE")
 			for _, m := range list {
 				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
-					shortDigest(m.DiskDigest),
-					m.Name,
-					m.Tag,
-					m.Created,
+					termField(shortDigest(m.DiskDigest)),
+					termField(m.Name),
+					termField(m.Tag),
+					termField(m.Created),
 					formatSize(m.DiskSize),
 				)
 			}

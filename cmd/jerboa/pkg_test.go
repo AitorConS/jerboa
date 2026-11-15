@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	pkg "github.com/AitorConS/jerboa/internal/package"
@@ -684,6 +685,32 @@ func TestPkgSearchOps(t *testing.T) {
 
 	out := execRoot(t, socketPath, vmStorePath, "pkg", "search", "node", "--source", "ops")
 	require.Contains(t, out, "node")
+}
+
+// The ops manifest is downloaded unsigned: its fields reach the terminal
+// without control sequences, and JSON output still carries them as given.
+func TestPkgSearchOps_SanitizesManifest(t *testing.T) {
+	_, configure := setupOpsServer(t)
+	configure(pkg.OpsPackageList{
+		Version: 1,
+		Packages: []pkg.OpsPackage{
+			{Name: "node\x1b[2J", Version: "v1\a", Namespace: "eyberg", Language: "node", Description: "fast\x1b]52;c;ZXZpbA==\x07 \u009b31m\nruntime\tok"},
+		},
+	}, nil)
+
+	withOpsStoreDir(t)
+	_, socketPath := startDaemon(t)
+	vmStorePath := t.TempDir()
+
+	out := execRoot(t, socketPath, vmStorePath, "pkg", "search", "node", "--source", "ops")
+	for _, c := range out {
+		require.False(t, (c < 0x20 && c != '\n') || c == 0x7f || (c >= 0x80 && c <= 0x9f), "control character %q in %q", c, out)
+	}
+	require.Contains(t, out, "fast 31m runtime ok")
+	require.Equal(t, 2, strings.Count(out, "\n"), "a field must not add lines")
+
+	out = execRoot(t, socketPath, vmStorePath, "pkg", "search", "node", "--source", "ops", "--output-json")
+	require.Contains(t, out, `\u001b[2J`)
 }
 
 func TestPkgSearchOps_NoResults(t *testing.T) {
