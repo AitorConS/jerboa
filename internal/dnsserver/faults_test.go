@@ -195,15 +195,23 @@ func TestFaults_UnusualQuestionsAreAnsweredInKind(t *testing.T) {
 }
 
 // Names that exist but must not be told: a VM that is stopped or not yet
-// ready, a VM in another network, and addresses that are no IPv4 address. With
-// no upstream they are all NXDOMAIN; none of them makes the server fail.
+// ready, and a VM in another network. With no upstream they are all NXDOMAIN;
+// none of them makes the server fail. Running VMs of the network whose address
+// is no IPv4 address own their name but have no A record: an authoritative
+// empty answer, never a forwarded question.
 func TestFaults_NamesThatMustNotResolve(t *testing.T) {
 	s := New(scheduler.NewResolver(appGuests()), "")
-	for _, name := range []string{"retired", "booting", "vault", "vault.other", "sixonly", "broken", "nobody", "POSTGRES.example"} {
+	for _, name := range []string{"retired", "booting", "vault", "vault.other", "VAULT.other", "nobody", "POSTGRES.example"} {
 		hdr, answers := mustAnswer(t, s, question(t, name, dnsmessage.TypeA), clientIP)
 		require.Equal(t, dnsmessage.RCodeNameError, hdr.RCode, name)
 		require.Empty(t, answers, name)
 		require.False(t, hdr.Authoritative, name)
+	}
+	for _, name := range []string{"sixonly", "broken", "SixOnly.app"} {
+		hdr, answers := mustAnswer(t, s, question(t, name, dnsmessage.TypeA), clientIP)
+		require.Equal(t, dnsmessage.RCodeSuccess, hdr.RCode, name)
+		require.Empty(t, answers, name)
+		require.True(t, hdr.Authoritative, name)
 	}
 
 	// A caller the daemon does not know (a spoofed or stale source address)

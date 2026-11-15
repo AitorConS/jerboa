@@ -159,21 +159,22 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 	// it as not-owned and forward/NXDOMAIN below instead.
 	if network := s.resolver.NetworkForIP(srcIP); network != "" {
 		name := strings.TrimSuffix(q.Name.String(), ".")
-		if q.Type == dnsmessage.TypeA {
-			// Every VM that answers to the name: the replicas of a service
-			// share an alias. Asking for exactly one would fail on them and
-			// send the private name to the upstream resolver.
-			if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil {
+		// Ownership is decided once, from every record of the network that
+		// answers to the name (in any letter case), whatever the question's
+		// type: the replicas of a service share an alias, and asking for
+		// exactly one would fail on them. A name of the network stays on the
+		// host. Forwarded, a public domain of the same name would answer (an
+		// AAAA for "db.app"), and the upstream resolver would learn the
+		// network's service names.
+		if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
+			if q.Type == dnsmessage.TypeA {
 				if ips := ipv4s(recs); len(ips) > 0 {
 					return s.answerA(hdr.ID, q, rotate(ips, int(s.turn.Add(1))))
 				}
 			}
-		} else if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
-			// The name belongs to this network, which has only IPv4
-			// addresses: there is no such record, and the question stays
-			// here. Forwarded, a public domain of the same name would answer
-			// (an AAAA for "db.app"), and the upstream resolver would learn
-			// the network's service names.
+			// The network has only IPv4 addresses, and this name none it
+			// can tell: there is no such record, and the question stays
+			// here.
 			return s.empty(hdr.ID, q, dnsmessage.RCodeSuccess)
 		}
 	}
