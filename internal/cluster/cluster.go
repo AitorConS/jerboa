@@ -66,7 +66,7 @@ func decodeGossip(r io.Reader) (gossipPayload, error) {
 		return gossipPayload{}, errGossipTooLarge
 	}
 	if err != nil {
-		return gossipPayload{}, err
+		return gossipPayload{}, fmt.Errorf("cluster: decode gossip: %w", err)
 	}
 	return p, nil
 }
@@ -223,7 +223,7 @@ func gossipDialControl(allowLoopback bool) func(network, address string, _ sysca
 	return func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
 		if err != nil {
-			return err
+			return fmt.Errorf("cluster: gossip address %q: %w", address, err)
 		}
 		ip := net.ParseIP(host)
 		if ip == nil || blockedGossipIP(ip, allowLoopback) {
