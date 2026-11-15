@@ -3,6 +3,7 @@ package release
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // PublicKeyB64 is the embedded minisign public key that every Jerboa binary
@@ -16,12 +17,18 @@ const PublicKeyB64 = "RWQUeMEQrLXFcshAMUevjf6nlhsSB1PuZYt5dFhb0za9aypwSAUMorsH"
 // Default builds a Client for the production release origin, honoring the
 // JERBOA_RELEASE_BASE override (useful for staging or local mirrors). It keeps
 // the newest accepted manifest's generation time in ~/.jerboa, so an older
-// manifest is refused.
+// manifest is refused, and refuses a stable manifest older than this build
+// (MinStableGenerated) or than the one the installer accepted, even with no
+// state of its own.
 func Default() (*Client, error) {
 	base := os.Getenv("JERBOA_RELEASE_BASE")
 	c, err := NewClient(base, PublicKeyB64)
 	if err != nil {
 		return nil, err
+	}
+	c.MinGenerated = MinStableGenerated
+	if runtime.GOOS != "windows" {
+		c.SeedStateFiles = []string{InstallerStateFile}
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		c.StateDir = filepath.Join(home, ".jerboa")

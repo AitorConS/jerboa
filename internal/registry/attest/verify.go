@@ -7,7 +7,9 @@ import (
 	"regexp"
 	"strings"
 
+	in_toto "github.com/in-toto/attestation/go/v1"
 	"github.com/sigstore/sigstore-go/pkg/bundle"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 )
@@ -68,8 +70,17 @@ func (id Identity) String() string {
 	return s
 }
 
+// requireSourceRepository makes a certificate's source repository claim part
+// of the identity. A var so tests with a private Sigstore instance, whose
+// certificates carry no such claim, can drop it.
+var requireSourceRepository = true
+
 // certificate is the identity as Fulcio certifies it: the certificate's SAN
-// is the workflow's URL, https://github.com/<repo>/<workflow>@<ref>.
+// is the workflow's URL, https://github.com/<repo>/<workflow>@<ref>, and its
+// source repository claim (OID 1.3.6.1.4.1.57264.1.12) is the repository the
+// job ran in. The SAN alone names only the workflow file: a job in another
+// repository that calls it as a reusable workflow is certified under the
+// same SAN, with its own repository as the source, so both must match.
 func (id Identity) certificate() (verify.CertificateIdentity, error) {
 	prefix := "https://github.com/" + id.Repository + "/"
 	var san string
@@ -81,7 +92,19 @@ func (id Identity) certificate() (verify.CertificateIdentity, error) {
 	default:
 		san = "^" + regexp.QuoteMeta(prefix) + `\.github/workflows/[^@]+@refs/.+$`
 	}
-	c, err := verify.NewShortCertificateIdentity(GitHubIssuer, "", "", san)
+	sanMatcher, err := verify.NewSANMatcher("", san)
+	if err != nil {
+		return verify.CertificateIdentity{}, fmt.Errorf("attest: %w", err)
+	}
+	issuer, err := verify.NewIssuerMatcher(GitHubIssuer, "")
+	if err != nil {
+		return verify.CertificateIdentity{}, fmt.Errorf("attest: %w", err)
+	}
+	var ext certificate.Extensions
+	if requireSourceRepository {
+		ext.SourceRepositoryURI = "https://github.com/" + id.Repository
+	}
+	c, err := verify.NewCertificateIdentity(sanMatcher, issuer, ext)
 	if err != nil {
 		return verify.CertificateIdentity{}, fmt.Errorf("attest: %w", err)
 	}
@@ -126,10 +149,13 @@ type Result struct {
 }
 
 // Verify checks attestations of subject (a sha256 digest) against trusted
-// material and identity, and returns those that verified. It fails unless at
-// least one did: the others may be from someone else, so they only add to
-// the error.
-func Verify(trusted root.TrustedMaterial, subject string, id Identity, entities []verify.SignedEntity) ([]Result, error) {
+// material and identity, and returns those that verified. A verified
+// statement must also be about name (SubjectName of the repository pulled)
+// and carry a predicate jerboa publishes, or a signature made for one
+// repository would vouch for another. It fails unless at least one
+// attestation passed: the others may be from someone else, so they only add
+// to the error.
+func Verify(trusted root.TrustedMaterial, name, subject string, id Identity, entities []verify.SignedEntity) ([]Result, error) {
 	if !digestRE.MatchString(subject) {
 		return nil, fmt.Errorf("attest: invalid subject digest %q", subject)
 	}
@@ -149,14 +175,14 @@ func Verify(trusted root.TrustedMaterial, subject string, id Identity, entities 
 	)
 	for _, e := range entities {
 		res, err := v.Verify(e, policy)
+		if err == nil {
+			err = checkStatement(res.Statement, name, subject)
+		}
 		if err != nil {
 			errs = append(errs, err)
 			continue
 		}
-		r := Result{}
-		if res.Statement != nil {
-			r.PredicateType = res.Statement.GetPredicateType()
-		}
+		r := Result{PredicateType: res.Statement.GetPredicateType()}
 		if sig, err := e.SignatureContent(); err == nil && sig.EnvelopeContent() != nil {
 			r.Statement, _ = sig.EnvelopeContent().RawEnvelope().DecodeB64Payload()
 		}
@@ -174,4 +200,28 @@ func Verify(trusted root.TrustedMaterial, subject string, id Identity, entities 
 		return nil, fmt.Errorf("no attestation of %s is signed by %s: %w", subject, id, errors.Join(errs...))
 	}
 	return out, nil
+}
+
+// checkStatement requires a verified statement to have exactly one subject,
+// name with digest subject, and a predicate type jerboa publishes.
+func checkStatement(st *in_toto.Statement, name, subject string) error {
+	if st == nil {
+		return errors.New("attest: the attestation holds no in-toto statement")
+	}
+	subjects := st.GetSubject()
+	if len(subjects) != 1 {
+		return fmt.Errorf("attest: the statement has %d subjects, want 1", len(subjects))
+	}
+	if got := subjects[0].GetName(); got != name {
+		return fmt.Errorf("attest: the statement is about %q, not %q", got, name)
+	}
+	if got := "sha256:" + subjects[0].GetDigest()["sha256"]; got != subject {
+		return fmt.Errorf("attest: the statement is about %s, not %s", got, subject)
+	}
+	switch t := st.GetPredicateType(); t {
+	case ProvenanceType, SBOMType:
+		return nil
+	default:
+		return fmt.Errorf("attest: unexpected predicate type %q", t)
+	}
 }

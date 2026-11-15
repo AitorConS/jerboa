@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/naming"
-	"github.com/sigstore/sigstore-go/pkg/testing/ca"
+	"github.com/sigstore/sigstore-go/pkg/fulcio/certificate"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 	"github.com/stretchr/testify/require"
 )
@@ -17,11 +17,13 @@ const (
 	subject  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	other    = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	workflow = "https://github.com/acme/app/.github/workflows/publish.yml@refs/heads/main"
+	// testName is the repository the test statements are about.
+	testName = "registry.jerboa.dev/acme/app"
 )
 
 func statement(t *testing.T, digest string) []byte {
 	t.Helper()
-	data, err := NewStatement("registry.jerboa.dev/acme/app", digest, SBOMType, []byte(`{"bomFormat":"CycloneDX"}`))
+	data, err := NewStatement(testName, digest, SBOMType, []byte(`{"bomFormat":"CycloneDX"}`))
 	require.NoError(t, err)
 	return data
 }
@@ -101,12 +103,7 @@ func TestParseIdentity(t *testing.T) {
 }
 
 func TestVerify(t *testing.T) {
-	// The virtual instance issues no certificate transparency entries.
-	saved := verifierOptions
-	verifierOptions = []verify.VerifierOption{verify.WithTransparencyLog(1), verify.WithObserverTimestamps(1)}
-	t.Cleanup(func() { verifierOptions = saved })
-	vs, err := ca.NewVirtualSigstore()
-	require.NoError(t, err)
+	vs := virtualSigstore(t)
 	signed, err := vs.Attest(workflow, GitHubIssuer, statement(t, subject))
 	require.NoError(t, err)
 	stranger, err := vs.Attest("https://github.com/evil/app/.github/workflows/publish.yml@refs/heads/main", GitHubIssuer, statement(t, subject))
@@ -115,7 +112,7 @@ func TestVerify(t *testing.T) {
 	for _, id := range []string{"acme/app", "acme/app/.github/workflows/publish.yml", "acme/app/.github/workflows/publish.yml@refs/heads/main"} {
 		identity, err := ParseIdentity(id)
 		require.NoError(t, err)
-		got, err := Verify(vs, subject, identity, []verify.SignedEntity{stranger, signed})
+		got, err := Verify(vs, testName, subject, identity, []verify.SignedEntity{stranger, signed})
 		require.NoError(t, err, id)
 		require.Len(t, got, 1)
 		require.Equal(t, SBOMType, got[0].PredicateType)
@@ -126,20 +123,20 @@ func TestVerify(t *testing.T) {
 	for _, id := range []string{"acme/application", "acme/app/.github/workflows/other.yml", "acme/app/.github/workflows/publish.yml@refs/heads/dev"} {
 		identity, err := ParseIdentity(id)
 		require.NoError(t, err)
-		_, err = Verify(vs, subject, identity, []verify.SignedEntity{signed})
+		_, err = Verify(vs, testName, subject, identity, []verify.SignedEntity{signed})
 		require.ErrorContains(t, err, "is signed by "+id, id)
 	}
 
 	identity, _ := ParseIdentity("acme/app")
-	_, err = Verify(vs, other, identity, []verify.SignedEntity{signed})
+	_, err = Verify(vs, testName, other, identity, []verify.SignedEntity{signed})
 	require.ErrorContains(t, err, "no attestation of "+other)
-	_, err = Verify(vs, subject, identity, nil)
+	_, err = Verify(vs, testName, subject, identity, nil)
 	require.ErrorContains(t, err, "has no attestations")
 
 	// Another issuer certifying the same workflow URL is not GitHub.
 	forged, err := vs.Attest(workflow, "https://accounts.example.com", statement(t, subject))
 	require.NoError(t, err)
-	_, err = Verify(vs, subject, identity, []verify.SignedEntity{forged})
+	_, err = Verify(vs, testName, subject, identity, []verify.SignedEntity{forged})
 	require.Error(t, err)
 }
 
@@ -192,17 +189,13 @@ func TestPolicy(t *testing.T) {
 }
 
 func TestVerifyListed(t *testing.T) {
-	saved := verifierOptions
-	verifierOptions = []verify.VerifierOption{verify.WithTransparencyLog(1), verify.WithObserverTimestamps(1)}
-	t.Cleanup(func() { verifierOptions = saved })
-	vs, err := ca.NewVirtualSigstore()
-	require.NoError(t, err)
+	vs := virtualSigstore(t)
 	signed, err := vs.Attest(workflow, GitHubIssuer, statement(t, subject))
 	require.NoError(t, err)
 	const recorded = "acme/app/.github/workflows/publish.yml"
 
 	// Each against the workflow the registry recorded for it.
-	got, err := VerifyListed(vs, subject, nil, []Listed{{Identity: recorded, Entity: signed}})
+	got, err := VerifyListed(vs, testName, subject, nil, []Listed{{Identity: recorded, Entity: signed}})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, recorded, got[0].Identity.String())
@@ -210,26 +203,26 @@ func TestVerifyListed(t *testing.T) {
 	// A certificate for another workflow than the one that uploaded it fails,
 	// as does a record that names no workflow.
 	for _, r := range []string{"acme/app/.github/workflows/other.yml", "evil/app/.github/workflows/publish.yml", "acme/app", "", "nonsense"} {
-		_, err = VerifyListed(vs, subject, nil, []Listed{{Identity: r, Entity: signed}})
+		_, err = VerifyListed(vs, testName, subject, nil, []Listed{{Identity: r, Entity: signed}})
 		require.ErrorContains(t, err, "signed by the workflow that uploaded it", r)
 	}
 	// One that verifies among others is enough.
-	got, err = VerifyListed(vs, subject, nil, []Listed{{Identity: "evil/app/.github/workflows/x.yml", Entity: signed}, {Identity: recorded, Entity: signed}})
+	got, err = VerifyListed(vs, testName, subject, nil, []Listed{{Identity: "evil/app/.github/workflows/x.yml", Entity: signed}, {Identity: recorded, Entity: signed}})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
 	// A wanted identity overrides the records.
 	want, _ := ParseIdentity("acme/app/.github/workflows/publish.yml@refs/heads/main")
-	got, err = VerifyListed(vs, subject, &want, []Listed{{Identity: "evil/app/.github/workflows/x.yml", Entity: signed}})
+	got, err = VerifyListed(vs, testName, subject, &want, []Listed{{Identity: "evil/app/.github/workflows/x.yml", Entity: signed}})
 	require.NoError(t, err)
 	require.Equal(t, want, got[0].Identity)
 	want, _ = ParseIdentity("acme/other")
-	_, err = VerifyListed(vs, subject, &want, []Listed{{Identity: recorded, Entity: signed}})
+	_, err = VerifyListed(vs, testName, subject, &want, []Listed{{Identity: recorded, Entity: signed}})
 	require.Error(t, err)
 
-	_, err = VerifyListed(vs, subject, nil, nil)
+	_, err = VerifyListed(vs, testName, subject, nil, nil)
 	require.ErrorIs(t, err, ErrUnsigned)
-	_, err = VerifyListed(vs, subject, &want, nil)
+	_, err = VerifyListed(vs, testName, subject, &want, nil)
 	require.ErrorIs(t, err, ErrUnsigned)
 }
 
@@ -267,4 +260,72 @@ func TestSigners(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, []byte(`{"signers":{"x/a/b":"not an identity"}}`), 0o600))
 	_, err = LoadSigners(path)
 	require.Error(t, err)
+}
+
+// A statement signed by the expected workflow counts only for the repository
+// it names and only with a predicate jerboa publishes, whether the identity
+// is pinned or taken from the registry's record.
+func TestVerifyRequiresTheStatementToBeAboutTheRepository(t *testing.T) {
+	vs := virtualSigstore(t)
+	const recorded = "acme/app/.github/workflows/publish.yml"
+	want, err := ParseIdentity(recorded)
+	require.NoError(t, err)
+	sign := func(name, predicateType string) verify.SignedEntity {
+		st, err := NewStatement(name, subject, predicateType, []byte(`{}`))
+		require.NoError(t, err)
+		e, err := vs.Attest(workflow, GitHubIssuer, st)
+		require.NoError(t, err)
+		return e
+	}
+	for what, e := range map[string]verify.SignedEntity{
+		"another repository":     sign("registry.jerboa.dev/acme/other", SBOMType),
+		"another registry":       sign("evil.example/acme/app", SBOMType),
+		"an unrelated predicate": sign(testName, "https://example.com/anything/v1"),
+	} {
+		_, err := Verify(vs, testName, subject, want, []verify.SignedEntity{e})
+		require.Error(t, err, what)
+		_, err = VerifyListed(vs, testName, subject, &want, []Listed{{Identity: recorded, Entity: e}})
+		require.Error(t, err, what)
+		_, err = VerifyListed(vs, testName, subject, nil, []Listed{{Identity: recorded, Entity: e}})
+		require.Error(t, err, what)
+	}
+	for _, predicateType := range []string{ProvenanceType, SBOMType} {
+		got, err := VerifyListed(vs, testName, subject, nil, []Listed{{Identity: recorded, Entity: sign(testName, predicateType)}})
+		require.NoError(t, err)
+		require.Equal(t, predicateType, got[0].PredicateType)
+	}
+
+	// A statement with a second subject is refused too.
+	two := []byte(`{"_type":"https://in-toto.io/Statement/v1","subject":[` +
+		`{"name":"` + testName + `","digest":{"sha256":"` + strings.TrimPrefix(subject, "sha256:") + `"}},` +
+		`{"name":"registry.jerboa.dev/acme/other","digest":{"sha256":"` + strings.TrimPrefix(subject, "sha256:") + `"}}],` +
+		`"predicateType":"` + SBOMType + `","predicate":{}}`)
+	e, err := vs.Attest(workflow, GitHubIssuer, two)
+	require.NoError(t, err)
+	_, err = Verify(vs, testName, subject, want, []verify.SignedEntity{e})
+	require.ErrorContains(t, err, "2 subjects")
+}
+
+// The identity requires the certificate's source repository claim, so a job
+// in another repository that calls the expected workflow (certified under
+// the same SAN) is refused. The private Sigstore instance cannot issue that
+// claim, so the certificate identity is checked against certificate
+// summaries directly.
+func TestSourceRepositoryClaim(t *testing.T) {
+	require.True(t, requireSourceRepository)
+	for _, s := range []string{"acme/app", "acme/app/.github/workflows/publish.yml", "acme/app/.github/workflows/publish.yml@refs/heads/main"} {
+		id, err := ParseIdentity(s)
+		require.NoError(t, err)
+		cert, err := id.certificate()
+		require.NoError(t, err)
+		summary := func(source string) certificate.Summary {
+			return certificate.Summary{SubjectAlternativeName: workflow, Extensions: certificate.Extensions{
+				Issuer: GitHubIssuer, SourceRepositoryURI: source,
+			}}
+		}
+		require.NoError(t, cert.Verify(summary("https://github.com/acme/app")), s)
+		for _, source := range []string{"https://github.com/evil/fork", "", "https://github.com/acme/app-fork"} {
+			require.Error(t, cert.Verify(summary(source)), s+" from "+source)
+		}
+	}
 }
