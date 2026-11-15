@@ -195,7 +195,7 @@ project markers (go.mod, package.json, etc.).`,
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
 					var cleanupBinary bool
-					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, sandbox, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
+					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, sandbox, srcPath, pkgFiles, platform, pkgSource, pkgs, infoW, subW)
 					if cleanupBinary && binaryPath != "" {
 						defer func() { _ = os.Remove(binaryPath) }()
 					}
@@ -779,7 +779,7 @@ func describeBuildSandbox(cfg *builder.Config, sandbox builder.Sandbox) string {
 // It returns (binaryPath, programPath, pkgFiles, cleanupBinary, error), where
 // programPath is the runtime's package path for an interpreted final stage and
 // empty for a compiled one.
-func buildStages(cmd *cobra.Command, cfg *builder.Config, sandbox builder.Sandbox, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, infoW io.Writer, subW io.Writer) (string, string, []pkg.File, bool, error) {
+func buildStages(cmd *cobra.Command, cfg *builder.Config, sandbox builder.Sandbox, srcPath string, pkgFiles []pkg.File, platformFlag, pkgSource string, userPkgs []string, infoW io.Writer, subW io.Writer) (string, string, []pkg.File, bool, error) {
 	stageOutputs := make(map[string]*stageResult)
 
 	var buildPlatform builder.Platform
@@ -858,13 +858,15 @@ func buildStages(cmd *cobra.Command, cfg *builder.Config, sandbox builder.Sandbo
 				pkgFiles:   stagePkgs,
 			}
 		case result.SourceDir != "":
-			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), result.Packages, pkgSource)
+			// As in a single-language build, a runtime the user named with
+			// --pkg (e.g. nanovms/node:20) replaces the automatic one.
+			resolvedPkgs, err := resolveAutoPackages(cmd.Context(), filterCoveredAutoPkgs(result.Packages, userPkgs), pkgSource)
 			if err != nil {
 				return "", "", nil, false, fmt.Errorf("build stage %q: resolve packages: %w", stage.Name, err)
 			}
 			stagePkgs = append(stagePkgs, resolvedPkgs...)
 
-			runtimeBinary, runtimeGuest, err := findRuntimeBinary(resolvedPkgs, detected)
+			runtimeBinary, runtimeGuest, err := findRuntimeBinary(append(append([]pkg.File{}, resolvedPkgs...), pkgFiles...), detected)
 			if err != nil {
 				return "", "", nil, false, fmt.Errorf("build stage %q: %w", stage.Name, err)
 			}
