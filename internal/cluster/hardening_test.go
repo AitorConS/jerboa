@@ -1,7 +1,13 @@
 package cluster
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -55,4 +61,76 @@ func TestGossip_RejectsLinkLocalAddresses(t *testing.T) {
 	require.False(t, validEntry(entry("node-x", "169.254.169.254:80", time.Now())))
 	require.False(t, validEntry(entry("node-x", "0.0.0.0:7946", time.Now())))
 	require.True(t, validEntry(entry("node-x", "10.0.0.2:7946", time.Now())))
+}
+
+// gzipJSONServer answers every request with body, gzip-encoded, so the Go
+// HTTP client inflates it transparently, as it would a hostile peer's reply.
+func gzipJSONServer(t *testing.T, body []byte) *httptest.Server {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, err := zw.Write(body)
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(buf.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestGossip_OversizedReplyIsDiscarded(t *testing.T) {
+	// Well over maxGossipBody once inflated, a few KiB on the wire. Each
+	// entry is valid, so only the size limit can stop the merge.
+	var body bytes.Buffer
+	body.WriteString(`{"member_id":"evil","members":[`)
+	for i := 0; body.Len() <= 2*maxGossipBody; i++ {
+		if i > 0 {
+			body.WriteByte(',')
+		}
+		fmt.Fprintf(&body, `{"id":"n-%d","addr":"10.0.0.9:7946","status":"alive"}`, i)
+	}
+	body.WriteString(`]}`)
+	srv := gzipJSONServer(t, body.Bytes())
+
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	c.mu.Lock()
+	c.members["peer"] = &Member{ID: "peer", Addr: srv.Listener.Addr().String(), Status: StatusAlive, LastSeen: time.Now()}
+	c.mu.Unlock()
+
+	c.doGossip(context.Background())
+	require.Len(t, c.Members(), 2, "an oversized reply must not change the member table")
+
+	// Join takes the same path.
+	require.NoError(t, c.Join(context.Background(), srv.Listener.Addr().String()))
+	require.Len(t, c.Members(), 2)
+}
+
+func TestGossip_TooManyEntriesIsRejected(t *testing.T) {
+	entries := make([]memberEntry, maxMembers+1)
+	for i := range entries {
+		entries[i] = entry(fmt.Sprintf("n-%d", i), "10.0.0.9:7946", time.Now())
+	}
+	data, err := json.Marshal(gossipPayload{MemberID: "evil", Members: entries})
+	require.NoError(t, err)
+	require.Less(t, len(data), maxGossipBody, "the test must exercise the entry cap, not the byte cap")
+
+	// As a reply: discarded whole.
+	srv := gzipJSONServer(t, data)
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	require.NoError(t, c.Join(context.Background(), srv.Listener.Addr().String()))
+	require.Len(t, c.Members(), 1)
+
+	// As a request: refused before it reaches the member table.
+	mux := http.NewServeMux()
+	RegisterGossipHandler(mux, c)
+	hs := httptest.NewServer(mux)
+	defer hs.Close()
+	resp, err := http.Post(hs.URL+"/cluster/gossip", "application/json", bytes.NewReader(data))
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Len(t, c.Members(), 1)
 }

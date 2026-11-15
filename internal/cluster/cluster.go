@@ -6,7 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -41,9 +43,55 @@ type Member struct {
 // lines, or an unbounded blob that would bloat the member table — is dropped.
 var memberIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]{1,128}$`)
 
-// maxGossipBody bounds the request body accepted by the gossip handler, which
-// is unauthenticated unless a cluster token is configured.
+// maxGossipBody bounds every gossip message this node decodes: requests to the
+// gossip handler and the replies to its own gossip and join requests alike. The
+// limit applies to the decoded stream, after the HTTP transport has inflated a
+// gzip-encoded reply, so a small compressed body cannot expand past it.
 const maxGossipBody = 1 << 20 // 1 MiB
+
+// errGossipTooLarge reports a gossip message over maxGossipBody bytes or with
+// more entries than the member table can hold.
+var errGossipTooLarge = errors.New("cluster: gossip message too large")
+
+// decodeGossip decodes one gossip message from r, reading at most
+// maxGossipBody bytes, and rejects a message carrying more than maxMembers
+// entries: no honest node sends more entries than its own table can hold.
+func decodeGossip(r io.Reader) (gossipPayload, error) {
+	var p gossipPayload
+	lr := &io.LimitedReader{R: r, N: maxGossipBody + 1}
+	err := json.NewDecoder(lr).Decode(&p)
+	if lr.N <= 0 || (err == nil && len(p.Members) > maxMembers) {
+		return gossipPayload{}, errGossipTooLarge
+	}
+	if err != nil {
+		return gossipPayload{}, err
+	}
+	return p, nil
+}
+
+// validEntries returns the well-formed entries of one gossip message. It reads
+// no cluster state, so callers run it before taking c.mu, and it logs dropped
+// entries once per message rather than once per entry, so a message full of
+// junk costs one log line. A message with more entries than the member table
+// can hold is rejected whole (ok is false).
+func validEntries(entries []memberEntry) (valid []memberEntry, ok bool) {
+	if len(entries) > maxMembers {
+		slog.Warn("cluster: dropping oversized gossip message", "entries", len(entries))
+		return nil, false
+	}
+	valid = make([]memberEntry, 0, len(entries))
+	for _, e := range entries {
+		if validEntry(e) {
+			valid = append(valid, e)
+		}
+	}
+	if dropped := len(entries) - len(valid); dropped > 0 {
+		// Counted rather than logged verbatim: the entries are unauthenticated
+		// wire data unless a cluster token is configured.
+		slog.Warn("cluster: dropping malformed gossip entries", "count", dropped)
+	}
+	return valid, true
+}
 
 // validEntry reports whether a member entry received over gossip is well-formed
 // enough to merge into the member table.
@@ -181,18 +229,22 @@ func (c *SwimCluster) LocalID() string {
 	return c.local.ID
 }
 
+// Join contacts each seed in turn and merges its reply. The HTTP exchange runs
+// without holding c.mu, so a slow or hostile seed cannot stall the gossip
+// handler or member listing; only the merge of an already validated reply takes
+// the lock.
 func (c *SwimCluster) Join(ctx context.Context, seedAddrs ...string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	for _, addr := range seedAddrs {
+		c.mu.RLock()
 		if addr == c.local.Addr {
+			c.mu.RUnlock()
 			continue
 		}
 		payload := gossipPayload{
 			MemberID: c.local.ID,
 			Members:  c.toEntriesLocked(),
 		}
+		c.mu.RUnlock()
 		data, err := json.Marshal(payload)
 		if err != nil {
 			return fmt.Errorf("cluster join marshal: %w", err)
@@ -211,10 +263,7 @@ func (c *SwimCluster) Join(ctx context.Context, seedAddrs ...string) error {
 			continue
 		}
 		if resp.StatusCode == http.StatusOK {
-			var remote gossipPayload
-			if decErr := json.NewDecoder(resp.Body).Decode(&remote); decErr == nil {
-				c.mergeEntriesLocked(remote.MemberID, remote.Members)
-			}
+			c.mergeReply(resp.Body, addr)
 		}
 		resp.Body.Close()
 	}
@@ -277,16 +326,20 @@ func (c *SwimCluster) UpdateLocal(vmCount int, cpuCap int, memCap int64) {
 }
 
 func (c *SwimCluster) HandleGossip(payload gossipPayload) gossipPayload {
+	entries, ok := validEntries(payload.Members)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.mergeEntriesLocked(payload.MemberID, payload.Members)
+	if ok {
+		c.mergeEntriesLocked(payload.MemberID, entries)
 
-	if m, ok := c.members[payload.MemberID]; ok {
-		m.LastSeen = time.Now()
-		if m.Status == StatusSuspect {
-			m.Status = StatusAlive
-			slog.Debug("cluster member recovered from suspicion", "member", m.ID)
+		if m, found := c.members[payload.MemberID]; found {
+			m.LastSeen = time.Now()
+			if m.Status == StatusSuspect {
+				m.Status = StatusAlive
+				slog.Debug("cluster member recovered from suspicion", "member", m.ID)
+			}
 		}
 	}
 
@@ -350,15 +403,29 @@ func (c *SwimCluster) doGossip(ctx context.Context) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
-		var remote gossipPayload
-		if decErr := json.NewDecoder(resp.Body).Decode(&remote); decErr == nil {
-			c.mu.Lock()
-			c.mergeEntriesLocked(remote.MemberID, remote.Members)
-			if m, ok := c.members[remote.MemberID]; ok {
-				m.LastSeen = time.Now()
-			}
-			c.mu.Unlock()
-		}
+		c.mergeReply(resp.Body, target)
+	}
+}
+
+// mergeReply decodes and validates a gossip reply read from peer (the address
+// this node dialed) without holding c.mu, then merges it. A reply that is too
+// large, malformed or carries too many entries changes no state.
+func (c *SwimCluster) mergeReply(body io.Reader, peer string) {
+	remote, err := decodeGossip(body)
+	if err != nil {
+		// The decode error is not logged: it can quote reply bytes.
+		slog.Warn("cluster: discarding gossip reply", "peer", stripLogControl(peer), "too_large", errors.Is(err, errGossipTooLarge))
+		return
+	}
+	entries, ok := validEntries(remote.Members)
+	if !ok {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.mergeEntriesLocked(remote.MemberID, entries)
+	if m, found := c.members[remote.MemberID]; found {
+		m.LastSeen = time.Now()
 	}
 }
 
@@ -419,17 +486,12 @@ const maxClockSkew = time.Minute
 
 // mergeEntriesLocked folds gossiped entries from sender into the table. Only a
 // member itself may change its address or announce that it left; others can
-// relay its liveness and declare it dead.
+// relay its liveness and declare it dead. entries must already have passed
+// validEntries, which callers run before taking c.mu.
 func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
 	now := time.Now()
 	for _, e := range entries {
 		if e.ID == c.local.ID {
-			continue
-		}
-		if !validEntry(e) {
-			// Dropped rather than logged verbatim: the entry is unauthenticated
-			// wire data unless a cluster token is configured.
-			slog.Warn("cluster: dropping malformed gossip entry")
 			continue
 		}
 		existing, ok := c.members[e.ID]
@@ -517,8 +579,8 @@ func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		var payload gossipPayload
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxGossipBody)).Decode(&payload); err != nil {
+		payload, err := decodeGossip(http.MaxBytesReader(w, r.Body, maxGossipBody))
+		if err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
