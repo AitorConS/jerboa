@@ -4,8 +4,10 @@ package vm
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -64,6 +66,30 @@ func TestQEMUManager_Start_NoPrivateRuntimeDir(t *testing.T) {
 	require.NoError(t, mgr.Start(context.Background(), v.ID))
 	require.NoError(t, mgr.Stop(context.Background(), v.ID))
 	<-v.Done()
+}
+
+// An attach-mode VM whose console nobody reads is still reaped when the VMM
+// exits: the guest's output must not block the monitor.
+func TestQEMUManager_AttachWithoutReader_StillStops(t *testing.T) {
+	// Far more output than any pipe buffer, then a clean exit.
+	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(func(context.Context, string, ...string) *exec.Cmd {
+		return exec.Command("sh", "-c", "head -c 4000000 /dev/zero; echo last-line; exit 0")
+	}))
+	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M", Attach: true})
+	require.NoError(t, err)
+	require.NoError(t, mgr.Start(context.Background(), v.ID))
+	select {
+	case <-v.Done():
+	case <-time.After(10 * time.Second):
+		t.Fatal("attach-mode VM never reached stopped with no console reader")
+	}
+	require.Equal(t, StateStopped, v.GetState())
+
+	// A client attaching late still gets the newest output and the end.
+	got, err := io.ReadAll(v.AttachSession().Reader)
+	require.NoError(t, err)
+	require.LessOrEqual(t, len(got), attachPipeMaxBytes)
+	require.True(t, strings.HasSuffix(string(got), "last-line\n"))
 }
 
 func TestQEMUManager_Start_StoreSave(t *testing.T) {

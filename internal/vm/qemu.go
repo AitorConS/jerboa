@@ -212,12 +212,13 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
-		pr, pw := io.Pipe()
+		// Never blocks: the VM is reaped whether or not anyone reads its console.
+		pipe := newAttachPipe()
 		v.mu.Lock()
-		v.logPipeReader = pr
-		v.logPipeWriter = pw
+		v.logPipeReader = pipe
+		v.logPipeWriter = pipe
 		v.mu.Unlock()
-		stdout = io.MultiWriter(&v.logBuf, pw)
+		stdout = io.MultiWriter(&v.logBuf, pipe)
 	}
 
 	cmd.Stdout = stdout
