@@ -208,8 +208,6 @@ func TestFaults_ConcurrentPutsAndReads(t *testing.T) {
 
 // A blob damaged on disk after it was stored.
 func TestFaults_DamagedBlob(t *testing.T) {
-	t.Skip("BUG: Open returns a blob's file without checking it against its digest, and Put of the same content " +
-		"keeps the damaged file, so a blob changed on disk is served as if intact; the package has no callers today")
 	root := t.TempDir()
 	s, err := NewStore(root)
 	require.NoError(t, err)
@@ -218,16 +216,16 @@ func TestFaults_DamagedBlob(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, strings.TrimPrefix(digest, "sha256:")), content[:5], 0o644))
 
-	if rc, err := s.Open(digest); err == nil {
-		data, rerr := io.ReadAll(rc)
-		_ = rc.Close()
-		require.Error(t, rerr, "the damaged blob was read without an error: %q", data)
-	}
-	_, _, err = s.Put(bytes.NewReader(content))
-	require.NoError(t, err)
 	rc, err := s.Open(digest)
 	require.NoError(t, err)
-	data, err := io.ReadAll(rc)
+	data, rerr := io.ReadAll(rc)
+	require.NoError(t, rc.Close())
+	require.ErrorIs(t, rerr, ErrCorrupt, "the damaged blob was read without an error: %q", data)
+	_, _, err = s.Put(bytes.NewReader(content))
+	require.NoError(t, err)
+	rc, err = s.Open(digest)
+	require.NoError(t, err)
+	data, err = io.ReadAll(rc)
 	require.NoError(t, rc.Close())
 	require.NoError(t, err)
 	assert.Equal(t, content, data, "storing the blob again did not repair it")

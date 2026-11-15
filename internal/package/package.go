@@ -92,7 +92,36 @@ type Index struct {
 type Store struct {
 	root     string
 	platform string
-	mu       sync.RWMutex
+	// mu is shared by every view of the store (ForPlatform): they write the
+	// same directories, so two downloads of one package must not run at once.
+	mu *sync.RWMutex
+	// verifying serializes Verify per package directory: it extracts the
+	// archive and then reads the result, which a second Verify of the same
+	// package would otherwise catch half written.
+	verifying *keyedLocks
+}
+
+// keyedLocks hands out one mutex per key. Keys are package directories, of
+// which a store has few, so entries are never dropped.
+type keyedLocks struct {
+	mu sync.Mutex
+	m  map[string]*sync.Mutex
+}
+
+// lock takes the mutex of key and returns the function that releases it.
+func (k *keyedLocks) lock(key string) func() {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = map[string]*sync.Mutex{}
+	}
+	l := k.m[key]
+	if l == nil {
+		l = &sync.Mutex{}
+		k.m[key] = l
+	}
+	k.mu.Unlock()
+	l.Lock()
+	return l.Unlock
 }
 
 // NewStore creates a Store rooted at dir, creating it if needed.
@@ -100,7 +129,7 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("package store mkdir %s: %w", dir, err)
 	}
-	return &Store{root: dir}, nil
+	return &Store{root: dir, mu: &sync.RWMutex{}, verifying: &keyedLocks{}}, nil
 }
 
 // PackageDir returns the local directory for a package version.
@@ -277,7 +306,8 @@ func (s *Store) Extract(pkg Package) (err error) {
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(gz)
+	end := &endChecked{r: gz}
+	tr := tar.NewReader(end)
 	budget := maxExtractedBytes
 	for {
 		hdr, err := tr.Next()
@@ -353,6 +383,9 @@ func (s *Store) Extract(pkg Package) (err error) {
 				return fmt.Errorf("package extract %s: archive expands beyond %d bytes", pkg.Name, maxExtractedBytes)
 			}
 		}
+	}
+	if err := end.complete(); err != nil {
+		return fmt.Errorf("package extract %s: %w", pkg.Name, err)
 	}
 	return nil
 }

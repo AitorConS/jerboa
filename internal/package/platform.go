@@ -251,12 +251,12 @@ func (s *Store) ForPlatform(platform string) (*Store, error) {
 	if err := ValidatePlatform(platform); err != nil {
 		return nil, err
 	}
-	return &Store{root: s.root, platform: platform}, nil
+	return &Store{root: s.root, platform: platform, mu: s.mu, verifying: s.verifying}, nil
 }
 
 // Verify checks legacy content in place; it never rewrites the original package.
 func (s *Store) Verify(p Package, platform string) ([]File, Reference, error) {
-	selected := &Store{root: s.root}
+	selected := &Store{root: s.root, mu: s.mu, verifying: s.verifying}
 	if p.Platform != "" {
 		var err error
 		selected, err = s.ForPlatform(p.Platform)
@@ -270,6 +270,7 @@ func (s *Store) Verify(p Package, platform string) ([]File, Reference, error) {
 	// Digests saved by an earlier build are reused for files that have not
 	// changed since, so an unchanged package is checked without being read.
 	pkgDir := selected.PackageDir(p.Name, p.Version)
+	defer s.verifying.lock(pkgDir)()
 	SeedDigests(pkgDir)
 	archivePath := filepath.Join(pkgDir, "files.tar.gz")
 	sum, err := fileDigest(archivePath)
@@ -387,7 +388,8 @@ func verifyExtractedArchive(archivePath string, files []File) error {
 		return fmt.Errorf("platform operation: %w", err)
 	}
 	defer gz.Close()
-	tr := tar.NewReader(gz)
+	end := &endChecked{r: gz}
+	tr := tar.NewReader(end)
 	expected := map[string][32]byte{}
 	for {
 		hdr, err := tr.Next()
@@ -411,6 +413,9 @@ func verifyExtractedArchive(archivePath string, files []File) error {
 			return fmt.Errorf("archive collision at %s", name)
 		}
 		expected[name] = sum
+	}
+	if err := end.complete(); err != nil {
+		return fmt.Errorf("platform operation: %w", err)
 	}
 	for _, f := range files {
 		if f.IsDir {
