@@ -27,7 +27,7 @@ func loopbackOwner(local, remote *net.TCPAddr) (uint32, bool) {
 	if uid, ok := procOwner("/proc/net/tcp", procAddr(remote.IP.To4(), remote.Port), procAddr(local.IP.To4(), local.Port)); ok {
 		return uid, true
 	}
-	// A client on an AF_INET6 socket that dialled an IPv4-mapped address
+	// A client on an AF_INET6 socket that dialed an IPv4-mapped address
 	// (::ffff:127.0.0.1) shows up to the daemon as 127.0.0.1 but is listed
 	// only in tcp6, under the mapped form of both addresses.
 	return procOwner("/proc/net/tcp6", procAddr(remote.IP.To16(), remote.Port), procAddr(local.IP.To16(), local.Port))

@@ -45,7 +45,11 @@ func readPrivate(root, path string) ([]byte, error) {
 	}
 	f := os.NewFile(uintptr(fd), path) //nolint:gosec // fd is a valid descriptor from openat
 	defer func() { _ = f.Close() }()
-	return io.ReadAll(f)
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, fmt.Errorf("config: read %s: %w", path, err)
+	}
+	return data, nil
 }
 
 // writePrivate replaces path, which lies below root, with data (mode 0600).

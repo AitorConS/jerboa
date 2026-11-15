@@ -184,7 +184,7 @@ func Load(path string) (*Config, error) {
 func ReadPrivateFile(path string) ([]byte, error) {
 	tmp := os.TempDir()
 	if !strings.HasPrefix(path, tmp) {
-		return os.ReadFile(path)
+		return os.ReadFile(path) //nolint:wrapcheck // callers test the bare error with os.IsNotExist
 	}
 	path = filepath.Clean(path)
 	if inNoHomeDir(path) {
