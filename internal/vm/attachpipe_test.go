@@ -71,14 +71,14 @@ func TestAttachPipe_CloseDeliversBufferedOutputThenError(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "last words\n", string(buf[:n]))
 	_, err = p.Read(buf)
-	assert.ErrorIs(t, err, exitErr)
+	require.ErrorIs(t, err, exitErr)
 
 	// Writes after close are dropped, not failed.
 	n, err = p.Write([]byte("late"))
 	require.NoError(t, err)
 	assert.Equal(t, 4, n)
 	_, err = p.Read(buf)
-	assert.ErrorIs(t, err, exitErr)
+	require.ErrorIs(t, err, exitErr)
 }
 
 func TestAttachPipe_ReaderWakesOnWriteAndClose(t *testing.T) {

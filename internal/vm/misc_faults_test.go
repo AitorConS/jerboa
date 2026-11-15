@@ -399,8 +399,7 @@ func TestFaults_RuntimeDirFailsClosed(t *testing.T) {
 
 	// Neither is possible: an error, never the rejected path.
 	dir, err = resolveRuntimeDir(base, uid, noTemp)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, syscall.ENOSPC)
+	require.ErrorIs(t, err, syscall.ENOSPC)
 	assert.Empty(t, dir)
 
 	// Nothing could be created at all (the temp dir takes no new entries):

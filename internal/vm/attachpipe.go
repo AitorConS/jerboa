@@ -20,7 +20,7 @@ const attachPipeMaxBytes = 256 << 10
 // bytes first; all of it is in the VM's log buffer as well.
 type attachPipe struct {
 	mu     sync.Mutex
-	ready  *sync.Cond // signalled when data arrives or the pipe closes
+	ready  *sync.Cond // signaled when data arrives or the pipe closes
 	buf    []byte
 	max    int
 	closed bool

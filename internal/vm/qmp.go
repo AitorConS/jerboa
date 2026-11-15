@@ -115,7 +115,7 @@ func resolveRuntimeDir(base string, uid int, mkdirTemp func(dir, pattern string)
 	slog.Warn("vm runtime dir is not private, using a new one", "dir", dir, "err", err)
 	fresh, tempErr := mkdirTemp(base, "jerboa-run-")
 	if tempErr != nil {
-		return "", fmt.Errorf("vm runtime dir: %s is not private (%v) and no private one could be made: %w", dir, err, tempErr)
+		return "", fmt.Errorf("vm runtime dir: %s is not private (%w) and no private one could be made: %w", dir, err, tempErr)
 	}
 	if err := checkPrivateDir(fresh); err != nil {
 		return "", fmt.Errorf("vm runtime dir: %w", err)
