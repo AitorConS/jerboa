@@ -189,6 +189,8 @@ class KernelCandidateTests(unittest.TestCase):
         self.assertIn('kernel/v0.2.1/toolset.json', inv['assets'])
         self.assertIn('kernel/v0.2.1/mkfs-darwin-arm64', inv['assets'])
         self.assertEqual(inv['kernel_toolset'], self.record)
+        self.assertEqual(inv['macos_x86_tools'], {'version': 'v0.2.1', 'files': {
+            name: self.record['files'][name] for name in c.X86_TOOLS}})
         self.assertEqual(manifest['components']['distro']['kernel'], 'v0.2.1')
         # The released installer refuses stable manifests older than this one.
         installer = Path('candidate/payload/releases/v1.0.0/install.sh').read_text()
@@ -242,6 +244,34 @@ class KernelCandidateTests(unittest.TestCase):
             key = 'kernel/v0.2.1/' + filename
             self.assertEqual(store[key], Path('kernel-candidate', filename).read_bytes())
             self.assertLess(events.index(('get', key)), switch)
+
+    def test_mac_x86_guest_files_are_the_selected_toolset(self):
+        from types import SimpleNamespace
+        self.stage()
+        dest = Path('dist/macos-arm64/tools/x86')
+        c.x86(SimpleNamespace(out=str(dest), check=False))
+        self.assertEqual((dest / 'kernel-version.txt').read_text(), 'v0.2.1\n')
+        for name in c.X86_TOOLS:
+            self.assertEqual(c.digest(dest / name), self.record['files'][name])
+        c.x86(SimpleNamespace(out=str(dest), check=True))
+        # Staging never overwrites, and a changed, extra or missing file fails.
+        with self.assertRaises(FileExistsError):
+            c.x86(SimpleNamespace(out=str(dest), check=False))
+        (dest / 'kernel.img').write_bytes(b'stable kernel')
+        with self.assertRaisesRegex(ValueError, 'differs from the candidate toolset'):
+            c.x86(SimpleNamespace(out=str(dest), check=True))
+        shutil.copyfile('kernel-selected/kernel.img', dest / 'kernel.img')
+        (dest / 'kernel-version.txt').write_text('v0.2.0\n')
+        with self.assertRaisesRegex(ValueError, 'version differs'):
+            c.x86(SimpleNamespace(out=str(dest), check=True))
+        (dest / 'kernel-version.txt').write_text('v0.2.1\n')
+        (dest / 'extra').write_bytes(b'')
+        with self.assertRaisesRegex(ValueError, 'Unexpected x86'):
+            c.x86(SimpleNamespace(out=str(dest), check=True))
+        # The selected toolset itself is checked against the lock first.
+        Path('kernel-selected/boot.img').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'bytes changed'):
+            c.x86(SimpleNamespace(out='other', check=False))
 
     def test_candidate_signed_for_stable_is_not_promotable(self):
         self.assemble()

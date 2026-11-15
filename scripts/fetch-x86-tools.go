@@ -3,6 +3,11 @@
 // Fetch only the signed guest boot artifacts for explicit x86 compatibility.
 // Host mkfs remains the native Mach-O ARM64 binary. Never download Linux tools
 // over the native tool directory.
+//
+// This is for local builds. Release candidates stage their own selected x86
+// toolset instead (candidate.py x86 in release.yml). An optional expected
+// kernel version refuses any other stable manifest, including an older one a
+// machine without release state would otherwise accept.
 package main
 
 import (
@@ -21,10 +26,14 @@ func main() {
 	}
 }
 func run() error {
-	if len(os.Args) != 2 {
-		return fmt.Errorf("usage: go run scripts/fetch-x86-tools.go NATIVE_TOOLS_DIRECTORY")
+	if len(os.Args) != 2 && len(os.Args) != 3 {
+		return fmt.Errorf("usage: go run scripts/fetch-x86-tools.go NATIVE_TOOLS_DIRECTORY [KERNEL_VERSION]")
 	}
 	root := os.Args[1]
+	want := ""
+	if len(os.Args) == 3 {
+		want = os.Args[2]
+	}
 	if err := tools.ValidateNativeTools(root); err != nil {
 		return err
 	}
@@ -36,6 +45,9 @@ func run() error {
 	component, err := tools.KernelComponentFromManifest(ctx, cl, release.ChannelStable)
 	if err != nil {
 		return err
+	}
+	if want != "" && component.Version != want {
+		return fmt.Errorf("stable kernel is %s, expected %s", component.Version, want)
 	}
 	stage, err := os.MkdirTemp(root, ".x86-staging-")
 	if err != nil {

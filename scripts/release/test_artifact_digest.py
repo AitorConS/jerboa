@@ -89,4 +89,13 @@ class WorkflowBindsArtifacts(unittest.TestCase):
         self.assertIn('kernel_linux_sha256:\n        value: ${{ jobs.kernel-build.outputs.kernel_linux_sha256 }}',validate)
         self.assertEqual(validate.count('artifact-digest.py verify "$KERNEL_LINUX" kernel-linux.tar.gz'),2)
 
+    def test_mac_x86_guest_kernel_comes_from_the_candidate(self):
+        job=jobs((ROOT/'.github/workflows/release.yml').read_text())['build-macos']
+        self.assertIn('    - kernel-stage\n',job)
+        self.assertIn('name: selected-kernel',job)
+        stage=job.index('candidate.py x86 --out dist/macos-arm64/tools/x86')
+        self.assertLess(job.index('artifact-digest.py verify "$SELECTED_KERNEL" kernel-selected'),stage)
+        self.assertLess(stage,job.index('build-macos.sh --with-x86'))
+        self.assertIn('candidate.py x86 --check --out "$BUNDLE/bin/tools/x86"',job)
+
 if __name__=='__main__':unittest.main()

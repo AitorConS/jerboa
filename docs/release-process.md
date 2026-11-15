@@ -141,8 +141,11 @@ The Linux download toolset and WSL rootfs contain the same selected `mkfs`,
 rootfs archive and verifies each embedded tool against the selected toolset.
 The manifest's kernel version and the distro's kernel version must agree.
 Native Mac continues to carry its source-built ARM64 kernel and native tools,
-validated using the candidate app on a physical Mac. Linux x86_64 tools are never
-substituted into the Mac app.
+validated using the candidate app on a physical Mac. Linux x86_64 host tools are
+never substituted into the Mac app. Its x86 guest boot files (`tools/x86`, used only
+for explicitly emulated linux/amd64 images) are the candidate's selected
+`boot.img` and `kernel.img`, staged by `build-macos` from the verified
+`selected-kernel` artifact; the job never fetches them from the live stable channel.
 
 The signed inventory includes the selection mode, engine SHA, candidate run,
 per-file hashes and QEMU/Firecracker boot evidence bound to those hashes. The

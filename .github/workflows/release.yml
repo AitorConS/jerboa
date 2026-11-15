@@ -298,6 +298,7 @@ jobs:
     needs:
     - inputs
     - validate
+    - kernel-stage
     timeout-minutes: 120
     env:
       MACOSX_DEPLOYMENT_TARGET: '26.0'
@@ -353,10 +354,32 @@ jobs:
         # Offline license metadata needs workspace dependencies beyond the binary build.
         cargo +1.97.0 fetch --locked --target aarch64-apple-darwin
         python3 experiments/hvf/distribution/package.py "$RUNNER_TEMP/firecracker-package"
+    # The app's x86 guest boot files are this candidate's selected toolset
+    # (the same-run build, or the explicitly reused published version), not
+    # whatever the stable channel serves while this job runs.
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: release-lock
+        path: jerboa
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: selected-kernel
+        path: jerboa/kernel-selected
+    - name: Stage the candidate's x86 guest kernel
+      working-directory: jerboa
+      run: |-
+        set -euo pipefail
+        python3 scripts/release/artifact-digest.py verify "$RELEASE_LOCK" release-lock.json
+        python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" kernel-selected
+        python3 scripts/release/candidate.py x86 --out dist/macos-arm64/tools/x86
+      env:
+        RELEASE_LOCK: ${{ needs.inputs.outputs.release_lock_sha256 }}
+        SELECTED_KERNEL: ${{ needs.kernel-stage.outputs.selected_kernel_sha256 }}
     - name: Build and test native Jerboa
       working-directory: jerboa
       run: |
         set -euo pipefail
+        # tools/x86 is already staged, so this does not fetch from stable.
         sh scripts/build-macos.sh --with-x86
         go test -race ./cmd/... ./internal/...
         python3 scripts/test_macos_distribution.py
@@ -376,6 +399,7 @@ jobs:
         # Checksums, ARM64 Mach-O, ad-hoc signatures, the Firecracker
         # Hypervisor entitlement, relocatable libraries and --version only.
         python3 scripts/verify-macos-distribution.py "$BUNDLE" --mode adhoc
+        python3 scripts/release/candidate.py x86 --check --out "$BUNDLE/bin/tools/x86"
         mkdir -p dist/macos-release
         cp "$BUNDLE/bin/jerboa" dist/macos-release/jerboa-darwin-arm64
         cp "$BUNDLE/bin/jerboad" dist/macos-release/jerboad-darwin-arm64
@@ -408,6 +432,10 @@ jobs:
         # Firecracker must keep the Hypervisor entitlement or HVF refuses VMs.
         codesign -d --entitlements - "$RES/bin/firecracker" 2>/dev/null | grep -q com.apple.security.hypervisor
         test "$(cat "$RES/bin/engine-version.txt")" = "v$VERSION"
+        # Any x86 guest files the app ships are the candidate's selected ones.
+        if [ -e "$RES/bin/tools/x86" ]; then
+          (cd ../jerboa && python3 scripts/release/candidate.py x86 --check --out "../desktop/$RES/bin/tools/x86")
+        fi
         # Run from inside the app: Firecracker resolves @loader_path/../lib.
         "$RES/bin/jerboa" --version
         "$RES/bin/jerboad" --version

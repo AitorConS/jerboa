@@ -353,6 +353,44 @@ def kernel():
     verify_kernel_toolset(root, spec)
 
 
+# The Mac app's guest boot files for explicitly emulated linux/amd64 images:
+# the candidate's own selected x86 toolset, never whatever stable serves.
+X86_TOOLS = ('boot.img', 'kernel.img')
+
+
+def x86_tools_record(kernel_record):
+    return {'version': kernel_record['kernel_version'],
+            'files': {name: kernel_record['files'][name] for name in X86_TOOLS}}
+
+
+def check_x86_tools(directory, expected):
+    directory = Path(directory)
+    names = {p.name for p in directory.iterdir()} if directory.is_dir() else set()
+    if names != {*X86_TOOLS, 'kernel-version.txt'}:
+        raise ValueError(f'Unexpected x86 guest tools in {directory}: {sorted(names)}')
+    if (directory / 'kernel-version.txt').read_text() != expected['version'] + '\n':
+        raise ValueError('x86 guest kernel version differs from the candidate')
+    for name, want in expected['files'].items():
+        file = directory / name
+        if file.is_symlink() or not file.is_file() or digest(file) != want:
+            raise ValueError('x86 guest file differs from the candidate toolset: ' + name)
+
+
+def x86(args):
+    """Stage (or, with --check, re-check) the Mac x86 guest boot files in --out."""
+    spec = json.loads(Path('release-lock.json').read_text())
+    record, _ = verify_kernel_toolset('kernel-selected', spec)
+    expected = x86_tools_record(record)
+    dest = Path(args.out)
+    if not args.check:
+        dest.mkdir(parents=True, exist_ok=False)
+        for name in X86_TOOLS:
+            shutil.copyfile(Path('kernel-selected') / name, dest / name)
+        (dest / 'kernel-version.txt').write_text(expected['version'] + '\n')
+    check_x86_tools(dest, expected)
+    print('x86 guest tools match candidate kernel', expected['version'], 'in', dest)
+
+
 def assemble():
     spec = json.loads(Path('release-lock.json').read_text())
     v = version(spec['version']); n = v[1:]
@@ -404,7 +442,9 @@ def assemble():
     write_json(root / 'manifest.json', manifest)
     record = {**spec, 'kernel_toolset': kernel_record, 'kernel_boot': kernel_boot, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
-              'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip')}
+              'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip'),
+              # build-macos stages these exact selected files as tools/x86.
+              'macos_x86_tools': x86_tools_record(kernel_record)}
     write_json(root / 'inventory.json', record)
     sign(root / 'manifest.json', f'candidate-manifest:{v}')
     sign(root / 'inventory.json', f'candidate:{spec["run_id"]} version:{v}')
@@ -671,6 +711,6 @@ def summary():
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','assemble','kernel','selected','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');a=p.parse_args()
-    if a.command=='cli':cli(a)
+    p=argparse.ArgumentParser();p.add_argument('command',choices=['lock','cli','x86','assemble','kernel','selected','authorize','promote','website','summary']);p.add_argument('--file');p.add_argument('--version');p.add_argument('--out');p.add_argument('--check',action='store_true');a=p.parse_args()
+    if a.command in ('cli','x86'):globals()[a.command](a)
     else:globals()[a.command]()
