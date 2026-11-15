@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -374,6 +375,48 @@ func TestFaults_RuntimeDirMustBePrivate(t *testing.T) {
 
 	// The directory actually in use passes its own check.
 	require.NoError(t, checkPrivateDir(qmpRuntimeDir()))
+}
+
+func TestFaults_RuntimeDirFailsClosed(t *testing.T) {
+	uid := os.Getuid()
+	noTemp := func(string, string) (string, error) { return "", syscall.ENOSPC }
+
+	// The expected path is ours: it is used as is.
+	base := t.TempDir()
+	dir, err := resolveRuntimeDir(base, uid, noTemp)
+	require.NoError(t, err)
+	assert.Equal(t, expectedRuntimeDir(base, uid), dir)
+
+	// Someone else put a link at the expected path; a fresh private
+	// directory is used instead.
+	base = t.TempDir()
+	target := t.TempDir()
+	require.NoError(t, os.Symlink(target, expectedRuntimeDir(base, uid)))
+	dir, err = resolveRuntimeDir(base, uid, os.MkdirTemp)
+	require.NoError(t, err)
+	assert.NotEqual(t, expectedRuntimeDir(base, uid), dir)
+	require.NoError(t, checkPrivateDir(dir))
+
+	// Neither is possible: an error, never the rejected path.
+	dir, err = resolveRuntimeDir(base, uid, noTemp)
+	require.ErrorIs(t, err, syscall.ENOSPC)
+	assert.Empty(t, dir)
+
+	// Nothing could be created at all (the temp dir takes no new entries):
+	// the not-yet-existing predictable path, which anyone could create later,
+	// is not handed out either.
+	missing := filepath.Join(t.TempDir(), "gone")
+	dir, err = resolveRuntimeDir(missing, uid, noTemp)
+	require.Error(t, err)
+	assert.Empty(t, dir)
+
+	// mkdirTemp handing back something that is not private is refused too.
+	base = t.TempDir()
+	require.NoError(t, os.Symlink(target, expectedRuntimeDir(base, uid)))
+	_, err = resolveRuntimeDir(base, uid, func(string, string) (string, error) {
+		return expectedRuntimeDir(base, uid), nil
+	})
+	require.Error(t, err)
 }
 
 // --- Guest log ---------------------------------------------------------------
