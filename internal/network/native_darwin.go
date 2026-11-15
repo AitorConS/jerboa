@@ -39,6 +39,11 @@ type NativeNetwork struct {
 	once      sync.Once
 }
 
+const (
+	dnsRelaySlots      = 64 // concurrent guest DNS queries per relay address
+	dnsRelaySlotsPerVM = dnsRelaySlots / 4
+)
+
 func NewNativeNetwork(cidr, gateway string, answer func([]byte, string) ([]byte, error)) (*NativeNetwork, error) {
 	return NewNativeNetworkWithPolicy(cidr, gateway, answer, nil)
 }
@@ -99,6 +104,10 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 		s.SetTransportProtocolHandler(tcp.ProtocolNumber, tf.HandlePacket)
 		s.SetTransportProtocolHandler(udp.ProtocolNumber, uf.HandlePacket)
 	}
+	// A relay handler holds its slot while the query is forwarded upstream,
+	// for seconds if the upstream is silent. One VM may hold a quarter of
+	// the slots, across both addresses, so the other VMs keep being answered.
+	relayShare := newSourceBudget(dnsRelaySlotsPerVM)
 	// Bind each address explicitly so replies preserve the queried source IP.
 	for _, address := range []string{netconst.DNSAnycastIP, "10.0.2.3"} {
 		dns, err := gonet.DialUDP(s, &tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFrom4Slice(net.ParseIP(address).To4()), Port: 53}, nil, ipv4.ProtocolNumber)
@@ -107,18 +116,21 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 		}
 		n.dns = append(n.dns, dns)
 		go func() {
-			slots := make(chan struct{}, 64)
+			slots := make(chan struct{}, dnsRelaySlots)
 			for {
 				b := make([]byte, 4096)
 				size, src, err := dns.ReadFrom(b)
 				if err != nil {
 					return
 				}
+				ip, _, _ := net.SplitHostPort(src.String())
+				if !relayShare.acquire(ip) {
+					continue
+				}
 				select {
 				case slots <- struct{}{}:
 					go func() {
-						defer func() { <-slots }()
-						ip, _, _ := net.SplitHostPort(src.String())
+						defer func() { <-slots; relayShare.release(ip) }()
 						if answer != nil {
 							if resp, err := answer(b[:size], ip); err == nil {
 								_, _ = dns.WriteTo(resp, src)
@@ -126,6 +138,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 						}
 					}()
 				default:
+					relayShare.release(ip)
 				}
 			}
 		}()
