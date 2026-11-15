@@ -3,6 +3,7 @@
 package network
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Guard rules for guest networks, in nftables tables owned by jerboad and
@@ -29,12 +31,47 @@ import (
 // Installing the guard is best-effort: without nft the daemon logs a warning
 // and runs without it. IPv4 forwarding stays enabled host-wide, as routing
 // guest traffic needs it.
+//
+// The tables can disappear behind the daemon: "flush ruleset", the first line
+// of the stock /etc/nftables.conf, removes them on every start or reload of
+// nftables.service. WatchGuard checks the kernel and reinstalls them, and a
+// bridge only gets route_localnet while the loopback drop is verifiably
+// loaded (see EnsureGuard and nftNAT.prepareBridge).
 const guardTable = "jerboa_guard"
 
 var guard struct {
 	mu        sync.Mutex
 	installed bool
-	bridges   map[string]bool
+	// dnsIP is the guest DNS address InstallGuard was given, kept so the
+	// guard can be reinstalled; empty until InstallGuard is called.
+	dnsIP   string
+	bridges map[string]bool
+	// taps holds the set elements GuardTap bound to each tap, so a
+	// reinstall restores the bindings of the guests that are running.
+	taps map[string]string
+}
+
+// Test seams: the nft calls of the guard, and the check that it is loaded.
+var (
+	guardNft   = runNft
+	guardProbe = probeGuard
+)
+
+// probeGuard reports whether the loopback drop and the bridge table of the
+// guard are loaded, asking the kernel rather than trusting guard.installed.
+func probeGuard() error {
+	// One list command per run: nft 1.0.9 fails a script holding two.
+	if _, err := nftOutput("list table bridge " + guardTable + "\n"); err != nil {
+		return fmt.Errorf("guard: tables not loaded: %w", err)
+	}
+	out, err := nftOutput("list chain inet " + guardTable + " prerouting\n")
+	if err != nil {
+		return fmt.Errorf("guard: tables not loaded: %w", err)
+	}
+	if !strings.Contains(out, "ip daddr 127.0.0.0/8 drop") {
+		return errors.New("guard: loopback drop rule missing")
+	}
+	return nil
 }
 
 func guardRuleset(dnsIP string) string {
@@ -92,22 +129,34 @@ func InstallGuard(dnsIP string) error {
 	if parsed == nil || parsed.To4() == nil {
 		return fmt.Errorf("guard: %q is not a valid IPv4 address", dnsIP)
 	}
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	guard.dnsIP = parsed.String()
 	if _, err := exec.LookPath("nft"); err != nil {
 		return errors.New("guard: nft not found")
 	}
-	guard.mu.Lock()
-	defer guard.mu.Unlock()
+	return installGuardLocked(guard.dnsIP)
+}
+
+// installGuardLocked installs the guard tables for dnsIP and restores the tap
+// bindings GuardTap recorded. guard.mu must be held.
+func installGuardLocked(dnsIP string) error {
 	script := "table inet " + guardTable + "\ndelete table inet " + guardTable + "\n" +
 		"add table bridge " + guardTable + "\n" +
 		"add chain bridge " + guardTable + " prerouting\n" +
 		"flush chain bridge " + guardTable + " prerouting\n" +
 		"delete chain bridge " + guardTable + " prerouting\n" +
-		guardRuleset(parsed.String())
+		guardRuleset(dnsIP)
 	bridges := existingBridges()
 	for _, b := range bridges {
 		script += bridgeIsolationRule(b)
 	}
-	if err := runNft(script); err != nil {
+	// Bindings of running guests: the bridge table keeps them across a
+	// daemon restart, but not across a flush of the whole ruleset.
+	for _, elems := range guard.taps {
+		script += prefixLines(elems, "add ")
+	}
+	if err := guardNft(script); err != nil {
 		return fmt.Errorf("guard: %w", err)
 	}
 	guard.installed = true
@@ -145,7 +194,7 @@ func GuardBridge(bridge string) error {
 	if !guard.installed || guard.bridges[bridge] {
 		return nil
 	}
-	if err := runNft(bridgeIsolationRule(bridge)); err != nil {
+	if err := guardNft(bridgeIsolationRule(bridge)); err != nil {
 		return fmt.Errorf("guard bridge %s: %w", bridge, err)
 	}
 	guard.bridges[bridge] = true
@@ -181,6 +230,12 @@ func GuardTap(tap, mac, ip string) error {
 	}
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
+	// Remembered even while the guard is not installed, so installing it
+	// later binds this guest too.
+	if guard.taps == nil {
+		guard.taps = make(map[string]string)
+	}
+	guard.taps[tap] = elems
 	if !guard.installed {
 		return nil
 	}
@@ -189,10 +244,11 @@ func GuardTap(tap, mac, ip string) error {
 	// bindings.
 	for _, l := range strings.SplitAfter(elems, "\n") {
 		if l != "" {
-			_ = runNft("delete " + l)
+			_ = guardNft("delete " + l)
 		}
 	}
-	if err := runNft(prefixLines(elems, "add ")); err != nil {
+	if err := guardNft(prefixLines(elems, "add ")); err != nil {
+		delete(guard.taps, tap)
 		return fmt.Errorf("guard tap %s: %w", tap, err)
 	}
 	return nil
@@ -206,12 +262,75 @@ func UnguardTap(tap, mac, ip string) {
 	}
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
+	if guard.taps[tap] == elems {
+		delete(guard.taps, tap)
+	}
 	if !guard.installed {
 		return
 	}
-	if err := runNft(prefixLines(reverseLines(elems), "delete ")); err != nil {
+	if err := guardNft(prefixLines(reverseLines(elems), "delete ")); err != nil {
 		slog.Debug("guard: unguard tap", "tap", tap, "err", err)
 	}
+}
+
+// EnsureGuard reports whether the guard is loaded in the kernel, and
+// reinstalls it (tap bindings included) when its tables were removed behind
+// the daemon or could not be installed at start. It fails when InstallGuard
+// was never called or the guard cannot be loaded.
+func EnsureGuard() error {
+	guard.mu.Lock()
+	defer guard.mu.Unlock()
+	if guard.dnsIP == "" {
+		return errors.New("guard: not configured")
+	}
+	err := guardProbe()
+	if err == nil {
+		return nil
+	}
+	if guard.installed {
+		slog.Warn("guard: tables were removed from the kernel; reinstalling", "err", err)
+	}
+	guard.installed = false
+	if err := installGuardLocked(guard.dnsIP); err != nil {
+		return err
+	}
+	if err := guardProbe(); err != nil {
+		guard.installed = false
+		return err
+	}
+	slog.Info("guard: installed")
+	return nil
+}
+
+// GuardCheckInterval is how often jerboad checks that the guard is loaded.
+const GuardCheckInterval = 5 * time.Second
+
+// WatchGuard checks the guard every interval until ctx ends. It reinstalls
+// tables that were removed and, while they cannot be loaded, turns
+// route_localnet off on the bridges kernel NAT turned it on for, so no guest
+// reaches the host's loopback; route_localnet comes back with the guard.
+func WatchGuard(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			checkGuard()
+		}
+	}
+}
+
+// checkGuard is one round of WatchGuard.
+func checkGuard() {
+	if err := loopbackGuard(); err != nil {
+		if disableRouteLocalnet() {
+			slog.Error("guard: not loaded; route_localnet turned off on jerboa bridges, so host clients on 127.0.0.1 cannot reach kernel-NAT published ports until it is back", "err", err)
+		}
+		return
+	}
+	restoreRouteLocalnet()
 }
 
 func prefixLines(s, prefix string) string {

@@ -319,7 +319,15 @@ daemon installs nftables rules (tables `inet jerboa_guard` and
 `bridge jerboa_guard`) that keep guests away from the host's `127.0.0.1`, stop
 traffic routed between two Jerboa networks, let hosts outside reach guests only
 through published ports, and drop frames a guest sends with another guest's MAC
-or IP address. Without `nft` the daemon logs a warning and runs without them.
+or IP address. Without `nft` the daemon logs a warning and runs without them,
+and published ports then use the userspace proxy only. The daemon checks the
+tables every few seconds and reinstalls them when a firewall reload removed
+them (`flush ruleset`, as the stock `/etc/nftables.conf` does). Kernel NAT for
+published ports sets `route_localnet` on a bridge only while the loopback rule
+is loaded; while the tables cannot be reinstalled the daemon turns it off
+again: guests never reach the host's loopback, and if the `ip jerboa` NAT table
+is still loaded, host clients connecting through `127.0.0.1` cannot reach the
+ports it translates until the guard is back.
 IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
 are in use.
 

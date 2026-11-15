@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Kernel NAT for published ports, in an nftables table owned by jerboad and
@@ -129,15 +130,102 @@ func runNft(script string) error {
 	return nil
 }
 
+// nftOutput runs an nft script and returns what it printed.
+func nftOutput(script string) (string, error) {
+	cmd := exec.Command("nft", "-f", "-") //nolint:noctx // short-lived local tool
+	cmd.Stdin = strings.NewReader(script)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("nft: %w: %s", err, strings.TrimSpace(out.String()))
+	}
+	return out.String(), nil
+}
+
+// route_localnet lets the kernel route packets from 127.0.0.0/8 to a bridge,
+// and so also deliver packets a guest sends to 127.0.0.0/8 to host sockets:
+// only the loopback drop of the guard stops those. It is set only while the
+// guard is loaded, and WatchGuard turns it off while the guard is gone.
+var (
+	// Test seams: the guard check and the sysctl write.
+	loopbackGuard      = EnsureGuard
+	writeRouteLocalnet = func(bridge, value string) error {
+		p := "/proc/sys/net/ipv4/conf/" + bridge + "/route_localnet"
+		return os.WriteFile(p, []byte(value), 0o644) //nolint:gosec // sysctl file
+	}
+	// localnet holds the bridges kernel NAT set route_localnet on: true
+	// while it is on, false while WatchGuard keeps it off.
+	localnet = struct {
+		mu      sync.Mutex
+		bridges map[string]bool
+	}{bridges: map[string]bool{}}
+)
+
 func (nftNAT) prepareBridge(bridge string) error {
 	if strings.ContainsAny(bridge, "/.") || bridge == "" {
 		return fmt.Errorf("invalid bridge name %q", bridge)
 	}
-	p := "/proc/sys/net/ipv4/conf/" + bridge + "/route_localnet"
-	if err := os.WriteFile(p, []byte("1"), 0o644); err != nil { //nolint:gosec // sysctl file
+	localnet.mu.Lock()
+	defer localnet.mu.Unlock()
+	// Fail closed: without the guard a guest would reach the host's
+	// loopback, so the ports stay on the userspace proxy.
+	if err := loopbackGuard(); err != nil {
+		_ = writeRouteLocalnet(bridge, "0")
+		if _, ok := localnet.bridges[bridge]; ok {
+			localnet.bridges[bridge] = false
+		}
+		return fmt.Errorf("route_localnet on %s needs the loopback guard: %w", bridge, err)
+	}
+	if err := writeRouteLocalnet(bridge, "1"); err != nil {
 		return fmt.Errorf("route_localnet on %s: %w", bridge, err)
 	}
+	localnet.bridges[bridge] = true
 	return nil
+}
+
+// disableRouteLocalnet turns route_localnet off on every bridge kernel NAT
+// turned it on for, and reports whether it was on for one. A bridge that no
+// longer exists is forgotten.
+func disableRouteLocalnet() bool {
+	localnet.mu.Lock()
+	defer localnet.mu.Unlock()
+	changed := false
+	for b, on := range localnet.bridges {
+		err := writeRouteLocalnet(b, "0")
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			delete(localnet.bridges, b)
+		case err != nil:
+			slog.Error("guard: route_localnet could not be turned off", "bridge", b, "err", err)
+		default:
+			changed = changed || on
+			localnet.bridges[b] = false
+		}
+	}
+	return changed
+}
+
+// restoreRouteLocalnet turns route_localnet back on where disableRouteLocalnet
+// turned it off. The guard must be loaded.
+func restoreRouteLocalnet() {
+	localnet.mu.Lock()
+	defer localnet.mu.Unlock()
+	for b, on := range localnet.bridges {
+		if on {
+			continue
+		}
+		err := writeRouteLocalnet(b, "1")
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			delete(localnet.bridges, b)
+		case err != nil:
+			slog.Warn("guard: route_localnet could not be restored", "bridge", b, "err", err)
+		default:
+			localnet.bridges[b] = true
+			slog.Info("guard: route_localnet restored", "bridge", b)
+		}
+	}
 }
 
 func (n nftNAT) add(entries []natEntry) error {
