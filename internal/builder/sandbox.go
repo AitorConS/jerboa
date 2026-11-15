@@ -28,7 +28,7 @@ import (
 // directory, and a warning says so.
 type Sandbox struct {
 	// Off runs build steps directly on the host ([build] sandbox = false,
-	// which the CLI honours only with --allow-unsandboxed).
+	// which the CLI honors only with --allow-unsandboxed).
 	Off bool
 	// Sockets lists further Unix sockets, or directories of them, a step
 	// may not connect to: the endpoint the CLI reaches the daemon at.

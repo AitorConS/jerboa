@@ -219,8 +219,8 @@ Key flags:
 | `--sbom <file>` | Also write the image's CycloneDX SBOM to `<file>`. Every build stores one with the image; `jerboa images sbom <ref>` prints it |
 | `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
-| `--allow-unsandboxed` | Honour `[build] sandbox = false` from `unikernel.toml`. Without it a project that sets it fails to build |
-| `--allow-build-network` | Honour `[build] network = true` from `unikernel.toml`. Without it a project that sets it (and has `[build] run` commands) fails to build |
+| `--allow-unsandboxed` | Honor `[build] sandbox = false` from `unikernel.toml`. Without it a project that sets it fails to build |
+| `--allow-build-network` | Honor `[build] network = true` from `unikernel.toml`. Without it a project that sets it (and has `[build] run` commands) fails to build |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
 `-f/--file`. Relevant `[build]` keys:

@@ -423,8 +423,8 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
 	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip optional CLI preflight diagnostics (ELF/platform and final guest validation remain mandatory)")
 	cmd.Flags().BoolVar(&smoke, "smoke", false, "boot the image once after building to verify it starts (stops and removes the test VM afterwards)")
-	cmd.Flags().BoolVar(&allow.unsandboxed, "allow-unsandboxed", false, "honour [build] sandbox = false from unikernel.toml: run the project's build steps directly on this machine, unconfined")
-	cmd.Flags().BoolVar(&allow.network, "allow-build-network", false, "honour [build] network = true from unikernel.toml: let the project's [build] run commands reach the network")
+	cmd.Flags().BoolVar(&allow.unsandboxed, "allow-unsandboxed", false, "honor [build] sandbox = false from unikernel.toml: run the project's build steps directly on this machine, unconfined")
+	cmd.Flags().BoolVar(&allow.network, "allow-build-network", false, "honor [build] network = true from unikernel.toml: let the project's [build] run commands reach the network")
 	return cmd
 }
 
