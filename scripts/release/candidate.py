@@ -45,6 +45,15 @@ def run(*args, **kwargs):
     return subprocess.check_output([str(a) for a in args], **kwargs)
 
 
+def built_binary_env():
+    """Environment for running a downloaded release binary.
+
+    assemble runs in the step that holds the signing seed; the binaries it
+    executes to check their version do not need it, or any other credential."""
+    return {k: v for k, v in os.environ.items()
+            if k != 'JERBOA_MINISIGN_SEED' and not re.search(r'TOKEN|SECRET|PASSWORD|_KEY$', k)}
+
+
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +196,7 @@ def verify_linux_versions(manifest, payload, expected):
         asset = manifest['components'][name]['platforms']['linux-amd64']
         binary = payload / asset['url'][len(BASE)+1:]
         binary.chmod(0o755)
-        output = run(binary.resolve(), '--version', text=True)
+        output = run(binary.resolve(), '--version', text=True, env=built_binary_env())
         if expected not in output.split():
             raise ValueError('Binary version mismatch: ' + output)
     distro = manifest['components']['distro']['url'][len(BASE)+1:]
@@ -209,7 +218,7 @@ def verify_linux_versions(manifest, payload, expected):
         with archive.extractfile(members[0]) as source:
             binary.write_bytes(source.read())
         binary.chmod(0o755)
-        output=run(binary,'--version',text=True)
+        output=run(binary,'--version',text=True,env=built_binary_env())
         if expected not in output.split():
             raise ValueError('Distro binary version mismatch: ' + output)
 

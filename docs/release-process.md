@@ -151,6 +151,19 @@ the same identity again. The complete rootfs and installers are also hashed.
 Promotion uploads the candidate's existing bytes, including new kernel paths,
 before updating stable. It neither builds a kernel nor resolves one from stable.
 
+Artifacts of a run share one namespace, which the run's self-hosted KVM jobs can
+also write to, and are downloaded by name. Each GitHub-hosted job that uploads an
+artifact a later trusted job uses therefore records its digest
+(`scripts/release/artifact-digest.py record`) as a job output, which no other job
+can set, and the consumer checks the download against it before using, executing
+or signing anything (`verify`; `validate.yml` exports `kernel_linux_sha256` for
+`kernel-linux`). Assembly downloads every artifact by its own name, never by
+pattern. The KVM runner's `validated-kernel` is not trusted on its own: it must
+equal the verified `selected-kernel` apart from its boot report. A missing or
+different digest fails the job; rebuild the candidate rather than re-running only
+the consumer. The release binaries assembly runs for their version check get an
+environment without the signing seed or other credentials.
+
 ## Reattempts and partial failures
 
 - Before channel promotion: stable stays at the previous version. Re-run the failed
