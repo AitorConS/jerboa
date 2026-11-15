@@ -159,12 +159,7 @@ func noHomeDir() string {
 // Load reads the config file at path. Returns defaults if the file does not exist.
 func Load(path string) (*Config, error) {
 	cfg := &Config{}
-	if strings.HasPrefix(path, os.TempDir()) {
-		if err := checkOwner(path); err != nil {
-			return nil, err
-		}
-	}
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path)
 	if os.IsNotExist(err) {
 		return cfg, nil
 	}
@@ -179,6 +174,22 @@ func Load(path string) (*Config, error) {
 		cfg.Hypervisor = ""
 	}
 	return cfg, nil
+}
+
+// readConfigFile reads path. Files in the shared temp directory are read only
+// if they are private to this user (see readPrivate); inside the no-home
+// fallback the directories leading to the file must be private too, since
+// another user may have created them first.
+func readConfigFile(path string) ([]byte, error) {
+	tmp := os.TempDir()
+	if !strings.HasPrefix(path, tmp) {
+		return os.ReadFile(path)
+	}
+	path = filepath.Clean(path)
+	if fallback := noHomeDir(); path == fallback || strings.HasPrefix(path, fallback+string(filepath.Separator)) {
+		return readPrivate(tmp, path)
+	}
+	return readPrivate(filepath.Dir(path), path)
 }
 
 // Save writes cfg to path, creating parent directories as needed.
