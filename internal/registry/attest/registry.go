@@ -84,21 +84,21 @@ func Check(ctx context.Context, cl *client.Client, cdn string, ref naming.ImageR
 		}
 		listed = append(listed, Listed{Identity: a.Identity, Entity: b})
 	}
-	return VerifyListed(trusted, subject, want, listed)
+	return VerifyListed(trusted, SubjectName(ref), subject, want, listed)
 }
 
 // VerifyListed verifies attestations of subject against want, or, when want
 // is nil, each against the workflow the registry recorded for it, so its
 // certificate must name the workflow whose OIDC token uploaded it. It fails
 // unless at least one verifies; results are in the order listed, oldest
-// first.
-func VerifyListed(trusted root.TrustedMaterial, subject string, want *Identity, listed []Listed) ([]Result, error) {
+// first. name is the SubjectName of the repository (see Verify).
+func VerifyListed(trusted root.TrustedMaterial, name, subject string, want *Identity, listed []Listed) ([]Result, error) {
 	if want != nil {
 		entities := make([]verify.SignedEntity, len(listed))
 		for i, l := range listed {
 			entities[i] = l.Entity
 		}
-		return Verify(trusted, subject, *want, entities)
+		return Verify(trusted, name, subject, *want, entities)
 	}
 	if len(listed) == 0 {
 		return nil, fmt.Errorf("%s %w", subject, ErrUnsigned)
@@ -116,7 +116,7 @@ func VerifyListed(trusted root.TrustedMaterial, subject string, want *Identity, 
 			errs = append(errs, err)
 			continue
 		}
-		res, err := Verify(trusted, subject, id, []verify.SignedEntity{l.Entity})
+		res, err := Verify(trusted, name, subject, id, []verify.SignedEntity{l.Entity})
 		if err != nil {
 			errs = append(errs, err)
 			continue

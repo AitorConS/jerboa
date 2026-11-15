@@ -228,7 +228,8 @@ Upload, after the push:
 Verification (`jerboa registry verify`, and every pull of an image that has attestations):
 1. Read the index of the subject's attestations, then each bundle, checked against its SHA-256; at most the 32 newest.
 2. Verify each bundle against the Sigstore trusted root (from its TUF repository): the certificate chains to Fulcio and has a certificate transparency entry, the signature has a Rekor entry and a trusted time, and the statement's subject is the digest.
-3. Check the certificate's identity: issuer `https://token.actions.githubusercontent.com` and a SAN of `https://github.com/<owner>/<repo>/<workflow>@<ref>` matching the expected identity: the puller's (`--identity`, a policy rule, or the signer remembered for the repository), else the identity the registry listed for that attestation.
+3. Check the statement: exactly one subject, named `<registry>/<ns>/<repo>` of the repository being pulled, and a predicate type of `https://slsa.dev/provenance/v1` or `https://cyclonedx.org/bom`. A statement signed for another repository does not count, even when the same workflow signs both.
+4. Check the certificate's identity: issuer `https://token.actions.githubusercontent.com`, a SAN of `https://github.com/<owner>/<repo>/<workflow>@<ref>` and a source repository claim (OID 1.3.6.1.4.1.57264.1.12) of `https://github.com/<owner>/<repo>`, matching the expected identity: the puller's (`--identity`, a policy rule, or the signer remembered for the repository), else the identity the registry listed for that attestation. The SAN alone names only the workflow file; a job of another repository that calls it as a reusable workflow carries the same SAN with its own repository as the source, and is refused.
 
 At least one attestation must verify; the others count for nothing. The
 registry's record and the certificate are independent: the first comes from
