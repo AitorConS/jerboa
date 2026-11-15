@@ -31,6 +31,41 @@ func TestQEMUManager_Start_AttachMode(t *testing.T) {
 	<-v.Done()
 }
 
+// With no private runtime dir to put the QMP socket in, Start refuses the VM
+// instead of using a directory someone else controls.
+func TestQEMUManager_Start_NoPrivateRuntimeDir(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores the read-only temp dir this test relies on")
+	}
+	runtimeDir.mu.Lock()
+	saved := runtimeDir.path
+	runtimeDir.path = ""
+	runtimeDir.mu.Unlock()
+	t.Cleanup(func() {
+		runtimeDir.mu.Lock()
+		runtimeDir.path = saved
+		runtimeDir.mu.Unlock()
+	})
+	base := t.TempDir()
+	require.NoError(t, os.Symlink(t.TempDir(), expectedRuntimeDir(base, os.Getuid())))
+	require.NoError(t, os.Chmod(base, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(base, 0o700) })
+	t.Setenv("TMPDIR", base)
+
+	mgr := fakeManager(true)
+	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M"})
+	require.NoError(t, err)
+	err = mgr.Start(context.Background(), v.ID)
+	require.ErrorContains(t, err, "runtime dir")
+	require.Equal(t, StateCreated, v.GetState())
+
+	// Nothing was cached: once the temp dir is usable again, Start works.
+	require.NoError(t, os.Chmod(base, 0o700))
+	require.NoError(t, mgr.Start(context.Background(), v.ID))
+	require.NoError(t, mgr.Stop(context.Background(), v.ID))
+	<-v.Done()
+}
+
 func TestQEMUManager_Start_StoreSave(t *testing.T) {
 	store := NewMemoryStore()
 	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(fakeQEMUCmd(true)), WithStore(store))

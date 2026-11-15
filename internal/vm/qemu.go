@@ -149,6 +149,11 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	if err := validatePortNetwork(cfg); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
+	// The QMP socket (and, on macOS, the network socket) live in the private
+	// runtime dir; without one the VM is not started.
+	if _, err := vmRuntimeDir(); err != nil {
+		return fmt.Errorf("qemu start %s: %w", id, err)
+	}
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("qemu start %s: %w", id, err)
 	}
