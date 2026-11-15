@@ -235,7 +235,7 @@ func verifySubject(ctx context.Context, out io.Writer, ref naming.ImageReference
 			return nil, err
 		}
 		signer.Ref = ""
-		fmt.Fprintf(out, "Remembering %s as the signer of %s: later pulls require it\n", signer, repo)
+		fmt.Fprintf(out, "Remembering %s as the signer of %s: later pulls require it\n", termField(fmt.Sprint(signer)), repo)
 	}
 	return results, nil
 }
@@ -244,9 +244,9 @@ func verifySubject(ctx context.Context, out io.Writer, ref naming.ImageReference
 func printVerified(out io.Writer, subject string, results []attest.Result) {
 	fmt.Fprintf(out, "Verified %s\n", subject)
 	for _, r := range results {
-		fmt.Fprintf(out, "  %-10s signed by %s\n", predicateName(r.PredicateType), r.Signer)
+		fmt.Fprintf(out, "  %-10s signed by %s\n", termField(predicateName(r.PredicateType)), termField(fmt.Sprint(r.Signer)))
 		if r.Commit != "" || r.Run != "" {
-			fmt.Fprintf(out, "  %-10s commit %s, run %s\n", "", r.Commit, r.Run)
+			fmt.Fprintf(out, "  %-10s commit %s, run %s\n", "", termField(r.Commit), termField(r.Run))
 		}
 	}
 }
@@ -325,7 +325,7 @@ publisher, or an unsigned image, is refused (~/.jerboa/signers.json).`,
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "REPOSITORY\tSIGNER")
 			for _, e := range list {
-				fmt.Fprintf(w, "%s\t%s\n", e[0], e[1])
+				fmt.Fprintf(w, "%s\t%s\n", termField(e[0]), termField(e[1]))
 			}
 			return w.Flush()
 		},

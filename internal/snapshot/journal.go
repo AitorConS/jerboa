@@ -56,6 +56,11 @@ func (s *Store) WriteOperation(op Operation) error {
 	if err != nil {
 		return fmt.Errorf("journal operation: %w", err)
 	}
+	// Reading the journal removes the temporary files of interrupted writes,
+	// so a write must not overlap a read or its own temporary file vanishes
+	// before the rename.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_ = os.Remove(path + ".tmp")
 	if err := writeFileSync(path, data); err != nil {
 		return fmt.Errorf("snapshot journal: %w", err)

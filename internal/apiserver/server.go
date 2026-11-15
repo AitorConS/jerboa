@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -91,6 +92,8 @@ type Server struct {
 	// concurrent runs cannot both register the same name.
 	nameMu     sync.Mutex
 	resourceMu sync.Mutex
+	// paths is where the daemon's data lives, for System.DF/Prune/Check.
+	paths SystemPaths
 }
 
 // createUnique registers a VM, rejecting a name already held by another VM
@@ -158,13 +161,20 @@ func NewServer(mgr vm.Manager, netStore *network.Store, endpoint string, shutdow
 func (s *Server) Serve(ctx context.Context) error {
 	if s.netStore != nil {
 		live := make(map[string]bool)
+		leases := make(map[string][]string)
 		for _, v := range s.mgr.List() {
 			live[v.ID] = true
+			if v.Cfg.NetworkName != "" && v.Cfg.IPAddress != "" {
+				leases[v.Cfg.NetworkName] = append(leases[v.Cfg.NetworkName], v.Cfg.IPAddress)
+			}
 		}
 		if err := s.netStore.RecoverReleases(live); err != nil {
 			_ = s.listener.Close()
 			return fmt.Errorf("recover network leases: %w", err)
 		}
+		// A lease file lost to a power cut was rebuilt empty: every address a
+		// registered VM holds goes back in before any request can take it.
+		s.netStore.ReclaimLeases(leases)
 	}
 	go func() {
 		<-ctx.Done()
@@ -519,6 +529,12 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleSnapshotList()
 	case "Snapshot.Inspect":
 		return s.handleSnapshotInspect(req.Params)
+	case "System.DF":
+		return s.handleSystemDF()
+	case "System.Prune":
+		return s.handleSystemPrune(ctx, req.Params)
+	case "System.Check":
+		return s.handleSystemCheck(req.Params)
 	case "Snapshot.Remove":
 		return s.handleSnapshotRemove(req.Params)
 	default:
@@ -598,17 +614,25 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 			if err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 			}
+			if p.ExpectedDigest != "" && m.DiskDigest != p.ExpectedDigest {
+				return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("image %s is now %s, not the verified %s", p.Image, m.DiskDigest, p.ExpectedDigest)}
+			}
 			resolvedManifest = &m
 			imagePath = disk
 			imageDigest = m.DiskDigest
 			p.Image = imageDigest
 		} else {
+			if p.ExpectedDigest != "" {
+				return nil, &api.RPCError{Code: -32602, Message: "expected_digest applies only to an image of the store"}
+			}
 			resolved, err := s.resolveImageRef(p.Image)
 			if err != nil {
 				return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 			}
 			imagePath = resolved
 		}
+	} else if p.ExpectedDigest != "" {
+		return nil, &api.RPCError{Code: -32602, Message: "expected_digest applies only to an image of the store"}
 	}
 	if (p.Image == "" && imagePath != "") || (looksLikePath(p.Image) && !s.isStoredImage(p.Image)) {
 		checked, err := hostImagePathCheck(ctx, imagePath)
@@ -828,6 +852,11 @@ func (s *Server) autoRemoveSession(ctx context.Context, v *vm.VM, session *vm.At
 func (s *Server) removeVM(ctx context.Context, id string) error {
 	s.resourceMu.Lock()
 	defer s.resourceMu.Unlock()
+	return s.removeVMLocked(ctx, id)
+}
+
+// removeVMLocked is removeVM for a caller that already holds resourceMu.
+func (s *Server) removeVMLocked(ctx context.Context, id string) error {
 	v, err := s.mgr.Get(id)
 	if err != nil {
 		return err
@@ -840,7 +869,8 @@ func (s *Server) removeVM(ctx context.Context, id string) error {
 			}
 		}
 		if _, err := s.netStore.Get(v.Cfg.NetworkName); err != nil {
-			if !os.IsNotExist(err) {
+			// The store wraps the error, which os.IsNotExist does not see through.
+			if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
 			release = false

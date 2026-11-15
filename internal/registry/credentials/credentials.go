@@ -6,6 +6,7 @@
 package credentials
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 
 	"github.com/AitorConS/jerboa/internal/naming"
 )
@@ -107,7 +110,13 @@ func Load() (File, error) {
 	if err != nil {
 		return f, fmt.Errorf("credentials: %w", err)
 	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		// What a power cut leaves of a file that was being created: no
+		// logins, not a file that blocks every later login.
+		return f, nil
+	}
 	if err := json.Unmarshal(data, &f); err != nil {
+		f.Registries = map[string]Entry{}
 		return f, fmt.Errorf("credentials: %s: %w", p, err)
 	}
 	if f.Registries == nil {
@@ -129,23 +138,7 @@ func (f File) Save() error {
 	if err != nil {
 		return fmt.Errorf("credentials: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(p), ".credentials-*")
-	if err != nil {
-		return fmt.Errorf("credentials: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("credentials: %w", err)
-	}
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("credentials: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("credentials: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), p); err != nil {
+	if err := durable.WriteFile(p, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("credentials: %w", err)
 	}
 	return nil

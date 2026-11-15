@@ -239,8 +239,7 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	}
 	stampPath := filepath.Join(dir, "node_modules", ".jerboa-deps-stamp")
 	stamp := hex.EncodeToString(nodeHash.Sum(nil))
-	previous, _ := os.ReadFile(stampPath)
-	if string(previous) != stamp {
+	if readStamp(stampPath) != stamp {
 		// npm ci is faster and reproducible when a lockfile exists; --omit=dev
 		// replaces the deprecated --production. --no-audit/--no-fund skip
 		// network round-trips that only produce advisory output.
@@ -269,7 +268,7 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 		if err := os.MkdirAll(filepath.Dir(stampPath), 0o755); err != nil {
 			return BuildResult{}, fmt.Errorf("build dependencies: %w", err)
 		}
-		if err := os.WriteFile(stampPath, []byte(stamp), 0o644); err != nil {
+		if err := writeStamp(stampPath, stamp); err != nil {
 			return BuildResult{}, fmt.Errorf("build dependencies: %w", err)
 		}
 	}
@@ -280,6 +279,58 @@ func (n *NodeDriver) Build(ctx context.Context, dir string, opts Options) (Build
 		Entrypoint: entrypoint,
 		Packages:   []string{pkgRef},
 	}, nil
+}
+
+// readStamp returns the dependency stamp at path, or "" when there is none
+// or the entry is not a regular file (a build step may have left a link
+// there).
+func readStamp(path string) string {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // the project's own stamp
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// writeStamp records a dependency stamp at path without following links.
+// Confined build steps write to the directory the stamp lives in, and the
+// stamp is written from outside the sandbox, so a link the steps left at
+// path, or in place of its directory, must not send the write elsewhere:
+// the directory must be a real one, and the stamp goes to a new file in it
+// that is then renamed over whatever entry is at path.
+func writeStamp(path, stamp string) error {
+	dir := filepath.Dir(path)
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("write deps stamp: %w", err)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("write deps stamp: %s is not a directory", dir)
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(path)+"-*")
+	if err != nil {
+		return fmt.Errorf("write deps stamp: %w", err)
+	}
+	tmp := f.Name()
+	_, err = f.WriteString(stamp)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, 0o644) //nolint:gosec // a stamp, like the rest of the project
+	}
+	if err == nil {
+		err = os.Rename(tmp, path)
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write deps stamp: %w", err)
+	}
+	return nil
 }
 
 // nodeEntrypoint determines the entrypoint script for the Node.js project.
@@ -392,7 +443,7 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 		}
 		sum := sha256.Sum256(append([]byte(pythonVersion+"\n"+wheelPlatform+"\n"), reqData...))
 		stamp := hex.EncodeToString(sum[:])
-		if prev, err := os.ReadFile(stampPath); err != nil || strings.TrimSpace(string(prev)) != stamp {
+		if strings.TrimSpace(readStamp(stampPath)) != stamp {
 			// Download wheels for the Linux guest architecture.
 			// The unikernel needs manylinux wheels, not
 			// Windows or macOS ones. --only-binary :all: prevents pip from falling
@@ -452,8 +503,8 @@ func (p *PythonDriver) Build(ctx context.Context, dir string, opts Options) (Bui
 					return BuildResult{}, fmt.Errorf("build dependencies: %w", err)
 				}
 			}
-			if err := os.WriteFile(stampPath, []byte(stamp+"\n"), 0o644); err != nil {
-				return BuildResult{}, fmt.Errorf("python driver: write deps stamp: %w", err)
+			if err := writeStamp(stampPath, stamp+"\n"); err != nil {
+				return BuildResult{}, fmt.Errorf("python driver: %w", err)
 			}
 		}
 		// pip installs to packages/; Python's default sys.path doesn't include it
@@ -730,6 +781,12 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 		args = append(args, opts.Entrypoint)
 	}
 
+	// A binary left by an earlier build must not be taken for this one's if
+	// the compiler reports success without writing anything.
+	if err := os.Remove(output); err != nil && !os.IsNotExist(err) {
+		return BuildResult{}, fmt.Errorf("go build: remove previous binary: %w", err)
+	}
+
 	env := append(Env(platform.GoCrossCompileEnv()...), opts.Env...)
 	cmd, done, err := opts.Sandbox.Command(ctx, Step{Dir: dir, Network: true, Env: env}, "go", args...)
 	if err != nil {
@@ -742,6 +799,10 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 	done()
 	if err != nil {
 		return BuildResult{}, fmt.Errorf("go build: %w", err)
+	}
+
+	if _, err := os.Stat(output); err != nil {
+		return BuildResult{}, fmt.Errorf("go build: the compiler produced no binary (is the entrypoint a main package?): %w", err)
 	}
 
 	abs, err := filepath.Abs(output)

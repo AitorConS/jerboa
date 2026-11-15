@@ -135,6 +135,40 @@ func TestStore_List(t *testing.T) {
 	require.Len(t, list, 2)
 }
 
+// An image directory deleted behind the store leaves its ref in refs.json.
+// That used to make List fail outright, hiding every image that was intact.
+func TestStore_ListSkipsRefWhoseImageIsGone(t *testing.T) {
+	s := makeStore(t)
+
+	disk1 := makeDiskFile(t)
+	disk2 := makeDiskFile(t)
+	require.NoError(t, os.WriteFile(disk2, []byte("different content"), 0o644))
+	require.NoError(t, s.Put("kept", "latest", validManifest(), disk1))
+	require.NoError(t, s.Put("gone", "latest", validManifest(), disk2))
+
+	_, gonePath, err := s.Resolve("gone:latest")
+	require.NoError(t, err)
+	goneDir := filepath.Dir(gonePath)
+	require.NoError(t, os.Chmod(gonePath, 0o644))
+	require.NoError(t, os.RemoveAll(goneDir))
+
+	list, err := s.List()
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Equal(t, "kept", list[0].Name)
+
+	// Prune drops the stale ref and leaves the intact image alone.
+	removed, err := s.PruneUnreferenced(nil)
+	require.NoError(t, err)
+	require.Empty(t, removed)
+	refs, err := s.readRefs()
+	require.NoError(t, err)
+	require.Len(t, refs, 1)
+	require.Contains(t, refs, "kept:latest")
+	_, _, err = s.Get("kept:latest")
+	require.NoError(t, err)
+}
+
 func TestStore_List_empty(t *testing.T) {
 	s := makeStore(t)
 	list, err := s.List()
@@ -291,9 +325,14 @@ func TestStore_readRefs_parse_error(t *testing.T) {
 	require.NoError(t, os.MkdirAll(root, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "refs.json"), []byte("{bad"), 0o644))
 
+	// An unreadable index is rebuilt (here, to an empty store) and set aside.
 	s := &Store{root: root}
-	_, err := s.List()
-	require.Error(t, err)
+	list, err := s.List()
+	require.NoError(t, err)
+	require.Empty(t, list)
+	saved, err := os.ReadFile(filepath.Join(root, "refs.json.corrupt"))
+	require.NoError(t, err)
+	require.Equal(t, "{bad", string(saved))
 }
 
 func TestStore_writeRefs_error(t *testing.T) {
@@ -441,6 +480,52 @@ func TestStore_TagsSharingDiskKeepOwnManifest(t *testing.T) {
 	require.NoError(t, s.Remove("api:v1"))
 	_, _, err = s.Get("worker:v1")
 	require.NoError(t, err)
+}
+
+// A pull of another repository's recipe for a disk already stored (a cached
+// pull, PutStored) or a later build of the same disk must not change what a
+// digest reference resolves to: config and recipe are not part of the disk
+// digest. Each tag keeps its own manifest either way.
+func TestStore_DigestReferenceKeepsTheFirstManifest(t *testing.T) {
+	for _, laterStored := range []bool{true, false} {
+		s := makeStore(t)
+		write := func() string {
+			p := filepath.Join(t.TempDir(), "disk.img")
+			require.NoError(t, os.WriteFile(p, []byte("one disk, two recipes"), 0o600))
+			return p
+		}
+		own := validManifest()
+		own.Config.Memory, own.Config.Ports, own.Recipe = "128M", []string{"8080:80"}, "sha256:"+strings.Repeat("a", 64)
+		a, err := s.PutMove("registry.jerboa.dev/acme/app", "v1", own, write())
+		require.NoError(t, err)
+
+		foreign := validManifest()
+		foreign.Config.Memory, foreign.Config.Ports, foreign.Recipe = "8G", []string{"22:22"}, "sha256:"+strings.Repeat("b", 64)
+		foreign.Config.MinDiskSize = 1 << 40
+		if laterStored {
+			foreign.DiskDigest = a.DiskDigest
+			_, ok, err := s.PutStored("registry.example.com/evil/app", "v1", foreign)
+			require.NoError(t, err)
+			require.True(t, ok)
+		} else {
+			_, err := s.PutMove("registry.example.com/evil/app", "v1", foreign, write())
+			require.NoError(t, err)
+		}
+
+		byDigest, _, err := s.Resolve(a.DiskDigest)
+		require.NoError(t, err)
+		require.Equal(t, "128M", byDigest.Config.Memory)
+		require.Equal(t, []string{"8080:80"}, byDigest.Config.Ports)
+		require.Equal(t, own.Recipe, byDigest.Recipe)
+		require.Zero(t, byDigest.Config.MinDiskSize)
+
+		m, _, err := s.Resolve("registry.jerboa.dev/acme/app:v1")
+		require.NoError(t, err)
+		require.Equal(t, "128M", m.Config.Memory)
+		m, _, err = s.Resolve("registry.example.com/evil/app:v1")
+		require.NoError(t, err)
+		require.Equal(t, "8G", m.Config.Memory, "the other tag keeps its own manifest")
+	}
 }
 
 // Images stored before per-tag manifests existed still resolve.

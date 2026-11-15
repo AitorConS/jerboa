@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 )
 
 // parseEndpoint splits a daemon endpoint into a net network and address.
@@ -48,8 +49,8 @@ func Listen(endpoint string) (net.Listener, error) {
 		return nil, err
 	}
 	if network == "unix" {
-		if err := os.Remove(address); err != nil && !os.IsNotExist(err) {
-			return nil, fmt.Errorf("api server remove stale socket: %w", err)
+		if err := clearStaleSocket(address); err != nil {
+			return nil, err
 		}
 	}
 	restoreUmask := func() {}
@@ -78,6 +79,36 @@ func Listen(endpoint string) (net.Listener, error) {
 		}
 	}
 	return l, nil
+}
+
+// staleProbe bounds the check for a daemon behind an existing socket file.
+const staleProbe = 2 * time.Second
+
+// clearStaleSocket removes the socket file a daemon that is gone left
+// behind. It refuses to remove a socket something still answers on (a
+// second daemon would start, and the first keep running unreachable with
+// its VMs) and anything that is not a socket (a mistyped --socket must not
+// delete a file).
+func clearStaleSocket(address string) error {
+	fi, err := os.Lstat(address)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("api server check socket %s: %w", address, err)
+	}
+	if fi.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("api server: %s exists and is not a socket; refusing to replace it", address)
+	}
+	d := net.Dialer{Timeout: staleProbe}
+	if conn, dialErr := d.Dial("unix", address); dialErr == nil { //nolint:noctx // bounded by the dialer's timeout
+		_ = conn.Close()
+		return fmt.Errorf("api server: a daemon is already listening on %s", address)
+	}
+	if err := os.Remove(address); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("api server remove stale socket: %w", err)
+	}
+	return nil
 }
 
 // dialArgs splits an already-validated endpoint into net.Dial arguments. Used

@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -66,10 +67,24 @@ func TestRestartVM_BackoffCalc(t *testing.T) {
 		{10, 30 * time.Second},
 	}
 	for _, tc := range cases {
-		backoff := time.Duration(1<<uint(tc.attempt)) * time.Second
-		if backoff > 30*time.Second {
-			backoff = 30 * time.Second
-		}
-		require.Equal(t, tc.expected, backoff, "attempt %d", tc.attempt)
+		require.Equal(t, tc.expected, restartBackoff(tc.attempt), "attempt %d", tc.attempt)
 	}
+}
+
+// The restart count is unbounded with MaxRetries 0; an unclamped shift
+// wrapped to a negative or zero delay from count 34 on.
+func TestRestartBackoff_NeverOverflows(t *testing.T) {
+	prev := time.Duration(0)
+	for count := 0; count <= 100; count++ {
+		got := restartBackoff(count)
+		require.Positive(t, got, "count %d", count)
+		require.LessOrEqual(t, got, 30*time.Second, "count %d", count)
+		require.GreaterOrEqual(t, got, prev, "count %d: backoff must not decrease", count)
+		if count >= 5 {
+			require.Equal(t, 30*time.Second, got, "count %d", count)
+		}
+		prev = got
+	}
+	require.Equal(t, 30*time.Second, restartBackoff(math.MaxInt))
+	require.Equal(t, time.Second, restartBackoff(-1))
 }

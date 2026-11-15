@@ -133,6 +133,10 @@ jobs:
         GH_REPO: ${{ github.repository }}
         JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
         KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
+        # Serial of the last published index, kept as a repository variable
+        # that release-asset writers cannot change: package-index.py refuses
+        # to extend a base index older than it. Raise it after each publish.
+        PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL }}
       run: |
         set -euo pipefail
         mkdir -p dist/publish
@@ -140,7 +144,7 @@ jobs:
           # Extend only an index this workflow signed: anyone who can edit
           # release assets could otherwise have an entry signed with it.
           gh release download pkg-index --pattern packages.json --pattern packages.json.minisig --dir dist/publish
-          bin/jerboa-verify dist/publish/packages.json
+          bin/jerboa-verify -purpose packages dist/publish/packages.json
         else
           gh release create pkg-index --title "Package index" --notes "Runtime package archives and index."
         fi
@@ -155,13 +159,14 @@ jobs:
         # Sign the exact bytes that are uploaded, and check the signature with
         # the key clients embed before publishing either file.
         bin/jerboa-sign -in dist/publish/packages.json -key-id "$KEY_ID" -comment "packages:$GITHUB_RUN_ID"
-        bin/jerboa-verify dist/publish/packages.json
+        bin/jerboa-verify -purpose packages dist/publish/packages.json
         gh release upload pkg-index dist/publish/packages.json dist/publish/packages.json.minisig --clobber
         base="https://github.com/$GH_REPO/releases/download/pkg-index"
         curl --fail --location --retry 5 --retry-all-errors "$base/packages.json" -o dist/public/packages.json --create-dirs
         curl --fail --location --retry 5 --retry-all-errors "$base/packages.json.minisig" -o dist/public/packages.json.minisig
         cmp dist/publish/packages.json dist/public/packages.json
-        bin/jerboa-verify dist/public/packages.json
+        bin/jerboa-verify -purpose packages dist/public/packages.json
+        echo "Package index serial: $(jq -r '.serial // "none"' dist/publish/packages.json) (set PKG_INDEX_MIN_SERIAL to it)" >> "$GITHUB_STEP_SUMMARY"
   select:
     runs-on: ubuntu-latest
     outputs:

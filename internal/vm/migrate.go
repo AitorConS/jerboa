@@ -48,9 +48,36 @@ func (m *Migrator) Migrate() (int, error) {
 			continue
 		}
 
+		// A VM is migrated once. Without this record a VM removed after its
+		// migration would be migrated again from the state.json it left in
+		// the file registry, and come back at every start.
+		done, err := m.sqliteDB.wasMigrated(st.ID)
+		if err != nil {
+			slog.Warn("migration: look up vm migration", "vm_id", st.ID, "err", err)
+			continue
+		}
+		if done {
+			continue
+		}
 		existing, err := m.sqliteDB.Get(st.ID)
 		if err == nil && existing != nil {
 			slog.Debug("migration: vm already exists in sqlite, skipping", "vm_id", st.ID)
+			m.recordMigrated(st.ID)
+			continue
+		}
+		// Migration runs before Restore, so memory alone does not say whether
+		// the VM was migrated by an earlier start: the database does, and its
+		// row is newer than the file record.
+		inDB, err := m.sqliteDB.hasRow(st.ID)
+		if err != nil {
+			slog.Warn("migration: look up vm in sqlite", "vm_id", st.ID, "err", err)
+			continue
+		}
+		if inDB {
+			// Migrated by a start that predates the record, or one that was
+			// cut between writing the row and recording it.
+			slog.Debug("migration: vm already exists in sqlite, skipping", "vm_id", st.ID)
+			m.recordMigrated(st.ID)
 			continue
 		}
 
@@ -82,16 +109,31 @@ func (m *Migrator) Migrate() (int, error) {
 			v.DaemonRecovered = true
 		}
 
+		// writeVM only persists registered VMs, so register first and take
+		// the VM back out if its row cannot be written.
+		m.sqliteDB.MemoryStore.mu.Lock()
+		m.sqliteDB.vms[v.ID] = v
+		m.sqliteDB.MemoryStore.mu.Unlock()
 		if err := m.sqliteDB.writeVM(v); err != nil {
 			slog.Warn("migration: write vm to sqlite", "vm_id", v.ID, "err", err)
+			_ = m.sqliteDB.MemoryStore.Remove(v.ID)
 			continue
 		}
 
-		m.sqliteDB.vms[v.ID] = v
+		m.recordMigrated(v.ID)
 		slog.Info("migration: migrated vm", "vm_id", v.ID)
 		migrated++
 	}
 
 	slog.Info("migration complete", "migrated", migrated)
 	return migrated, nil
+}
+
+// recordMigrated marks a VM as migrated. A failure is only logged: the VM's
+// row keeps it from being migrated again for as long as the VM exists, and
+// the next start retries the record.
+func (m *Migrator) recordMigrated(id string) {
+	if err := m.sqliteDB.markMigrated(id); err != nil {
+		slog.Warn("migration: record vm as migrated", "vm_id", id, "err", err)
+	}
 }

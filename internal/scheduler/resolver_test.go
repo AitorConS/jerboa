@@ -187,3 +187,25 @@ func TestResolverScopesStartingGuestWithoutPublishingIt(t *testing.T) {
 		})
 	}
 }
+
+// DNS names have no letter case: names, IDs, aliases and the network suffix
+// match in any case, while the network filter stays exact.
+func TestResolverIgnoresLetterCase(t *testing.T) {
+	source := &fakeSource{vms: []*vm.VM{
+		{ID: "pg", State: vm.StateRunning, Cfg: vm.Config{Name: "Postgres", NetworkName: "app", IPAddress: "10.100.0.2", NetworkAliases: []string{"DB.internal"}}},
+		{ID: "w1", State: vm.StateRunning, Cfg: vm.Config{Name: "web-1", NetworkName: "app", IPAddress: "10.100.0.3", NetworkAliases: []string{"web"}}},
+		{ID: "w2", State: vm.StateRunning, Cfg: vm.Config{Name: "web-2", NetworkName: "app", IPAddress: "10.100.0.4", NetworkAliases: []string{"WEB"}}},
+		{ID: "x", State: vm.StateRunning, Cfg: vm.Config{Name: "other", NetworkName: "App", IPAddress: "10.200.0.2"}},
+	}}
+	r := NewResolver(source)
+	for _, name := range []string{"postgres", "POSTGRES", "PG", "db.INTERNAL", "postgres.APP", "pOsTgReS.app"} {
+		rec, err := r.Resolve(name, "app")
+		require.NoError(t, err, name)
+		require.Equal(t, "pg", rec.VMID, name)
+	}
+	recs, err := r.ResolveAll("Web", "app")
+	require.NoError(t, err)
+	require.Len(t, recs, 2)
+	_, err = r.ResolveAll("other", "app")
+	require.Error(t, err, "a network differing in case is another network")
+}

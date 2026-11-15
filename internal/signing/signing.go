@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/durable"
 )
 
 const (
@@ -161,13 +163,16 @@ func (s *Store) SaveKeyPair(kp *KeyPair) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("save key pair mkdir: %w", err)
 	}
-	privBlock := &pem.Block{Type: "ED25519 PRIVATE KEY", Bytes: kp.PrivateKey}
-	if err := os.WriteFile(filepath.Join(dir, privKeyFile), pem.EncodeToMemory(privBlock), 0o600); err != nil {
-		return fmt.Errorf("save private key: %w", err)
-	}
+	// The private key is what HasKeyPair looks for, so it is written last: a
+	// save interrupted between the two files leaves no key pair (and the next
+	// signature generates one) rather than a private key that never loads.
 	pubBlock := &pem.Block{Type: "ED25519 PUBLIC KEY", Bytes: kp.PublicKey}
-	if err := os.WriteFile(filepath.Join(dir, pubKeyFile), pem.EncodeToMemory(pubBlock), 0o644); err != nil {
+	if err := durable.WriteFile(filepath.Join(dir, pubKeyFile), pem.EncodeToMemory(pubBlock), 0o644); err != nil {
 		return fmt.Errorf("save public key: %w", err)
+	}
+	privBlock := &pem.Block{Type: "ED25519 PRIVATE KEY", Bytes: kp.PrivateKey}
+	if err := durable.WriteFile(filepath.Join(dir, privKeyFile), pem.EncodeToMemory(privBlock), 0o600); err != nil {
+		return fmt.Errorf("save private key: %w", err)
 	}
 	return nil
 }
@@ -225,6 +230,16 @@ func (s *Store) signaturePath(digest string) string {
 	return filepath.Join(s.root, sigDirName, name)
 }
 
+// checkDigestName refuses a digest that cannot name a file in the signature
+// directory. The digest comes from the daemon, which may be remote: one with a
+// path separator would read or write a signature outside the store.
+func checkDigestName(digest string) error {
+	if digest == "" || digest == "." || digest == ".." || strings.ContainsAny(digest, "/\\\x00") {
+		return fmt.Errorf("invalid digest %q", digest)
+	}
+	return nil
+}
+
 // loadOrGenerateKey returns the stored key pair, generating and saving one if
 // none exists yet.
 func (s *Store) loadOrGenerateKey() (*KeyPair, error) {
@@ -237,6 +252,9 @@ func (s *Store) loadOrGenerateKey() (*KeyPair, error) {
 // SignDigest signs a content digest (e.g. an image's disk digest) with the
 // stored key pair and saves the signature keyed by that digest.
 func (s *Store) SignDigest(digest string) (*Signature, error) {
+	if err := checkDigestName(digest); err != nil {
+		return nil, fmt.Errorf("sign digest: %w", err)
+	}
 	kp, err := s.loadOrGenerateKey()
 	if err != nil {
 		return nil, fmt.Errorf("sign digest: %w", err)
@@ -253,7 +271,7 @@ func (s *Store) SignDigest(digest string) (*Signature, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sign digest: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := durable.WriteFile(path, data, 0o644); err != nil {
 		return nil, fmt.Errorf("sign digest: write: %w", err)
 	}
 	return sig, nil
@@ -263,6 +281,9 @@ func (s *Store) SignDigest(digest string) (*Signature, error) {
 // (nil, nil) when no signature exists, the signature on success, and an error
 // when a signature exists but is invalid.
 func (s *Store) VerifyDigest(digest string) (*Signature, error) {
+	if err := checkDigestName(digest); err != nil {
+		return nil, fmt.Errorf("verify digest: %w", err)
+	}
 	data, err := os.ReadFile(s.signaturePath(digest))
 	if os.IsNotExist(err) {
 		return nil, nil

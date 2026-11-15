@@ -165,6 +165,62 @@ Locally created packages (`pkg create`, `pkg from-docker`) live in the
 `jerboa` source — build with `--pkg-source jerboa` (or `pkg_source = "jerboa"`)
 to use them.
 
+### `sets [build] sandbox = false` / `sets [build] network = true`
+
+```
+build: unikernel.toml sets [build] network = true, which lets the project's [build] run commands reach the network; rerun with --allow-build-network to allow it
+```
+
+`unikernel.toml` comes with the project, and so do the commands the build
+sandbox confines, so the file cannot relax the sandbox on its own. The build
+stops before running anything.
+
+**Fix**: read the project's `[build] run` commands, then pass the flag the
+message names if you trust them:
+
+```sh
+jerboa build . --allow-build-network     # for [build] network = true
+jerboa build . --allow-unsandboxed       # for [build] sandbox = false
+```
+
+`examples/nextapp` needs `--allow-build-network`. See
+[build-concepts.md](build-concepts.md).
+
+### `a build step changed the build's policy files`
+
+A confined build step wrote or created `unikernel.toml` or `.unignore`, the
+files that decide how the build runs. The build fails, and a file the step
+created is removed.
+
+**Fix**: check what the project's build commands do before building it again.
+A project that has to generate those files must do so before `jerboa build`.
+
+### `ops package "<name>" not found in the eyberg namespace`
+
+A runtime named without a namespace (`node:20`, `python:3.12`, or the one a
+language build picks for you) is looked up in the `eyberg` namespace only. When
+`eyberg` has no package for that version or architecture the build fails
+instead of taking another publisher's package of the same name.
+
+**Fix**: pick a version `eyberg` publishes (`jerboa pkg search node`), or name
+the publisher you want:
+
+```sh
+jerboa build . --pkg <namespace>/node:20
+```
+
+### `package index serial N is older than one already accepted`
+
+The signed package index carries a serial that grows with every publication,
+and `jerboa` remembers the newest one it accepted from each index URL. An
+older index, even with a valid signature, is refused and the cached copy is
+kept. `package index has no serial, but serial N was already accepted` is the
+same refusal for an index in the format before serials.
+
+**Fix**: retry later; a mirror or cache may be serving a superseded index. If
+the record itself is damaged (`package index state ... is corrupt`), delete
+`index-state.json` beside the cached `index.json`.
+
 ---
 
 ## Boot-Time Errors (Guest Serial Output)
@@ -405,6 +461,84 @@ Volumes mount onto directories that must already exist inside the image.
 [build]
 dirs = ["/db"]
 ```
+
+### `state file ... is not written by compose up for this project`
+
+Compose keeps a stack's state in `~/.jerboa/compose/<hash>.json`. A
+`.jerboa-compose-<hash>.json` left next to the compose file by an earlier
+version is taken over only if it is yours, records this compose file, and
+names only this project's VMs, networks and volumes. Any other such file is
+refused, because it would tell `compose down` what to stop and remove, and
+`up`, `down`, `ps` and `logs` do nothing until it is gone. The message ends
+with the reason (owned by another user, writable by others, a VM that is not
+one of the project's services, ...).
+
+**Fix**: if the file came with a project you downloaded, delete it. If it is
+your own stack from an earlier version, fix what the message names (usually
+`chmod go-w` on the file) and run the command again. See
+[compose.md](compose.md).
+
+### Compose rejects a service name
+
+Service names become VM names, so they follow the rules of network and volume
+names: letters, digits and `_.-`, starting with a letter or digit. Names with
+spaces or other characters that earlier versions accepted are now refused.
+
+**Fix**: rename the service in the compose file. Bring a stack started under
+the old name down with the old file first.
+
+### The dashboard asks for the token again after an upgrade
+
+The dashboard's cookie no longer holds the observability token; it holds a
+session that opens only that dashboard, for 12 hours or until the daemon
+restarts. Cookies set by earlier versions are not accepted.
+
+**Fix**: open `/ui/login` and enter the token once. `/metrics` does not take
+the cookie: send the token as `Authorization: Bearer <token>`.
+
+### Console or log output loses colours or cursor movement
+
+`jerboa logs`, `compose logs`, `pkg load` and attach output remove terminal
+control sequences from guest output, so a guest cannot move the cursor, retitle
+the window or write to the clipboard of your terminal.
+
+**Fix**: pass `--raw` to print the output unfiltered when you trust the guest.
+
+### Published ports stop answering on `127.0.0.1` (Linux)
+
+The daemon log shows `guard: not loaded; route_localnet turned off on jerboa
+bridges`. Kernel NAT for published ports needs `route_localnet` on the bridge,
+which is only safe while the daemon's nftables rule that keeps guests away
+from the host's loopback is loaded. When a firewall reload removed the tables
+and they cannot be reinstalled, the daemon turns `route_localnet` off rather
+than leave guests a path to `127.0.0.1`.
+
+**Fix**: find why `nft` fails (the log line carries its error; a missing `nft`
+binary or a ruleset that rejects the `jerboa` tables are the usual causes).
+The daemon rechecks every few seconds and restores the ports on its own
+(`guard: route_localnet restored`).
+
+### `release: stable manifest generated at ... is older than ... allows`
+
+Every client has a floor for the stable channel: the generation time of the
+newest manifest it accepted, the one `install.sh` recorded in
+`/etc/jerboa/release-state.json`, and a date compiled into the binary. A
+manifest older than that is refused, so an old release cannot be served again
+as the current one.
+
+**Fix**: retry later; a mirror or cache may be serving a superseded manifest.
+If you run a mirror, sync `channels/stable.json` and its signature.
+
+### `config: ... is not a private directory owned by this user`
+
+Without `HOME`, `jerboa` keeps its settings in a per-user fallback directory
+and uses it only if the directory, and the files in it, belong to you and
+nobody else can write them. It never falls back to the working directory.
+
+**Fix**: set `HOME`, or remove the directory the message names if you did not
+create it.
+
+---
 
 ---
 

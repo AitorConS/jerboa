@@ -188,6 +188,11 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if err := validatePortNetwork(v.Cfg); err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
+	// The API and vsock sockets, the config file and the VMM log live in the
+	// private runtime dir; without one the VM is not started.
+	if _, err := vmRuntimeDir(); err != nil {
+		return fmt.Errorf("firecracker start %s: %w", id, err)
+	}
 	if err := v.transition(StateStarting); err != nil {
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
@@ -273,12 +278,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 
 	var stdout io.Writer = &v.logBuf
 	if v.Cfg.Attach {
-		pr, pw := io.Pipe()
+		// Never blocks: the VM is reaped whether or not anyone reads its console.
+		pipe := newAttachPipe()
 		v.mu.Lock()
-		v.logPipeReader = pr
-		v.logPipeWriter = pw
+		v.logPipeReader = pipe
+		v.logPipeWriter = pipe
 		v.mu.Unlock()
-		stdout = io.MultiWriter(&v.logBuf, pw)
+		stdout = io.MultiWriter(&v.logBuf, pipe)
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = io.Discard
@@ -344,7 +350,13 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		abort()
 		return fmt.Errorf("firecracker start %s: %w", id, err)
 	}
-	_ = m.store.Save(v)
+	// A running VM the registry has no record of is an orphan after the next
+	// daemon start: nothing would know its process, tap or disk. If the state
+	// cannot be written (a full disk), the start fails and the process goes.
+	if err := m.store.Save(v); err != nil {
+		abort()
+		return fmt.Errorf("firecracker start %s: record running state: %w", id, err)
+	}
 
 	// A published port that never binds is a broken run, so a port-forwarder start
 	// failure FAILS the run instead of leaving a "running" VM whose published port
@@ -633,7 +645,11 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPat
 	if err := v.transition(StateStopped); err != nil {
 		slog.Debug("firecracker monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
-	_ = m.store.Save(v)
+	if err := m.store.Save(v); err != nil {
+		// Not fatal: the next daemon start finds the process gone and marks
+		// the VM stopped. Until then the registry on disk says it runs.
+		slog.Warn("monitor: record stopped state", "vm_id", v.ID, "err", err)
+	}
 	m.hchecker.Stop(v.ID)
 
 	if explicitStop {
@@ -673,10 +689,7 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	restartCount := old.RestartCount
 	old.mu.RUnlock()
 
-	backoff := time.Duration(1<<uint(restartCount)) * time.Second
-	if backoff > 30*time.Second {
-		backoff = 30 * time.Second
-	}
+	backoff := restartBackoff(restartCount)
 	slog.Info("firecracker monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 

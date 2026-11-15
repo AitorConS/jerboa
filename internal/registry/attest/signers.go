@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/naming"
 )
 
@@ -100,19 +101,10 @@ func (s *Signers) save() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("signers: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".signers-*.json")
-	if err != nil {
-		return fmt.Errorf("signers: %w", err)
-	}
-	defer func() { _ = os.Remove(tmp.Name()) }()
-	if _, err := tmp.Write(append(data, '\n')); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("signers: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("signers: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), s.path); err != nil {
+	// The file is what makes a change of signer visible: it is replaced
+	// whole and flushed, so a crash or a power cut keeps every signer
+	// remembered so far.
+	if err := durable.WriteFile(s.path, append(data, '\n'), 0o600); err != nil {
 		return fmt.Errorf("signers: %w", err)
 	}
 	return nil

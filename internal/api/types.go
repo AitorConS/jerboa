@@ -82,7 +82,11 @@ type RunParams struct {
 	// ImagePath is a direct path to a bootable disk image on the daemon's
 	// filesystem. Used for file-based runs when Image is empty. The daemon
 	// accepts it only from a local client that owns the file.
-	ImagePath      string            `json:"image_path"`
+	ImagePath string `json:"image_path"`
+	// ExpectedDigest, when set, is the disk digest Image must resolve to
+	// (the one whose signature run --verify checked); the daemon refuses to
+	// run another disk.
+	ExpectedDigest string            `json:"expected_digest,omitempty"`
 	Memory         string            `json:"memory"`
 	CPUs           int               `json:"cpus"`
 	NetworkAliases []string          `json:"network_aliases,omitempty"`
@@ -502,4 +506,87 @@ type ImagePullResult struct {
 	BlobsFetched int    `json:"blobs_fetched"`
 	Requests     int    `json:"requests"`
 	BytesFetched int64  `json:"bytes_fetched"`
+}
+
+// SystemUsage is the disk space one kind of thing the daemon stores takes.
+type SystemUsage struct {
+	// Kind is "images", "vms", "volumes", "snapshots", "build-cache" or "tools".
+	Kind string `json:"kind"`
+	// Count is how many there are, and Active how many of them are in use.
+	Count  int `json:"count"`
+	Active int `json:"active"`
+	// Bytes is the space they occupy on disk (sparse disks count for what
+	// they really hold), and Reclaimable what `jerboa system prune` with
+	// every option would free.
+	Bytes       int64 `json:"bytes"`
+	Reclaimable int64 `json:"reclaimable"`
+}
+
+// SystemDF is the result of System.DF.
+type SystemDF struct {
+	Usage []SystemUsage `json:"usage"`
+	// DataDir is where the daemon keeps its data; Total and Free describe the
+	// filesystem it is on (zero when they cannot be read).
+	DataDir string `json:"data_dir"`
+	Total   int64  `json:"total"`
+	Free    int64  `json:"free"`
+}
+
+// SystemPruneParams selects what System.Prune removes beyond what nothing
+// refers to any more.
+type SystemPruneParams struct {
+	// VMs also removes every stopped VM.
+	VMs bool `json:"vms,omitempty"`
+	// All also removes every image that no VM uses.
+	All bool `json:"all,omitempty"`
+	// Volumes also removes every volume that no VM mounts.
+	Volumes bool `json:"volumes,omitempty"`
+	// DryRun reports what would be removed and removes nothing.
+	DryRun bool `json:"dry_run,omitempty"`
+}
+
+// SystemPruneItem is one thing System.Prune removed (or would remove).
+type SystemPruneItem struct {
+	// Kind is "vm", "image", "volume", "boot-disk", "build-cache" or "leftover".
+	Kind  string `json:"kind"`
+	Name  string `json:"name"`
+	Bytes int64  `json:"bytes"`
+}
+
+// SystemPruneResult is the result of System.Prune.
+type SystemPruneResult struct {
+	Removed   []SystemPruneItem `json:"removed"`
+	Reclaimed int64             `json:"reclaimed"`
+	// Errors lists what could not be removed; the rest was.
+	Errors []string `json:"errors,omitempty"`
+	DryRun bool     `json:"dry_run,omitempty"`
+}
+
+// SystemCheckParams configures System.Check.
+type SystemCheckParams struct {
+	// Deep also re-hashes every stored image disk, which reads all of them.
+	Deep bool `json:"deep,omitempty"`
+}
+
+// Finding severities, in increasing order of concern.
+const (
+	SeverityOK      = "ok"
+	SeverityInfo    = "info"
+	SeverityWarning = "warning"
+	SeverityError   = "error"
+)
+
+// SystemFinding is the outcome of one check.
+type SystemFinding struct {
+	// Check names what was looked at, e.g. "images" or "disk space".
+	Check    string `json:"check"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+	// Hint says what to do about it; empty when nothing needs doing.
+	Hint string `json:"hint,omitempty"`
+}
+
+// SystemCheckResult is the result of System.Check.
+type SystemCheckResult struct {
+	Findings []SystemFinding `json:"findings"`
 }

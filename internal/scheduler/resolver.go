@@ -77,6 +77,12 @@ func (r *Resolver) ResolveAll(name, network string) ([]Record, error) {
 // absent literal matches fall back to host.network, where network is the
 // caller's own, by its full name or the one its compose file gives it; an
 // explicit network never changes scope. Unscoped dotted queries retain suffix-based network selection.
+//
+// Names, VM IDs, aliases and the network suffix match regardless of letter
+// case, as DNS names do: a guest resolver may change the case of a question
+// (0x20 randomization), and a case variant of a name the network owns must
+// not be taken for a name nobody owns and sent to the upstream resolver. The
+// network filter itself stays exact, so case never joins two networks.
 func (r *Resolver) lookup(name, network string) ([]Record, string, string) {
 	host, scope := splitScopedName(name)
 	if network == "" {
@@ -86,7 +92,8 @@ func (r *Resolver) lookup(name, network string) ([]Record, string, string) {
 	match := func(query string) []Record {
 		var matches []Record
 		for _, rec := range records {
-			if rec.Name == query || rec.VMID == query || slices.Contains(rec.Aliases, query) {
+			if strings.EqualFold(rec.Name, query) || strings.EqualFold(rec.VMID, query) ||
+				slices.ContainsFunc(rec.Aliases, func(a string) bool { return strings.EqualFold(a, query) }) {
 				matches = append(matches, rec)
 			}
 		}
@@ -97,7 +104,7 @@ func (r *Resolver) lookup(name, network string) ([]Record, string, string) {
 	}
 	// A guest names a network as its compose file does ("db.backend"), while
 	// the network itself carries the project-scoped name.
-	if scope != "" && (scope == network || scope == naming.ComposeLocalName(network)) {
+	if scope != "" && (strings.EqualFold(scope, network) || strings.EqualFold(scope, naming.ComposeLocalName(network))) {
 		return match(host), host, network
 	}
 	return nil, name, network

@@ -1,6 +1,10 @@
 package network
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+	"time"
+)
 
 type BridgeConfig struct{ Name, CIDR string }
 
@@ -19,3 +23,9 @@ func InstallGuard(string) error       { return unsupportedBridge() }
 func GuardBridge(string) error        { return unsupportedBridge() }
 func GuardTap(_, _, _ string) error   { return unsupportedBridge() }
 func UnguardTap(_, _, _ string)       {}
+
+// WatchGuard has nothing to watch: macOS installs no nftables guard.
+func WatchGuard(context.Context, time.Duration) {}
+
+// GuardCheckInterval matches the Linux constant.
+const GuardCheckInterval = 5 * time.Second

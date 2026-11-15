@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -20,7 +19,8 @@ var version = "dev"
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// Errors carry text from the daemon, registries and project files.
+		fmt.Fprintln(os.Stderr, "Error:", sanitizeTerminal(err.Error()))
 		os.Exit(1)
 	}
 }
@@ -123,6 +123,8 @@ func newRootCmd() *cobra.Command {
 		newStatsCmd(&endpoint, &outputFmt),
 		newNodeCmd(&endpoint, &outputFmt),
 		newConfigCmd(),
+		newSystemCmd(&endpoint, &outputFmt),
+		newDoctorCmd(&endpoint, &outputFmt),
 	)
 	// The daemon command group manages the dedicated WSL2 distro that hosts
 	// jerboad on Windows (import/start/stop). On Linux jerboad runs natively
@@ -158,6 +160,9 @@ func needsDaemon(cmd *cobra.Command) bool {
 		"config": true, "kernel": true, "pkg": true,
 		"completion": true, "help": true,
 		"daemon": true, "init": true, "version": true,
+		// The doctor reports an unreachable daemon as a finding; it brings
+		// the Windows daemon up itself.
+		"doctor": true,
 	}
 	for c := cmd; c != nil; c = c.Parent() {
 		if c.Name() == "jerboa" && c.Parent() == nil {
@@ -254,12 +259,13 @@ func ensureObservabilityToken(cfg *config.Config) bool {
 }
 
 // daemonJSONPath returns the path to the client-owned daemon secret file.
+//
+// It is config.DaemonFilePath, so without a home directory the file lives in
+// the same per-user fallback as the config (and is read and written through
+// its ownership checks by wslboot) rather than in ./.jerboa, which would put
+// the daemon token wherever the command happened to run.
 func daemonJSONPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".jerboa", "daemon.json")
-	}
-	return filepath.Join(home, ".jerboa", "daemon.json")
+	return config.DaemonFilePath()
 }
 
 func defaultStorePath() string {

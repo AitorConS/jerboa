@@ -539,6 +539,13 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 	} else {
 		vmSrv.SetVolumeStore(volStore)
 	}
+	// What `jerboa system df`, `system prune` and `doctor` measure, clean and
+	// check. VM records are directories only with the file store.
+	sysPaths := apiserver.SystemPaths{DataDir: filepath.Dir(storePath), VMDisks: vmDiskDir, Tools: toolsDir}
+	if vmStoreType == "file" || vmStoreType == "" {
+		sysPaths.VMs = vmsDir()
+	}
+	vmSrv.SetSystemPaths(sysPaths)
 
 	// Enable on-demand TFS formatting of attached volumes (lazy mkfs resolver).
 	// Volumes are created as sparse files in the daemon-owned store;
@@ -569,8 +576,12 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		// Isolate guest networks from the host's loopback, from each other
 		// and from address spoofing between guests.
 		if err := network.InstallGuard(netconst.DNSAnycastIP); err != nil {
-			slog.Warn("jerboad: guest network guard not installed; guests are not isolated from each other", "err", err)
+			slog.Warn("jerboad: guest network guard not installed; guests are not isolated from each other, and published ports use the userspace proxy until it is", "err", err)
 		}
+		// A firewall reload ("flush ruleset") removes the guard behind the
+		// daemon: reinstall it, and keep guests off the host's loopback
+		// while it cannot be.
+		go network.WatchGuard(ctx, network.GuardCheckInterval)
 		// Upstream resolver for names the daemon does not own. Overridable so
 		// restricted/offline environments can point at their own resolver (or set
 		// it empty to disable forwarding).

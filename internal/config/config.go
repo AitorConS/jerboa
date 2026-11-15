@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/AitorConS/jerboa/internal/durable"
+
 	"github.com/pelletier/go-toml/v2"
 )
 
@@ -157,12 +159,7 @@ func noHomeDir() string {
 // Load reads the config file at path. Returns defaults if the file does not exist.
 func Load(path string) (*Config, error) {
 	cfg := &Config{}
-	if strings.HasPrefix(path, os.TempDir()) {
-		if err := checkOwner(path); err != nil {
-			return nil, err
-		}
-	}
-	data, err := os.ReadFile(path)
+	data, err := ReadPrivateFile(path)
 	if os.IsNotExist(err) {
 		return cfg, nil
 	}
@@ -179,9 +176,47 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes cfg to path, creating parent directories as needed.
+// ReadPrivateFile reads path the way Load does: a file in the shared temp
+// directory is read only if it is private to this user (see readPrivate), and
+// inside the no-home fallback (noHomeDir) the directories leading to it must
+// be private too, since another user may have created them first. Other paths
+// are read as they are.
+func ReadPrivateFile(path string) ([]byte, error) {
+	tmp := os.TempDir()
+	if !strings.HasPrefix(path, tmp) {
+		return os.ReadFile(path) //nolint:wrapcheck // callers test the bare error with os.IsNotExist
+	}
+	path = filepath.Clean(path)
+	if inNoHomeDir(path) {
+		return readPrivate(tmp, path)
+	}
+	return readPrivate(filepath.Dir(path), path)
+}
+
+// inNoHomeDir reports whether the clean path lies inside noHomeDir.
+func inNoHomeDir(path string) bool {
+	return strings.HasPrefix(path, noHomeDir()+string(filepath.Separator))
+}
+
+// Save writes cfg to path, creating parent directories as needed. The config
+// may hold a daemon auth token, so it is kept owner-only.
 func Save(path string, cfg *Config) error {
-	// The config may hold a daemon auth token, so keep it owner-only.
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("config: marshal: %w", err)
+	}
+	return WritePrivateFile(path, data)
+}
+
+// WritePrivateFile replaces path with data, owner-only (0600 in a 0700
+// directory), creating the directory as needed. Inside the no-home fallback
+// each directory below the temp dir is created and checked through its own
+// descriptor, and one that is not a real directory of this user is refused,
+// so a directory another user created first never receives the file.
+func WritePrivateFile(path string, data []byte) error {
+	if clean := filepath.Clean(path); strings.HasPrefix(clean, os.TempDir()) && inNoHomeDir(clean) {
+		return writePrivate(os.TempDir(), clean, data)
+	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("config: create dir: %w", err)
@@ -189,11 +224,7 @@ func Save(path string, cfg *Config) error {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return fmt.Errorf("config: chmod dir: %w", err)
 	}
-	data, err := toml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("config: marshal: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := durable.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
