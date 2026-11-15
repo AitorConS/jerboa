@@ -484,7 +484,10 @@ func TestFaults_SaturatedServerDropsThenRecovers(t *testing.T) {
 	require.True(t, ok, "the server did not recover from saturation")
 	hdr, _ := parse(t, resp)
 	require.Equal(t, uint16(7), hdr.ID)
-	require.Len(t, s.sem, 0) //nolint:testifylint // a channel's length, not a collection's
+	// The worker gives its slot back after it has sent the answer, so the
+	// client can have the answer a moment before the slot is free.
+	require.Eventually(t, func() bool { return len(s.sem) == 0 }, 10*time.Second, time.Millisecond,
+		"the worker kept its slot after answering")
 }
 
 // Many guests asking at once all get their own answer back.
