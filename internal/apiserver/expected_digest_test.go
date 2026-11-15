@@ -5,6 +5,7 @@ package apiserver
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -22,7 +23,10 @@ func TestHandleRun_ExpectedDigest(t *testing.T) {
 	require.NoError(t, os.WriteFile(disk, []byte("verified disk"), 0o600))
 	m, err := e.imgs.PutMove("app", "v1", image.Manifest{
 		SchemaVersion: image.SchemaVersion, Created: time.Now().UTC(),
-		Config: image.Config{Memory: "128M", CPUs: 1}, DiskSize: 13,
+		// The host's own architecture: a macOS daemon refuses to run an
+		// x86 image (what an empty architecture means) without emulation.
+		Architecture: runtime.GOARCH,
+		Config:       image.Config{Memory: "128M", CPUs: 1}, DiskSize: 13,
 	}, disk)
 	require.NoError(t, err)
 
