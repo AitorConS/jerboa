@@ -138,18 +138,25 @@ func (m *nativeNetworkHost) prepareHostVM(v *VM) (func(), error) {
 		}
 		ports = append(ports, p)
 	}
-	v.Cfg.nativeSocket = filepath.Join(qmpRuntimeDir(), "net-"+v.ID+".sock")
+	// The config is written under the VM's lock: a second Start of the same
+	// VM, on its way to losing the transition, reads it.
+	nativeSocket := filepath.Join(qmpRuntimeDir(), "net-"+v.ID+".sock")
 	sum := sha256.Sum256([]byte(v.ID))
-	v.Cfg.nativeMAC = fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
-	_ = os.Remove(v.Cfg.nativeSocket)
-	link, err = g.network.ListenVM(v.Cfg.nativeSocket, ip, v.Cfg.nativeMAC)
+	nativeMAC := fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", sum[0], sum[1], sum[2], sum[3], sum[4])
+	_ = os.Remove(nativeSocket)
+	link, err = g.network.ListenVM(nativeSocket, ip, nativeMAC)
 	if err != nil {
 		return failed(err)
 	}
-	v.Cfg.nativeControl = ""
+	nativeControl := ""
 	if link.Peering() {
-		v.Cfg.nativeControl = network.PeerControlPath(v.Cfg.nativeSocket)
+		nativeControl = network.PeerControlPath(nativeSocket)
 	}
+	v.mu.Lock()
+	v.Cfg.nativeSocket = nativeSocket
+	v.Cfg.nativeMAC = nativeMAC
+	v.Cfg.nativeControl = nativeControl
+	v.mu.Unlock()
 	v.mu.Lock()
 	v.hostCleanup = cleanup
 	v.healthAddress = ip
