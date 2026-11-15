@@ -82,9 +82,13 @@ jerboad --ui-addr 127.0.0.1:8080 --observability-token-file /etc/jerboa/observab
 
 The dashboard needs the token even on loopback, since every local user can
 reach `127.0.0.1` and it shows VM names, addresses and serial logs. A browser
-is sent to `/ui/login`, which stores the
-token in an HttpOnly cookie. The dashboard lists which environment variables a
-VM has, not their values.
+is sent to `/ui/login`, which checks the token and sets an HttpOnly session
+cookie named after the dashboard's port (`jerboa_ui_8080`). The cookie never
+holds the token: browsers send a cookie to every port of a host, so it only
+opens this dashboard, for 12 hours or until the daemon restarts, and is not
+accepted by `/metrics`, which takes the token only as
+`Authorization: Bearer`. The dashboard lists which environment variables a VM
+has, not their values.
 
 Routes:
 

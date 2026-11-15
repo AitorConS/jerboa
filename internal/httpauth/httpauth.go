@@ -11,13 +11,11 @@ import (
 	"strings"
 )
 
-// CookieName carries the token for a browser, which cannot set an
-// Authorization header on page loads. The dashboard's sign-in form sets it.
-const CookieName = "jerboa_observability"
-
 // Bearer wraps next so that, when token is non-empty, every request must carry a
-// matching "Authorization: Bearer <token>" header (or the CookieName cookie),
-// compared in constant time.
+// matching "Authorization: Bearer <token>" header, compared in constant time.
+// A cookie is never accepted: the browser sends one to every port of the
+// host, so a cookie holding the token would reach other listeners there. The
+// dashboard keeps its own session cookie instead.
 //
 // An empty token disables the check and returns next unchanged, so a caller can
 // pass an operator-supplied token through unconditionally: no token configured
@@ -36,17 +34,10 @@ func Bearer(token string, next http.Handler) http.Handler {
 	})
 }
 
-// Authorized reports whether r carries token in its Authorization header or
-// in the CookieName cookie.
+// Authorized reports whether r carries token in its Authorization header.
 func Authorized(token string, r *http.Request) bool {
-	want := []byte(token)
-	if got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
-		return subtle.ConstantTimeCompare([]byte(got), want) == 1
-	}
-	if c, err := r.Cookie(CookieName); err == nil {
-		return subtle.ConstantTimeCompare([]byte(c.Value), want) == 1
-	}
-	return false
+	got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return ok && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 }
 
 // LoopbackHost wraps next so that, when addr binds only the loopback
