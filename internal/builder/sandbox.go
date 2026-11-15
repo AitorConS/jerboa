@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -16,7 +18,8 @@ import (
 // whose build scripts and plugins run arbitrary code. Confined, a step can
 // read the host but write only to the project directory, caches of its own
 // and a temporary directory, cannot read the usual credential directories,
-// cannot connect to the Jerboa daemon or its VMs' control sockets, and,
+// cannot connect to the Jerboa daemon or its VMs' control sockets, nor to
+// the host services known to act for whoever asks (see brokerSockets), and,
 // unless allowed, cannot reach the network.
 //
 // The mechanism is bubblewrap (bwrap) on Linux and sandbox-exec on macOS.
@@ -24,11 +27,17 @@ import (
 // credentials removed from its environment and a private temporary
 // directory, and a warning says so.
 type Sandbox struct {
-	// Off runs build steps directly on the host ([build] sandbox = false).
+	// Off runs build steps directly on the host ([build] sandbox = false,
+	// which the CLI honors only with --allow-unsandboxed).
 	Off bool
 	// Sockets lists further Unix sockets, or directories of them, a step
 	// may not connect to: the endpoint the CLI reaches the daemon at.
 	Sockets []string
+	// ReadOnly lists files in the project a step may read but not change:
+	// the build's own policy (unikernel.toml, .unignore), so a confined
+	// step cannot relax the confinement or the build context of later
+	// builds.
+	ReadOnly []string
 }
 
 // Step is one build step to confine.
@@ -42,6 +51,8 @@ type Step struct {
 	Network bool
 	// Env is the step's environment; Env() when nil.
 	Env []string
+	// ReadOnly lists files under Dir or Writable the step may not change.
+	ReadOnly []string
 }
 
 // Command returns the command that runs name with args as st, confined
@@ -73,6 +84,7 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 		return nil, nil, fmt.Errorf("sandbox: %w", err)
 	}
 	st.Writable = append(caches, st.Writable...)
+	st.ReadOnly = append(append([]string{}, st.ReadOnly...), s.ReadOnly...)
 	env = append(env, cacheEnv...)
 
 	// Resolve the tool here: inside the launcher a missing tool would only
@@ -92,8 +104,11 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 	}
 	done := func() { _ = os.RemoveAll(tmp) }
 	env = append(env, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
-	argv, ok := confine(st, tmp, controlSockets(s.Sockets), name, args)
-	if !ok {
+	sockets := append(controlSockets(s.Sockets), brokerMasks(st, tmp)...)
+	argv, ok := confine(st, tmp, sockets, name, args)
+	if ok {
+		env = withoutBrokerAddresses(env)
+	} else {
 		warnUnconfined.Do(func() {
 			slog.Warn("no build sandbox is available on this host (bubblewrap on Linux, sandbox-exec on macOS); build steps run directly, without Jerboa's credentials in their environment")
 		})
@@ -110,7 +125,7 @@ var warnUnconfined sync.Once
 // Describe says how build steps are confined on this host.
 func (s Sandbox) Describe() string {
 	if s.Off {
-		return "build steps run directly on the host ([build] sandbox = false)"
+		return "build steps run directly on the host, unconfined ([build] sandbox = false, allowed by --allow-unsandboxed)"
 	}
 	if name := sandboxName(); name != "" {
 		return "build steps run in a sandbox (" + name + "): they write only to the project and tool caches"
@@ -236,11 +251,93 @@ func controlSockets(extra []string) []string {
 	return out
 }
 
+// brokerSockets returns the well-known Unix sockets, and directories of
+// them, of host services that run commands or act for the user on request:
+// the D-Bus buses (systemd, portals, polkit-backed services), the systemd
+// user manager, container and VM engines, X11 (keystrokes into a terminal),
+// tmux and screen (keystrokes into a shell), and the GnuPG agent. A confined
+// step that reached one could have it act outside the sandbox, as with the
+// daemon. Paths that do not exist are left out by the launcher. The SSH
+// agent stays reachable: package managers fetch private dependencies over
+// SSH. This is a list of what is known, not a guarantee: other sockets on
+// the host stay reachable.
+func brokerSockets() []string {
+	uid := os.Getuid()
+	runtimeDirs := []string{fmt.Sprintf("/run/user/%d", uid)}
+	if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" && filepath.IsAbs(xdg) && xdg != runtimeDirs[0] {
+		runtimeDirs = append(runtimeDirs, xdg)
+	}
+	var out []string
+	for _, rt := range runtimeDirs {
+		for _, name := range []string{
+			"bus", "dbus-1", "at-spi", "systemd",
+			"docker.sock", "docker", "podman", "containerd-rootless", "buildkit", "libvirt",
+			"gnupg", "snapd-session-agent.socket",
+		} {
+			out = append(out, filepath.Join(rt, name))
+		}
+	}
+	out = append(out,
+		"/run/dbus/system_bus_socket", "/var/run/dbus/system_bus_socket",
+		"/run/docker.sock", "/var/run/docker.sock", "/run/docker",
+		"/run/podman", "/run/containerd", "/run/buildkit",
+		"/run/libvirt", "/var/run/libvirt",
+		"/var/snap/lxd/common/lxd/unix.socket", "/var/lib/lxd/unix.socket",
+		"/var/lib/incus/unix.socket", "/run/incus",
+		"/run/snapd.socket", "/run/snapd-snap.socket",
+		"/tmp/.X11-unix",
+		fmt.Sprintf("/tmp/tmux-%d", uid), filepath.Join(os.TempDir(), fmt.Sprintf("tmux-%d", uid)),
+	)
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		out = append(out, filepath.Join("/run/screen", "S-"+u.Username), filepath.Join("/var/run/screen", "S-"+u.Username))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		// Docker Desktop, Colima, OrbStack, Rancher Desktop, Lima and Podman
+		// machines on macOS; the GnuPG agent's sockets live in its home.
+		for _, rel := range []string{
+			".docker/run", ".colima", ".orbstack/run", ".rd/docker.sock", ".lima",
+			".local/share/containers/podman/machine", ".gnupg",
+		} {
+			out = append(out, filepath.Join(home, rel))
+		}
+	}
+	return out
+}
+
+// brokerMasks returns the brokerSockets to mask for st, leaving out any
+// that holds the directories the step works in: masking it would hide them.
+func brokerMasks(st Step, tmp string) []string {
+	var out []string
+	for _, p := range brokerSockets() {
+		if !within(st.Dir, p) && !within(tmp, p) && !slices.ContainsFunc(st.Writable, func(w string) bool { return within(w, p) }) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// brokerAddresses are the environment variables that point clients at the
+// services brokerSockets hides, some of them at addresses no path mask
+// covers (abstract sockets, TCP).
+var brokerAddresses = []string{"DBUS_SESSION_BUS_ADDRESS", "DBUS_SYSTEM_BUS_ADDRESS", "DOCKER_HOST", "CONTAINER_HOST"}
+
+// withoutBrokerAddresses returns env without brokerAddresses.
+func withoutBrokerAddresses(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(brokerAddresses, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // bwrapArgs returns the bubblewrap command line that runs name with args as
 // st: the host root read-only, fresh /dev and /proc, the project, the
-// writable directories and the step's temporary directory bound read-write,
-// the hidden paths and the control sockets masked, and no network unless
-// allowed.
+// writable directories and the step's temporary directory bound read-write
+// except for the read-only files in them, the hidden paths and the control
+// sockets masked, and no network unless allowed.
 func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string, args []string) []string {
 	argv := []string{bwrap,
 		"--ro-bind", "/", "/",
@@ -264,6 +361,14 @@ func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string
 	for _, w := range append(append(append([]string{}, tmp...), st.Writable...), st.Dir) {
 		argv = append(argv, "--bind", w, w)
 	}
+	// Bound over the read-write directories above. A file that does not
+	// exist cannot be bound, so a step could still create it.
+	for _, p := range st.ReadOnly {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			r := realPath(p)
+			argv = append(argv, "--ro-bind", r, r)
+		}
+	}
 	// Mount over the control sockets last, so no bind above uncovers them.
 	for _, p := range sockets {
 		fi, err := os.Stat(p)
@@ -281,8 +386,10 @@ func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string
 
 // seatbeltProfile returns the sandbox-exec profile that confines st: every
 // write outside the project, the writable directories, /dev and the
-// temporary directories is denied, so are reads of the hidden paths and
-// connections to the control sockets, and so is the network unless allowed
+// temporary directories is denied, so are writes to the read-only files
+// (creating them included), reads of the hidden paths and
+// connections to the control sockets and Apple events, and so is the
+// network unless allowed
 // (other local connections stay open).
 func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
 	var b strings.Builder
@@ -292,6 +399,9 @@ func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
 		fmt.Fprintf(&b, " (subpath %s)", sbplString(realPath(p)))
 	}
 	b.WriteString(")\n")
+	for _, p := range st.ReadOnly {
+		fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", sbplString(realFilePath(p)))
+	}
 	for _, p := range hidden {
 		fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", sbplString(realPath(p)))
 	}
@@ -306,12 +416,24 @@ func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
 	for _, p := range sockets {
 		fmt.Fprintf(&b, "(deny network-outbound (remote unix-socket (subpath %s)))\n", sbplString(realPath(p)))
 	}
+	// Apple events drive other applications (a Terminal window runs what it
+	// is sent), outside the profile.
+	b.WriteString("(deny appleevent-send)\n")
 	return b.String()
 }
 
 // sbplString quotes s as a sandbox profile string literal.
 func sbplString(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// realFilePath is realPath for a file that may not exist yet: its
+// directory is resolved instead.
+func realFilePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Join(realPath(filepath.Dir(p)), filepath.Base(p))
 }
 
 // realPath resolves symlinks (macOS's /tmp and /var), which sandbox-exec

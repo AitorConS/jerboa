@@ -31,8 +31,24 @@ const upstreamTimeout = 3 * time.Second
 
 // maxConcurrentQueries caps the number of queries handled in parallel. It backs
 // a semaphore so a UDP flood cannot spawn unbounded goroutines; excess packets
-// are dropped (DNS clients retry) rather than exhausting host memory/CPU.
+// are dropped (DNS clients retry) rather than exhausting host memory/CPU. A
+// question that is forwarded gives its slot up while it waits for the
+// upstream resolver, so these slots only do work that needs no upstream.
 const maxConcurrentQueries = 64
+
+// maxConcurrentForwards caps the questions waiting for the upstream resolver,
+// each for up to upstreamTimeout.
+const maxConcurrentForwards = 64
+
+// maxForwardsPerSource caps the forwarded questions one source address has
+// outstanding, so a guest that keeps the upstream busy (names it never
+// answers) holds a fraction of maxConcurrentForwards and the other guests'
+// questions still go out. Past it the guest's forwarded questions are
+// dropped; names of its network are still answered.
+const maxForwardsPerSource = 8
+
+// errForwardBusy reports a forwarded question dropped for lack of a slot.
+var errForwardBusy = errors.New("too many forwarded questions outstanding")
 
 // maxUpstreamResponse is the largest answer relayed from the upstream
 // resolver, the most a UDP datagram carries.
@@ -49,6 +65,12 @@ type Server struct {
 	conn *net.UDPConn
 	// sem bounds concurrent query handlers (see maxConcurrentQueries).
 	sem chan struct{}
+	// fwd bounds questions waiting for the upstream (maxConcurrentForwards),
+	// and fwdBySrc counts them per source address (maxForwardsPerSource),
+	// guarded by fwdMu.
+	fwd      chan struct{}
+	fwdMu    sync.Mutex
+	fwdBySrc map[string]int
 	// turn rotates the order of the addresses a shared name answers with.
 	turn atomic.Uint32
 }
@@ -60,6 +82,8 @@ func New(resolver *scheduler.Resolver, upstream string) *Server {
 		resolver: resolver,
 		upstream: upstream,
 		sem:      make(chan struct{}, maxConcurrentQueries),
+		fwd:      make(chan struct{}, maxConcurrentForwards),
+		fwdBySrc: make(map[string]int),
 	}
 }
 
@@ -98,8 +122,10 @@ func (s *Server) ListenAndServe(addr string) error {
 		select {
 		case s.sem <- struct{}{}:
 			go func() {
-				defer func() { <-s.sem }()
-				s.handle(conn, query, src)
+				var once sync.Once
+				release := func() { once.Do(func() { <-s.sem }) }
+				defer release()
+				s.handle(conn, query, src, release)
 			}()
 		default:
 			slog.Debug("dnsserver: worker pool saturated, dropping query", "src", src.IP)
@@ -120,13 +146,16 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) handle(conn *net.UDPConn, query []byte, src *net.UDPAddr) {
+// handle answers one packet. release gives up the handler slot; it is called
+// once the question is forwarded, so waiting for the upstream does not hold
+// the slot.
+func (s *Server) handle(conn *net.UDPConn, query []byte, src *net.UDPAddr, release func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			slog.Error("dnsserver: recovered panic", "src", src.IP, "panic", r, "stack", string(debug.Stack()))
 		}
 	}()
-	resp, err := s.buildResponse(query, src.IP.String())
+	resp, err := s.respond(query, src.IP.String(), release)
 	if err != nil {
 		slog.Debug("dnsserver: handle", "src", src.IP, "err", err)
 		return
@@ -140,9 +169,15 @@ func (s *Server) Answer(query []byte, srcIP string) ([]byte, error) {
 	return s.buildResponse(query, srcIP)
 }
 
-// buildResponse parses a query, answers A questions the daemon owns from
-// srcIP's network, and forwards everything else upstream.
+// buildResponse parses a query, answers the names srcIP's network owns, and
+// forwards everything else upstream.
 func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
+	return s.respond(query, srcIP, nil)
+}
+
+// respond is buildResponse; a non-nil release is called once the question
+// holds a forwarding slot, before it waits for the upstream.
+func (s *Server) respond(query []byte, srcIP string, release func()) ([]byte, error) {
 	var p dnsmessage.Parser
 	hdr, err := p.Start(query)
 	if err != nil {
@@ -159,21 +194,22 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 	// it as not-owned and forward/NXDOMAIN below instead.
 	if network := s.resolver.NetworkForIP(srcIP); network != "" {
 		name := strings.TrimSuffix(q.Name.String(), ".")
-		if q.Type == dnsmessage.TypeA {
-			// Every VM that answers to the name: the replicas of a service
-			// share an alias. Asking for exactly one would fail on them and
-			// send the private name to the upstream resolver.
-			if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil {
+		// Ownership is decided once, from every record of the network that
+		// answers to the name (in any letter case), whatever the question's
+		// type: the replicas of a service share an alias, and asking for
+		// exactly one would fail on them. A name of the network stays on the
+		// host. Forwarded, a public domain of the same name would answer (an
+		// AAAA for "db.app"), and the upstream resolver would learn the
+		// network's service names.
+		if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
+			if q.Type == dnsmessage.TypeA {
 				if ips := ipv4s(recs); len(ips) > 0 {
 					return s.answerA(hdr.ID, q, rotate(ips, int(s.turn.Add(1))))
 				}
 			}
-		} else if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
-			// The name belongs to this network, which has only IPv4
-			// addresses: there is no such record, and the question stays
-			// here. Forwarded, a public domain of the same name would answer
-			// (an AAAA for "db.app"), and the upstream resolver would learn
-			// the network's service names.
+			// The network has only IPv4 addresses, and this name none it
+			// can tell: there is no such record, and the question stays
+			// here.
 			return s.empty(hdr.ID, q, dnsmessage.RCodeSuccess)
 		}
 	}
@@ -181,7 +217,16 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 	// Not a name this network owns: forward upstream so
 	// ordinary internet name resolution still works for the guest.
 	if s.upstream != "" {
-		if resp, fErr := s.forward(query); fErr == nil {
+		done, ok := s.takeForward(srcIP)
+		if !ok {
+			return nil, errForwardBusy
+		}
+		if release != nil {
+			release()
+		}
+		resp, fErr := s.forward(query)
+		done()
+		if fErr == nil {
 			return resp, nil
 		}
 	}
@@ -276,6 +321,31 @@ func (s *Server) empty(id uint16, q dnsmessage.Question, rcode dnsmessage.RCode)
 		return nil, fmt.Errorf("finish response: %w", err)
 	}
 	return resp, nil
+}
+
+// takeForward takes a forwarding slot for src, and returns the function that
+// gives it back. It fails without waiting when every slot, or every slot src
+// may hold, is taken.
+func (s *Server) takeForward(src string) (done func(), ok bool) {
+	s.fwdMu.Lock()
+	defer s.fwdMu.Unlock()
+	if s.fwdBySrc[src] >= maxForwardsPerSource {
+		return nil, false
+	}
+	select {
+	case s.fwd <- struct{}{}:
+	default:
+		return nil, false
+	}
+	s.fwdBySrc[src]++
+	return func() {
+		s.fwdMu.Lock()
+		defer s.fwdMu.Unlock()
+		if s.fwdBySrc[src]--; s.fwdBySrc[src] <= 0 {
+			delete(s.fwdBySrc, src)
+		}
+		<-s.fwd
+	}, true
 }
 
 // forward relays the raw query to the upstream resolver and returns its raw

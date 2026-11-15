@@ -91,7 +91,7 @@ func newStatusCmd(socketPath *string, outputFmt *string) *cobra.Command {
 					if health == "" {
 						health = "-"
 					}
-					fmt.Fprintf(w2, "%s\t%s\t%s\t%s\t%d\t%s\n", v.ID, name, v.State, health, detail.RestartCount, v.Image)
+					fmt.Fprintf(w2, "%s\t%s\t%s\t%s\t%d\t%s\n", termField(v.ID), termField(name), termField(v.State), termField(health), detail.RestartCount, termField(v.Image))
 				}
 				return w2.Flush()
 			}
