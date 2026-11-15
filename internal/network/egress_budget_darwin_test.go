@@ -3,6 +3,7 @@ package network
 import (
 	"context"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -156,4 +157,45 @@ func TestEgressUnansweredHandshakeIsAbortedAfterItsDeadline(t *testing.T) {
 	e.send(a, 3000, 100, 0, header.TCPFlagSyn)
 	_, ok := e.synAcks(time.Second)[tcpip.FullAddress{Addr: tcpip.AddrFrom4(a), Port: 3000}]
 	require.True(t, ok)
+}
+
+func TestNativeNetworkWithoutPolicyKeepsFlowCaps(t *testing.T) {
+	// Host access (no address policy) widens where guests may connect, not
+	// how many flows they may hold.
+	n, err := NewNativeNetwork("172.29.0.0/24", "172.29.0.1", nil)
+	require.NoError(t, err)
+	defer n.Close()
+	l, err := n.ListenVM(filepath.Join(shortDir(t), "vm.sock"), "172.29.0.2", "02:00:00:00:00:02")
+	require.NoError(t, err)
+	defer l.Close()
+	for range maxEgressFlowsPerVM {
+		require.NotNil(t, n.egress.reserve("172.29.0.2"))
+	}
+	require.Nil(t, n.egress.reserve("172.29.0.2"))
+
+	require.NoError(t, n.Expose("tcp", "127.0.0.1:0", "172.29.0.2:8080"))
+	require.NotNil(t, n.published["tcp/127.0.0.1:0"], "published ports use the capped owned forwarder")
+	require.NoError(t, n.Unexpose("tcp", "127.0.0.1:0"))
+
+	l.Close()
+	n.egress.mu.Lock()
+	defer n.egress.mu.Unlock()
+	require.Empty(t, n.egress.flows, "removing the VM closes its flows")
+}
+
+func TestEgressPermittedWithoutPolicy(t *testing.T) {
+	_, subnet, _ := net.ParseCIDR("172.29.0.0/24")
+	permitted := egressPermitted(subnet, "172.29.0.1", nil)
+	to := func(dst [4]byte, port uint16) stack.TransportEndpointID {
+		return stack.TransportEndpointID{LocalAddress: tcpip.AddrFrom4(dst), LocalPort: port, RemoteAddress: tcpip.AddrFrom4([4]byte{172, 29, 0, 2}), RemotePort: 40000}
+	}
+	require.False(t, permitted(to([4]byte{169, 254, 169, 254}, 80), false), "metadata services stay out of reach")
+	require.False(t, permitted(to([4]byte{255, 255, 255, 255}, 67), true))
+	require.True(t, permitted(to([4]byte{172, 29, 0, 1}, 80), false), "host access reaches the host's loopback")
+	require.True(t, permitted(to([4]byte{192, 168, 1, 10}, 443), false))
+	require.True(t, permitted(to([4]byte{1, 1, 1, 1}, 53), true))
+
+	policy := egressPermitted(subnet, "172.29.0.1", func(_, address string, _ uint16, _ bool) bool { return address == "127.0.0.1" })
+	require.True(t, policy(to([4]byte{172, 29, 0, 1}, 80), false), "the gateway is the host's loopback")
+	require.False(t, policy(to([4]byte{172, 29, 0, 9}, 80), false), "the network's own addresses are never dialed on the host")
 }
