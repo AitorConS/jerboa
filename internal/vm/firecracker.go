@@ -683,10 +683,7 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	restartCount := old.RestartCount
 	old.mu.RUnlock()
 
-	backoff := time.Duration(1<<uint(restartCount)) * time.Second
-	if backoff > 30*time.Second {
-		backoff = 30 * time.Second
-	}
+	backoff := restartBackoff(restartCount)
 	slog.Info("firecracker monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 
