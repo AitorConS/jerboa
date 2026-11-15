@@ -209,7 +209,7 @@ flags) unless later custom build args override them.
 
 ```bash
 jerboa build examples/flaskapp --name flaskapp --port 8080
-jerboa build examples/nextapp --name nextapp --port 3000
+jerboa build examples/nextapp --name nextapp --port 3000 --allow-build-network
 ```
 
 Supported build modes:
@@ -319,7 +319,15 @@ daemon installs nftables rules (tables `inet jerboa_guard` and
 `bridge jerboa_guard`) that keep guests away from the host's `127.0.0.1`, stop
 traffic routed between two Jerboa networks, let hosts outside reach guests only
 through published ports, and drop frames a guest sends with another guest's MAC
-or IP address. Without `nft` the daemon logs a warning and runs without them.
+or IP address. Without `nft` the daemon logs a warning and runs without them,
+and published ports then use the userspace proxy only. The daemon checks the
+tables every few seconds and reinstalls them when a firewall reload removed
+them (`flush ruleset`, as the stock `/etc/nftables.conf` does). Kernel NAT for
+published ports sets `route_localnet` on a bridge only while the loopback rule
+is loaded; while the tables cannot be reinstalled the daemon turns it off
+again: guests never reach the host's loopback, and if the `ip jerboa` NAT table
+is still loaded, host clients connecting through `127.0.0.1` cannot reach the
+ports it translates until the guard is back.
 IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
 are in use.
 
@@ -357,8 +365,15 @@ How it works:
   daemon owns; guests reach it through their default gateway
 - queries are scoped by source IP, so `db` resolves to the `db` VM **on the
   caller's own network**
+- names match in any letter case (`DB`, `db.APP`), as DNS names do; a name of
+  the caller's network (VM name, ID or alias, shared aliases included) is
+  answered by the daemon for every record type and never forwarded: a type
+  the VM has no record of gets an empty answer
 - names the daemon does not own are forwarded to an upstream resolver, so
-  ordinary internet lookups still work
+  ordinary internet lookups still work. A guest can have a limited number of
+  forwarded questions outstanding; beyond that its further forwarded questions
+  are dropped (DNS clients retry), while names of its network are still
+  answered
 - the same mechanism powers `compose` — services connect to each other by
   service name (see [Compose]({% link compose.md %}))
 

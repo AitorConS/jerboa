@@ -13,7 +13,6 @@ import (
 	"sync/atomic"
 
 	"github.com/AitorConS/jerboa/internal/netconst"
-	"github.com/containers/gvisor-tap-vsock/pkg/services/forwarder"
 	"github.com/containers/gvisor-tap-vsock/pkg/tap"
 	"github.com/containers/gvisor-tap-vsock/pkg/types"
 	"gvisor.dev/gvisor/pkg/tcpip"
@@ -33,10 +32,36 @@ type NativeNetwork struct {
 	published map[string]*nativePublication
 	sw        *tap.Switch
 	gso       *gsoEndpoint
-	ports     *forwarder.PortsForwarder
 	dns       []net.PacketConn
 	peers     *peering // nil: direct VM-to-VM links disabled
 	once      sync.Once
+}
+
+// linkLocalEgress (cloud metadata services among it) is never forwarded.
+var linkLocalEgress = &net.IPNet{IP: net.IPv4(169, 254, 0, 0).To4(), Mask: net.CIDRMask(16, 32)}
+
+const (
+	dnsRelaySlots      = 64 // concurrent guest DNS queries per relay address
+	dnsRelaySlotsPerVM = dnsRelaySlots / 4
+)
+
+// egressPermitted is the address check of the guest forwarders. Without a
+// policy (host access) guests reach any address but link-local ones and,
+// over UDP, the limited broadcast address, as gvproxy's forwarders allowed.
+func egressPermitted(subnet *net.IPNet, gateway string, allow func(string, string, uint16, bool) bool) func(stack.TransportEndpointID, bool) bool {
+	return func(id stack.TransportEndpointID, udp bool) bool {
+		if allow == nil {
+			ip := net.IP(id.LocalAddress.AsSlice())
+			return !linkLocalEgress.Contains(ip) && !(udp && ip.Equal(net.IPv4bcast))
+		}
+		address := id.LocalAddress.String()
+		if address == gateway {
+			address = "127.0.0.1"
+		} else if subnet.Contains(net.ParseIP(address)) {
+			return false
+		}
+		return allow(id.RemoteAddress.String(), address, id.LocalPort, udp)
+	}
 }
 
 func NewNativeNetwork(cidr, gateway string, answer func([]byte, string) ([]byte, error)) (*NativeNetwork, error) {
@@ -72,33 +97,17 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 		return fail(e)
 	}
 	s.SetRouteTable([]tcpip.Route{{Destination: sn, NIC: 1}})
-	var natMu sync.Mutex
-	nat := map[tcpip.Address]tcpip.Address{tcpip.AddrFrom4Slice(net.ParseIP(gateway).To4()): tcpip.AddrFrom4Slice(net.IPv4(127, 0, 0, 1).To4())}
-	tf := forwarder.TCP(s, nat, &natMu, false, 0, 0)
-	uf := forwarder.UDP(s, nat, &natMu, false)
-	permitted := func(id stack.TransportEndpointID, udp bool) bool {
-		if allow == nil {
-			return true
-		}
-		address := id.LocalAddress.String()
-		if address == gateway {
-			address = "127.0.0.1"
-		} else if subnet.Contains(net.ParseIP(address)) {
-			return false
-		}
-		return allow(id.RemoteAddress.String(), address, id.LocalPort, udp)
-	}
-	n := &NativeNetwork{stack: s, sw: sw, gso: gso, ports: forwarder.NewPortsForwarder(s)}
+	// The pool owns every guest flow and holds the flow caps, with or
+	// without an address policy (host access only widens the addresses).
+	n := &NativeNetwork{stack: s, sw: sw, gso: gso, egress: newEgressPool()}
 	if NativePeeringEnabled() {
 		n.peers = newPeering()
 	}
-	if allow != nil {
-		n.egress = newEgressPool()
-		n.egress.install(s, gateway, permitted)
-	} else {
-		s.SetTransportProtocolHandler(tcp.ProtocolNumber, tf.HandlePacket)
-		s.SetTransportProtocolHandler(udp.ProtocolNumber, uf.HandlePacket)
-	}
+	n.egress.install(s, gateway, egressPermitted(subnet, gateway, allow))
+	// A relay handler holds its slot while the query is forwarded upstream,
+	// for seconds if the upstream is silent. One VM may hold a quarter of
+	// the slots, across both addresses, so the other VMs keep being answered.
+	relayShare := newSourceBudget(dnsRelaySlotsPerVM)
 	// Bind each address explicitly so replies preserve the queried source IP.
 	for _, address := range []string{netconst.DNSAnycastIP, "10.0.2.3"} {
 		dns, err := gonet.DialUDP(s, &tcpip.FullAddress{NIC: 1, Addr: tcpip.AddrFrom4Slice(net.ParseIP(address).To4()), Port: 53}, nil, ipv4.ProtocolNumber)
@@ -107,18 +116,21 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 		}
 		n.dns = append(n.dns, dns)
 		go func() {
-			slots := make(chan struct{}, 64)
+			slots := make(chan struct{}, dnsRelaySlots)
 			for {
 				b := make([]byte, 4096)
 				size, src, err := dns.ReadFrom(b)
 				if err != nil {
 					return
 				}
+				ip, _, _ := net.SplitHostPort(src.String())
+				if !relayShare.acquire(ip) {
+					continue
+				}
 				select {
 				case slots <- struct{}{}:
 					go func() {
-						defer func() { <-slots }()
-						ip, _, _ := net.SplitHostPort(src.String())
+						defer func() { <-slots; relayShare.release(ip) }()
 						if answer != nil {
 							if resp, err := answer(b[:size], ip); err == nil {
 								_, _ = dns.WriteTo(resp, src)
@@ -126,6 +138,7 @@ func NewNativeNetworkWithPolicy(cidr, gateway string, answer func([]byte, string
 						}
 					}()
 				default:
+					relayShare.release(ip)
 				}
 			}
 		}()
@@ -152,28 +165,20 @@ func (n *NativeNetwork) DialContext(ctx context.Context, _, addr string) (net.Co
 	return c, nil
 }
 func (n *NativeNetwork) Expose(proto, local, remote string) error {
-	if n.egress != nil {
-		return n.exposeOwned(proto, local, remote)
-	}
-	return n.ports.Expose(types.TransportProtocol(proto), local, remote)
+	return n.exposeOwned(proto, local, remote)
 }
 func (n *NativeNetwork) Unexpose(proto, local string) error {
-	if n.egress != nil {
-		return n.unexposeOwned(proto, local)
-	}
-	return n.ports.Unexpose(types.TransportProtocol(proto), local)
+	return n.unexposeOwned(proto, local)
 }
 func (n *NativeNetwork) Close() {
 	n.once.Do(func() {
-		if n.egress != nil {
-			n.egress.closeSource("")
-			n.publishMu.Lock()
-			for key, p := range n.published {
-				p.close()
-				delete(n.published, key)
-			}
-			n.publishMu.Unlock()
+		n.egress.closeSource("")
+		n.publishMu.Lock()
+		for key, p := range n.published {
+			p.close()
+			delete(n.published, key)
 		}
+		n.publishMu.Unlock()
 		for _, c := range n.dns {
 			_ = c.Close()
 		}
@@ -244,10 +249,8 @@ func (n *NativeNetwork) ListenVM(path, ip, mac string) (*NativeLink, error) {
 		return nil, err
 	}
 	l := &NativeLink{listener: ln}
-	if n.egress != nil {
-		n.egress.activateSource(ip)
-		l.cleanup = func() { n.egress.closeSource(ip) }
-	}
+	n.egress.activateSource(ip)
+	l.cleanup = func() { n.egress.closeSource(ip) }
 	if err := n.listenPeers(l, path, ip, mac); err != nil {
 		ln.Close()
 		if l.cleanup != nil {

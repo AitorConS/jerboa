@@ -76,7 +76,20 @@ file) is resolved relative to the compose file, not the current directory.
   created or removed by compose (an external volume takes no `size`, an external
   network no `subnet`)
 - `compose down --volumes` removes only volumes created by that stack
-- stacks are tracked by separate `.jerboa-compose-<hash>.json` files next to their compose files; the hash identifies the full canonical compose path
+- stacks are tracked by separate state files in `~/.jerboa/compose/<hash>.json`
+  (private to the user); the hash identifies the full canonical compose path.
+  Project content cannot provide the state that tells `compose down` what to
+  stop and remove
+- a state file left next to the compose file by an earlier version
+  (`.jerboa-compose-<hash>.json`) is taken over and moved to `~/.jerboa/compose`
+  only if it is this project's: owned by you and writable by nobody else,
+  recording this compose file, naming only networks and volumes with this
+  project's `compose-<hash>-` prefix, and naming VMs by their full ID whose VM
+  name is a service of the compose file. Any other such file is reported as not
+  written by `compose up` for the project; `up`, `down`, `ps` and `logs` refuse
+  to act on it until you remove it
+- service names follow the same rules as network and volume names (letters,
+  digits and `_.-`, starting with a letter or digit), since they become VM names
 - state is written atomically as resources are created, so a failed `up` can be cleaned with `down`
 - repeated `down` is safe; failed cleanup retains the remaining resources in state
 

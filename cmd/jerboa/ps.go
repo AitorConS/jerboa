@@ -40,7 +40,7 @@ func newPsCmd(socketPath *string, outputFmt *string) *cobra.Command {
 				if name == "" {
 					name = "-"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", info.ID, name, info.State, info.Health, info.Image)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", termField(info.ID), termField(name), termField(info.State), termField(info.Health), termField(info.Image))
 			}
 			return w.Flush()
 		},

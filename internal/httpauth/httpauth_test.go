@@ -59,13 +59,15 @@ func TestBearer_AcceptsCorrectToken(t *testing.T) {
 	require.Equal(t, "ok", rr.Body.String())
 }
 
-func TestBearer_AcceptsCookie(t *testing.T) {
-	h := Bearer("s3cret", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+func TestBearer_IgnoresCookie(t *testing.T) {
+	// A cookie reaches every port of the host, so the token is never taken
+	// from one.
+	h := Bearer("s3cret", okHandler())
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.AddCookie(&http.Cookie{Name: CookieName, Value: "s3cret"})
+	req.AddCookie(&http.Cookie{Name: "jerboa_observability", Value: "s3cret"})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 func TestLoopbackHost(t *testing.T) {
