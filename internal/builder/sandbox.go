@@ -24,11 +24,17 @@ import (
 // credentials removed from its environment and a private temporary
 // directory, and a warning says so.
 type Sandbox struct {
-	// Off runs build steps directly on the host ([build] sandbox = false).
+	// Off runs build steps directly on the host ([build] sandbox = false,
+	// which the CLI honours only with --allow-unsandboxed).
 	Off bool
 	// Sockets lists further Unix sockets, or directories of them, a step
 	// may not connect to: the endpoint the CLI reaches the daemon at.
 	Sockets []string
+	// ReadOnly lists files in the project a step may read but not change:
+	// the build's own policy (unikernel.toml, .unignore), so a confined
+	// step cannot relax the confinement or the build context of later
+	// builds.
+	ReadOnly []string
 }
 
 // Step is one build step to confine.
@@ -42,6 +48,8 @@ type Step struct {
 	Network bool
 	// Env is the step's environment; Env() when nil.
 	Env []string
+	// ReadOnly lists files under Dir or Writable the step may not change.
+	ReadOnly []string
 }
 
 // Command returns the command that runs name with args as st, confined
@@ -73,6 +81,7 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 		return nil, nil, fmt.Errorf("sandbox: %w", err)
 	}
 	st.Writable = append(caches, st.Writable...)
+	st.ReadOnly = append(append([]string{}, st.ReadOnly...), s.ReadOnly...)
 	env = append(env, cacheEnv...)
 
 	// Resolve the tool here: inside the launcher a missing tool would only
@@ -110,7 +119,7 @@ var warnUnconfined sync.Once
 // Describe says how build steps are confined on this host.
 func (s Sandbox) Describe() string {
 	if s.Off {
-		return "build steps run directly on the host ([build] sandbox = false)"
+		return "build steps run directly on the host, unconfined ([build] sandbox = false, allowed by --allow-unsandboxed)"
 	}
 	if name := sandboxName(); name != "" {
 		return "build steps run in a sandbox (" + name + "): they write only to the project and tool caches"
@@ -238,9 +247,9 @@ func controlSockets(extra []string) []string {
 
 // bwrapArgs returns the bubblewrap command line that runs name with args as
 // st: the host root read-only, fresh /dev and /proc, the project, the
-// writable directories and the step's temporary directory bound read-write,
-// the hidden paths and the control sockets masked, and no network unless
-// allowed.
+// writable directories and the step's temporary directory bound read-write
+// except for the read-only files in them, the hidden paths and the control
+// sockets masked, and no network unless allowed.
 func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string, args []string) []string {
 	argv := []string{bwrap,
 		"--ro-bind", "/", "/",
@@ -264,6 +273,14 @@ func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string
 	for _, w := range append(append(append([]string{}, tmp...), st.Writable...), st.Dir) {
 		argv = append(argv, "--bind", w, w)
 	}
+	// Bound over the read-write directories above. A file that does not
+	// exist cannot be bound, so a step could still create it.
+	for _, p := range st.ReadOnly {
+		if fi, err := os.Stat(p); err == nil && fi.Mode().IsRegular() {
+			r := realPath(p)
+			argv = append(argv, "--ro-bind", r, r)
+		}
+	}
 	// Mount over the control sockets last, so no bind above uncovers them.
 	for _, p := range sockets {
 		fi, err := os.Stat(p)
@@ -281,7 +298,8 @@ func bwrapArgs(bwrap string, st Step, hidden, tmp, sockets []string, name string
 
 // seatbeltProfile returns the sandbox-exec profile that confines st: every
 // write outside the project, the writable directories, /dev and the
-// temporary directories is denied, so are reads of the hidden paths and
+// temporary directories is denied, so are writes to the read-only files
+// (creating them included), reads of the hidden paths and
 // connections to the control sockets, and so is the network unless allowed
 // (other local connections stay open).
 func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
@@ -292,6 +310,9 @@ func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
 		fmt.Fprintf(&b, " (subpath %s)", sbplString(realPath(p)))
 	}
 	b.WriteString(")\n")
+	for _, p := range st.ReadOnly {
+		fmt.Fprintf(&b, "(deny file-write* (literal %s))\n", sbplString(realFilePath(p)))
+	}
 	for _, p := range hidden {
 		fmt.Fprintf(&b, "(deny file-read* (subpath %s))\n", sbplString(realPath(p)))
 	}
@@ -312,6 +333,15 @@ func seatbeltProfile(st Step, hidden, tmp, sockets []string) string {
 // sbplString quotes s as a sandbox profile string literal.
 func sbplString(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+}
+
+// realFilePath is realPath for a file that may not exist yet: its
+// directory is resolved instead.
+func realFilePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Join(realPath(filepath.Dir(p)), filepath.Base(p))
 }
 
 // realPath resolves symlinks (macOS's /tmp and /var), which sandbox-exec

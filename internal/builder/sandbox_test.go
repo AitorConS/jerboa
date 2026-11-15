@@ -40,6 +40,33 @@ func TestBwrapArgs(t *testing.T) {
 	require.NotContains(t, strings.Join(bwrapArgs("bwrap", st, nil, nil, nil, "go", nil), " "), "--unshare-net")
 }
 
+// The build's policy files stay read-only inside the read-write project, so
+// a confined step cannot relax the next build's confinement.
+func TestBwrapArgsKeepsThePolicyReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, ConfigFileName)
+	require.NoError(t, os.WriteFile(cfg, []byte("[build]\n"), 0o600))
+	st := Step{Dir: dir, ReadOnly: []string{cfg, filepath.Join(dir, UnignoreFile)}}
+	line := strings.Join(bwrapArgs("bwrap", st, nil, nil, nil, "sh", nil), " ")
+	bind := "--bind " + dir + " " + dir
+	ro := "--ro-bind " + realPath(cfg) + " " + realPath(cfg)
+	require.Contains(t, line, ro)
+	require.Greater(t, strings.Index(line, ro), strings.Index(line, bind), "the read-only bind must come after the project's read-write one")
+	require.NotContains(t, line, UnignoreFile, "a missing file cannot be bound")
+}
+
+func TestSandboxPassesThePolicyFilesToTheStep(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, ConfigFileName)
+	require.NoError(t, os.WriteFile(cfg, []byte("[build]\n"), 0o600))
+	cmd, done, err := Sandbox{ReadOnly: []string{cfg}}.Command(context.Background(), Step{Dir: dir, Env: []string{}}, "true")
+	require.NoError(t, err)
+	defer done()
+	if sandboxName() == "bubblewrap" {
+		require.Contains(t, strings.Join(cmd.Args, " "), "--ro-bind "+realPath(cfg)+" "+realPath(cfg))
+	}
+}
+
 func TestSeatbeltProfile(t *testing.T) {
 	st := Step{Dir: "/src/a \"b\"", Writable: []string{"/cache"}}
 	p := seatbeltProfile(st, []string{"/home/u/.aws"}, []string{"/tmp/step"}, []string{"/home/u/.jerboa"})

@@ -56,6 +56,7 @@ func newBuildCmd(endpoint *string, verbose *bool) *cobra.Command {
 		layout      string
 		sizeReportF string
 		sbomOut     string
+		allow       buildAllow
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path>",
@@ -133,6 +134,17 @@ project markers (go.mod, package.json, etc.).`,
 				}
 			}
 
+			// The confinement of the build steps, decided before anything
+			// runs and reported on every build, not only with --verbose.
+			var sandbox builder.Sandbox
+			if info.IsDir() {
+				sandbox, err = buildSandbox(cfg, *endpoint, buildPolicyFiles(srcPath, configFile), allow)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintln(cmd.ErrOrStderr(), describeBuildSandbox(cfg, sandbox))
+			}
+
 			// Effective package list: [build] pkgs from unikernel.toml first, then
 			// --pkg flags appended (deduplicated). Package source precedence:
 			// explicit --pkg-source flag > [build] pkg_source > "ops" default.
@@ -176,7 +188,7 @@ project markers (go.mod, package.json, etc.).`,
 				if cfg != nil && cfg.HasStages() {
 					sp.Start("Building project")
 					var cleanupBinary bool
-					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, buildSandbox(cfg, *endpoint), srcPath, pkgFiles, platform, pkgSource, infoW, subW)
+					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, sandbox, srcPath, pkgFiles, platform, pkgSource, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -190,7 +202,7 @@ project markers (go.mod, package.json, etc.).`,
 					var buildEntrypoint string
 					var driverEnv map[string]string
 					var cleanupBinary bool
-					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, buildSandbox(cfg, *endpoint), lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
+					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, sandbox, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
 					if err != nil {
 						sp.Fail("Build failed")
 						return err
@@ -396,6 +408,8 @@ project markers (go.mod, package.json, etc.).`,
 	cmd.Flags().StringVarP(&configFile, "file", "f", "", "path to the unikernel.toml to use (default: <path>/unikernel.toml)")
 	cmd.Flags().BoolVar(&noPreflight, "no-preflight", false, "skip optional CLI preflight diagnostics (ELF/platform and final guest validation remain mandatory)")
 	cmd.Flags().BoolVar(&smoke, "smoke", false, "boot the image once after building to verify it starts (stops and removes the test VM afterwards)")
+	cmd.Flags().BoolVar(&allow.unsandboxed, "allow-unsandboxed", false, "honour [build] sandbox = false from unikernel.toml: run the project's build steps directly on this machine, unconfined")
+	cmd.Flags().BoolVar(&allow.network, "allow-build-network", false, "honour [build] network = true from unikernel.toml: let the project's [build] run commands reach the network")
 	return cmd
 }
 
@@ -493,13 +507,12 @@ func buildSingle(cmd *cobra.Command, srcPath string, cfg *builder.Config, sandbo
 		return "", "", "", nil, nil, false, fmt.Errorf("build: %w", err)
 	}
 
-	fmt.Fprintln(infoW, sandbox.Describe())
-
 	// Execute user-defined build commands (unikernel.toml [build] run = [...]).
 	// These run before the driver packages the project — equivalent to RUN in a Dockerfile.
-	network := cfg != nil && cfg.Build.Network
+	// buildSandbox has checked that the operator allows the network.
+	network := buildRunNetwork(cfg, sandbox)
 	if len(buildRun) > 0 && !network && !sandbox.Off {
-		fmt.Fprintln(infoW, "build commands run without network access; set [build] network = true to allow it")
+		fmt.Fprintln(infoW, "build commands run without network access; set [build] network = true and pass --allow-build-network to allow it")
 	}
 	for _, command := range buildRun {
 		fmt.Fprintf(infoW, "$ %s\n", command)
@@ -623,15 +636,63 @@ func copyFromGuestPath(cf builder.CopyFromConfig, prevBinary string) string {
 	return strings.TrimPrefix(filepath.ToSlash(dst), "/")
 }
 
+// buildAllow holds what the operator lets a project's unikernel.toml relax.
+// The file comes with the project, as do the commands the sandbox confines,
+// so its [build] sandbox = false and network = true take effect only when
+// the operator also asks for them on the command line.
+type buildAllow struct {
+	unsandboxed bool // --allow-unsandboxed
+	network     bool // --allow-build-network
+}
+
+// buildRunNetwork reports whether cfg's [build] run commands get the
+// network: they run (a single-language build), confined, and the project
+// asks for it.
+func buildRunNetwork(cfg *builder.Config, sandbox builder.Sandbox) bool {
+	return cfg != nil && cfg.Build.Network && len(cfg.Build.Run) > 0 && !cfg.HasStages() && !sandbox.Off
+}
+
 // buildSandbox returns the confinement for build steps, keeping them away
-// from the daemon socket this command was pointed at.
-func buildSandbox(cfg *builder.Config, endpoint string) builder.Sandbox {
+// from the daemon socket this command was pointed at and from changing the
+// policy files. It fails when cfg relaxes the confinement in a way allow
+// does not cover, naming the flag that would.
+func buildSandbox(cfg *builder.Config, endpoint string, policy []string, allow buildAllow) (builder.Sandbox, error) {
 	sandbox := cfg.BuildSandbox()
+	if sandbox.Off && !allow.unsandboxed {
+		return builder.Sandbox{}, fmt.Errorf("build: %s sets [build] sandbox = false, which runs the project's build steps directly on this machine, unconfined; rerun with --allow-unsandboxed to allow it", builder.ConfigFileName)
+	}
+	if buildRunNetwork(cfg, sandbox) && !allow.network {
+		return builder.Sandbox{}, fmt.Errorf("build: %s sets [build] network = true, which lets the project's [build] run commands reach the network; rerun with --allow-build-network to allow it", builder.ConfigFileName)
+	}
 	path, ok := strings.CutPrefix(endpoint, "unix://")
 	if (ok || !strings.Contains(endpoint, "://")) && path != "" {
 		sandbox.Sockets = []string{path}
 	}
-	return sandbox
+	sandbox.ReadOnly = policy
+	return sandbox, nil
+}
+
+// buildPolicyFiles returns the files that set how a build of srcPath is
+// confined and what goes into its image: its unikernel.toml (and the one -f
+// names) and its .unignore.
+func buildPolicyFiles(srcPath, configFile string) []string {
+	files := []string{
+		filepath.Join(srcPath, builder.ConfigFileName),
+		filepath.Join(srcPath, builder.UnignoreFile),
+	}
+	if configFile != "" {
+		files = append(files, absPath(configFile))
+	}
+	return files
+}
+
+// describeBuildSandbox says how the build steps of cfg run, for every build.
+func describeBuildSandbox(cfg *builder.Config, sandbox builder.Sandbox) string {
+	d := sandbox.Describe()
+	if buildRunNetwork(cfg, sandbox) {
+		d += "; [build] run commands may reach the network"
+	}
+	return d
 }
 
 // buildStages processes multi-stage builds from unikernel.toml.

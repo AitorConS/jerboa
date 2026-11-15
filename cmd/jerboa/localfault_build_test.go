@@ -301,13 +301,50 @@ func lfGoProject(t *testing.T) string {
 }
 
 // lfBuild runs jerboa build in an isolated home, keeping the PATH the test
-// prepared.
+// prepared. It allows the unconfined build steps lfGoProject asks for.
 func lfBuild(t *testing.T, endpoint string, args ...string) fdResult {
+	t.Helper()
+	return lfBuildWith(t, endpoint, append([]string{"--allow-unsandboxed"}, args...)...)
+}
+
+// lfBuildWith is lfBuild without --allow-unsandboxed.
+func lfBuildWith(t *testing.T, endpoint string, args ...string) fdResult {
 	t.Helper()
 	path := os.Getenv("PATH")
 	fdIsolate(t)
 	t.Setenv("PATH", path)
 	return fdExec(t, "", append([]string{"--host", endpoint, "build"}, args...)...)
+}
+
+// A project's unikernel.toml cannot relax the confinement of its own build
+// steps without the operator's flag: the build stops before running
+// anything, names the flag, and the flag lets the same build through.
+func TestLocalFault_BuildPolicyNeedsTheOperator(t *testing.T) {
+	t.Run("sandbox = false", func(t *testing.T) {
+		tool := lfFakeGo(t, "exit 1")
+		d := fdNew(t).all(fdOK(nil))
+		res := lfBuildWith(t, d.endpoint, lfGoProject(t))
+		fdRequireCleanFailure(t, res, "[build] sandbox = false", "--allow-unsandboxed")
+		assert.Empty(t, d.methods())
+		_, err := os.Stat(filepath.Join(tool, "calls"))
+		require.ErrorIs(t, err, os.ErrNotExist, "a build step ran unconfined without the flag")
+
+		res = lfBuildWith(t, d.endpoint, "--allow-unsandboxed", lfGoProject(t))
+		fdRequireCleanFailure(t, res, "go build")
+		assert.Contains(t, res.stderr, "build steps run directly on the host", "the mode must be shown without --verbose")
+	})
+	t.Run("network = true", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "svc")
+		marker := filepath.Join(t.TempDir(), "ran")
+		lfWrite(t, filepath.Join(dir, "go.mod"), "module example.com/svc\n")
+		lfWrite(t, filepath.Join(dir, builder.ConfigFileName), "[build]\nlang = \"go\"\nnetwork = true\nrun = [\"touch '"+marker+"'\"]\n")
+		d := fdNew(t).all(fdOK(nil))
+		res := lfBuildWith(t, d.endpoint, dir)
+		fdRequireCleanFailure(t, res, "[build] network = true", "--allow-build-network")
+		assert.Empty(t, d.methods())
+		_, err := os.Stat(marker)
+		require.ErrorIs(t, err, os.ErrNotExist, "a [build] run command ran without the flag")
+	})
 }
 
 // Whatever is wrong with what the user points the build at, the daemon is

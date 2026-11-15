@@ -219,6 +219,8 @@ Key flags:
 | `--sbom <file>` | Also write the image's CycloneDX SBOM to `<file>`. Every build stores one with the image; `jerboa images sbom <ref>` prints it |
 | `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
+| `--allow-unsandboxed` | Honour `[build] sandbox = false` from `unikernel.toml`. Without it a project that sets it fails to build |
+| `--allow-build-network` | Honour `[build] network = true` from `unikernel.toml`. Without it a project that sets it (and has `[build] run` commands) fails to build |
 
 `unikernel.toml` is read automatically when present, or selected explicitly with
 `-f/--file`. Relevant `[build]` keys:
@@ -235,8 +237,8 @@ Key flags:
 | `include` | Allowlist of project paths to package for `node`, `python` and `raw` builds (e.g. `["server.js", "lib", "node_modules", "**/*.json"]`). Paths are relative to the project root; `*` matches within a path segment, `**` across segments, and a directory matches everything below it. It only narrows what `.unignore` lets through. Node builds package `node_modules` (the production dependencies the driver installs); other languages ignore it by default, and `.unignore` can exclude it explicitly. Python builds must list `packages` (pip dependencies). The build fails if the entrypoint is not included |
 | `dirs` | Absolute directories to create empty in the image — volume mount points (a volume can only mount onto a directory that already exists in the image) and runtime scratch paths |
 | `install_scripts` | `true` lets `npm` run dependencies' install scripts (`preinstall`, `install`, `postinstall`) on the build machine. Off by default: `npm` runs with `--ignore-scripts` |
-| `sandbox` | `false` runs build steps directly on the build machine instead of confined (see below). Default `true` |
-| `network` | `true` lets `[build] run` commands reach the network. Off by default; `npm`, `pip`, `cargo` and `go build` always may, to fetch dependencies |
+| `sandbox` | `false` asks to run build steps directly on the build machine instead of confined (see below). Default `true`. Takes effect only with `--allow-unsandboxed` |
+| `network` | `true` asks to let `[build] run` commands reach the network. Off by default; `npm`, `pip`, `cargo` and `go build` always may, to fetch dependencies. Takes effect only with `--allow-build-network` |
 
 For `lang = "raw"`, `[program] path` names the runtime binary resolved from
 package files; the program is executed from its real in-image path, so binaries
@@ -294,7 +296,15 @@ Build driver behavior to know:
   `[build] run` commands have no network unless `[build] network = true`;
   the language tools keep it to fetch dependencies. A step that writes
   elsewhere (for example straight to `/tmp`) fails: write under `TMPDIR` or
-  the project, or set `[build] sandbox = false`. Without `bwrap` (install
+  the project, or set `[build] sandbox = false`. Confined steps cannot
+  change the project's `unikernel.toml` or `.unignore` (on Linux, those
+  that exist when the step starts).
+- `unikernel.toml` comes with the project, as do the commands the sandbox
+  confines, so it cannot switch the confinement off on its own:
+  `[build] sandbox = false` needs `--allow-unsandboxed` and
+  `[build] network = true` needs `--allow-build-network` on the command
+  line, or the build fails before running anything and names the flag.
+  Every build prints how its steps run. Without `bwrap` (install
   the `bubblewrap` package) or `sandbox-exec`, and on Windows, steps run
   directly with a private `TMPDIR`, and the build warns.
 - The build context leaves out common credential files by default: `.env`,

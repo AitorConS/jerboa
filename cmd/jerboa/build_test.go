@@ -190,9 +190,67 @@ func TestBuildSandboxHidesTheDaemonSocket(t *testing.T) {
 		"tcp://127.0.0.1:7000":     nil,
 		"":                         nil,
 	} {
-		require.Equal(t, want, buildSandbox(nil, endpoint).Sockets, endpoint)
+		sandbox, err := buildSandbox(nil, endpoint, nil, buildAllow{})
+		require.NoError(t, err)
+		require.Equal(t, want, sandbox.Sockets, endpoint)
 	}
 	off := false
 	cfg := &builder.Config{Build: builder.BuildConfig{Sandbox: &off}}
-	require.True(t, buildSandbox(cfg, "/srv/jerboad.sock").Off)
+	sandbox, err := buildSandbox(cfg, "/srv/jerboad.sock", nil, buildAllow{unsandboxed: true})
+	require.NoError(t, err)
+	require.True(t, sandbox.Off)
+}
+
+// The project's unikernel.toml comes with the commands the sandbox confines;
+// it relaxes the confinement only with the operator's flag.
+func TestBuildSandboxNeedsTheOperatorToRelaxIt(t *testing.T) {
+	off, on := false, true
+	run := []string{"make"}
+	cases := []struct {
+		name  string
+		build builder.BuildConfig
+		allow buildAllow
+		want  string // error naming the flag; "" when allowed
+	}{
+		{"default", builder.BuildConfig{Run: run}, buildAllow{}, ""},
+		{"sandbox = true", builder.BuildConfig{Sandbox: &on, Run: run}, buildAllow{}, ""},
+		{"sandbox = false", builder.BuildConfig{Sandbox: &off}, buildAllow{}, "--allow-unsandboxed"},
+		{"sandbox = false, network flag only", builder.BuildConfig{Sandbox: &off}, buildAllow{network: true}, "--allow-unsandboxed"},
+		{"sandbox = false, allowed", builder.BuildConfig{Sandbox: &off, Network: true, Run: run}, buildAllow{unsandboxed: true}, ""},
+		{"network = true", builder.BuildConfig{Network: true, Run: run}, buildAllow{}, "--allow-build-network"},
+		{"network = true, unsandboxed flag only", builder.BuildConfig{Network: true, Run: run}, buildAllow{unsandboxed: true}, "--allow-build-network"},
+		{"network = true, allowed", builder.BuildConfig{Network: true, Run: run}, buildAllow{network: true}, ""},
+		// Nothing gets the network: no run commands.
+		{"network = true without run", builder.BuildConfig{Network: true}, buildAllow{}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cfg := &builder.Config{Build: c.build}
+			sandbox, err := buildSandbox(cfg, "", []string{"/src/unikernel.toml"}, c.allow)
+			if c.want != "" {
+				require.ErrorContains(t, err, c.want)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []string{"/src/unikernel.toml"}, sandbox.ReadOnly)
+			require.Equal(t, c.build.Sandbox != nil && !*c.build.Sandbox, sandbox.Off)
+		})
+	}
+}
+
+func TestBuildPolicyFiles(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "app")
+	other := filepath.Join(t.TempDir(), "other.toml")
+	require.Equal(t, []string{
+		filepath.Join(src, builder.ConfigFileName),
+		filepath.Join(src, builder.UnignoreFile),
+	}, buildPolicyFiles(src, ""))
+	require.Contains(t, buildPolicyFiles(src, other), other)
+}
+
+func TestDescribeBuildSandboxReportsTheNetwork(t *testing.T) {
+	cfg := &builder.Config{Build: builder.BuildConfig{Network: true, Run: []string{"make"}}}
+	require.Contains(t, describeBuildSandbox(cfg, builder.Sandbox{}), "may reach the network")
+	require.NotContains(t, describeBuildSandbox(nil, builder.Sandbox{}), "network")
+	require.Contains(t, describeBuildSandbox(cfg, builder.Sandbox{Off: true}), "directly on the host")
 }
