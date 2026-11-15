@@ -298,7 +298,14 @@ Build driver behavior to know:
   elsewhere (for example straight to `/tmp`) fails: write under `TMPDIR` or
   the project, or set `[build] sandbox = false`. Confined steps cannot
   change the project's `unikernel.toml` or `.unignore` (on Linux, those
-  that exist when the step starts).
+  that exist when the step starts), nor connect to the host services known
+  to act for whoever asks: the D-Bus session and system buses, the systemd
+  user manager, Docker, Podman, containerd, BuildKit, libvirt, LXD/Incus
+  and snapd, X11, tmux and screen, and the GnuPG agent, at their usual
+  socket paths (`DBUS_*_BUS_ADDRESS`, `DOCKER_HOST` and `CONTAINER_HOST`
+  are removed from their environment). On macOS they cannot send Apple
+  events. The SSH agent stays reachable, for dependencies fetched over SSH;
+  other local sockets do too.
 - `unikernel.toml` comes with the project, as do the commands the sandbox
   confines, so it cannot switch the confinement off on its own:
   `[build] sandbox = false` needs `--allow-unsandboxed` and
