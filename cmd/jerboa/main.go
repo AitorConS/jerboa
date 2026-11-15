@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -259,12 +258,13 @@ func ensureObservabilityToken(cfg *config.Config) bool {
 }
 
 // daemonJSONPath returns the path to the client-owned daemon secret file.
+//
+// It is config.DaemonFilePath, so without a home directory the file lives in
+// the same per-user fallback as the config (and is read and written through
+// its ownership checks by wslboot) rather than in ./.jerboa, which would put
+// the daemon token wherever the command happened to run.
 func daemonJSONPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return filepath.Join(".jerboa", "daemon.json")
-	}
-	return filepath.Join(home, ".jerboa", "daemon.json")
+	return config.DaemonFilePath()
 }
 
 func defaultStorePath() string {
