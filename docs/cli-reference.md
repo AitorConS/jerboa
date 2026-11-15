@@ -368,9 +368,13 @@ Resolve the image through the daemon and sign its disk digest with the default E
 ### `jerboa verify <image>`
 
 Resolve the image through the daemon, hash its actual disk contents, and verify the
-signature against that digest. `run --verify enforce` pins the verified digest;
-each hypervisor verifies the bytes while writing its private boot copy and starts
-the VM only if the digest matches. Signatures made before the `jerboa-ed25519-v1`
+signature against that digest. `run --verify enforce` pins the verified digest:
+the VM runs the named tag, with that tag's own defaults, and the daemon refuses
+it if the tag no longer names the verified disk; each hypervisor verifies the
+bytes while writing its private boot copy and starts the VM only if the digest
+matches. A digest reference (`run sha256:…`) takes its defaults from the first
+image stored with that disk; a later tag of the same disk (another repository's
+recipe for it, say) does not change them. Signatures made before the `jerboa-ed25519-v1`
 format are refused; run `jerboa sign <image>` again to replace them.
 
 ---

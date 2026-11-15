@@ -121,7 +121,7 @@ The identity is a GitHub repository (`owner/repo`), optionally narrowed to a wor
 ]}
 ```
 
-The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`. A workflow that pushes through a reusable workflow is certified by Fulcio as the reusable one; such signatures do not match the recorded workflow, so pull them with `--identity` or a policy rule.
+The Sigstore trusted root is fetched through its TUF repository and cached in `~/.jerboa/sigstore`. The certificate must also say the job ran in that repository (its source repository claim), and the signed statement must name the repository being pulled. A workflow that pushes through a reusable workflow of another repository is certified by Fulcio as the reusable one while its source repository is the caller, so such signatures match no identity and are refused.
 
 ### What a pull checks
 
