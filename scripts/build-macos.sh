@@ -30,8 +30,10 @@ cp kernel/output/platform/virt/bin/kernel.img "$dest/tools/kernel.img"
 cp kernel/output/platform/virt/boot-stub.img "$dest/tools/boot.img"
 printf 'darwin-arm64\n' > "$dest/tools/platform.txt"
 cp kernel/VERSION "$dest/tools/kernel-version.txt"
+# A pre-staged tools/x86 (release.yml stages the candidate's own) is kept.
+# JERBOA_X86_KERNEL_VERSION makes the fetch refuse any other stable kernel.
 if "$with_x86" && [ ! -d "$dest/tools/x86" ]; then
-  go run scripts/fetch-x86-tools.go "$dest/tools"
+  go run scripts/fetch-x86-tools.go "$dest/tools" ${JERBOA_X86_KERNEL_VERSION:+"$JERBOA_X86_KERNEL_VERSION"}
 fi
 file "$dest/jerboa" "$dest/jerboad" "$dest/tools/mkfs" "$dest/tools/kernel.img"
 echo "Native build staged in $dest"

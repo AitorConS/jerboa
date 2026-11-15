@@ -169,8 +169,13 @@ without a timestamp. A Developer ID signature with a secure timestamp will
 differ between runs by design.
 
 `bin/tools/x86` is not rebuilt: no x86_64 guest cross toolchain is pinned. Its
-three files are copied from the signed release artifacts fetched by
-`scripts/fetch-x86-tools.go`, and the lock verifies their hashes.
+three files are copied from signed release artifacts, and the lock verifies their
+hashes. Locally `scripts/fetch-x86-tools.go` fetches them from the stable channel
+(pass the expected kernel version, or set `JERBOA_X86_KERNEL_VERSION` for
+`build-macos.sh`, to refuse any other). A release candidate instead stages
+`boot.img` and `kernel.img` of its own selected Linux toolset, the one it boots
+on QEMU/KVM and Firecracker and publishes, and checks the packaged bundle and app
+against it; the signed inventory records them as `macos_x86_tools`.
 
 The claim is bit-for-bit reproducibility on this pinned macOS ARM64 environment
 only. Other Macs, other Command Line Tools or SDK versions, and full Xcode are
