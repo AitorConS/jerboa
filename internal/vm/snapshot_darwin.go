@@ -230,6 +230,9 @@ func (m *FirecrackerManager) SnapshotRestore(ctx context.Context, id, name strin
 	if err := snapshotEligible(v.Cfg); err != nil {
 		return fmt.Errorf("snapshot restore %s: %w", v.ID, err)
 	}
+	if _, err := vmRuntimeDir(); err != nil {
+		return fmt.Errorf("snapshot restore %s: %w", v.ID, err)
+	}
 	release, err := m.snapshots.Acquire(name)
 	if err != nil {
 		return fmt.Errorf("snapshot restore %s: %w", v.ID, err)
