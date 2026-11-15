@@ -332,7 +332,7 @@ func (c *SwimCluster) HandleGossip(payload gossipPayload) gossipPayload {
 	defer c.mu.Unlock()
 
 	if ok {
-		c.mergeEntriesLocked(payload.MemberID, entries)
+		c.mergeEntriesLocked(payload.MemberID, "", entries)
 
 		if m, found := c.members[payload.MemberID]; found {
 			m.LastSeen = time.Now()
@@ -423,7 +423,7 @@ func (c *SwimCluster) mergeReply(body io.Reader, peer string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.mergeEntriesLocked(remote.MemberID, entries)
+	c.mergeEntriesLocked(remote.MemberID, peer, entries)
 	if m, found := c.members[remote.MemberID]; found {
 		m.LastSeen = time.Now()
 	}
@@ -484,11 +484,26 @@ const maxMembers = 1024
 // later one is clamped to now, so an entry cannot pin itself as fresh forever.
 const maxClockSkew = time.Minute
 
-// mergeEntriesLocked folds gossiped entries from sender into the table. Only a
-// member itself may change its address or announce that it left; others can
-// relay its liveness and declare it dead. entries must already have passed
-// validEntries, which callers run before taking c.mu.
-func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
+// mergeEntriesLocked folds gossiped entries from sender into the table.
+// entries must already have passed validEntries, which callers run before
+// taking c.mu.
+//
+// Every node holds the same cluster token, so the token proves membership but
+// not identity, and sender (the member_id in the message body) is only a claim.
+// The rules below therefore never let that claim alone change what this node
+// records about another member:
+//
+//   - A known member's address never changes over gossip. Member IDs are
+//     random per process and a node's advertised address is fixed for the life
+//     of the process, so an honest node never moves; a restarted node joins
+//     under a new ID and its old entry ages out.
+//   - "left" is accepted only from the member itself, and only on a reply to a
+//     request this node sent to the member's recorded address (dialed is that
+//     address; it is empty for inbound gossip). The claim is then bound to
+//     whoever answers at that address, not to a body field any peer can set.
+//   - Any peer may still relay liveness and newer capacity figures, introduce
+//     members this node has not seen, and declare a member dead, as before.
+func (c *SwimCluster) mergeEntriesLocked(sender, dialed string, entries []memberEntry) {
 	now := time.Now()
 	for _, e := range entries {
 		if e.ID == c.local.ID {
@@ -499,8 +514,6 @@ func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
 		if entryTime.After(now.Add(maxClockSkew)) {
 			entryTime = now
 		}
-		self := e.ID == sender
-
 		if !ok {
 			if len(c.members) >= maxMembers {
 				slog.Warn("cluster: member table full; ignoring new member")
@@ -520,12 +533,12 @@ func (c *SwimCluster) mergeEntriesLocked(sender string, entries []memberEntry) {
 			continue
 		}
 
-		if e.Status == StatusDead || (e.Status == StatusLeft && self) {
+		// The member answered at its recorded address and speaks for itself.
+		firstHand := e.ID == sender && dialed != "" && existing.Addr == dialed
+
+		if e.Status == StatusDead || (e.Status == StatusLeft && firstHand) {
 			existing.Status = e.Status
 		} else if entryTime.After(existing.LastSeen) {
-			if self {
-				existing.Addr = e.Addr
-			}
 			existing.VMCount = e.VMCount
 			existing.CPUCap = e.CPUCap
 			existing.MemCap = e.MemCap

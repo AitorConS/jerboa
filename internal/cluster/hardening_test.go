@@ -38,23 +38,70 @@ func TestGossip_FutureLastSeenIsClamped(t *testing.T) {
 	}
 }
 
-func TestGossip_OnlyAMemberMovesItsAddress(t *testing.T) {
+func memberByID(c *SwimCluster, id string) (Member, bool) {
+	for _, m := range c.Members() {
+		if m.ID == id {
+			return m, true
+		}
+	}
+	return Member{}, false
+}
+
+func TestGossip_AddressOfAKnownMemberNeverMoves(t *testing.T) {
 	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
 	start := time.Now().Add(-time.Minute)
 	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{entry("node-b", "10.0.0.2:7946", start)}})
 	// A third party relays a newer entry for node-b with another address.
 	c.HandleGossip(gossipPayload{MemberID: "node-c", Members: []memberEntry{entry("node-b", "10.0.0.66:7946", time.Now())}})
-	addr := func() string {
-		for _, m := range c.Members() {
-			if m.ID == "node-b" {
-				return m.Addr
-			}
-		}
-		return ""
-	}
-	require.Equal(t, "10.0.0.2:7946", addr())
-	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{entry("node-b", "10.0.0.3:7946", time.Now().Add(time.Second))}})
-	require.Equal(t, "10.0.0.3:7946", addr())
+	m, _ := memberByID(c, "node-b")
+	require.Equal(t, "10.0.0.2:7946", m.Addr)
+	// The same entry with member_id set to node-b: the token is shared, so the
+	// body field proves nothing and the address stays put.
+	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{entry("node-b", "10.0.0.66:7946", time.Now().Add(time.Second))}})
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, "10.0.0.2:7946", m.Addr)
+}
+
+// leftReplyServer answers gossip as node-b announcing that it left.
+func leftReplyServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		e := entry("node-b", "10.0.0.2:7946", time.Now())
+		e.Status = StatusLeft
+		_ = json.NewEncoder(w).Encode(gossipPayload{MemberID: "node-b", Members: []memberEntry{e}})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestGossip_LeftNeedsTheMemberAtItsAddress(t *testing.T) {
+	left := entry("node-b", "10.0.0.2:7946", time.Now())
+	left.Status = StatusLeft
+
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{entry("node-b", "10.0.0.2:7946", time.Now())}})
+
+	// Relayed by a third party, or claimed by any token holder in inbound
+	// gossip: ignored.
+	c.HandleGossip(gossipPayload{MemberID: "node-c", Members: []memberEntry{left}})
+	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{left}})
+	m, _ := memberByID(c, "node-b")
+	require.Equal(t, StatusAlive, m.Status)
+
+	// A reply from some other address claiming to be node-b: ignored.
+	impostor := leftReplyServer(t)
+	require.NoError(t, c.Join(context.Background(), impostor.Listener.Addr().String()))
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, StatusAlive, m.Status)
+
+	// The reply from node-b's recorded address: accepted.
+	genuine := leftReplyServer(t)
+	c.mu.Lock()
+	c.members["node-b"].Addr = genuine.Listener.Addr().String()
+	c.mu.Unlock()
+	require.NoError(t, c.Join(context.Background(), genuine.Listener.Addr().String()))
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, StatusLeft, m.Status)
 }
 
 func TestGossip_RejectsLinkLocalAddresses(t *testing.T) {
