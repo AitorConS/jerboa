@@ -20,7 +20,8 @@ var version = "dev"
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// Errors carry text from the daemon, registries and project files.
+		fmt.Fprintln(os.Stderr, "Error:", sanitizeTerminal(err.Error()))
 		os.Exit(1)
 	}
 }

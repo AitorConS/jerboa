@@ -63,6 +63,15 @@ services:
 	require.ErrorContains(t, err, "missing image")
 }
 
+// A service name becomes a VM name that listings print, so one with control
+// characters (a double-quoted YAML key can carry them) is refused.
+func TestParse_ServiceNameWithControlCharacters(t *testing.T) {
+	for _, key := range []string{`"web\e]0;pwned\a"`, `"web\r"`, `"web server"`, `"../web"`} {
+		_, err := compose.Parse([]byte("version: \"1\"\nservices:\n  " + key + ":\n    image: web:latest\n"))
+		require.ErrorContains(t, err, "service name", key)
+	}
+}
+
 func TestParse_UnknownDependency(t *testing.T) {
 	_, err := compose.Parse([]byte(`
 version: "1"
