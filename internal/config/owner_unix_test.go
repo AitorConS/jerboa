@@ -139,3 +139,111 @@ func TestLoad_TempFileOutsideFallbackRefusesSymlink(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "tcp://198.51.100.7:7890", cfg.Daemon.Endpoint)
 }
+
+var secretConfig = &Config{Daemon: DaemonConfig{Token: "victim-secret"}}
+
+func TestSave_NoHomeFallbackCreatesPrivateDirs(t *testing.T) {
+	userDir, path := noHomeFallback(t)
+	require.NoError(t, Save(path, secretConfig))
+	for _, dir := range []string{userDir, filepath.Dir(path)} {
+		fi, err := os.Lstat(dir)
+		require.NoError(t, err)
+		assert.True(t, fi.IsDir())
+		assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), dir)
+	}
+	fi, err := os.Lstat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), fi.Mode().Perm())
+	cfg, err := Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "victim-secret", cfg.Daemon.Token)
+
+	// Saving again replaces the file in place.
+	require.NoError(t, Save(path, &Config{Hypervisor: "qemu"}))
+	cfg, err = Load(path)
+	require.NoError(t, err)
+	assert.Equal(t, "qemu", cfg.Hypervisor)
+	entries, err := os.ReadDir(filepath.Dir(path))
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "no temporary file is left behind")
+}
+
+func TestSave_NoHomeFallbackRefusesSymlinkedDirs(t *testing.T) {
+	for _, which := range []string{"jerboa-uid", ".jerboa"} {
+		t.Run(which, func(t *testing.T) {
+			userDir, path := noHomeFallback(t)
+			elsewhere := t.TempDir()
+			link := userDir
+			if which == ".jerboa" {
+				require.NoError(t, os.Mkdir(userDir, 0o700))
+				link = filepath.Dir(path)
+			}
+			require.NoError(t, os.Symlink(elsewhere, link))
+			err := Save(path, secretConfig)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "not a private directory")
+			entries, err := os.ReadDir(elsewhere)
+			require.NoError(t, err)
+			assert.Empty(t, entries, "nothing is written through the symlink")
+		})
+	}
+}
+
+func TestSave_NoHomeFallbackRefusesFileInPlaceOfDir(t *testing.T) {
+	userDir, path := noHomeFallback(t)
+	require.NoError(t, os.WriteFile(userDir, nil, 0o600))
+	require.Error(t, Save(path, secretConfig))
+}
+
+func TestSave_NoHomeFallbackRefusesForeignOwnedDir(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to make a directory another user owns")
+	}
+	userDir, path := noHomeFallback(t)
+	require.NoError(t, os.Mkdir(userDir, 0o777))
+	require.NoError(t, os.Chown(userDir, 65534, 65534))
+	err := Save(path, secretConfig)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a private directory")
+	_, err = os.Lstat(filepath.Dir(path))
+	require.True(t, os.IsNotExist(err), "nothing is created inside it")
+}
+
+func TestSave_NoHomeFallbackNarrowsOwnWritableDir(t *testing.T) {
+	userDir, path := noHomeFallback(t)
+	require.NoError(t, os.Mkdir(userDir, 0o700))
+	require.NoError(t, os.Chmod(userDir, 0o777))
+	require.NoError(t, Save(path, secretConfig))
+	fi, err := os.Lstat(userDir)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm())
+	_, err = Load(path)
+	require.NoError(t, err)
+}
+
+func TestSave_NoHomeFallbackReplacesPlantedSymlink(t *testing.T) {
+	_, path := noHomeFallback(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	target := filepath.Join(t.TempDir(), "victim-target")
+	require.NoError(t, os.WriteFile(target, []byte("untouched"), 0o600))
+	require.NoError(t, os.Symlink(target, path))
+	require.NoError(t, Save(path, secretConfig))
+
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, "untouched", string(got), "the symlink is replaced, not followed")
+	fi, err := os.Lstat(path)
+	require.NoError(t, err)
+	assert.True(t, fi.Mode().IsRegular())
+}
+
+func TestWritePrivateFile_DaemonFileFallback(t *testing.T) {
+	userDir, _ := noHomeFallback(t)
+	path := DaemonFilePath()
+	require.Equal(t, filepath.Join(noHomeDir(), "daemon.json"), path)
+	elsewhere := t.TempDir()
+	require.NoError(t, os.Symlink(elsewhere, userDir))
+	require.Error(t, WritePrivateFile(path, []byte(`{"token":"x"}`)))
+	_, err := ReadPrivateFile(path)
+	require.Error(t, err)
+}
