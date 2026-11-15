@@ -18,6 +18,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -48,6 +49,8 @@ type Server struct {
 	conn *net.UDPConn
 	// sem bounds concurrent query handlers (see maxConcurrentQueries).
 	sem chan struct{}
+	// turn rotates the order of the addresses a shared name answers with.
+	turn atomic.Uint32
 }
 
 // New creates a Server backed by resolver, forwarding unknown names to upstream
@@ -157,9 +160,12 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 	if network := s.resolver.NetworkForIP(srcIP); network != "" {
 		name := strings.TrimSuffix(q.Name.String(), ".")
 		if q.Type == dnsmessage.TypeA {
-			if rec, rErr := s.resolver.Resolve(name, network); rErr == nil {
-				if ip := net.ParseIP(rec.IP).To4(); ip != nil {
-					return s.answerA(hdr.ID, q, [4]byte{ip[0], ip[1], ip[2], ip[3]})
+			// Every VM that answers to the name: the replicas of a service
+			// share an alias. Asking for exactly one would fail on them and
+			// send the private name to the upstream resolver.
+			if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil {
+				if ips := ipv4s(recs); len(ips) > 0 {
+					return s.answerA(hdr.ID, q, rotate(ips, int(s.turn.Add(1))))
 				}
 			}
 		} else if recs, rErr := s.resolver.ResolveAll(name, network); rErr == nil && len(recs) > 0 {
@@ -182,7 +188,37 @@ func (s *Server) buildResponse(query []byte, srcIP string) ([]byte, error) {
 	return s.empty(hdr.ID, q, dnsmessage.RCodeNameError)
 }
 
-func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, error) {
+// maxAnswers bounds the addresses in one answer so it fits the 512 bytes
+// every resolver accepts over UDP. With the order rotating, a larger set
+// is still reached over successive questions.
+const maxAnswers = 16
+
+// ipv4s returns the IPv4 addresses of recs, leaving out records that hold
+// none.
+func ipv4s(recs []scheduler.Record) [][4]byte {
+	ips := make([][4]byte, 0, len(recs))
+	for _, rec := range recs {
+		if ip := net.ParseIP(rec.IP).To4(); ip != nil {
+			ips = append(ips, [4]byte{ip[0], ip[1], ip[2], ip[3]})
+		}
+	}
+	return ips
+}
+
+// rotate returns ips starting at position turn, so successive answers lead
+// with a different address and clients that take the first one spread out.
+func rotate(ips [][4]byte, turn int) [][4]byte {
+	start := turn % len(ips)
+	out := make([][4]byte, 0, len(ips))
+	out = append(out, ips[start:]...)
+	out = append(out, ips[:start]...)
+	if len(out) > maxAnswers {
+		out = out[:maxAnswers]
+	}
+	return out
+}
+
+func (s *Server) answerA(id uint16, q dnsmessage.Question, ips [][4]byte) ([]byte, error) {
 	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{
 		ID:                 id,
 		Response:           true,
@@ -200,14 +236,16 @@ func (s *Server) answerA(id uint16, q dnsmessage.Question, ip [4]byte) ([]byte, 
 	if err := b.StartAnswers(); err != nil {
 		return nil, fmt.Errorf("start answers: %w", err)
 	}
-	err := b.AResource(dnsmessage.ResourceHeader{
-		Name:  q.Name,
-		Type:  dnsmessage.TypeA,
-		Class: dnsmessage.ClassINET,
-		TTL:   30,
-	}, dnsmessage.AResource{A: ip})
-	if err != nil {
-		return nil, fmt.Errorf("add A resource: %w", err)
+	for _, ip := range ips {
+		err := b.AResource(dnsmessage.ResourceHeader{
+			Name:  q.Name,
+			Type:  dnsmessage.TypeA,
+			Class: dnsmessage.ClassINET,
+			TTL:   30,
+		}, dnsmessage.AResource{A: ip})
+		if err != nil {
+			return nil, fmt.Errorf("add A resource: %w", err)
+		}
 	}
 	resp, err := b.Finish()
 	if err != nil {
