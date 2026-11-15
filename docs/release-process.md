@@ -27,6 +27,31 @@ runner timestamp in that API; queue and approval latency are explicitly unknown,
 calculated by subtracting workflow creation time. Compare p50/p95 over a representative
 sample before claiming the 3–5 minute PR target has been achieved.
 
+### Self-hosted KVM runner access
+
+The `if:` guards (head repository must be this one) and `environment: kvm` on the
+KVM jobs are lines of workflow files that a `pull_request` run takes from the pull
+request itself: a fork can delete them, or add a workflow naming
+`[self-hosted, linux, kvm]`. They document intent; they do not enforce it. What
+enforces it is outside the pull request's reach:
+
+- **Runner job-started hook.** Install `scripts/release/kvm-runner-guard.py` on the
+  runner as its `ACTIONS_RUNNER_HOOK_JOB_STARTED` script, with
+  `JERBOA_KVM_REPOSITORY=AitorConS/jerboa` (see the script's header). Before any step
+  of a job it refuses pull requests whose head is another repository, events other
+  than push, pull_request, workflow_dispatch and schedule, and workflows other than
+  `main.yml`, `release.yml` and `nightly.yml`. Reinstall it from main when it
+  changes, and add a workflow to its list before giving that workflow KVM jobs.
+- **Settings > Actions > General:** "Require approval for all external
+  contributors" for fork pull request workflows.
+- **Environment `kvm`:** required reviewer (the owner), so same-repository pull
+  request jobs wait for a review of the revision they run.
+- **Runner:** dedicated to this repository, not shared with other repositories;
+  preferably ephemeral (`--ephemeral`, re-registered per job). While it is
+  persistent, a job can leave state for the next one, which is why release
+  assembly trusts no artifact a KVM job could replace (see
+  [Promote](#promote)).
+
 Kernel host tests are required in full CI and also run nightly on hosted Linux: they do not use KVM. For diagnosis,
 manual `nightly.yml` dispatch accepts `suite: kernel`; scheduled/default runs still
 execute all suites. Native Mac validation remains manual and distribution remains

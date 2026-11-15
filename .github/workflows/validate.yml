@@ -191,6 +191,8 @@ jobs:
       run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
     # Self-hosted KVM runner: never for pull requests from forks, whose
     # workflow changes it would run. A maintainer pushes such a branch here.
+    # A fork can edit these lines, so the runner job-started hook
+    # (scripts/release/kvm-runner-guard.py) is what enforces it.
     if: inputs.full && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs:
     - lint
@@ -232,6 +234,8 @@ jobs:
       run: go test -tags e2e -count=1 -timeout 30m -v ./tests/e2e/...
     # Self-hosted KVM runner: never for pull requests from forks, whose
     # workflow changes it would run. A maintainer pushes such a branch here.
+    # A fork can edit these lines, so the runner job-started hook
+    # (scripts/release/kvm-runner-guard.py) is what enforces it.
     if: inputs.full && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     needs:
     - lint
