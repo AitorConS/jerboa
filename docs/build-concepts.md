@@ -185,7 +185,10 @@ jerboa pkg list                   # locally cached packages
 ```
 
 Node and Python builds resolve their runtime package **automatically**
-(`node:20`, `python:3.12`) — you only declare extra packages.
+(`node:20`, `python:3.12`) — you only declare extra packages. With the ops
+source the runtime comes from the `eyberg` namespace only; when it has no
+package for that version or architecture the build fails rather than take
+another publisher's, and `--pkg <namespace>/node:20` picks one explicitly.
 
 If a file from your project and a file from a package land at the same path in
 the image (for example, both ship a `README.md` at the root), **your project's

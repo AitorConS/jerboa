@@ -249,6 +249,10 @@ func resolveAutoPackages(ctx context.Context, autoPkgs []string, pkgSource strin
 	return resolvePackages(ctx, autoPkgs)
 }
 
+// opsRuntimeNamespace is the ops namespace bare runtime names (node:20,
+// python:3.12) resolve in.
+const opsRuntimeNamespace = "eyberg"
+
 func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string, archs ...string) *pkg.OpsPackage {
 	// Build a list of name aliases to try: the ops ecosystem names the Python
 	// runtime "python3" rather than "python", so try both.
@@ -262,12 +266,13 @@ func lookupOpsPackage(manifest *pkg.OpsPackageList, name, version string, archs 
 		names = append(names, "python")
 	}
 
-	namespaces := []string{"eyberg", "nanovms", "myuniverse"}
+	// A bare name resolves only in the primary namespace. Falling through
+	// to others let gaps there (a version or an architecture eyberg lacks)
+	// decide whose runtime went into the image; another namespace's package
+	// is used only when named, e.g. --pkg nanovms/node:20.
 	for _, alias := range names {
-		for _, ns := range namespaces {
-			if t := manifest.LookupArch(ns, alias, version, optionalPackageArch(archs)); t != nil {
-				return t
-			}
+		if t := manifest.LookupArch(opsRuntimeNamespace, alias, version, optionalPackageArch(archs)); t != nil {
+			return t
 		}
 	}
 	// LookupArch already matches version prefixes ("20" → 20.x) and returns
@@ -304,7 +309,10 @@ func resolveOpsAutoPackages(ctx context.Context, autoPkgs []string) ([]pkg.File,
 			target = lookupOpsPackage(manifest, pkgName, pkgVer, packageArchFor(ctx))
 		}
 		if target == nil {
-			return nil, fmt.Errorf("ops package %q not found in manifest (try --pkg eyberg/%s)", ref, pkgName)
+			if !strings.Contains(pkgName, "/") {
+				return nil, fmt.Errorf("ops package %q not found in the %s namespace of the manifest for linux/%s; to use another publisher's runtime, name it with --pkg <namespace>/%s", ref, opsRuntimeNamespace, packageArchFor(ctx), ref)
+			}
+			return nil, fmt.Errorf("ops package %q not found in manifest", ref)
 		}
 
 		if !opsStore.IsDownloaded(target.Namespace, target.Name, target.Version) {
