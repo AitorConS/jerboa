@@ -198,6 +198,72 @@ func TestEthernetWriterBoundsBytesUnderLargeFrameBurst(t *testing.T) {
 	require.Less(t, len(c.writes), ethernetQueueFrames)
 }
 
+// A port that frees a queue slot now and then, but never turns its queue
+// over, may hold the switch (which writes under a network-wide lock) for one
+// bounded wait in total, not for one wait per frame, and is not closed.
+func TestEthernetSlowPortHoldsTheSwitchForOneBoundedWait(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "", "")
+	defer c.Close()
+	defer b.Close()
+	go func() {
+		got := make([]byte, 18)
+		for {
+			if _, err := io.ReadFull(b, got); err != nil {
+				return
+			}
+			time.Sleep(ethernetWriteWait / 5)
+		}
+	}()
+	frame := make([]byte, 18)
+	binary.BigEndian.PutUint32(frame, 14)
+	var waited time.Duration
+	for end := time.Now().Add(10 * ethernetWriteWait); time.Now().Before(end); {
+		began := time.Now()
+		_, err := c.Write(frame)
+		require.NoError(t, err, "a port that drains is not disconnected")
+		if d := time.Since(began); d > time.Millisecond {
+			waited += d
+		}
+	}
+	// One bounded wait plus scheduling slack; a wait per frame would be
+	// close to the whole ten-wait run.
+	require.Less(t, waited, 4*ethernetWriteWait, "the switch waited on the slow port frame after frame")
+}
+
+// A port that keeps up under backpressure loses nothing.
+func TestEthernetFastPortUnderBackpressureLosesNothing(t *testing.T) {
+	a, b := net.Pipe()
+	c := newEthernetConn(a, "", "")
+	defer c.Close()
+	defer b.Close()
+	const frames = 4 * ethernetQueueFrames * 10
+	received := make(chan int, 1)
+	go func() {
+		got := make([]byte, 18)
+		n := 0
+		for n < frames {
+			if _, err := io.ReadFull(b, got); err != nil {
+				break
+			}
+			n++
+		}
+		received <- n
+	}()
+	frame := make([]byte, 18)
+	binary.BigEndian.PutUint32(frame, 14)
+	for range frames {
+		_, err := c.Write(frame)
+		require.NoError(t, err)
+	}
+	select {
+	case n := <-received:
+		require.Equal(t, frames, n)
+	case <-time.After(10 * time.Second):
+		t.Fatal("frames were dropped")
+	}
+}
+
 func TestEthernetWriterBackpressureDeliversQueuedFrames(t *testing.T) {
 	a, b := net.Pipe()
 	c := newEthernetConn(a, "", "")
