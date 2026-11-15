@@ -57,8 +57,11 @@ preview, as selected for this rollout.
    The installer smoke runs on a Windows machine started for this run only (see
    [Windows installer smoke](#windows-installer-smoke)); assembly waits for it.
 6. Download `release-candidate` and `macos-app` from the run. The candidate includes a
-   signed manifest, a signed inventory with source revisions, exact payload hashes,
-   and a generated Windows update feed. Stable remains unchanged.
+   manifest signed for the `candidate` channel, a signed inventory with source
+   revisions, exact payload hashes, and a generated Windows update feed. Stable
+   remains unchanged: clients and `install.sh` only accept a manifest whose channel
+   is `stable`, and only promotion signs one, so an unpromoted or rejected candidate
+   cannot be served to them as a release.
 7. Run native Mac tests on the candidate app using `scripts/release/native-macos.sh`.
    Preserve the JSON result with the candidate run ID and app archive hash in a
    reviewable HTTPS report. A hosted Mac VM does not provide Hypervisor.framework.
@@ -116,9 +119,14 @@ missing platforms, invalid signatures, changed bytes, an older version, or a pre
 published version with another manifest. Production paths remain compatible with old
 clients, including `desktop/jerboa-desktop-setup-X.Y.Z.exe`.
 
-Promotion uploads immutable objects, records a signed receipt, verifies public artifact
-downloads, then updates `channels/stable.json`, its detached signature, and
-`desktop/latest.yml`. The final step dispatches `Jerboa_Docs/release-sync.yml`, which
+Promotion signs the stable manifest only after its checks pass: the candidate's
+manifest with its channel changed to `stable` and nothing else (the generation time
+stays the candidate's, so a retry re-creates the same bytes and signature). It
+uploads immutable objects, including that manifest as `releases/<v>/manifest.json`
+and the candidate's as `releases/<v>/candidate-manifest.json`, records a signed
+receipt, verifies public artifact downloads, then updates `channels/stable.json`,
+its detached signature, and `desktop/latest.yml`. Candidates assembled before this
+change carry a stable signature of their own and are refused; rebuild them. The final step dispatches `Jerboa_Docs/release-sync.yml`, which
 checks signed published metadata, verifies both download URLs, preserves existing
 editorial notes and commits generated metadata. Verify the website workflow and Vercel
 status separately; successful dispatch means queued, not deployed.

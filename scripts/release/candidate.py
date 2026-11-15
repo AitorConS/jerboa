@@ -29,6 +29,13 @@ KERNEL_FILES = {'mkfs': 'mkfs-linux-amd64', 'dump': 'dump-linux-amd64',
 TOOLSET_MKFS = {'linux-arm64': Path('mkfs-linux-arm64') / 'mkfs',
                 'darwin-arm64': Path('mkfs-darwin-arm64') / 'mkfs'}
 
+# Candidates are signed for their own channel. No client fetches it, and the
+# Go client and install.sh refuse a manifest whose channel is not the one they
+# asked for, so an assembled but unpromoted (or rejected) candidate is never
+# accepted as stable. promote() signs the stable manifest once its checks pass.
+CANDIDATE_CHANNEL = 'candidate'
+STABLE_CHANNEL = 'stable'
+
 REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64'},
             'daemon': {'linux-amd64', 'darwin-arm64'},
             'desktop': {'windows-amd64', 'darwin-arm64'}}
@@ -312,7 +319,10 @@ def kernel():
         download(BASE + '/channels/stable.json', manifest)
         download(BASE + '/channels/stable.json.minisig', str(manifest) + '.minisig')
         verify_signature(manifest)
-        component = json.loads(manifest.read_text())['components']['kernel']
+        published = json.loads(manifest.read_text())
+        if published.get('channel') != STABLE_CHANNEL:
+            raise ValueError('Published manifest is not signed for the stable channel')
+        component = published['components']['kernel']
         if component['version'] != spec['kernel_version'] or set(component['files']) != set(KERNEL_FILES):
             raise ValueError('Published kernel does not match requested toolset')
         provenance = {'stable_manifest': digest(manifest)}
@@ -341,7 +351,7 @@ def assemble():
     payload = root / 'payload'
     # Clients refuse a manifest generated before one they already accepted, so
     # an older signed manifest cannot be replayed to them.
-    manifest = {'channel': 'stable', 'generated': generated_now(), 'components': {}}
+    manifest = {'channel': CANDIDATE_CHANNEL, 'generated': generated_now(), 'components': {}}
     components = manifest['components']
     def stage(source, key):
         key = safe_path(key); target = payload / key
@@ -387,7 +397,7 @@ def assemble():
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
               'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip')}
     write_json(root / 'inventory.json', record)
-    sign(root / 'manifest.json', f'release:{v}')
+    sign(root / 'manifest.json', f'candidate-manifest:{v}')
     sign(root / 'inventory.json', f'candidate:{spec["run_id"]} version:{v}')
 
 
@@ -421,6 +431,10 @@ def verify_candidate(root):
     verify_signature(root / 'inventory.json'); verify_signature(root / 'manifest.json')
     inv = json.loads((root / 'inventory.json').read_text())
     manifest = json.loads((root / 'manifest.json').read_text())
+    if manifest.get('channel') != CANDIDATE_CHANNEL:
+        # Candidates assembled before stable signing moved to promotion carry
+        # a stable signature of their own; rebuild them instead.
+        raise ValueError('Candidate manifest is not signed for the candidate channel; rebuild the candidate')
     assert_manifest(manifest, inv['version'])
     if digest(root/'manifest.json') != inv['manifest'] or digest(root/'latest.yml') != inv['feed']:
         raise ValueError('Candidate metadata hash mismatch')
@@ -512,12 +526,26 @@ def put(path, key, immutable=True, content_type='application/octet-stream'):
         '--content-type', content_type, '--cache-control', 'public, max-age=31536000, immutable' if immutable else 'no-cache')
 
 
+def stable_manifest(manifest, path):
+    """Write the stable manifest for a verified candidate manifest.
+
+    Only the channel changes. The generation time stays the candidate's, so a
+    retried promotion re-creates identical bytes (and, Ed25519 being
+    deterministic, an identical signature) and the installer pinned at assembly
+    still accepts it."""
+    if manifest.get('channel') != CANDIDATE_CHANNEL:
+        raise ValueError('Only a candidate manifest can be promoted')
+    write_json(path, {**manifest, 'channel': STABLE_CHANNEL})
+    return Path(path)
+
+
 def promote():
     root = Path('candidate');inv, manifest = verify_candidate(root)
     authorized = json.loads(Path('authorized-run.json').read_text())
     if inv['run_id'] != authorized['run_id'] or inv['engine_sha'] != authorized['engine_sha']:
         raise ValueError('Artifact provenance does not match authorized run')
     v = inv['version'];before = Path('previous-stable.json')
+    stable = stable_manifest(manifest, 'stable-manifest.json')
     # Read origin directly; a previous promotion may have failed between the
     # manifest and its detached signature. Same-version resume is allowed only
     # when the manifest bytes match this signed candidate exactly.
@@ -531,17 +559,25 @@ def promote():
             raise ValueError('Refusing a kernel downgrade')
         if old['components']['kernel']['version'] == manifest['components']['kernel']['version'] and old['components']['kernel'] != manifest['components']['kernel']:
             raise ValueError('Kernel version already published with different bytes; bump kernel/VERSION')
-        if old_v == v and digest(previous) != digest(root/'manifest.json'):
+        if old_v == v and digest(previous) != digest(stable):
             raise ValueError('Version already published with another manifest; cut a new release')
         check_generation(old, manifest)
     # Persist a signed promotion record before changing channel pointers.
     promotion = {'version': v, 'candidate_run': inv['run_id'], 'inventory': inv,
                  'macos_evidence': os.environ['MACOS_EVIDENCE']}
     write_json('promotion.json', promotion);sign('promotion.json', f'promotion:{v}')
+    # The stable signature is made here, after every promotion check, and is
+    # the only one clients accept for the stable channel.
+    sign(stable, f'release:{v}')
     for key in sorted(inv['assets']):
         put(root/'payload'/key, key)
-    for name in ['manifest.json', 'manifest.json.minisig', 'inventory.json', 'inventory.json.minisig', 'latest.yml']:
+    for name in ['inventory.json', 'inventory.json.minisig', 'latest.yml']:
         put(root/name, f'releases/{v}/{name}')
+    # The candidate manifest stays inspectable beside the inventory naming its
+    # digest; clients refuse it as stable because of its channel.
+    for name in ['manifest.json', 'manifest.json.minisig']:
+        put(root/name, f'releases/{v}/candidate-{name}')
+    put(stable, f'releases/{v}/manifest.json');put(str(stable)+'.minisig', f'releases/{v}/manifest.json.minisig')
     # Immutable record is candidate-specific; re-approval may supply a different
     # evidence URL, so keep promotion receipts per workflow run.
     receipt = f'releases/{v}/promotions/{os.environ["GITHUB_RUN_ID"]}'
@@ -551,14 +587,14 @@ def promote():
         for key, expected in inv['assets'].items():
             p = Path(tmp)/'asset';download(BASE+'/'+key,p)
             if digest(p) != expected:raise ValueError('Public download mismatch: '+key)
-    put(root/'manifest.json', 'channels/stable.json', False, 'application/json')
-    put(root/'manifest.json.minisig', 'channels/stable.json.minisig', False, 'text/plain')
+    put(stable, 'channels/stable.json', False, 'application/json')
+    put(str(stable)+'.minisig', 'channels/stable.json.minisig', False, 'text/plain')
     put(root/'latest.yml', 'desktop/latest.yml', False, 'text/yaml')
     # Read-back pointer verification is separate from artifact verification.
     with tempfile.TemporaryDirectory() as tmp:
-        for remote,local in [('channels/stable.json','manifest.json'),('channels/stable.json.minisig','manifest.json.minisig'),('desktop/latest.yml','latest.yml')]:
+        for remote,local in [('channels/stable.json',stable),('channels/stable.json.minisig',str(stable)+'.minisig'),('desktop/latest.yml',root/'latest.yml')]:
             p=Path(tmp)/'pointer';download(BASE+'/'+remote,p)
-            if digest(p)!=digest(root/local):raise ValueError('Pointer mismatch: '+remote)
+            if digest(p)!=digest(local):raise ValueError('Pointer mismatch: '+remote)
     # Website release date is the first completed promotion, not build time.
     published_key=f'releases/{v}/published.json'
     with tempfile.TemporaryDirectory() as tmp:
@@ -569,7 +605,8 @@ def promote():
                 raise ValueError('Publication record belongs to another candidate')
         else:
             published={'version':v,'date':datetime.datetime.now(datetime.timezone.utc).date().isoformat(),
-                       'inventory_sha256':digest(root/'inventory.json')['sha256']}
+                       'inventory_sha256':digest(root/'inventory.json')['sha256'],
+                       'manifest_sha256':digest(stable)['sha256']}
         write_json('published.json',published);sign('published.json',f'published:{v}')
         put('published.json',published_key,content_type='application/json')
         put('published.json.minisig',published_key+'.minisig',content_type='text/plain')

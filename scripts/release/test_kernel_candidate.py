@@ -120,11 +120,19 @@ class KernelCandidateTests(unittest.TestCase):
             for name, filename in c.KERNEL_FILES.items()}}
         def download(url, target):
             if url.endswith('stable.json'):
-                c.write_json(target, {'components': {'kernel': component}})
+                c.write_json(target, {'channel': channel, 'components': {'kernel': component}})
             elif url.endswith('.minisig'):
                 Path(target).write_bytes(b'signature')
             else:
                 shutil.copyfile(file, target)
+        # A validly signed manifest of another channel (an unpromoted
+        # candidate) is not the published toolset.
+        channel = 'candidate'
+        with patch.object(c, 'download', side_effect=download), patch.object(c, 'verify_signature'):
+            with self.assertRaisesRegex(ValueError, 'stable channel'):
+                c.kernel()
+        shutil.rmtree('kernel-candidate')
+        channel = 'stable'
         with patch.object(c, 'download', side_effect=download), patch.object(c, 'verify_signature') as verify:
             c.kernel()
             verify.assert_called_once()
@@ -225,12 +233,25 @@ class KernelCandidateTests(unittest.TestCase):
                 patch.object(c, 'sign', side_effect=sign), \
                 patch.dict(os.environ, {'MACOS_EVIDENCE': 'https://example.org/report', 'GITHUB_RUN_ID': '456'}):
             c.promote()
-        self.assertEqual(json.loads(store['channels/stable.json'])['components']['kernel'], manifest['components']['kernel'])
+        self.assertEqual(manifest['channel'], 'candidate')
+        stable = json.loads(store['channels/stable.json'])
+        self.assertEqual(stable, {**manifest, 'channel': 'stable'})
+        self.assertEqual(stable['components']['kernel'], manifest['components']['kernel'])
         switch = events.index(('put', 'channels/stable.json'))
         for filename in c.KERNEL_FILES.values():
             key = 'kernel/v0.2.1/' + filename
             self.assertEqual(store[key], Path('kernel-candidate', filename).read_bytes())
             self.assertLess(events.index(('get', key)), switch)
+
+    def test_candidate_signed_for_stable_is_not_promotable(self):
+        self.assemble()
+        m = json.loads(Path('candidate/manifest.json').read_text()); m['channel'] = 'stable'
+        c.write_json('candidate/manifest.json', m)
+        inv = json.loads(Path('candidate/inventory.json').read_text())
+        inv['manifest'] = c.digest('candidate/manifest.json')
+        c.write_json('candidate/inventory.json', inv)
+        with patch.object(c, 'verify_signature'), self.assertRaisesRegex(ValueError, 'candidate channel'):
+            c.verify_candidate('candidate')
 
     def test_rootfs_cannot_ship_another_kernel(self):
         _, manifest = self.assemble()
