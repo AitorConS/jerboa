@@ -59,7 +59,7 @@ stores a personal access token, as CI does.`,
 				return err
 			}
 			if entry.Login != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s as %s\n", registry, entry.Login)
+				fmt.Fprintf(cmd.OutOrStdout(), "Logged in to %s as %s\n", registry, termField(entry.Login))
 			} else {
 				fmt.Fprintf(cmd.OutOrStdout(), "Stored a token for %s\n", registry)
 			}
@@ -81,7 +81,7 @@ func githubLogin(ctx context.Context, w io.Writer, registry string, cl *client.C
 		if err != nil {
 			return "", "", err
 		}
-		fmt.Fprintf(w, "Open %s and enter the code %s to log in to %s\n", l.VerificationURI, l.UserCode, registry)
+		fmt.Fprintf(w, "Open %s and enter the code %s to log in to %s\n", termField(l.VerificationURI), termField(l.UserCode), registry)
 		return cl.WaitLogin(ctx, l)
 	}
 	clientID, err := githubClientID(ctx, registry, d, official)
@@ -93,7 +93,7 @@ func githubLogin(ctx context.Context, w io.Writer, registry string, cl *client.C
 	if err != nil {
 		return "", "", err
 	}
-	fmt.Fprintf(w, "Open %s and enter the code %s\n", dc.VerificationURI, dc.UserCode)
+	fmt.Fprintf(w, "Open %s and enter the code %s\n", termField(dc.VerificationURI), termField(dc.UserCode))
 	gh, err := flow.Wait(ctx, clientID, dc)
 	if err != nil {
 		return "", "", err
@@ -276,7 +276,7 @@ workflow and run) and of its SBOM are stored with it, for pulls to verify.
 				return fmt.Errorf("push: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: uploaded %d of %d files (%s) in %d packs\n%s\n",
-				res.Reference, res.BlobsUploaded, res.Blobs, humanBytes(res.BytesUploaded), res.PacksUploaded, res.Recipe)
+				termField(res.Reference), res.BlobsUploaded, res.Blobs, humanBytes(res.BytesUploaded), res.PacksUploaded, termField(res.Recipe))
 			if !signed {
 				return nil
 			}
@@ -322,7 +322,7 @@ func pushIndex(cmd *cobra.Command, cl *client.Client, token string, ref naming.I
 	for i, e := range res.Manifests {
 		platforms[i] = e.Platform
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: an index for %s\n%s\n", ref, strings.Join(platforms, ", "), res.Index)
+	fmt.Fprintf(cmd.OutOrStdout(), "Pushed %s: an index for %s\n%s\n", ref, termField(strings.Join(platforms, ", ")), termField(res.Index))
 	return res.Index, nil
 }
 
@@ -393,7 +393,7 @@ See jerboa registry verify and signers.`,
 				return fmt.Errorf("pull: %w; the pulled image was removed", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s (%s): fetched %d of %d files (%s) in %d requests\n%s\n",
-				res.Image.Name, res.Image.Tag, res.Image.Platform, res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, res.Image.DiskDigest)
+				termField(res.Image.Name), termField(res.Image.Tag), termField(res.Image.Platform), res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, termField(res.Image.DiskDigest))
 			return nil
 		},
 	}
@@ -439,8 +439,8 @@ func newRegistryCmd() *cobra.Command {
 			if token == "" {
 				return fmt.Errorf("pat create: the registry at %s answered without a token", registry)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", token)
-			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], id, credentials.EnvToken)
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", termField(token))
+			fmt.Fprintf(cmd.ErrOrStderr(), "Created token %s (%s). Store it as %s in CI; it is not shown again.\n", args[0], termField(id), credentials.EnvToken)
 			return nil
 		},
 	}
@@ -474,7 +474,7 @@ func newRegistryCmd() *cobra.Command {
 				if p.Delete {
 					scope += " +delete"
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\texpires %s\t%s\n", p.ID, p.Name, expires, scope)
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\texpires %s\t%s\n", termField(p.ID), termField(p.Name), expires, termField(scope))
 			}
 			return nil
 		},

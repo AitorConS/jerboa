@@ -28,6 +28,19 @@ func TestSanitizeTerminal(t *testing.T) {
 	}
 }
 
+func TestTermField(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain":                      "plain",
+		"two\nlines\tand tab":        "two lines and tab",
+		"\x1b[31mred\x1b[0m\r\n":     "red ",
+		"name\x1b]0;title\x07\u009b": "name",
+	} {
+		if got := termField(in); got != want {
+			t.Errorf("termField(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestGuestOutputRaw(t *testing.T) {
 	var b bytes.Buffer
 	_, _ = guestOutput(&b, true).Write([]byte("\x1b[31m"))
