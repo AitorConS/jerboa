@@ -2,8 +2,10 @@ package builder
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -38,6 +40,33 @@ func TestBwrapArgs(t *testing.T) {
 
 	st.Network = true
 	require.NotContains(t, strings.Join(bwrapArgs("bwrap", st, nil, nil, nil, "go", nil), " "), "--unshare-net")
+}
+
+// The build's policy files stay read-only inside the read-write project, so
+// a confined step cannot relax the next build's confinement.
+func TestBwrapArgsKeepsThePolicyReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, ConfigFileName)
+	require.NoError(t, os.WriteFile(cfg, []byte("[build]\n"), 0o600))
+	st := Step{Dir: dir, ReadOnly: []string{cfg, filepath.Join(dir, UnignoreFile)}}
+	line := strings.Join(bwrapArgs("bwrap", st, nil, nil, nil, "sh", nil), " ")
+	bind := "--bind " + dir + " " + dir
+	ro := "--ro-bind " + realPath(cfg) + " " + realPath(cfg)
+	require.Contains(t, line, ro)
+	require.Greater(t, strings.Index(line, ro), strings.Index(line, bind), "the read-only bind must come after the project's read-write one")
+	require.NotContains(t, line, UnignoreFile, "a missing file cannot be bound")
+}
+
+func TestSandboxPassesThePolicyFilesToTheStep(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, ConfigFileName)
+	require.NoError(t, os.WriteFile(cfg, []byte("[build]\n"), 0o600))
+	cmd, done, err := Sandbox{ReadOnly: []string{cfg}}.Command(context.Background(), Step{Dir: dir, Env: []string{}}, "true")
+	require.NoError(t, err)
+	defer done()
+	if sandboxName() == "bubblewrap" {
+		require.Contains(t, strings.Join(cmd.Args, " "), "--ro-bind "+realPath(cfg)+" "+realPath(cfg))
+	}
 }
 
 func TestSeatbeltProfile(t *testing.T) {
@@ -153,4 +182,67 @@ func TestBuildSandboxFromConfig(t *testing.T) {
 	cfg, err := parseConfig("unikernel.toml", []byte("[build]\nnetwork = true\n"))
 	require.NoError(t, err)
 	require.True(t, cfg.Build.Network)
+}
+
+// Host services that act for whoever connects are masked like the daemon.
+func TestBrokerSocketsCoverTheHostBrokers(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("no build sandbox on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/elsewhere")
+	got := brokerSockets()
+	uid := os.Getuid()
+	for _, want := range []string{
+		fmt.Sprintf("/run/user/%d/bus", uid),
+		fmt.Sprintf("/run/user/%d/systemd", uid),
+		fmt.Sprintf("/run/user/%d/docker.sock", uid),
+		fmt.Sprintf("/run/user/%d/podman", uid),
+		"/run/user/elsewhere/bus",
+		"/run/dbus/system_bus_socket",
+		"/var/run/docker.sock",
+		"/tmp/.X11-unix",
+		fmt.Sprintf("/tmp/tmux-%d", uid),
+		filepath.Join(home, ".docker", "run"),
+	} {
+		require.Contains(t, got, want)
+	}
+	for _, p := range got {
+		require.NotContains(t, p, "ssh", "the SSH agent stays reachable")
+	}
+}
+
+func TestBrokerMasksSpareTheStepsDirectories(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	project := filepath.Join(home, ".lima", "src")
+	got := brokerMasks(Step{Dir: project}, filepath.Join(t.TempDir(), "step"))
+	require.NotContains(t, got, filepath.Join(home, ".lima"), "masking it would hide the project")
+	require.Contains(t, got, filepath.Join(home, ".colima"))
+}
+
+func TestBwrapArgsMaskTheHostBrokers(t *testing.T) {
+	rt := t.TempDir()
+	bus := filepath.Join(rt, "bus")
+	require.NoError(t, os.WriteFile(bus, nil, 0o600))
+	systemd := filepath.Join(rt, "systemd")
+	require.NoError(t, os.MkdirAll(systemd, 0o700))
+	line := strings.Join(bwrapArgs("bwrap", Step{Dir: "/src/app"}, nil, nil, []string{bus, systemd}, "sh", nil), " ")
+	require.Contains(t, line, "--ro-bind /dev/null "+realPath(bus))
+	require.Contains(t, line, "--tmpfs "+realPath(systemd))
+}
+
+func TestSeatbeltProfileDeniesAppleEvents(t *testing.T) {
+	require.Contains(t, seatbeltProfile(Step{Dir: "/src"}, nil, nil, nil), "(deny appleevent-send)")
+}
+
+func TestConfinedStepsLoseBrokerAddresses(t *testing.T) {
+	env := withoutBrokerAddresses([]string{"DBUS_SESSION_BUS_ADDRESS=unix:abstract=/tmp/dbus-x", "DOCKER_HOST=tcp://127.0.0.1:2375", "SSH_AUTH_SOCK=/run/user/1/ssh", "PATH=/bin"})
+	require.Equal(t, []string{"SSH_AUTH_SOCK=/run/user/1/ssh", "PATH=/bin"}, env)
+	// Unconfined, the step keeps its environment as given.
+	cmd, done, err := Sandbox{Off: true}.Command(context.Background(), Step{Dir: t.TempDir(), Env: []string{"DOCKER_HOST=x"}}, "true")
+	require.NoError(t, err)
+	defer done()
+	require.Equal(t, []string{"DOCKER_HOST=x"}, cmd.Env)
 }
