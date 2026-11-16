@@ -1,0 +1,1102 @@
+{
+ "arch": "arm64",
+ "archive_sha256": "2f512a0b1c9c89e1e72466704f0eaf4e6c9dba4e1016baa7b1e13aaedbf3a35f",
+ "binaries_sha256": {
+  "jerboa": "ba45b0e66321201a21adb1f815b5e1baf9fb09068e819551e95883ca2cab1582",
+  "jerboad": "d350f0b2ceed48211a1e459c64b041b64c68c9e6a3953cebb72101b55cdfbca4"
+ },
+ "expected": {
+  "compose": {
+   "file": "/private/var/tmp/jerboa-upgrade-fixture/project/compose.yaml",
+   "ps": [
+    {
+     "id": "0121ce1f87d2",
+     "service": "api",
+     "state": "running"
+    }
+   ],
+   "state": {
+    "created_networks": [
+     "compose-b2684e0f41a2-backend"
+    ],
+    "created_volumes": [
+     "compose-b2684e0f41a2-state"
+    ],
+    "project": "/private/var/tmp/jerboa-upgrade-fixture/project/.jerboa-compose-63e959e92dd8321b0a090b9925ca8e2b.json",
+    "service_ips": {
+     "api": ""
+    },
+    "service_networks": {
+     "api": "compose-b2684e0f41a2-backend"
+    },
+    "services": {
+     "api": "0121ce1f87d2"
+    }
+   },
+   "state_file": "/private/var/tmp/jerboa-upgrade-fixture/project/.jerboa-compose-63e959e92dd8321b0a090b9925ca8e2b.json"
+  },
+  "config": {
+   "endpoint": "",
+   "hypervisor": "firecracker",
+   "token": ""
+  },
+  "credentials": {
+   "127.0.0.1:47893": "jrb_pat_upgrade_fixture_not_a_real_token"
+  },
+  "image_digest": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+  "image_dirs": [
+   "4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a",
+   "b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4",
+   "cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded"
+  ],
+  "images": [
+   {
+    "architecture": "arm64",
+    "created": "2026-11-16T21:10:21Z",
+    "disk_digest": "sha256:b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4",
+    "disk_size": 4198912,
+    "layout": "compact",
+    "name": "legacy",
+    "platform": "linux/arm64",
+    "recipe": "sha256:99f8701eb9c2dedfd4ec6361ea4f71d7b24fc35592f83d5d08fa405e2362357a",
+    "tag": "latest"
+   },
+   {
+    "architecture": "arm64",
+    "created": "2026-11-16T21:10:21Z",
+    "disk_digest": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "disk_size": 4198912,
+    "layout": "compact",
+    "name": "probe",
+    "platform": "linux/arm64",
+    "recipe": "sha256:1c8acebf036461fb37aaf3c43ef783e364d0e13b63585630f829c181a28d29fe",
+    "tag": "latest"
+   },
+   {
+    "architecture": "arm64",
+    "created": "2026-11-16T21:10:21Z",
+    "disk_digest": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "disk_size": 4198912,
+    "layout": "compact",
+    "name": "probe",
+    "platform": "linux/arm64",
+    "recipe": "sha256:1c8acebf036461fb37aaf3c43ef783e364d0e13b63585630f829c181a28d29fe",
+    "tag": "v1"
+   }
+  ],
+  "networks": [
+   {
+    "bridge": "jerboa-br-41263",
+    "created_at": "2026-11-16T21:10:21Z",
+    "driver": "userspace",
+    "gateway": "10.77.0.1",
+    "name": "appnet",
+    "subnet": "10.77.0.0/24"
+   },
+   {
+    "bridge": "jerboa-br-bbe97",
+    "created_at": "2026-11-16T21:10:23Z",
+    "driver": "userspace",
+    "gateway": "10.100.0.1",
+    "name": "compose-b2684e0f41a2-backend",
+    "subnet": "10.100.0.0/24"
+   },
+   {
+    "bridge": "jerboa-br-idle",
+    "created_at": "2026-11-16T21:10:21Z",
+    "driver": "userspace",
+    "gateway": "10.78.0.1",
+    "name": "idle",
+    "subnet": "10.78.0.0/24"
+   }
+  ],
+  "replaced_images": {
+   "in_use": "sha256:4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a",
+   "unused": "sha256:7cf0766ac83684dba83b9a67b0562bcc30f795c53630550b05466d380af02310"
+  },
+  "snapshots": [
+   {
+    "backend": "firecracker-hvf",
+    "components": 9,
+    "cpus": 1,
+    "created_at": "2026-11-16T21:10:27Z",
+    "gateway": "10.77.0.1",
+    "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "image_digest": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "ip_address": "10.77.0.3",
+    "mac": "02:35:eb:59:66:11",
+    "manifest_sha256": "40dbcec7acd235f249e7ef37f935ea7178b71992e08082ec875c0d5ff32ab7ad",
+    "memory": "128M",
+    "name": "before-upgrade",
+    "network": "appnet",
+    "size_bytes": 139964481,
+    "subnet": "10.77.0.0/24",
+    "vm_id": "8daadce4e393",
+    "vm_name": "snapshotted"
+   }
+  ],
+  "sqlite": {
+   "removed_but_left_on_disk": "f2432ca23f71",
+   "vms": {
+    "kept": {
+     "cpus": 1,
+     "created_at": "2026-11-16T22:10:31+01:00",
+     "env": [
+      "PROBE_EXIT=1",
+      "PROBE_MARK=kept"
+     ],
+     "id": "d1ee1cb1a44a",
+     "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+     "memory": "128M",
+     "name": "kept",
+     "started_at": "2026-11-16T22:10:31+01:00",
+     "state": "stopped",
+     "stopped_at": "2026-11-16T22:10:31+01:00"
+    },
+    "late": {
+     "cpus": 1,
+     "created_at": "2026-11-16T22:10:32+01:00",
+     "env": [
+      "PROBE_MARK=late",
+      "DB_PASSWORD=fixture-secret-value"
+     ],
+     "id": "c9b85ed55201",
+     "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+     "memory": "128M",
+     "name": "late",
+     "started_at": "2026-11-16T22:10:32+01:00",
+     "state": "running",
+     "warnings": [
+      "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+     ]
+    }
+   }
+  },
+  "vms": {
+   "api": {
+    "cpus": 1,
+    "created_at": "2026-11-16T22:10:23+01:00",
+    "env": [
+     "PROBE_MARK=compose"
+    ],
+    "gateway_ip": "10.100.0.1",
+    "id": "0121ce1f87d2",
+    "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "ip_address": "10.100.0.2",
+    "memory": "128M",
+    "name": "api",
+    "started_at": "2026-11-16T22:10:23+01:00",
+    "state": "running",
+    "volumes": [
+     {
+      "disk_path": "/private/var/tmp/jerboa-upgrade-fixture/home/.jerboa/volumes/compose-b2684e0f41a2-state/disk.img",
+      "guest_path": "/data",
+      "label": "compose-b2684e0f41a2-state"
+     }
+    ],
+    "warnings": [
+     "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+    ]
+   },
+   "finished": {
+    "cpus": 1,
+    "created_at": "2026-11-16T22:10:22+01:00",
+    "env": [
+     "PROBE_EXIT=1",
+     "PROBE_MARK=finished"
+    ],
+    "id": "b2cb5f4da68b",
+    "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "memory": "128M",
+    "name": "finished",
+    "started_at": "2026-11-16T22:10:22+01:00",
+    "state": "stopped",
+    "stopped_at": "2026-11-16T22:10:23+01:00",
+    "warnings": [
+     "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+    ]
+   },
+   "halted": {
+    "cpus": 2,
+    "created_at": "2026-11-16T22:10:22+01:00",
+    "env": [
+     "PROBE_MARK=halted"
+    ],
+    "gateway_ip": "10.77.0.1",
+    "id": "4336e7c7eb1e",
+    "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "ip_address": "10.77.0.2",
+    "memory": "128M",
+    "name": "halted",
+    "started_at": "2026-11-16T22:10:22+01:00",
+    "state": "stopped",
+    "stopped_at": "2026-11-16T22:10:22+01:00",
+    "warnings": [
+     "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+    ]
+   },
+   "snapshotted": {
+    "cpus": 1,
+    "created_at": "2026-11-16T22:10:27+01:00",
+    "env": [
+     "PROBE_MARK=snapshotted"
+    ],
+    "gateway_ip": "10.77.0.1",
+    "id": "8daadce4e393",
+    "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "ip_address": "10.77.0.3",
+    "memory": "128M",
+    "name": "snapshotted",
+    "started_at": "2026-11-16T22:10:27+01:00",
+    "state": "running",
+    "warnings": [
+     "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+    ]
+   },
+   "veteran": {
+    "cpus": 1,
+    "created_at": "2026-11-16T22:10:20+01:00",
+    "env": [
+     "PROBE_EXIT=1",
+     "PROBE_MARK=veteran"
+    ],
+    "id": "c87d4cafbb39",
+    "image": "sha256:4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a",
+    "memory": "128M",
+    "name": "veteran",
+    "started_at": "2026-11-16T22:10:20+01:00",
+    "state": "stopped",
+    "stopped_at": "2026-11-16T22:10:20+01:00",
+    "warnings": [
+     "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+    ]
+   },
+   "web": {
+    "cpus": 1,
+    "created_at": "2026-11-16T22:10:21+01:00",
+    "env": [
+     "PROBE_MARK=web",
+     "API_KEY=fixture-secret-value"
+    ],
+    "gateway_ip": "10.77.0.1",
+    "health": "starting",
+    "id": "d84b32fbbbcf",
+    "image": "sha256:cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+    "ip_address": "10.77.0.10",
+    "memory": "128M",
+    "name": "web",
+    "ports": [
+     {
+      "bind_addr": "127.0.0.1",
+      "guest_port": 8080,
+      "host_port": 47894,
+      "protocol": "tcp"
+     }
+    ],
+    "restart_policy": "on-failure",
+    "started_at": "2026-11-16T22:10:21+01:00",
+    "state": "running",
+    "volumes": [
+     {
+      "disk_path": "/private/var/tmp/jerboa-upgrade-fixture/home/.jerboa/volumes/data/disk.img",
+      "guest_path": "/data",
+      "label": "data"
+     }
+    ],
+    "warnings": [
+     "Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush"
+    ]
+   }
+  },
+  "volumes": [
+   {
+    "created_at": "2026-11-16T21:10:23.364243Z",
+    "disk_path": "/private/var/tmp/jerboa-upgrade-fixture/home/.jerboa/volumes/compose-b2684e0f41a2-state/disk.img",
+    "id": "compose-b2684e0f41a2-state",
+    "label": "compose-b2684e0f41a2-state",
+    "size_bytes": 16777216
+   },
+   {
+    "created_at": "2026-11-16T21:10:21.720671Z",
+    "disk_path": "/private/var/tmp/jerboa-upgrade-fixture/home/.jerboa/volumes/data/disk.img",
+    "id": "data",
+    "label": "data",
+    "size_bytes": 16777216
+   },
+   {
+    "created_at": "2026-11-16T21:10:21.733299Z",
+    "disk_path": "/private/var/tmp/jerboa-upgrade-fixture/home/.jerboa/volumes/spare/disk.img",
+    "id": "spare",
+    "label": "spare",
+    "size_bytes": 8388608
+   }
+  ]
+ },
+ "files": [
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/blobs"
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/1c8acebf036461fb37aaf3c43ef783e364d0e13b63585630f829c181a28d29fe",
+   "sha256": "1c8acebf036461fb37aaf3c43ef783e364d0e13b63585630f829c181a28d29fe",
+   "size": 1401
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/46e7b06116c721bd43676f88effee7429adc66af52fd4cad795b7455f536f84a",
+   "sha256": "46e7b06116c721bd43676f88effee7429adc66af52fd4cad795b7455f536f84a",
+   "size": 60
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/68bea6aae04075526adc0c84693a5f7cb03ef8bf96601720ab599a43aaef0c54",
+   "sha256": "68bea6aae04075526adc0c84693a5f7cb03ef8bf96601720ab599a43aaef0c54",
+   "size": 1573024
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/98cf4b929b1f291083771073a165f79ceb18c800a00e2e4c56a87256e024fe17",
+   "sha256": "98cf4b929b1f291083771073a165f79ceb18c800a00e2e4c56a87256e024fe17",
+   "size": 1573024
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/99f8701eb9c2dedfd4ec6361ea4f71d7b24fc35592f83d5d08fa405e2362357a",
+   "sha256": "99f8701eb9c2dedfd4ec6361ea4f71d7b24fc35592f83d5d08fa405e2362357a",
+   "size": 1401
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/9bc3bb8170cc7414cf251d683905dc65e81672b369be12f1e60f9667b74e91b3",
+   "sha256": "9bc3bb8170cc7414cf251d683905dc65e81672b369be12f1e60f9667b74e91b3",
+   "size": 1573024
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/c4d237343068b2c8e4f7da9f5011229fc4d404194b03b4d4aaf97cd2074a2adb",
+   "sha256": "c4d237343068b2c8e4f7da9f5011229fc4d404194b03b4d4aaf97cd2074a2adb",
+   "size": 1401
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/dee55f6f8da9ab14fb0b97a447449005d66f2a5277f878885d93ff247c77354c",
+   "sha256": "dee55f6f8da9ab14fb0b97a447449005d66f2a5277f878885d93ff247c77354c",
+   "size": 1415600
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/f0b2a0bbbeeeb82a0a76e518712c0b2f575c443b4fc144b4bab9569036573dea",
+   "sha256": "f0b2a0bbbeeeb82a0a76e518712c0b2f575c443b4fc144b4bab9569036573dea",
+   "size": 1401
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/f8b19df4b52d1c1d0a488c69b83f940cb4789109ddb139d536b8c799789f5cf3",
+   "sha256": "f8b19df4b52d1c1d0a488c69b83f940cb4789109ddb139d536b8c799789f5cf3",
+   "size": 512
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/blobs/f91e71aef36edceaf1eb249c0416000344bd05f204207bdff0d6ddd2284d62c0",
+   "sha256": "f91e71aef36edceaf1eb249c0416000344bd05f204207bdff0d6ddd2284d62c0",
+   "size": 1573024
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/config.toml",
+   "sha256": "f5912f2e1d9ea2904ae8121f2c31eb89f908f1c5450cdbd2483c10392182de6f",
+   "size": 27
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/credentials.json",
+   "sha256": "dd389f2e1f8630653aa16ec730e87ccbe58818c28ec8dc9c628de7cb4e1bd169",
+   "size": 115
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a"
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a/disk.img",
+   "sha256": "4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a",
+   "size": 4198912
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a/manifest.json",
+   "sha256": "3ac479eb8382a612f254c38e760cf45083fc494026f2c10aef0b542fc66153eb",
+   "size": 355
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a/sbom.cdx.json",
+   "sha256": "b283fad667fbfdca79b56546c6a54c8310a1eb2e70c0b7ec39982e2cdf18373d",
+   "size": 672
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a/tags"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a/tags/legacy:latest.json",
+   "sha256": "65100fda7eb73988572cf6d140f55cd1be5dbc3f0a0d00b7b7ebad1e9861f663",
+   "size": 442
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/4405e1152f119adae5b941bdb95577d0c6c090259cb3723fb28e771da29cd41a/verified.json",
+   "sha256": "4621b31b8c4af4f32038426436b1c6f2df141a1dadef0ca8b985dbd7179bde27",
+   "size": 199
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4"
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4/disk.img",
+   "sha256": "b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4",
+   "size": 4198912
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4/manifest.json",
+   "sha256": "bb831490b21016a56ba1877dcf9499409e78c01ad7c97fbcb82f35ae468ef237",
+   "size": 355
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4/sbom.cdx.json",
+   "sha256": "807de6ccd501b8681476a629b7ab65a3a9721a4124b911af9dd6287aca47e76b",
+   "size": 672
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4/tags"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4/tags/legacy:latest.json",
+   "sha256": "7ebcbef3a074f764b67fa23889c164b1f44f30da2eb0bd0c3254c9da41ff05f5",
+   "size": 442
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/b979ae2c9cb33de01004f1de1c6b87bba33f346045a1e44a333d85eb6a29dae4/verified.json",
+   "sha256": "cb654f4f996dac0a44b0da60cdec0723c8e9a9bf62ce197e9515bcdc3390e9b9",
+   "size": 199
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded"
+  },
+  {
+   "mode": "0o444",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/disk.img",
+   "sha256": "cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+   "size": 4198912
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/manifest.json",
+   "sha256": "475125f776546fc2688c1e06650feb7368060fde586c1dc8c477c3e0d32d15a6",
+   "size": 354
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/sbom.cdx.json",
+   "sha256": "3ffff8a63c06b9b103f308a232207b6589ef3c3c1f76abbd51e501ba55b91ee6",
+   "size": 672
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/tags"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/tags/probe:latest.json",
+   "sha256": "61f454b5787e23c2f719a37fdb778eb452d478a4f4d6e774d442d62359d22ef6",
+   "size": 441
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/tags/probe:v1.json",
+   "sha256": "340a5ac5476edffa5b8e7170b32efa95636e84f5cc9e9765c245371e5eedbd5e",
+   "size": 437
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/verified.json",
+   "sha256": "92674a759fde6a27278a5e22db18b83701a3f61ce283d81df151729037f5f5f8",
+   "size": 199
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/images/refs.json",
+   "sha256": "313ab4d20e0131244c7b94932b7dbcc7d66ddaf64cdd2611d4e78ad3c601ba47",
+   "size": 257
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/keys"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/keys/signing.key",
+   "sha256": "e46ffb03a1b90e8b617465dad9c4378afd83ce27159177b8ab1267f8031bb778",
+   "size": 160
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/keys/signing.pub",
+   "sha256": "9b7ef8078d05b884978826d9f7b887422740b6df6dcda4b0134e1938d222eb9f",
+   "size": 113
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/networks"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/networks/appnet"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/networks/appnet/meta.json",
+   "sha256": "f288fa66fad17258feff6cda7a66829d5a5838a8b3253d5a5695df32c708b5af",
+   "size": 193
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/networks/appnet/state.json",
+   "sha256": "a7abdbd59ffdcd5ec4a9a56b339ec893d793be1d115425c32d55da89f05c7bf4",
+   "size": 115
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/networks/compose-b2684e0f41a2-backend"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/networks/compose-b2684e0f41a2-backend/meta.json",
+   "sha256": "d87237016bccaeddeddf78cc5eab18df958e847e770cd342424624e7c8775b39",
+   "size": 240
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/networks/compose-b2684e0f41a2-backend/state.json",
+   "sha256": "f8c3aa8704c6538a56841ecf3ecad3d8f0edaf23cc701c48494fdb9906337772",
+   "size": 82
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/networks/idle"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/networks/idle/meta.json",
+   "sha256": "e9c1463bceffd4dd9fab4bd4db34ef2941d05f1fa8d685f6e5fcd72b5673e520",
+   "size": 189
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/networks/idle/state.json",
+   "sha256": "edf8812a7b98771be9bba3ab11c1c385fd3eeb2ffc494c804acae363dda87ff6",
+   "size": 63
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/packages-ops"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home/.jerboa/packages-ops/arm64"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/packages-ops/arm64/manifest.json",
+   "sha256": "de7e1503d0feaa0443beef9d3928a5be1f4e6553e77b0ac974316d297ff4a7ed",
+   "size": 784799
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/release-state.json",
+   "sha256": "487590195d610f9e74085bdd63c68c73ece542ae0ce2348d1fc097819a19ae07",
+   "size": 67
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/signatures"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/signatures/sha256-cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded.sig",
+   "sha256": "305971b6b7d7a810f2780b674d7aa03633cf15883add689bafe589b302aa9976",
+   "size": 298
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/snapshots"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/snapshots/.operations"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/snapshots/.staging"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/snapshots/before-upgrade"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/jerboa-snapshot.json",
+   "sha256": "c8afa4ae47c9917b262a5bc29f13f98402200ef946228112034a4360b70777b4",
+   "size": 2150
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/cpu-0.bin",
+   "sha256": "46a4af22e1235f8f49c4d371ecb38145644078c3381efdba9af1b11d13eb011a",
+   "size": 2146
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/devices.bin",
+   "sha256": "9fc911ce4106f6780e16ef59b45cd3c0dca78c936c3f6c8a9e7ee1484e38e1d7",
+   "size": 1274
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/disk-0.bin",
+   "sha256": "31dcd73478fd2f93907397f8063f2bdef31872332704c3b344ff3e918a9659d2",
+   "size": 4198912
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/firmware-0",
+   "sha256": "db863cff9b8ab6212bb7a7c0cefabda87bc3b4b880403aea9ff82d2743ecc93a",
+   "size": 22
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/firmware-1",
+   "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "size": 0
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/firmware-2",
+   "sha256": "aacbf03cb64ec62ee545dadaade0577f3e41014776d914337550aa235dc998f8",
+   "size": 27
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/gic.bin",
+   "sha256": "579f1efc5de770bbdc7d51f2881c81408fe37b40df411c9dc6889da80d8b4fd2",
+   "size": 126412
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/kernel",
+   "sha256": "dee55f6f8da9ab14fb0b97a447449005d66f2a5277f878885d93ff247c77354c",
+   "size": 1415600
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/manifest.json",
+   "sha256": "40dbcec7acd235f249e7ef37f935ea7178b71992e08082ec875c0d5ff32ab7ad",
+   "size": 2360
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/snapshots/before-upgrade/vm.snapshot/ram.bin",
+   "sha256": "bbf96451e12b7e21226d4df5760218177980988d75e76bf03026094e4f548d93",
+   "size": 134217728
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vm-disks"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vm-disks/fc-0121ce1f87d2-rootfs.img",
+   "sha256": "8fee893bd4c8d8f430e903b52bec5d2b5e5eb3e72409526e53e95d58404628cc",
+   "size": 4198912
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vm-disks/fc-8daadce4e393-rootfs.img",
+   "sha256": "31dcd73478fd2f93907397f8063f2bdef31872332704c3b344ff3e918a9659d2",
+   "size": 4198912
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vm-disks/fc-d84b32fbbbcf-rootfs.img",
+   "sha256": "81328ee13a22f7eb608ff53f71426fa757319361c7ff2950f5ae4056d49d7b72",
+   "size": 4198912
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms/0121ce1f87d2"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vms/0121ce1f87d2/state.json",
+   "sha256": "3b826522b1f090a221d51a1599121a461bcebf5da6c37d794c72c29c35b82d80",
+   "size": 1382
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms/4336e7c7eb1e"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vms/4336e7c7eb1e/state.json",
+   "sha256": "03aff0925c257a7153ff6b305b964ba1f7cc58276b5eff93b48c62e9d145519d",
+   "size": 1168
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms/8daadce4e393"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vms/8daadce4e393/state.json",
+   "sha256": "57d4715d5bf5e12dc03c58cb07b060581835cfd41a69cb6e9f9235553d8008bd",
+   "size": 1126
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms/b2cb5f4da68b"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vms/b2cb5f4da68b/state.json",
+   "sha256": "9ccef53e1d9cb13878d02dc21585e39f87087ab210477c8908796cd358b8fecc",
+   "size": 1153
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms/c87d4cafbb39"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vms/c87d4cafbb39/state.json",
+   "sha256": "4e51aa2b9860f28f19f78a138df05cea5486c1bd54b8ae6b407fdd58a45af959",
+   "size": 1151
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/vms/d84b32fbbbcf"
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/vms/d84b32fbbbcf/state.json",
+   "sha256": "4c1ca03230c9be5dddbaefabab790ca245b914901113ae0a805bcdcc4779c3cb",
+   "size": 1614
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/volumes"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/volumes/compose-b2684e0f41a2-state"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/volumes/compose-b2684e0f41a2-state/disk.img",
+   "sha256": "9786f68125625133723689dbdf28e7d81bdd9a03489e7ee18e2c819a23d90a71",
+   "size": 17301504
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/volumes/compose-b2684e0f41a2-state/meta.json",
+   "sha256": "9ef4f100fecfb793d4c39b0edcc171ca06dbd7272f7d7f0b298f945b414f13bd",
+   "size": 269
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/volumes/data"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/volumes/data/disk.img",
+   "sha256": "5b5e2ea78e42e79381b69158280011cc06d4d87daead795373014f5de941bb89",
+   "size": 17301504
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/volumes/data/meta.json",
+   "sha256": "6e635300f305158f450b82b4ffe21ff8396499728997f14a7009ca9c5e1a2a6d",
+   "size": 203
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home/.jerboa/volumes/spare"
+  },
+  {
+   "mode": "0o644",
+   "path": "home/.jerboa/volumes/spare/disk.img",
+   "sha256": "2daeb1f36095b44b318410b3f4e8b5d989dcc7bb023d1426c492dab0a3053e74",
+   "size": 8388608
+  },
+  {
+   "mode": "0o600",
+   "path": "home/.jerboa/volumes/spare/meta.json",
+   "sha256": "6ce2e55aae57dcd55989334d6bbc683a0e45ef31ff074accfb982301bafee5cc",
+   "size": 205
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home-sqlite"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home-sqlite/.jerboa"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home-sqlite/.jerboa/blobs"
+  },
+  {
+   "mode": "0o444",
+   "path": "home-sqlite/.jerboa/blobs/1c8acebf036461fb37aaf3c43ef783e364d0e13b63585630f829c181a28d29fe",
+   "sha256": "1c8acebf036461fb37aaf3c43ef783e364d0e13b63585630f829c181a28d29fe",
+   "size": 1401
+  },
+  {
+   "mode": "0o444",
+   "path": "home-sqlite/.jerboa/blobs/46e7b06116c721bd43676f88effee7429adc66af52fd4cad795b7455f536f84a",
+   "sha256": "46e7b06116c721bd43676f88effee7429adc66af52fd4cad795b7455f536f84a",
+   "size": 60
+  },
+  {
+   "mode": "0o444",
+   "path": "home-sqlite/.jerboa/blobs/68bea6aae04075526adc0c84693a5f7cb03ef8bf96601720ab599a43aaef0c54",
+   "sha256": "68bea6aae04075526adc0c84693a5f7cb03ef8bf96601720ab599a43aaef0c54",
+   "size": 1573024
+  },
+  {
+   "mode": "0o444",
+   "path": "home-sqlite/.jerboa/blobs/dee55f6f8da9ab14fb0b97a447449005d66f2a5277f878885d93ff247c77354c",
+   "sha256": "dee55f6f8da9ab14fb0b97a447449005d66f2a5277f878885d93ff247c77354c",
+   "size": 1415600
+  },
+  {
+   "mode": "0o444",
+   "path": "home-sqlite/.jerboa/blobs/f8b19df4b52d1c1d0a488c69b83f940cb4789109ddb139d536b8c799789f5cf3",
+   "sha256": "f8b19df4b52d1c1d0a488c69b83f940cb4789109ddb139d536b8c799789f5cf3",
+   "size": 512
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home-sqlite/.jerboa/images"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded"
+  },
+  {
+   "mode": "0o444",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/disk.img",
+   "sha256": "cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded",
+   "size": 4198912
+  },
+  {
+   "mode": "0o644",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/manifest.json",
+   "sha256": "46b4a38029ce9def706851a1baac5132961a7cd311180bb7398e5ceb811d250b",
+   "size": 353
+  },
+  {
+   "mode": "0o644",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/sbom.cdx.json",
+   "sha256": "3ffff8a63c06b9b103f308a232207b6589ef3c3c1f76abbd51e501ba55b91ee6",
+   "size": 672
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/tags"
+  },
+  {
+   "mode": "0o644",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/tags/probe:latest.json",
+   "sha256": "69f4852719cb6aca5bc28e8881f2f058e58be8bf2459dfe0fcba79baf1207513",
+   "size": 440
+  },
+  {
+   "mode": "0o644",
+   "path": "home-sqlite/.jerboa/images/cc57691feca14a60b4272741da45f13c742f8761b46cf23fc49bf8468eccbded/verified.json",
+   "sha256": "d36051f522968481a555c7dc9a27318af7720584b7164d8276215ca1716e1e6c",
+   "size": 199
+  },
+  {
+   "mode": "0o644",
+   "path": "home-sqlite/.jerboa/images/refs.json",
+   "sha256": "e9141932222bd3a7857575fdcffca30cd606a1120c96e47f7369ed0793b0df17",
+   "size": 88
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/networks"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/snapshots"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/snapshots/.operations"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/snapshots/.staging"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/vm-disks"
+  },
+  {
+   "mode": "0o600",
+   "path": "home-sqlite/.jerboa/vm-disks/fc-c9b85ed55201-rootfs.img",
+   "sha256": "8746497931e9faf3d4ba3965f880b67d10ab352559a18e3f44ae08c03a097ad1",
+   "size": 4198912
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/vms"
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/vms/d1ee1cb1a44a"
+  },
+  {
+   "mode": "0o600",
+   "path": "home-sqlite/.jerboa/vms/d1ee1cb1a44a/state.json",
+   "sha256": "16da896d0a12808deb7fb62446572668747983bed6925d0dfc5edf3c7bc5ff17",
+   "size": 1152
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/vms/f2432ca23f71"
+  },
+  {
+   "mode": "0o600",
+   "path": "home-sqlite/.jerboa/vms/f2432ca23f71/state.json",
+   "sha256": "6ecdefdea6a4d3239597ef0c0fffbc0f0ed12c769b89746c2edd5edadf5b0cd0",
+   "size": 1157
+  },
+  {
+   "mode": "0o644",
+   "path": "home-sqlite/.jerboa/vms/vms.db",
+   "sha256": "fca2f9a599632afac925f270479a79b7966fd74761862ed5ac66be5dbe48912e",
+   "size": 12288
+  },
+  {
+   "dir": true,
+   "mode": "0o700",
+   "path": "home-sqlite/.jerboa/volumes"
+  },
+  {
+   "dir": true,
+   "mode": "0o755",
+   "path": "project"
+  },
+  {
+   "mode": "0o600",
+   "path": "project/.jerboa-compose-63e959e92dd8321b0a090b9925ca8e2b.json",
+   "sha256": "a9638097e69256e42c6444b88279f261f43398710b71668062dbec4f2b9f808c",
+   "size": 401
+  },
+  {
+   "mode": "0o644",
+   "path": "project/compose.yaml",
+   "sha256": "98e7a619d3ea9dc0ec2497ec77c2233ad3ff9b9165ba784d07bb446c31a4226a",
+   "size": 236
+  }
+ ],
+ "hypervisor": "firecracker",
+ "kvm": false,
+ "os": "darwin",
+ "recorded": "2026-11-16T21:10:32Z",
+ "root": "/private/var/tmp/jerboa-upgrade-fixture",
+ "version": "v0.59.0"
+}
