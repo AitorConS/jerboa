@@ -8,6 +8,7 @@ import argparse
 import base64
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -35,6 +36,24 @@ TOOLSET_MKFS = {'linux-arm64': Path('mkfs-linux-arm64') / 'mkfs',
 # accepted as stable. promote() signs the stable manifest once its checks pass.
 CANDIDATE_CHANNEL = 'candidate'
 STABLE_CHANNEL = 'stable'
+
+# Generation of the release pipeline, recorded in every inventory. Promotion
+# refuses a candidate of another generation, so a candidate assembled before a
+# pipeline change is rebuilt, never promoted by mistake. Bump it whenever
+# promotion needs something older candidates do not have; test_kernel_candidate
+# pins the inventory's fields to this number and fails when one changes
+# without a bump.
+PIPELINE = 2
+REBUILD = ('rebuild the candidate: dispatch "Build release candidate" again on main, '
+           'repeat the native Mac validation on the new run and promote that run')
+
+# The stable-manifest floor compiled into every released jerboa and jerboad
+# (release.MinStableGenerated): lock() takes it from the live stable manifest
+# and every release build sets it with this linker flag.
+FLOOR_SOURCE = Path('internal/release/freshness.go')
+FLOOR_FLAG = '-X github.com/AitorConS/jerboa/internal/release.MinStableGenerated='
+RUNTIME_REPOSITORY = 'AitorConS/firecracker-macos'
+CHANGELOG_SCRIPT = Path(__file__).with_name('changelog.py')
 
 REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64'},
             'daemon': {'linux-amd64', 'darwin-arm64'},
@@ -112,6 +131,84 @@ def sign(path, comment):
     verify_signature(path)
 
 
+def notes_key(v):
+    return f'releases/{v}/notes.md'
+
+
+def release_notes(v, changelog='CHANGELOG.md'):
+    """The release notes of a version: its CHANGELOG.md section.
+
+    A version nobody wrote an entry for is not released. The entry is made at
+    release time by prepare-release.py, which names the Unreleased section
+    after the version; the notes travel in the signed candidate."""
+    n = version(v)[1:]
+    spec = importlib.util.spec_from_file_location('changelog', CHANGELOG_SCRIPT)
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    try:
+        return module.extract(Path(changelog).read_text(encoding='utf-8'), n)
+    except (OSError, module.ChangelogError) as e:
+        raise ValueError(
+            f'{changelog} has no usable entry for {n} ({e}). Run `python3 scripts/release/prepare-release.py {n}`, '
+            'which names the Unreleased section after the version and writes VERSION.md, merge that pull request '
+            'and build the candidate again') from e
+
+
+def timestamp(value):
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', value):
+        raise ValueError(f'Expected a UTC time like 2026-01-31T12:00:00Z, got {value!r}')
+    return value
+
+
+def live_stable(directory):
+    """Download the live stable manifest, verify it and return it."""
+    path = Path(directory) / 'stable.json'
+    download(BASE + '/channels/stable.json', path)
+    download(BASE + '/channels/stable.json.minisig', str(path) + '.minisig')
+    verify_signature(path)
+    manifest = json.loads(path.read_text())
+    if manifest.get('channel') != STABLE_CHANNEL:
+        raise ValueError('Published manifest is not signed for the stable channel')
+    return manifest
+
+
+def committed_floor():
+    found = re.findall(r'(?m)^var MinStableGenerated = "([^"]*)"$', FLOOR_SOURCE.read_text())
+    if len(found) != 1:
+        raise ValueError(f'{FLOOR_SOURCE} has no MinStableGenerated declaration to read')
+    return timestamp(found[0])
+
+
+def stable_floor(manifest):
+    """The floor this candidate's binaries are built with: the live manifest's time.
+
+    A released client then refuses every stable manifest older than the one
+    that was live when its release was built, with no state of its own. The
+    value committed in the source is only the fallback of builds from source;
+    it must never be later, or those builds would refuse the live manifest."""
+    floor = timestamp(manifest.get('generated'))
+    committed = committed_floor()
+    if committed > floor:
+        raise ValueError(
+            f'MinStableGenerated in {FLOOR_SOURCE} is {committed}, later than the live stable manifest ({floor}): '
+            f'a jerboa built from this source refuses the stable channel. Set it to {floor} or earlier '
+            '(the engine commit time of a promoted release) in a pull request, merge it and build the candidate again')
+    return floor
+
+
+def check_runtime(revision):
+    """The hypervisor commit must be on its repository's main with green checks."""
+    compare = api(f'repos/{RUNTIME_REPOSITORY}/compare/{revision}...main')
+    if compare.get('status') not in ('identical', 'ahead'):
+        raise ValueError(f'runtime_sha {revision} is not on the main branch of {RUNTIME_REPOSITORY}; '
+                         'use a commit of main (gh api repos/' + RUNTIME_REPOSITORY + '/commits/main --jq .sha)')
+    runs = api(f'repos/{RUNTIME_REPOSITORY}/commits/{revision}/check-runs?per_page=100').get('check_runs', [])
+    bad = sorted({f'{r.get("name")}: {r.get("conclusion") or r.get("status")}' for r in runs
+                  if r.get('status') != 'completed' or r.get('conclusion') not in ('success', 'skipped', 'neutral')})
+    if bad or not any(r.get('conclusion') == 'success' for r in runs):
+        raise ValueError(f'runtime_sha {revision} has not passed the checks of {RUNTIME_REPOSITORY} '
+                         f'({", ".join(bad) or "no successful check run"}); wait for them, or choose a commit of main that passed')
+
+
 def lock():
     v = version(os.environ['VERSION'])
     if v != 'v' + Path('VERSION.md').read_text().strip():
@@ -128,9 +225,24 @@ def lock():
              'kernel_version': version(os.environ['KERNEL_VERSION']),
              'run_id': os.environ['GITHUB_RUN_ID'], 'repository': os.environ['GITHUB_REPOSITORY'],
              'toolchains': {'go': '1.27.4', 'node': '22', 'rust': '1.97.0'}}
+    release_notes(v)
+    check_runtime(value['runtime_sha'])
+    with tempfile.TemporaryDirectory() as tmp:
+        stable = live_stable(tmp)
+    value['min_stable_generated'] = stable_floor(stable)
+    # What kernel-stage compares a newly built kernel with, before anything
+    # is built on top of it.
+    published = stable['components']['kernel']
+    value['stable_kernel'] = {'version': version(published['version']),
+                              'files': {KERNEL_FILES[name]: {'sha256': f['sha256'], 'size': f['size']}
+                                        for name, f in published['files'].items() if name in KERNEL_FILES}}
+    live = stable['components']['cli']['version']
+    if version_tuple(live) >= version_tuple(v):
+        print(f'::warning::{v} is not newer than the published {live}: this candidate cannot be promoted. '
+              'Raise VERSION.md first if it is meant for users.')
     write_json('release-lock.json', value)
     with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-        for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source']:
+        for k in ['version', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source', 'min_stable_generated']:
             out.write(f'{k}={value[k]}\n')
 
 
@@ -187,6 +299,35 @@ def verify_zstd_variants(manifest, payload):
             data = subprocess.run(['zstd', '-dc', str(packed)], check=True, capture_output=True).stdout
             if {'sha256': hashlib.sha256(data).hexdigest(), 'size': len(data)} != {'sha256': asset['sha256'], 'size': asset['size']}:
                 raise ValueError('zstd variant differs from its binary: ' + packed.name)
+
+
+def verify_floor_embedded(manifest, payload, floor):
+    """Every released jerboa and jerboad must carry the candidate's stable floor.
+
+    Binaries of other platforms cannot be run here; the linker stores the -X
+    value as it is, so its bytes are looked for instead."""
+    needle = timestamp(floor).encode()
+    for name in ['cli', 'daemon']:
+        for platform, asset in sorted(manifest['components'][name]['platforms'].items()):
+            if needle not in (payload / asset['url'][len(BASE)+1:]).read_bytes():
+                raise ValueError(f'{name} {platform} was not built with the stable floor {floor}: its build must pass '
+                                 f'-ldflags "{FLOOR_FLAG}{floor}" (see build-release and build-macos in release.yml)')
+    if manifest['generated'] < floor:
+        raise ValueError(f'Candidate manifest ({manifest["generated"]}) is older than its own stable floor ({floor})')
+
+
+def check_published_kernel(spec, record):
+    """Fail before boot tests and packaging when a built kernel cannot be promoted."""
+    published = spec.get('stable_kernel')
+    if not published:
+        return
+    if version_tuple(published['version']) > version_tuple(spec['kernel_version']):
+        raise ValueError(f'Kernel {spec["kernel_version"]} is older than the published {published["version"]}; '
+                         'raise kernel/VERSION above it')
+    if published['version'] == spec['kernel_version'] and published['files'] != record['files']:
+        raise ValueError(f'Kernel {spec["kernel_version"]} is already published with different bytes: raise kernel/VERSION '
+                         'to a new version in a pull request and pass it as kernel_version, or choose kernel_source: stable '
+                         'to reuse the published kernel')
 
 
 def verify_linux_versions(manifest, payload, expected):
@@ -351,6 +492,8 @@ def kernel():
     record['files'] = {filename: digest(root / filename) for filename in KERNEL_FILES.values()}
     write_json(root / 'toolset.json', record)
     verify_kernel_toolset(root, spec)
+    if source == 'build':
+        check_published_kernel(spec, record)
 
 
 # The Mac app's guest boot files for explicitly emulated linux/amd64 images:
@@ -428,6 +571,10 @@ def assemble():
     # Keep bootstrap bytes in the signed candidate inventory; promotion must
     # never read an installer from a newer checkout.
     stage(pin_installer(Path('scripts/install.sh'), root / 'install.sh', manifest['generated']), f'releases/{v}/install.sh')
+    # The release notes are the changelog entry of the engine revision that
+    # was built; promotion publishes these bytes beside the release.
+    (root / 'notes.md').write_text(release_notes(v), encoding='utf-8')
+    stage(root / 'notes.md', notes_key(v))
     installer = f'jerboa-desktop-setup-{n}.exe'
     stage(Path('desktop-windows') / (installer + '.blockmap'), 'desktop/' + installer + '.blockmap')
     # Generate the updater feed ourselves from the staged final installer bytes.
@@ -439,8 +586,9 @@ def assemble():
     assert_manifest(manifest, v)
     verify_linux_versions(manifest, payload, v)
     verify_zstd_variants(manifest, payload)
+    verify_floor_embedded(manifest, payload, spec['min_stable_generated'])
     write_json(root / 'manifest.json', manifest)
-    record = {**spec, 'kernel_toolset': kernel_record, 'kernel_boot': kernel_boot, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
+    record = {**spec, 'pipeline': PIPELINE, 'kernel_toolset': kernel_record, 'kernel_boot': kernel_boot, 'date': date, 'assets': {str(p.relative_to(payload)): digest(p) for p in sorted(payload.rglob('*')) if p.is_file()},
               'manifest': digest(root / 'manifest.json'), 'feed': digest(root / 'latest.yml'),
               'native_macos_app': digest(Path('native-macos') / f'jerboa-desktop-{n}-macos-arm64.zip'),
               # build-macos stages these exact selected files as tools/x86.
@@ -484,6 +632,14 @@ def verify_candidate(root):
         # Candidates assembled before stable signing moved to promotion carry
         # a stable signature of their own; rebuild them instead.
         raise ValueError('Candidate manifest is not signed for the candidate channel; rebuild the candidate')
+    if inv.get('pipeline') != PIPELINE:
+        raise ValueError(f'Candidate was assembled by release pipeline {inv.get("pipeline", 1)} and promotion is at '
+                         f'{PIPELINE}; {REBUILD}')
+    if 'min_stable_generated' not in inv:
+        raise ValueError('Candidate does not record the stable floor its binaries were built with; ' + REBUILD)
+    timestamp(inv['min_stable_generated'])
+    if notes_key(inv['version']) not in inv['assets']:
+        raise ValueError('Candidate carries no release notes; ' + REBUILD)
     assert_manifest(manifest, inv['version'])
     if digest(root/'manifest.json') != inv['manifest'] or digest(root/'latest.yml') != inv['feed']:
         raise ValueError('Candidate metadata hash mismatch')
@@ -588,11 +744,38 @@ def stable_manifest(manifest, path):
     return Path(path)
 
 
+def check_floor(old, inv):
+    """Refuse a candidate whose binaries accept stable manifests older than the live one."""
+    live = old.get('generated')
+    if live and inv['min_stable_generated'] < live:
+        raise ValueError(
+            f'Candidate binaries accept stable manifests since {inv["min_stable_generated"]}, but a release generated at '
+            f'{live} was promoted after this candidate was built, so they would accept a replay of the manifests it '
+            f'replaced; {REBUILD}')
+
+
+def macos_evidence(inv, root='.'):
+    """The committed native Mac report must be the one of this exact candidate."""
+    path = Path(root) / 'docs' / 'releases' / inv['version'] / 'native-macos.json'
+    how = (f'run scripts/release/native-macos.sh on the macos-app artifact of run {inv["run_id"]}, commit its report as '
+           f'{path} on main and dispatch the promotion again')
+    if not path.is_file():
+        raise ValueError(f'No native Mac validation report at {path}; {how}')
+    report = json.loads(path.read_text())
+    expected = {'candidate_run': inv['run_id'], 'app_sha256': inv['native_macos_app']['sha256'],
+                'version': inv['version'], 'result': 'pass'}
+    for key, want in expected.items():
+        if str(report.get(key)) != want:
+            raise ValueError(f'{path} has {key} {report.get(key)!r}, but this candidate needs {want!r}: the report is '
+                             f'of another build or did not pass; {how}')
+
+
 def promote():
     root = Path('candidate');inv, manifest = verify_candidate(root)
     authorized = json.loads(Path('authorized-run.json').read_text())
     if inv['run_id'] != authorized['run_id'] or inv['engine_sha'] != authorized['engine_sha']:
         raise ValueError('Artifact provenance does not match authorized run')
+    macos_evidence(inv)
     v = inv['version'];before = Path('previous-stable.json')
     stable = stable_manifest(manifest, 'stable-manifest.json')
     # Read origin directly; a previous promotion may have failed between the
@@ -611,6 +794,10 @@ def promote():
         if old_v == v and digest(previous) != digest(stable):
             raise ValueError('Version already published with another manifest; cut a new release')
         check_generation(old, manifest)
+        # A retry of this same candidate meets its own manifest, which is
+        # newer than the floor its binaries were built with.
+        if old_v != v:
+            check_floor(old, inv)
     # Persist a signed promotion record before changing channel pointers.
     promotion = {'version': v, 'candidate_run': inv['run_id'], 'inventory': inv,
                  'macos_evidence': os.environ['MACOS_EVIDENCE']}

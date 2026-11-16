@@ -128,15 +128,19 @@ jobs:
         path: dist/packages/
         merge-multiple: false
     - name: Publish archives and index
+      id: publish
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
         JERBOA_MINISIGN_SEED: ${{ secrets.JERBOA_MINISIGN_SEED }}
         KEY_ID: ${{ vars.JERBOA_MINISIGN_KEYID }}
         # Serial of the last published index, kept as a repository variable
-        # that release-asset writers cannot change: package-index.py refuses
-        # to extend a base index older than it. Raise it after each publish.
-        PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL }}
+        # that release-asset writers cannot change: package-index.py extends
+        # only the index with exactly that serial (0 until one is recorded).
+        # An older index was restored on the release; a newer one means the
+        # variable was not raised after the last publish, and the run stops
+        # with the command to raise it. The next step raises it.
+        PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL || '0' }}
       run: |
         set -euo pipefail
         mkdir -p dist/publish
@@ -166,7 +170,37 @@ jobs:
         curl --fail --location --retry 5 --retry-all-errors "$base/packages.json.minisig" -o dist/public/packages.json.minisig
         cmp dist/publish/packages.json dist/public/packages.json
         bin/jerboa-verify -purpose packages dist/public/packages.json
-        echo "Package index serial: $(jq -r '.serial // "none"' dist/publish/packages.json) (set PKG_INDEX_MIN_SERIAL to it)" >> "$GITHUB_STEP_SUMMARY"
+        serial="$(jq -r '.serial // 0' dist/publish/packages.json)"
+        echo "serial=$serial" >> "$GITHUB_OUTPUT"
+        echo "Package index serial: $serial" >> "$GITHUB_STEP_SUMMARY"
+    # GITHUB_TOKEN cannot write repository variables. With a token that can
+    # (secret PKG_INDEX_VARIABLES_TOKEN of the release environment: Variables
+    # read and write on this repository only) the record is raised here;
+    # without one the summary gives the command, and the next publish refuses
+    # to run until it was done.
+    - name: Record the published serial
+      env:
+        VARIABLES_TOKEN: ${{ secrets.PKG_INDEX_VARIABLES_TOKEN }}
+        SERIAL: ${{ steps.publish.outputs.serial }}
+        RECORDED: ${{ vars.PKG_INDEX_MIN_SERIAL || '0' }}
+      run: |
+        set -euo pipefail
+        if [ "$SERIAL" = "$RECORDED" ]; then
+          echo "PKG_INDEX_MIN_SERIAL is already $SERIAL"
+          exit 0
+        fi
+        if [ -n "$VARIABLES_TOKEN" ]; then
+          GH_TOKEN="$VARIABLES_TOKEN" gh variable set PKG_INDEX_MIN_SERIAL --body "$SERIAL" --repo "$GITHUB_REPOSITORY"
+          echo "PKG_INDEX_MIN_SERIAL raised from $RECORDED to $SERIAL" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+        command="gh variable set PKG_INDEX_MIN_SERIAL --body $SERIAL --repo $GITHUB_REPOSITORY"
+        echo "::warning::PKG_INDEX_MIN_SERIAL is $RECORDED and the published index has serial $SERIAL. Run: $command (the next publish refuses to run until it is $SERIAL)"
+        {
+          echo "**Action needed:** record the published serial, or the next publish refuses to run:"
+          echo
+          echo "    $command"
+        } >> "$GITHUB_STEP_SUMMARY"
   select:
     runs-on: ubuntu-latest
     outputs:

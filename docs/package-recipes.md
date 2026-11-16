@@ -227,10 +227,21 @@ release with its original signature is not used. An index without a serial
 (the format before serials) is still accepted, with a deprecation warning,
 until an index with a serial has been accepted from that URL.
 
-The publish job extends only a base index that is not older than the
-repository variable `PKG_INDEX_MIN_SERIAL`; raise it to the serial shown in
-the job summary after each publish. A base without a serial is refused once
-the variable is set.
+The publish job extends only the index whose serial equals the repository
+variable `PKG_INDEX_MIN_SERIAL` (an unset variable counts as 0, and so does an
+index from before serials). An index with a lower serial is a superseded one
+restored on the release and is refused. One with a higher serial means the
+variable was not raised after the last publication: the job stops before
+signing anything and prints the command that raises it
+(`gh variable set PKG_INDEX_MIN_SERIAL --body <serial>`), to run after
+checking that the summary of the last publishing run shows that serial. The
+variable is never lowered.
+
+After a publication the job records the new serial itself when the `release`
+environment holds the secret `PKG_INDEX_VARIABLES_TOKEN`, a token allowed to
+write this repository's Actions variables (the workflow's own token cannot).
+Without that secret it writes the same command to the job summary with a
+warning, and the next publish refuses to run until it was done.
 
 ## Example: adding memcached
 
