@@ -105,6 +105,21 @@ If you change:
 
 then update the relevant docs in `docs/` and any root-level public docs affected by the change.
 
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) records what changed for users in each version.
+If your change is one a user would notice (a new or changed command, flag or
+default, a fix, something removed, a security fix), add a line to the
+`Unreleased` section under `Added`, `Changed`, `Deprecated`, `Removed`,
+`Fixed` or `Security`, with the pull request number. Write what the user sees
+and, when an existing setup is affected, what to do about it; put those
+entries first. Refactors, tests, CI and dependency bumps need no entry. At
+release time `Unreleased` is renamed to `## [X.Y.Z] - YYYY-MM-DD`, its link is
+added at the end of the file, and a new empty `Unreleased` is opened;
+`docs/releases/vX.Y.Z/` then records only the validation evidence and links to
+that entry. `python3 scripts/release/changelog.py check` verifies the
+structure, and CI runs it.
+
 ## Security
 
 For sensitive issues, do not open a public bug with exploit details first. Follow [SECURITY.md](SECURITY.md).
