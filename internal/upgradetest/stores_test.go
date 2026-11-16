@@ -1,3 +1,5 @@
+//go:build linux || (darwin && arm64)
+
 package upgradetest_test
 
 import (
