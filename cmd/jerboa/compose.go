@@ -115,7 +115,14 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 					continue
 				}
 				if _, getErr := client.VolumeGet(cmd.Context(), volName); getErr == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, skipping\n", volName)
+					// The name is scoped to this project, so the volume is the
+					// one an earlier up created and a down without --volumes
+					// kept: it stays the stack's, for down --volumes to remove.
+					state.CreatedVolumes = append(state.CreatedVolumes, volName)
+					if err := writeState(composeFile, state); err != nil {
+						return fmt.Errorf("compose: %w", err)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, reusing\n", volName)
 					continue
 				} else if !api.IsNotFound(getErr) {
 					return fmt.Errorf("compose up: volume %q: %w", volName, getErr)
@@ -147,7 +154,12 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 					continue
 				}
 				if getErr == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "network %s already exists, skipping\n", netName)
+					// As for volumes: left by a down that could not remove it.
+					state.CreatedNetworks = append(state.CreatedNetworks, netName)
+					if err := writeState(composeFile, state); err != nil {
+						return fmt.Errorf("compose: %w", err)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "network %s already exists, reusing\n", netName)
 					continue
 				}
 				_, createErr := client.NetworkCreate(cmd.Context(), netName, netCfg.Subnet, driver)
