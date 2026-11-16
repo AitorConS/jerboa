@@ -60,6 +60,49 @@ manual `nightly.yml` dispatch accepts `suite: kernel`; scheduled/default runs st
 execute all suites. Native Mac validation remains manual and distribution remains
 preview, as selected for this rollout.
 
+### Upgrade tests
+
+Two layers show that an installed machine survives the next release.
+
+**State compatibility, with the unit tests.** `internal/upgradetest/testdata`
+holds what released versions left on disk: `scripts/upgrade/make-fixture.py`
+runs the released `jerboa` and `jerboad` (downloaded and checked against that
+release's signed manifest) through a fixed scenario and packs their home
+directories together with what that version reported about them. The tests in
+`internal/upgradetest`, `internal/release` and `cmd/jerboad` restore that state
+and require the current stores, daemon and CLI to show the same images, names,
+VMs, volumes, networks, snapshots, compose project, credentials and settings,
+also after a first start interrupted at every write, a half-finished migration
+and damaged files. A fixture is restored where it was recorded
+(`/var/tmp/jerboa-upgrade-fixture`), because the state names absolute paths.
+
+Record a fixture for every release, once it is published:
+
+```sh
+scripts/upgrade/make-fixture-docker.sh v0.60.0     # Linux, in a container
+python3 scripts/upgrade/make-fixture.py --version v0.60.0 \
+    --bin-dir ".../Jerboa Desktop.app/Contents/Resources/bin" \
+    --out internal/upgradetest/testdata             # macOS 26, natively
+```
+
+Keep the older ones: each is an upgrade path. `TestFixturesCoverTheLatestRelease`
+fails once `VERSION.md` is more than one minor version ahead of the newest
+Linux fixture, so the version bump of the release after a forgotten one does
+not pass CI.
+
+**A real upgrade, on the KVM runner.** The `Upgrade from stable` job of
+`validate.yml` (full validation: main, release candidates, and pull requests
+that touch the installer, the workflows or `tests/upgrade/`) boots a disposable
+virtual machine and, inside it, installs the current stable release with the
+public installer, creates an image, a VM with a volume and a compose project,
+upgrades to the build under test with that build's `scripts/install.sh`,
+checks that everything is still there and works, then goes back to stable and
+forward again (`tests/upgrade/guest.sh`). The build under test is served from a
+release origin made inside the machine, signed with a key generated for the
+run; the installer is used unchanged except for the key it trusts. Nothing is
+installed on the runner: `tests/upgrade/run.py` only writes inside its `--work`
+directory. A release candidate cannot be built while this job fails.
+
 ## Prepare a candidate
 
 1. Merge validated engine and Desktop changes. Choose exact 40-character Desktop

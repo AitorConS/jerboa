@@ -1,0 +1,14 @@
+version: "1"
+services:
+  api:
+    image: voltest:latest
+    memory: 256M
+    networks: [backend]
+    volumes: ["state:/data"]
+    ports: ["18081:8080"]
+networks:
+  backend:
+    driver: bridge
+volumes:
+  state:
+    size: 64M

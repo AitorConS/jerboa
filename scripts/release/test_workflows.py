@@ -63,6 +63,29 @@ class WorkflowContracts(unittest.TestCase):
   self.assertEqual(scope.classify(['tests/integration/lifecycle_test.go']),(True,True))
   self.assertEqual(scope.classify(['tests/e2e/build_test.go']),(True,True))
   self.assertEqual(scope.classify(['.github/workflows/release.yml']),(True,True))
+  self.assertEqual(scope.classify(['tests/upgrade/guest.sh']),(True,True))
+  self.assertEqual(scope.classify(['scripts/install.sh']),(True,True))
+ def test_upgrade_from_stable_gates_validation_and_candidates(self):
+  text=(ROOT/'.github/workflows/validate.yml').read_text()
+  job=text.split('  upgrade-e2e:\n',1)[1].split('  release-tests:\n',1)[0]
+  self.assertIn('tests/upgrade/run.py',job)
+  self.assertIn('environment: kvm',job)
+  # The installer never runs on the runner itself.
+  self.assertNotIn('install.sh',job)
+  self.assertNotIn('sudo ',job.replace('sudo usermod',''))
+  result=text.split('  result:\n',1)[1]
+  self.assertIn('    - upgrade-e2e\n',result.split('    steps:',1)[0])
+  # A release candidate runs the same validation in full before anything
+  # is built for it.
+  release=(ROOT/'.github/workflows/release.yml').read_text()
+  self.assertIn('uses: ./.github/workflows/validate.yml\n    with:\n      full: true',release)
+  for name in ['build-release','kernel-stage']:
+   needs=release.split('  '+name+':\n',1)[1].split('    steps:',1)[0]
+   self.assertIn('validate',needs)
+  # The state-compatibility tests run with the unit tests.
+  self.assertIn('go test ./cmd/... ./internal/...',text)
+  guest=(ROOT/'tests/upgrade/guest.sh').read_text()
+  self.assertIn('https://releases.jerboa.dev/install.sh',guest)
  def test_package_matrix_builds_each_arch(self):
   with tempfile.TemporaryDirectory() as d:
    out=Path(d)/'out'
