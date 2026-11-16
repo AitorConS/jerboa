@@ -143,3 +143,33 @@ func TestParseSize(t *testing.T) {
 		})
 	}
 }
+
+// A removal is a rename followed by a delete: a daemon killed between the
+// two leaves a staging directory the sweep removes, never a volume that is
+// still listed without its disk.
+func TestRemoveGoesThroughStaging(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewStore(root)
+	require.NoError(t, err)
+	_, err = s.Create("data", 4096)
+	require.NoError(t, err)
+
+	// What the rename leaves if the delete never runs.
+	staged := filepath.Join(root, ".remove-data-1")
+	require.NoError(t, os.Rename(filepath.Join(root, "data"), staged))
+	vols, err := s.List()
+	require.NoError(t, err)
+	require.Empty(t, vols, "a volume being removed must not be listed")
+	require.Equal(t, []string{staged}, s.Staging())
+	count, _ := s.SweepStaging(0)
+	require.Equal(t, 1, count)
+	require.NoDirExists(t, staged)
+
+	// And a whole removal leaves nothing behind.
+	_, err = s.Create("data", 4096)
+	require.NoError(t, err)
+	require.NoError(t, s.Remove("data"))
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}

@@ -586,7 +586,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		// restricted/offline environments can point at their own resolver (or set
 		// it empty to disable forwarding).
 		dnsUpstream := "1.1.1.1:53"
-		if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
+		if v, set := os.LookupEnv("JERBOA_DNS_UPSTREAM"); set {
 			dnsUpstream = v
 		}
 		dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)

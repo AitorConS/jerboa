@@ -5,6 +5,7 @@ package apiserver
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/api"
@@ -50,4 +51,32 @@ func TestVolumeRemoveStaysInStore(t *testing.T) {
 	_, rpcErr := s.handleVolumeRemove(raw)
 	require.NotNil(t, rpcErr)
 	require.FileExists(t, vol.DiskPath)
+}
+
+// A volume whose disk is gone is what `jerboa doctor` tells the user to
+// remove with `jerboa volume rm`: it must go, unless a VM still mounts it.
+func TestVolumeRemoveWithoutDisk(t *testing.T) {
+	s, mgr, _ := newBugServer(t)
+	store, err := volume.NewStore(t.TempDir())
+	require.NoError(t, err)
+	vol, err := store.Create("data", 4096)
+	require.NoError(t, err)
+	s.volStore = store
+	v, err := mgr.Create(context.Background(), vm.Config{ImagePath: "test.img", Memory: "256M", Volumes: []vm.VolumeMount{{DiskPath: vol.DiskPath}}})
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(vol.DiskPath))
+	raw, err := json.Marshal(api.VolumeRemoveParams{Name: "data"})
+	require.NoError(t, err)
+
+	_, rpcErr := s.handleVolumeRemove(raw)
+	require.NotNil(t, rpcErr)
+	require.Contains(t, rpcErr.Message, "referenced")
+	_, err = store.Get("data")
+	require.NoError(t, err, "a volume a VM mounts must stay in the store")
+
+	require.NoError(t, mgr.Remove(context.Background(), v.ID))
+	_, rpcErr = s.handleVolumeRemove(raw)
+	require.Nil(t, rpcErr)
+	_, err = store.Get("data")
+	require.Error(t, err)
 }
