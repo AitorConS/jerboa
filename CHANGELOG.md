@@ -113,6 +113,10 @@ Which versions exist, and where:
 - Sizes that overflowed silently in `volume create`, `--memory-max` and
   `--disk-bps` are rejected. `volume ls` no longer panics on a null entry, and
   `registry pat create` no longer reports success with an empty token. (#263)
+- `jerboa compose down` also removes the copy of a project's state that an
+  interrupted takeover left next to the compose file, which brought the
+  project back after it was taken down; and a compose state file that does
+  not parse is named in the error.
 
 ### Security
 
