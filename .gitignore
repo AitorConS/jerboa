@@ -6,6 +6,8 @@ dist/
 /jerboad.exe
 coverage.out
 coverage.html
+# Coverage profiles from ad hoc runs (e.g. `go test -coverprofile=cov_win.out`)
+cov*.out
 *.o
 *.a
 kernel/build/
