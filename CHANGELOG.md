@@ -120,6 +120,11 @@ Which versions exist, and where:
 - Sizes that overflowed silently in `volume create`, `--memory-max` and
   `--disk-bps` are rejected. `volume ls` no longer panics on a null entry, and
   `registry pat create` no longer reports success with an empty token. (#263)
+- **A Firecracker VM started again after a daemon restart has its network.**
+  On Linux the tap device of a VM that was running when the daemon stopped
+  (a restart, an upgrade) stayed behind, and the VM started in its place
+  failed to set its network up and ran unreachable, with only a warning in
+  the daemon log. The tap is now taken over.
 - `jerboa compose down` also removes the copy of a project's state that an
   interrupted takeover left next to the compose file, which brought the
   project back after it was taken down; and a compose state file that does
