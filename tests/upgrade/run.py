@@ -2,17 +2,16 @@
 """Run the upgrade end-to-end test (tests/upgrade/guest.sh) in a machine made for it.
 
 guest.sh installs Jerboa system-wide with the public installer, so it never
-runs on the host. This script gives it a disposable machine and takes it away
-again; everything it writes on the host is inside --work.
+runs on the host. This script boots a QEMU virtual machine from the pinned
+Ubuntu cloud image for it and takes it away again; everything it writes on
+the host is inside --work. With a usable /dev/kvm the machine runs under KVM
+with the host CPU passed through, so the Jerboa inside runs Firecracker where
+nested virtualization is on and QEMU where it is not. Without KVM (a
+developer's Mac) the machine is emulated: the test still passes, in about an
+hour instead of minutes.
 
-  --machine vm      (default) a QEMU virtual machine booted from the pinned
-                    Ubuntu cloud image, with KVM when /dev/kvm is usable and
-                    the host CPU passed through, so that the Jerboa inside
-                    runs Firecracker where nested virtualization is on and
-                    QEMU where it is not. Needs qemu-system-x86_64, ssh and
-                    ssh-keygen. Its disk changes go to a temporary overlay.
-  --machine docker  a privileged systemd container, for hosts without KVM
-                    (a developer's Mac). No /dev/kvm inside: QEMU only.
+Needs qemu-system-x86_64, ssh, scp, ssh-keygen and go; qemu-img, when there,
+gives the machine a larger disk.
 
 Usage:
   make build VERSION=v0.60.0-ci     # or the binaries of a release candidate
@@ -26,6 +25,7 @@ import hashlib
 import http.server
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -38,14 +38,6 @@ REPO = HERE.parents[1]
 # Pinned: a dated build that is not replaced, checked before it is booted.
 IMAGE_URL = 'https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-amd64.img'
 IMAGE_SHA256 = '04e8f2461a16a44e78a370284471f29616cdd9baf1893df25807b71f985b6c94'
-DOCKER_IMAGE = 'jerboa-upgrade-e2e'
-DOCKERFILE = '''FROM ubuntu:24.04
-RUN apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
-    systemd systemd-sysv dbus sudo curl ca-certificates jq openssl python3 iproute2 kmod procps \\
-    && rm -rf /var/lib/apt/lists/*
-CMD ["/sbin/init"]
-'''
-
 
 def log(message):
     print(f'==> {message}', flush=True)
@@ -108,7 +100,7 @@ def console_tail(work):
 def in_vm(args, work, payload):
     for tool in ('qemu-system-x86_64', 'ssh', 'ssh-keygen', 'scp'):
         if not shutil.which(tool):
-            raise SystemExit(f'{tool} is required for --machine vm')
+            raise SystemExit(f'{tool} is required')
     image = fetch_image(work)
     key = work / 'id_ed25519'
     run('ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', key)
@@ -175,28 +167,6 @@ def in_vm(args, work, payload):
         console.close()
 
 
-def in_docker(args, work, payload):
-    run('docker', 'build', '-q', '--platform', 'linux/amd64', '-t', DOCKER_IMAGE, '-', input=DOCKERFILE.encode(),
-        stdout=subprocess.DEVNULL)
-    name = f'jerboa-upgrade-e2e-{os.getpid()}'
-    run('docker', 'run', '-d', '--name', name, '--platform', 'linux/amd64', '--privileged', '--cgroupns=host',
-        '-v', '/sys/fs/cgroup:/sys/fs/cgroup:rw', '--tmpfs', '/run', '--tmpfs', '/run/lock', DOCKER_IMAGE,
-        stdout=subprocess.DEVNULL)
-    try:
-        for _ in range(60):
-            state = subprocess.run(['docker', 'exec', name, 'systemctl', 'is-system-running'], capture_output=True, text=True).stdout.strip()
-            if state in ('running', 'degraded'):
-                break
-            time.sleep(1)
-        else:
-            raise SystemExit('systemd did not come up in the container')
-        run('docker', 'cp', '-q', payload, f'{name}:/root/payload')
-        return subprocess.run(['docker', 'exec', name, 'bash', '/root/payload/guest.sh', '/root/payload'],
-                              timeout=args.timeout).returncode
-    finally:
-        subprocess.run(['docker', 'rm', '-f', '-v', name], capture_output=True)
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--jerboa', required=True, type=Path, help='linux/amd64 jerboa under test')
@@ -204,7 +174,6 @@ def main():
     parser.add_argument('--version', required=True, help='version the binaries report, e.g. v0.60.0')
     parser.add_argument('--installer', type=Path, default=REPO / 'scripts' / 'install.sh', help='installer under test')
     parser.add_argument('--work', required=True, type=Path, help='new directory for everything this run writes')
-    parser.add_argument('--machine', choices=('vm', 'docker'), default='vm')
     parser.add_argument('--cpus', type=int, default=4)
     parser.add_argument('--memory', type=int, default=6144, help='machine memory in MiB')
     parser.add_argument('--boot-timeout', type=int, default=600)
@@ -213,10 +182,12 @@ def main():
     args = parser.parse_args()
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=False)
+    # A cancelled job must still take its machine away.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     try:
         payload = stage_payload(args, work)
-        log(f'upgrade test of {args.version} in a {args.machine}')
-        status = (in_vm if args.machine == 'vm' else in_docker)(args, work, payload)
+        log(f'upgrade test of {args.version}')
+        status = in_vm(args, work, payload)
     finally:
         if not args.keep:
             shutil.rmtree(work, ignore_errors=True)

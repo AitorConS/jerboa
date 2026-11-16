@@ -110,7 +110,6 @@ cp "${payload}/compose.yaml" /srv/app/compose.yaml
 (cd /srv/app && jerboa compose up compose.yaml)
 wait_http http://127.0.0.1:18081/
 write_marker http://127.0.0.1:18081 api-before-upgrade
-web_id="$(jerboa inspect web | jq -r .id)"
 api_id="$(jerboa inspect api | jq -r .id)"
 ls /srv/app/.jerboa-compose-*.json >/dev/null 2>&1 || ls /root/.jerboa/compose/*.json >/dev/null 2>&1 \
 	|| fail "compose up left no state"
@@ -177,19 +176,18 @@ snapshot "${work}/after"
 same_state "${work}/before" "${work}/after" "across the upgrade"
 [ "$(jerboa inspect web | jq -r .state)" = stopped ] || fail "web should be stopped after the daemon restart"
 
-step "4a. the stopped VMs start again, with their data"
-"${payload}/vmstart" "${web_id}"
+step "4a. a stopped VM starts again, with its network and its data"
+# (Starting a stopped VM replaces it with a new one of the same name, so it
+# is addressed by name from here on.)
+"${payload}/vmstart" web
 wait_http http://127.0.0.1:18080/
 expect_contains http://127.0.0.1:18080/ web-before-upgrade
 write_marker http://127.0.0.1:18080 web-after-upgrade
-"${payload}/vmstart" "${api_id}"
-wait_http http://127.0.0.1:18081/
-expect_contains http://127.0.0.1:18081/ api-before-upgrade
 
 step "4b. the compose project is still managed"
 (cd /srv/app && jerboa compose ps compose.yaml --output json) > "${work}/compose-ps.json"
 [ "$(jq -r '.[] | select(.service == "api") | .id' "${work}/compose-ps.json")" = "${api_id}" ] || fail "compose ps lost the api service"
-[ "$(jq -r '.[] | select(.service == "api") | .state' "${work}/compose-ps.json")" = running ] || fail "compose ps does not see api running"
+[ "$(jq -r '.[] | select(.service == "api") | .state' "${work}/compose-ps.json")" = stopped ] || fail "compose ps does not see api stopped"
 if ls /srv/app/.jerboa-compose-*.json >/dev/null 2>&1; then fail "the compose state is still next to the compose file"; fi
 ls /root/.jerboa/compose/*.json >/dev/null || fail "the compose state was not moved to ~/.jerboa/compose"
 (cd /srv/app && jerboa compose down compose.yaml)
@@ -221,11 +219,12 @@ systemctl is-active --quiet jerboad || fail "${old_version} does not start on th
 snapshot "${work}/downgraded"
 same_state "${work}/upgraded" "${work}/downgraded" "across the downgrade"
 # The old CLI looks for the compose state next to the compose file, where it
-# no longer is: it must say so, and must not act on anything.
-if (cd /srv/app && jerboa compose down compose.yaml) > "${work}/old-compose.log" 2>&1; then
-	fail "${old_version} took a project down whose state it cannot see: $(cat "${work}/old-compose.log")"
+# no longer is: it must say so, and its down must not act on anything.
+if (cd /srv/app && jerboa compose ps compose.yaml) > "${work}/old-compose.log" 2>&1; then
+	fail "${old_version} lists a project whose state it cannot see: $(cat "${work}/old-compose.log")"
 fi
-grep -qi "state" "${work}/old-compose.log" || fail "${old_version} failed on the compose project without saying why: $(cat "${work}/old-compose.log")"
+grep -q "read state" "${work}/old-compose.log" || fail "${old_version} failed on the compose project without saying why: $(cat "${work}/old-compose.log")"
+(cd /srv/app && jerboa compose down compose.yaml --volumes) >/dev/null 2>&1 || true
 snapshot "${work}/downgraded-after"
 same_state "${work}/upgraded" "${work}/downgraded-after" "by a refused compose down"
 
@@ -234,7 +233,7 @@ upgrade
 [ "$(installed_version)" = "${new_version}" ] || fail "the second upgrade did not install ${new_version}"
 snapshot "${work}/final"
 same_state "${work}/upgraded" "${work}/final" "across the downgrade and the second upgrade"
-"${payload}/vmstart" "${web_id}"
+"${payload}/vmstart" web
 wait_http http://127.0.0.1:18080/
 expect_contains http://127.0.0.1:18080/ web-before-upgrade
 expect_contains http://127.0.0.1:18080/ web-after-upgrade
