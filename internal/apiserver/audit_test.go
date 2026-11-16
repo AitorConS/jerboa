@@ -74,6 +74,8 @@ func TestVolumeRemoveWithoutDisk(t *testing.T) {
 	_, err = store.Get("data")
 	require.NoError(t, err, "a volume a VM mounts must stay in the store")
 
+	require.NoError(t, mgr.Start(context.Background(), v.ID))
+	require.NoError(t, mgr.Stop(context.Background(), v.ID))
 	require.NoError(t, mgr.Remove(context.Background(), v.ID))
 	_, rpcErr = s.handleVolumeRemove(raw)
 	require.Nil(t, rpcErr)
