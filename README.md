@@ -206,6 +206,7 @@ no longer builds or deploys the old Jekyll site. Local source references:
 - [Architecture](docs/architecture.md)
 - [Observability](docs/observability.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Changelog](CHANGELOG.md)
 
 ## CI and releases
 
@@ -215,8 +216,9 @@ and synchronizes website downloads. See [release operations](docs/release-proces
 
 ## Versioning
 
-- CLI/daemon version: [`VERSION.md`](VERSION.md) (source version; wire protocol 2)
+- CLI/daemon version: [`VERSION.md`](VERSION.md) (source version; wire protocol 3)
 - Kernel version: [`kernel/VERSION`](kernel/VERSION)
+- What changed in each version: [`CHANGELOG.md`](CHANGELOG.md)
 
 Check installed versions against the latest release:
 

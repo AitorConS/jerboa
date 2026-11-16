@@ -254,6 +254,8 @@ jobs:
         cache: true
     - name: Test release and workflow contracts
       run: python3 -m unittest discover -s scripts/release -p "test_*.py"
+    - name: Check the changelog's structure
+      run: python3 scripts/release/changelog.py check
     - name: Lint workflows
       run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck=""
   result:
