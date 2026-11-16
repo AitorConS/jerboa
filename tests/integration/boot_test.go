@@ -85,8 +85,19 @@ func TestVMLifecycle(t *testing.T) {
 func requireQEMU(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath(defaultQEMU); err != nil {
-		t.Skipf("%s not found in PATH", defaultQEMU)
+		missing(t, "%s not found in PATH", defaultQEMU)
 	}
+}
+
+// missing skips the test for a prerequisite this machine lacks. On the CI
+// runner it fails instead: these tests run nowhere else, and one that skips
+// there passes without having run.
+func missing(t *testing.T, format string, args ...any) {
+	t.Helper()
+	if os.Getenv("CI") != "" {
+		t.Fatalf("prerequisite missing on the CI runner: "+format, args...)
+	}
+	t.Skipf(format, args...)
 }
 
 // requireTAPNetworking skips the test unless the process can manage bridges.
@@ -96,7 +107,7 @@ func requireTAPNetworking(t *testing.T) {
 	t.Helper()
 	const probe = "jerboa-netprobe"
 	if err := network.CreateBridge(network.BridgeConfig{Name: probe, CIDR: "10.255.255.1/30"}); err != nil {
-		t.Skipf("TAP networking unavailable (need CAP_NET_ADMIN): %v", err)
+		missing(t, "TAP networking unavailable (need CAP_NET_ADMIN): %v", err)
 	}
 	_ = network.DestroyBridge(probe)
 }

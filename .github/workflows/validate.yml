@@ -87,6 +87,8 @@ jobs:
       run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
     - name: Installer platform and verification regressions
       run: python3 scripts/test-install.py
+    - name: Windows installer smoke script regressions
+      run: bash scripts/windows-install-smoke-test.sh
     - name: Coverage summary
       run: go tool cover -func=coverage.out | tail -1
     - name: Enforce coverage threshold (60%)
@@ -230,8 +232,20 @@ jobs:
       run: tar -xzf kernel-linux.tar.gz
     - name: Build CLI binaries
       run: make build
+    # Not a gate: the tests themselves fail, with CI set, for a prerequisite
+    # they need and the runner lacks. This is what to look at when they do.
+    - name: Report E2E prerequisites
+      run: |
+        id
+        grep -E '^Cap(Eff|Amb)' /proc/self/status
+        sudo -n true 2>/dev/null && echo "passwordless sudo: yes" || echo "passwordless sudo: no"
+        for tool in qemu-system-x86_64 firecracker bwrap nft ip gcc; do
+          command -v "$tool" || echo "$tool: NOT FOUND"
+        done
+    # The fast set: every scenario once, the slow and host-level ones
+    # (JERBOA_E2E_SLOW) run nightly.
     - name: Run E2E tests
-      run: go test -tags e2e -count=1 -timeout 30m -v ./tests/e2e/...
+      run: scripts/run-e2e.sh -test.v -test.timeout 30m
     # Self-hosted KVM runner: never for pull requests from forks, whose
     # workflow changes it would run. A maintainer pushes such a branch here.
     # A fork can edit these lines, so the runner job-started hook

@@ -2,11 +2,18 @@
 """Classify changes; uncertainty always selects validation."""
 import os,subprocess
 
+# What only the end-to-end suite (tests/e2e) checks against a real daemon and
+# real VMs: the CLI and daemon, and the packages that build, run, connect and
+# store. A pull request that changes them runs the KVM jobs before the merge,
+# not after it.
+E2E_COVERED=('cmd/jerboa/','cmd/jerboad/','internal/apiserver/','internal/builder/','internal/compose/',
+             'internal/dnsserver/','internal/network/','internal/vm/','internal/volume/','scripts/run-e2e.sh')
+
 def classify(paths):
     enabled=any(not (p.startswith('docs/') or p.endswith('.md')) for p in paths)
     # VERSION.md is metadata, not permission to publish. Kernel/toolchain changes
     # require the expensive suite even on a PR; every main push validates fully.
-    full=any(p.startswith(('kernel/','distro/','.github/','scripts/release/','tests/integration/','tests/e2e/')) for p in paths)
+    full=any(p.startswith(('kernel/','distro/','.github/','scripts/release/','tests/integration/','tests/e2e/')+E2E_COVERED) for p in paths)
     return enabled,full
 
 if __name__=='__main__':

@@ -62,6 +62,9 @@ class WorkflowContracts(unittest.TestCase):
   self.assertEqual(scope.classify(['kernel/platform/pc/main.c']),(True,True))
   self.assertEqual(scope.classify(['tests/integration/lifecycle_test.go']),(True,True))
   self.assertEqual(scope.classify(['tests/e2e/build_test.go']),(True,True))
+  # What the end-to-end suite covers runs it before the merge.
+  for path in ['cmd/jerboa/run.go','cmd/jerboad/main.go','internal/vm/qemu.go','internal/network/guard_linux.go','internal/builder/sandbox.go']:
+   self.assertEqual(scope.classify([path]),(True,True),path)
   self.assertEqual(scope.classify(['.github/workflows/release.yml']),(True,True))
  def test_package_matrix_builds_each_arch(self):
   with tempfile.TemporaryDirectory() as d:
