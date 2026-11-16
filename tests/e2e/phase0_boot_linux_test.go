@@ -49,7 +49,7 @@ func buildImage(t *testing.T, binaryPath string) string {
 	t.Helper()
 	mkfs := "../../kernel/output/tools/bin/mkfs"
 	if _, err := os.Stat(mkfs); err != nil {
-		t.Skipf("kernel not built: %s not found (run make kernel && make mkfs first)", mkfs)
+		missing(t, "kernel not built: %s not found (run make kernel && make -C kernel tools first)", mkfs)
 	}
 	out := t.TempDir() + "/test.img"
 	cmd := exec.Command(mkfs, "-b", "../../kernel/output/platform/pc/boot/boot.img", "-k", "../../kernel/output/platform/pc/bin/kernel.img", out)
