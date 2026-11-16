@@ -51,7 +51,6 @@ type File struct {
 	Path   string `json:"path"`
 	Mode   string `json:"mode"`
 	Dir    bool   `json:"dir"`
-	Link   string `json:"link"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
 }
@@ -350,11 +349,9 @@ func (f *Fixture) restore() error {
 			if err := os.Chtimes(target, hdr.ModTime, hdr.ModTime); err != nil {
 				return fmt.Errorf("restore %s: %w", hdr.Name, err)
 			}
-		case tar.TypeSymlink:
-			if err := os.Symlink(hdr.Linkname, target); err != nil {
-				return fmt.Errorf("restore %s: %w", hdr.Name, err)
-			}
 		default:
+			// Jerboa's state is directories and regular files; the recorder
+			// refuses anything else, and so does this.
 			return fmt.Errorf("archive entry %q has an unexpected type", hdr.Name)
 		}
 	}

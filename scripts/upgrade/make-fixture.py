@@ -429,10 +429,9 @@ def pack(out, version, meta):
             elif info.isdir():
                 entry['dir'] = True
                 tar.addfile(info)
-            elif info.issym():
-                entry['link'] = info.linkname
-                tar.addfile(info)
             else:
+                # Directories and regular files only: the tests restore
+                # nothing else.
                 raise SystemExit(f'unexpected file type in the state: {path}')
             files.append(entry)
     archive = target / 'state.tar.zst'
