@@ -29,7 +29,7 @@ func requireNetAdmin(t *testing.T) {
 	requireGuestNetworking(t)
 	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons(unix.ETH_P_ALL)))
 	if err != nil {
-		missing(t, "raw sockets need CAP_NET_RAW: %v", err)
+		missing(t, "raw sockets need CAP_NET_RAW (%v); %s", err, grantNetAdmin)
 	}
 	_ = unix.Close(fd)
 }

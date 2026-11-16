@@ -52,6 +52,7 @@ var suite struct {
 	bin   string // directory of jerboa and jerboad
 	tools string // --tools-dir
 	cache string // tool caches of sandboxed build steps (Linux)
+	lacks []lack // prerequisites this machine does not meet
 	seq   atomic.Uint32
 }
 
@@ -76,6 +77,7 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	suite.cache = cache
+	suite.lacks = reportPreflight()
 	code := m.Run()
 	_ = os.RemoveAll(cache)
 	os.Exit(code)
