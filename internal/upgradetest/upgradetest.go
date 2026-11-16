@@ -103,6 +103,8 @@ type Expected struct {
 	VMs       map[string]VM     `json:"vms"`
 	ImageDirs []string          `json:"image_dirs"`
 	Creds     map[string]string `json:"credentials"`
+	// Signed reports whether probe:latest was signed with `jerboa sign`.
+	Signed bool `json:"signed"`
 	// ImageDigest is the disk probe:latest and probe:v1 name.
 	ImageDigest string `json:"image_digest"`
 	// ReplacedImages are disks a rebuild of their tag left without a name:
@@ -156,6 +158,10 @@ func (f *Fixture) Data() string { return filepath.Join(f.Home(), ".jerboa") }
 
 // SQLiteHome is the home directory whose daemon ran with --vm-store sqlite.
 func (f *Fixture) SQLiteHome() string { return filepath.Join(f.Root, "home-sqlite") }
+
+// Before reports whether the fixture is of a release older than version
+// ("v0.56.0"), for what a later release changed on purpose.
+func (f *Fixture) Before(version string) bool { return versionLess(f.Version, version) }
 
 // VMNames returns the recorded VM names, sorted.
 func (f *Fixture) VMNames() []string {

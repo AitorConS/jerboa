@@ -40,6 +40,13 @@ Which versions exist, and where:
   compose file. A state file found there is taken over only if `compose up`
   wrote it for that project and you own it; otherwise the command stops and
   names the file. (#276)
+- **A compose project still up from 0.55.1 or earlier is refused.** Its state
+  names its network and volumes without the project prefix that `compose up`
+  has given them since 0.56.0, which is what a foreign state file looks like:
+  `compose ps`, `down` and `up` stop and name the file. Take such a project
+  down before upgrading, or afterwards remove its VMs, volumes and network
+  with `jerboa rm`, `jerboa volume rm` and `jerboa network rm` and delete the
+  `.jerboa-compose-*.json` file next to the compose file.
 - **Compose service names are restricted** to letters, digits and `_.-`, the
   rule networks and volumes already follow. Rename services that use anything
   else. (#276)

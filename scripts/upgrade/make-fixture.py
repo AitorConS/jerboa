@@ -215,6 +215,11 @@ class Old:
             raise SystemExit(f'jerboa {" ".join(args)} failed:\n{result.stdout}{result.stderr}')
         return result.stdout
 
+    def has(self, *command, flag=None):
+        """Whether this release has the command (and the flag): older ones lack some."""
+        result = subprocess.run([str(self.bindir / 'jerboa'), *command, '--help'], env=self.env, capture_output=True, text=True)
+        return result.returncode == 0 and 'unknown command' not in result.stderr and (flag is None or flag in result.stdout)
+
     def json(self, *args):
         return json.loads(self.run(*args, '--output', 'json'))
 
@@ -251,7 +256,7 @@ def write_probe(directory):
 
 def main_scenario(old, work, snapshot):
     """Everything a user of the default (file) VM store can leave behind."""
-    layout = ['--layout', 'standard'] if LINUX and not os.path.exists('/dev/kvm') else []
+    layout = ['--layout', 'standard'] if LINUX and not os.path.exists('/dev/kvm') and old.has('build', flag='--layout') else []
     probe = work / 'probe'
     write_probe(probe)
     expected = {}
@@ -283,9 +288,15 @@ def main_scenario(old, work, snapshot):
     old.build(probe, 'legacy', *layout)
     (probe / 'main.go').write_text(PROBE)
     digest = old.build(probe, 'probe', *layout)
-    old.run('tag', 'probe:latest', 'probe:v1')
-    old.run('sign', 'probe:latest')
-    old.run('verify', 'probe:latest')
+    # (Releases before the registry have no `tag`: the second name is a build.)
+    if old.has('tag'):
+        old.run('tag', 'probe:latest', 'probe:v1')
+    else:
+        old.build(probe, 'probe', '--tag', 'v1', *layout)
+    expected['signed'] = old.has('sign')
+    if expected['signed']:
+        old.run('sign', 'probe:latest')
+        old.run('verify', 'probe:latest')
     expected['replaced_images'] = {'in_use': first, 'unused': orphan}
     expected['image_dirs'] = sorted(p.name for p in (old.home / '.jerboa' / 'images').iterdir() if p.is_dir())
 
@@ -321,11 +332,13 @@ def main_scenario(old, work, snapshot):
     expected['compose']['state'] = json.loads((project / state_files[0]).read_text())
 
     # A registry login and the package index cache.
-    server = http.server.ThreadingHTTPServer(('127.0.0.1', REGISTRY_PORT), Registry)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    old.run('login', REGISTRY, '--token', REGISTRY_TOKEN)
-    server.shutdown()
-    expected['credentials'] = {REGISTRY: REGISTRY_TOKEN}
+    expected['credentials'] = {}
+    if old.has('login', flag='--token'):
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', REGISTRY_PORT), Registry)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        old.run('login', REGISTRY, '--token', REGISTRY_TOKEN)
+        server.shutdown()
+        expected['credentials'] = {REGISTRY: REGISTRY_TOKEN}
     old.run('pkg', 'search', 'redis', check=False)
     old.run('version', check=False)
 
@@ -347,7 +360,7 @@ def main_scenario(old, work, snapshot):
 
 def sqlite_scenario(old, work):
     """A daemon that was moved to --vm-store sqlite and used there."""
-    layout = ['--layout', 'standard'] if LINUX and not os.path.exists('/dev/kvm') else []
+    layout = ['--layout', 'standard'] if LINUX and not os.path.exists('/dev/kvm') and old.has('build', flag='--layout') else []
     probe = work / 'probe-sqlite'
     write_probe(probe)
     if LINUX:

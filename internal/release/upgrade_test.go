@@ -3,6 +3,7 @@ package release
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -33,6 +34,9 @@ func (t toServer) RoundTrip(r *http.Request) (*http.Response, error) {
 func TestReleaseStateOfAReleasedVersion(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
 		data, err := os.ReadFile(filepath.Join(f.Data(), stateFile))
+		if errors.Is(err, os.ErrNotExist) {
+			t.Skipf("%s kept no record of the manifests it accepted", f.Version)
+		}
 		require.NoError(t, err)
 		var recorded map[string]string
 		require.NoError(t, json.Unmarshal(data, &recorded))

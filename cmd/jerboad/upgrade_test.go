@@ -283,8 +283,18 @@ func TestUpgrade_DaemonServesAReleasedHome(t *testing.T) {
 		kept := strings.TrimPrefix(f.Expected.ReplacedImages.InUse, "sha256:")
 		assert.FileExists(t, filepath.Join(f.Data(), "images", kept, "disk.img"))
 
-		// The signature made with the released version verifies.
+		// The signature made with the released version verifies. Releases
+		// before 0.56.0 signed in a format that is no longer accepted: the
+		// CLI says so, and the key they generated signs again.
+		require.True(t, f.Expected.Signed)
 		out, err := u.cli("", "verify", "probe:latest")
+		if f.Before(scopedComposeSince) {
+			require.Error(t, err, out)
+			assert.Contains(t, out, "legacy format; sign the image again")
+			out, err = u.cli("", "sign", "probe:latest")
+			require.NoError(t, err, out)
+			out, err = u.cli("", "verify", "probe:latest")
+		}
 		require.NoError(t, err, out)
 
 		// The daemon's own consistency check finds nothing wrong with what
@@ -308,6 +318,70 @@ func TestUpgrade_DaemonServesAReleasedHome(t *testing.T) {
 	})
 }
 
+// scopedComposeSince is the release whose `compose up` first gave a
+// project's networks and volumes names of its own, and whose `jerboa sign`
+// first wrote the current signature format.
+const scopedComposeSince = "v0.56.0"
+
+// TestUpgrade_ComposeProjectFromBeforeScopedNames pins what happens to a
+// project brought up before 0.56.0, whose state names its network and volume
+// by their bare names: this version cannot tell such a state from one written
+// to make it remove somebody else's resources, so it refuses it, names the
+// file, and touches nothing. The project's VMs, volume and network remain and
+// are removed with jerboa stop/rm, volume rm and network rm.
+func TestUpgrade_ComposeProjectFromBeforeScopedNames(t *testing.T) {
+	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
+		if !f.Before(scopedComposeSince) {
+			t.Skipf("%s scopes compose names", f.Version)
+		}
+		u := newUpgraded(t, f)
+		client, _ := u.start()
+		want := f.Expected.Compose
+		project := filepath.Dir(want.File)
+		before, err := os.ReadFile(want.StateFile)
+		require.NoError(t, err)
+		for _, args := range [][]string{{"ps"}, {"down", "--volumes"}, {"up"}} {
+			out, err := u.cli(project, append([]string{"compose", args[0], "compose.yaml"}, args[1:]...)...)
+			require.Error(t, err, "compose %s: %s", args[0], out)
+			assert.Contains(t, out, "is not one of this project's", "compose %s", args[0])
+			assert.Contains(t, out, want.StateFile, "compose %s names the file", args[0])
+		}
+		ctx := context.Background()
+		for _, id := range want.State.Services {
+			_, err := client.Get(ctx, id)
+			require.NoError(t, err, "the service's VM is left alone")
+		}
+		vols, err := client.VolumeList(ctx)
+		require.NoError(t, err)
+		assert.Len(t, vols, len(f.Expected.Volumes))
+		nets, err := client.NetworkList(ctx)
+		require.NoError(t, err)
+		assert.Len(t, nets, len(f.Expected.Networks))
+		after, err := os.ReadFile(want.StateFile)
+		require.NoError(t, err)
+		assert.Equal(t, before, after)
+		assert.Empty(t, newComposeStateFiles(t, f))
+
+		// The way out: remove what the project created by name, and its
+		// state file; the project can then be brought up again.
+		for _, id := range want.State.Services {
+			require.NoError(t, client.Remove(ctx, id))
+		}
+		for _, name := range want.State.CreatedVolumes {
+			out, err := u.cli("", "volume", "rm", name)
+			require.NoError(t, err, out)
+		}
+		for _, name := range want.State.CreatedNetworks {
+			out, err := u.cli("", "network", "rm", name)
+			require.NoError(t, err, out)
+		}
+		require.NoError(t, os.Remove(want.StateFile))
+		out, err := u.cli(project, "compose", "ps", "compose.yaml")
+		require.Error(t, err)
+		assert.Contains(t, out, "run 'jerboa compose up' first")
+	})
+}
+
 // composeState is the compose state file, old or new.
 func readComposeState(t *testing.T, path string) upgradetest.ComposeState {
 	t.Helper()
@@ -328,6 +402,9 @@ func newComposeStateFiles(t *testing.T, f *upgradetest.Fixture) []string {
 
 func TestUpgrade_ComposeProjectIsTakenOver(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
+		if f.Before(scopedComposeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectFromBeforeScopedNames", f.Version)
+		}
 		u := newUpgraded(t, f)
 		client, _ := u.start()
 		want := f.Expected.Compose
@@ -388,6 +465,9 @@ func TestUpgrade_ComposeProjectIsTakenOver(t *testing.T) {
 // project to stay manageable with nothing lost.
 func TestUpgrade_ComposeTakeoverInterrupted(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
+		if f.Before(scopedComposeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectFromBeforeScopedNames", f.Version)
+		}
 		u := newUpgraded(t, f)
 		client, _ := u.start()
 		want := f.Expected.Compose
@@ -431,6 +511,9 @@ func TestUpgrade_ComposeTakeoverInterrupted(t *testing.T) {
 // inspect.
 func TestUpgrade_ComposeStateThatIsNotOurs(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
+		if f.Before(scopedComposeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectFromBeforeScopedNames", f.Version)
+		}
 		want := f.Expected.Compose
 		project := filepath.Dir(want.File)
 		var state map[string]any

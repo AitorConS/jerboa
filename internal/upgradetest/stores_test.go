@@ -94,7 +94,9 @@ func TestRestoreGivesBackTheRecordedState(t *testing.T) {
 		assert.GreaterOrEqual(t, len(e.VMs), 5)
 		assert.GreaterOrEqual(t, len(e.Volumes), 3)
 		assert.GreaterOrEqual(t, len(e.Networks), 3)
-		assert.NotEmpty(t, e.Creds)
+		// (Releases before the registry had no login.)
+		_, err := os.Stat(filepath.Join(f.Data(), "credentials.json"))
+		assert.Equal(t, err == nil, len(e.Creds) > 0, "credentials are recorded when the release stored any")
 		assert.NotEmpty(t, e.Compose.State.Services)
 		assert.Len(t, e.SQLite.VMs, 2)
 	})
@@ -149,9 +151,24 @@ func TestImagesAndNamesSurvive(t *testing.T) {
 		inUse := vm.ImageDigestsInUse(files.List())
 		kept := f.Expected.ReplacedImages.InUse
 		require.True(t, inUse[kept], "a recorded VM boots from the replaced image")
+		// What the first prune may take is exactly what no name and no VM
+		// refers to: nothing in a store of a release that cleaned up after
+		// a rebuild itself, the replaced disks in one of a release that did
+		// not.
+		var orphans []string
+		for _, dir := range f.Expected.ImageDirs {
+			digest := "sha256:" + dir
+			named := false
+			for _, w := range want {
+				named = named || w.Digest == digest
+			}
+			if !named && !inUse[digest] {
+				orphans = append(orphans, digest)
+			}
+		}
 		removed, err := store.PruneUnreferenced(func(d string) bool { return inUse[d] })
 		require.NoError(t, err)
-		assert.Empty(t, removed, "nothing the released version kept is unreferenced")
+		assert.ElementsMatch(t, orphans, removed)
 		require.NoError(t, store.VerifyDisk(kept))
 		after, err := store.List()
 		require.NoError(t, err)
