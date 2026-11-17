@@ -7,11 +7,15 @@ a client that cached the old archive would no longer match the index.
 
 The index carries a purpose, a publication time and a serial that grows by
 one with every publication that adds an entry; clients refuse an index whose
-serial is below the newest they accepted. The base index must not be older
-than PKG_INDEX_MIN_SERIAL (the serial of the last publication, recorded where
-release-asset writers cannot change it), so a superseded index restored on
-the release is not extended and signed again. A base without a serial (the
-format before serials) is accepted only while that floor is unset.
+serial is below the newest they accepted. When PKG_INDEX_MIN_SERIAL is set
+(the serial of the last publication, recorded where release-asset writers
+cannot change it; the publish workflow always sets it, 0 standing for "no
+serial published yet"), the base index must carry exactly that serial. An
+older base is a superseded index restored on the release, which is not
+extended and signed again. A newer one means the record was not raised after
+the last publication: the run stops and says how to raise it, so the record
+cannot silently fall behind. A base without a serial (the format before
+serials) counts as serial 0.
 
 Prints the file names of new archives, one per line, for the caller to upload.
 """
@@ -28,17 +32,29 @@ PURPOSE = "jerboa-package-index"
 
 
 def check_base(index, min_serial):
-    """Refuse a base index that is not a package index or is older than the floor."""
+    """Refuse a base index that is not a package index or is not the recorded one.
+
+    min_serial is None when no record is kept (local use)."""
     serial = index.get("serial", 0)
     if "serial" in index or "purpose" in index:
         if index.get("purpose") != PURPOSE:
             raise SystemExit(f"Base index purpose is {index.get('purpose')!r}, not {PURPOSE!r}")
         if not isinstance(serial, int) or isinstance(serial, bool) or serial < 1:
             raise SystemExit(f"Base index has an invalid serial {serial!r}")
+    if min_serial is None:
+        return serial
     if serial < min_serial:
         raise SystemExit(
             f"Base index serial {serial} is older than the last publication ({min_serial}); "
             "restore the newest packages.json on the release instead of extending an older one")
+    if serial > min_serial:
+        raise SystemExit(
+            f"Base index serial {serial} is newer than PKG_INDEX_MIN_SERIAL ({min_serial}): the variable was not "
+            f"raised after the last publication. Check that the summary of the last \"Package Build\" run that "
+            f"published shows serial {serial}; if it does, run\n"
+            f"  gh variable set PKG_INDEX_MIN_SERIAL --body {serial}\n"
+            "and run this workflow again. If no run published that serial, the index on the release was "
+            "replaced: do not extend it. Never lower the variable.")
     return serial
 
 
@@ -67,7 +83,8 @@ def main():
     repository = sys.argv[3]
     index_path = destination / "packages.json"
     index = json.loads(index_path.read_text()) if index_path.exists() else {"packages": {}}
-    min_serial = int(os.environ.get("PKG_INDEX_MIN_SERIAL") or 0)
+    floor = (os.environ.get("PKG_INDEX_MIN_SERIAL") or "").strip()
+    min_serial = int(floor) if floor else None
     serial = check_base(index, min_serial)
     check_urls(index, repository)
     metadata = sorted(source.rglob("meta.json"))

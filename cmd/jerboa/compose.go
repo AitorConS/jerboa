@@ -584,7 +584,7 @@ func readStateFile(path, composeFile string) (compose.State, error) {
 	}
 	var state compose.State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return compose.State{}, fmt.Errorf("parse state: %w", err)
+		return compose.State{}, fmt.Errorf("parse state %s: %w", path, err)
 	}
 	if err := checkState(composeFile, state); err != nil {
 		return compose.State{}, foreign(err.Error())
@@ -687,6 +687,16 @@ func readComposeFile(composeFile string) (compose.File, error) {
 func removeState(composeFile string) error {
 	if err := os.Remove(stateFilePath(composeFile)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("compose: remove state: %w", err)
+	}
+	// A takeover that was interrupted between writing the state here and
+	// removing it from the project directory left a copy there, which would
+	// bring the project back as soon as this one is gone. Only a file that
+	// is this project's state is removed; anything else stays to be reported.
+	legacy := legacyStateFilePath(composeFile)
+	if _, err := readStateFile(legacy, composeFile); err == nil {
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("compose: remove state: %w", err)
+		}
 	}
 	return nil
 }

@@ -41,15 +41,25 @@ jobs:
       runtime_sha: ${{ steps.lock.outputs.runtime_sha }}
       kernel_version: ${{ steps.lock.outputs.kernel_version }}
       kernel_source: ${{ steps.lock.outputs.kernel_source }}
+      # The generation time of the stable manifest that is live now: every
+      # jerboa and jerboad of this candidate is built to refuse an older one.
+      min_stable_generated: ${{ steps.lock.outputs.min_stable_generated }}
       release_lock_sha256: ${{ steps.digest.outputs.release_lock_sha256 }}
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
+    # lock verifies the live stable manifest's signature with jerboa-verify.
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.4
+        cache: true
     - name: Validate immutable inputs
       run: python3 scripts/release/candidate.py lock
       id: lock
       env:
+        # Reads the hypervisor repository's commit and check runs (public).
+        GH_TOKEN: ${{ github.token }}
         DESKTOP_SHA: ${{ inputs.desktop_sha }}
         RUNTIME_SHA: ${{ inputs.runtime_sha }}
         KERNEL_VERSION: ${{ inputs.kernel_version }}
@@ -148,6 +158,10 @@ jobs:
         command -v cc
         command -v qemu-system-x86_64
         command -v firecracker
+    # The hook that keeps fork jobs off this runner is a copy installed on
+    # the machine: a release is when a stale copy gets noticed.
+    - name: Check the installed runner guard is this revision's
+      run: python3 scripts/release/kvm-runner-guard.py check-installed
     - name: Boot exact staged kernels
       run: python3 scripts/release/validate-kernel.py --work "$RUNNER_TEMP/kernel-boot-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
     - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -206,7 +220,7 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
-        go build -ldflags="-s -w -X main.version=${CLI_VERSION}" \
+        go build -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
           -o dist/jerboa-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboa
     - name: Build jerboad
@@ -216,7 +230,7 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
-        go build -ldflags="-s -w -X main.version=${CLI_VERSION}" \
+        go build -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
           -o dist/jerboad-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboad
     - name: Record CLI candidate hash
@@ -233,6 +247,8 @@ jobs:
         path: dist/
     env:
       RELEASE_VERSION: ${{ needs.inputs.outputs.version }}
+      # Assembly refuses binaries that do not carry it.
+      MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}
   build-distro:
     name: Build WSL2 Distro Rootfs
     runs-on: ubuntu-latest
@@ -303,6 +319,8 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: '26.0'
       RELEASE_VERSION: ${{ needs.inputs.outputs.version }}
+      # scripts/build-macos.sh builds jerboa and jerboad with this floor.
+      JERBOA_MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}
     outputs:
       binaries_macos_sha256: ${{ steps.digest.outputs.binaries_macos_sha256 }}
       desktop_macos_sha256: ${{ steps.digest.outputs.desktop_macos_sha256 }}

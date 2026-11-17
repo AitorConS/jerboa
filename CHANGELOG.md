@@ -40,6 +40,13 @@ Which versions exist, and where:
   compose file. A state file found there is taken over only if `compose up`
   wrote it for that project and you own it; otherwise the command stops and
   names the file. (#276)
+- **A compose project still up from 0.55.1 or earlier is refused.** Its state
+  names its network and volumes without the project prefix that `compose up`
+  has given them since 0.56.0, which is what a foreign state file looks like:
+  `compose ps`, `down` and `up` stop and name the file. Take such a project
+  down before upgrading, or afterwards remove its VMs, volumes and network
+  with `jerboa rm`, `jerboa volume rm` and `jerboa network rm` and delete the
+  `.jerboa-compose-*.json` file next to the compose file.
 - **Compose service names are restricted** to letters, digits and `_.-`, the
   rule networks and volumes already follow. Rename services that use anything
   else. (#276)
@@ -113,6 +120,15 @@ Which versions exist, and where:
 - Sizes that overflowed silently in `volume create`, `--memory-max` and
   `--disk-bps` are rejected. `volume ls` no longer panics on a null entry, and
   `registry pat create` no longer reports success with an empty token. (#263)
+- **A Firecracker VM started again after a daemon restart has its network.**
+  On Linux the tap device of a VM that was running when the daemon stopped
+  (a restart, an upgrade) stayed behind, and the VM started in its place
+  failed to set its network up and ran unreachable, with only a warning in
+  the daemon log. The tap is now taken over.
+- `jerboa compose down` also removes the copy of a project's state that an
+  interrupted takeover left next to the compose file, which brought the
+  project back after it was taken down; and a compose state file that does
+  not parse is named in the error.
 
 - `jerboa compose down --volumes` removes the stack's volume also after a
   `down` without `--volumes` and a second `up`. The second `up` used to stop

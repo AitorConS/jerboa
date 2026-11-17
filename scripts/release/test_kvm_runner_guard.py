@@ -48,6 +48,31 @@ class GuardTests(unittest.TestCase):
         del env['GITHUB_EVENT_PATH']
         self.assertRegex(g.refusal(env),'payload')
 
+    def test_installed_copy_is_compared_with_the_checkout(self):
+        current=HERE/'kvm-runner-guard.py'
+        hook=Path(self.tmp.name)/'hook';hook.write_bytes(current.read_bytes())
+        self.assertEqual(g.installed({'ACTIONS_RUNNER_HOOK_JOB_STARTED':str(hook)},current)[0],'ok')
+        hook.write_bytes(current.read_bytes()+b'# older\n')
+        state,message=g.installed({'ACTIONS_RUNNER_HOOK_JOB_STARTED':str(hook)},current)
+        self.assertEqual(state,'stale');self.assertIn(f'sudo install -o root -g root -m 0755 scripts/release/kvm-runner-guard.py {hook}',message)
+        self.assertEqual(g.installed({'ACTIONS_RUNNER_HOOK_JOB_STARTED':str(hook)+'.missing'},current)[0],'stale')
+        # A runner that does not show the variable to steps cannot be checked.
+        state,message=g.installed({},current)
+        self.assertEqual(state,'unknown');self.assertIn('ACTIONS_RUNNER_HOOK_JOB_STARTED',message)
+
+    def test_check_installed_fails_only_on_a_stale_copy(self):
+        import os,subprocess,sys
+        current=HERE/'kvm-runner-guard.py'
+        hook=Path(self.tmp.name)/'hook'
+        def run(**extra):
+            env={k:v for k,v in os.environ.items() if k!='ACTIONS_RUNNER_HOOK_JOB_STARTED'}
+            return subprocess.run([sys.executable,str(current),'check-installed'],capture_output=True,text=True,env={**env,**extra})
+        r=run();self.assertEqual(r.returncode,0);self.assertIn('::warning::',r.stdout)
+        hook.write_bytes(current.read_bytes())
+        r=run(ACTIONS_RUNNER_HOOK_JOB_STARTED=str(hook));self.assertEqual(r.returncode,0);self.assertNotIn('::warning::',r.stdout)
+        hook.write_bytes(b'#!/bin/sh\n')
+        r=run(ACTIONS_RUNNER_HOOK_JOB_STARTED=str(hook));self.assertEqual(r.returncode,1);self.assertIn('::error::',r.stderr)
+
     def test_default_workflows_cover_every_kvm_workflow(self):
         # Callers of a reusable workflow are what GITHUB_WORKFLOW_REF names.
         workflows=HERE.parents[1]/'.github/workflows'

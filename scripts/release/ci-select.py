@@ -13,7 +13,9 @@ def classify(paths):
     enabled=any(not (p.startswith('docs/') or p.endswith('.md')) for p in paths)
     # VERSION.md is metadata, not permission to publish. Kernel/toolchain changes
     # require the expensive suite even on a PR; every main push validates fully.
-    full=any(p.startswith(('kernel/','distro/','.github/','scripts/release/','tests/integration/','tests/e2e/')+E2E_COVERED) for p in paths)
+    # The installer and what the upgrade test drives decide whether an
+    # installed machine survives the next release.
+    full=any(p.startswith(('kernel/','distro/','.github/','scripts/release/','tests/integration/','tests/e2e/','tests/upgrade/','scripts/install.sh')+E2E_COVERED) for p in paths)
     return enabled,full
 
 if __name__=='__main__':

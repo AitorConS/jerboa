@@ -18,9 +18,14 @@ Requisitos:
 Fusiona las PR del motor, Desktop y Firecracker que quieras publicar.
 Comprueba que sus pruebas pasan. No uses ramas de trabajo sin validar.
 
-Cambia VERSION.md mediante una PR: numero del producto sin prefijo v.
-Ejemplo: 0.54.3. Si cambian los bytes respecto a una version publicada,
-usa una version nueva; nunca sobrescribas una version anterior.
+Prepara la version con una PR. Ejecuta, con el numero sin prefijo v:
+  python3 scripts/release/prepare-release.py 0.60.0
+El script convierte la seccion Unreleased de CHANGELOG.md en la de esa version
+(con la fecha de hoy en UTC, o --date AAAA-MM-DD), abre una Unreleased vacia,
+anade el enlace de la version al final del archivo y escribe VERSION.md.
+Revisa la entrada: es la nota de la version. Si cambian los bytes respecto a una
+version publicada, usa una version nueva; nunca sobrescribas una anterior.
+Si no lo ejecutas, el candidato falla al empezar y te indica este comando.
 
 Si distribuyes cambios del kernel Linux, cambia tambien kernel/VERSION a una
 version nueva (por ejemplo 0.2.1). Fusiona la PR con CI required verde.
@@ -33,7 +38,9 @@ Ejecuta:
   gh api repos/AitorConS/firecracker-macos/commits/main --jq .sha
 
 Copia los 40 caracteres de cada respuesta. Esos valores son desktop_sha y
-runtime_sha. Comprueba el CI de esos commits, no solo el de una revision anterior.
+runtime_sha. Comprueba el CI del commit de Desktop, no solo el de una revision
+anterior. El de Firecracker lo comprueba el workflow: rechaza un runtime_sha que
+no este en main de firecracker-macos o cuyas comprobaciones no hayan pasado.
 El workflow captura automaticamente el SHA de Jerboa seleccionado en main.
 
 Alternativa web: repositorio > main > Commits > abrir commit > copiar SHA completo.
@@ -47,7 +54,8 @@ Para incluir los cambios del kernel:
 
 Ejemplo: archivo 0.2.1 -> entrada v0.2.1.
 El kernel se obtiene de la compilacion validada de esa misma ejecucion.
-No necesitas publicar el kernel por separado.
+No necesitas publicar el kernel por separado. Si esa version ya esta publicada
+con otros bytes, kernel-stage falla enseguida: sube kernel/VERSION.
 
 Solo si quieres reutilizar intencionadamente las herramientas Linux publicadas:
   kernel_source = stable
@@ -86,6 +94,13 @@ fallidos). Los kernels Linux elegidos se arrancan con QEMU y Firecracker.
 La distribucion y las descargas usan los mismos archivos comprobados.
 Stable todavia no cambia.
 
+No tienes que ajustar nada mas a mano. El candidato toma del manifiesto estable
+vigente la fecha minima que aceptaran sus binarios (antes habia que subir
+release.MinStableGenerated), la compila en jerboa y jerboad y el ensamblado
+rechaza un binario que no la lleve. Si el trabajo de arranque del kernel dice
+que la proteccion instalada en el runner KVM no es la de esta revision,
+reinstalala con el comando que muestra y relanza ese trabajo.
+
 Guarda el numero de la URL de la ejecucion:
   https://github.com/AitorConS/jerboa/actions/runs/NUMERO
 Ese NUMERO es candidate_run. No es el numero de la PR ni el SHA del commit.
@@ -113,9 +128,12 @@ Compara el resultado con app_sha256 del informe y con native_macos_app.sha256
 en inventory.json del candidato. El SHA de Git identifica un commit; este
 SHA-256 identifica los bytes de un archivo. No son intercambiables.
 
-Conserva el JSON y los logs en un informe HTTPS accesible al revisor. La evidencia
-debe identificar ese candidate_run y el hash exacto de la app. No uses resultados
-de otra compilacion aunque tenga el mismo numero de version.
+Guarda el JSON como docs/releases/vX.Y.Z/native-macos.json en main (con su log
+y la ficha de la version, que enlaza a la entrada del changelog en vez de
+repetir las notas) mediante una PR. La promocion lee ese archivo y se niega a
+publicar si no nombra ese candidate_run, el hash exacto de la app, la version y
+"result": "pass". No uses resultados de otra compilacion aunque tenga el mismo
+numero de version.
 
 6. PUBLICAR
 
@@ -127,9 +145,16 @@ Run workflow, rama main:
   macos_evidence: URL HTTPS del informe de la prueba nativa
 
 Aprueba el entorno release despues de revisar la evidencia y el inventario.
-ESTE PASO SI PUBLICA: sube los archivos verificados (incluido el kernel nuevo),
-verifica las descargas publicas y actualiza stable y el feed de Desktop.
+ESTE PASO SI PUBLICA: sube los archivos verificados (incluido el kernel nuevo
+y las notas, releases/vX.Y.Z/notes.md), verifica las descargas publicas y
+actualiza stable y el feed de Desktop.
 No recompila los binarios. No crees otro candidato entre la prueba y la promocion.
+
+La promocion rechaza, sin escribir nada, un candidato que haya que reconstruir:
+uno ensamblado por una version anterior del pipeline, o uno construido antes de
+que se publicara la version que ahora esta en stable. El mensaje lo dice; lanza
+de nuevo Build release candidate en main, repite la prueba de Mac con la nueva
+ejecucion y promociona esa.
 
 7. VERIFICAR EL RESULTADO Y LA WEB
 
@@ -141,8 +166,9 @@ La promocion dispara automaticamente:
   https://github.com/AitorConS/Jerboa_Docs/actions/workflows/release-sync.yml
 
 Comprueba que ese workflow y el despliegue de Vercel pasan y que la web muestra
-la version y las descargas correctas. Las notas detalladas del changelog son
-manuales; la sincronizacion conserva las existentes o crea una nota generica.
+la version y las descargas correctas. Las notas de la version son su entrada
+de CHANGELOG.md; la sincronizacion de la web conserva las notas que ya tenga o
+crea una generica.
 La documentacion tecnica publica tiene su propio flujo de sincronizacion.
 
 8. SI FALLA ALGO
@@ -164,5 +190,13 @@ ya publicado, usa otra version de producto. El publicador rechaza downgrades.
 
 Los candidatos caducan a los 30 dias. Si caducaron, reconstruye y vuelve a validar.
 No elimines las protecciones ni marques pruebas omitidas como satisfactorias.
+
+PAQUETES (workflow Package Build, aparte de la version del producto)
+
+Tras publicar el indice, el workflow anota su serial en la variable
+PKG_INDEX_MIN_SERIAL si el entorno release tiene el secreto
+PKG_INDEX_VARIABLES_TOKEN. Si no lo tiene, el resumen muestra el comando
+(gh variable set PKG_INDEX_MIN_SERIAL --body N) y la siguiente publicacion se
+niega a ejecutarse hasta que lo hagas. Nunca bajes esa variable.
 
 Referencia detallada: docs/release-process.md, en AitorConS/jerboa.

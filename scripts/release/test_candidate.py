@@ -109,7 +109,7 @@ class ProtocolTests(unittest.TestCase):
             old=os.getcwd();os.chdir(td)
             try:
                 Path('authorized-run.json').write_text(json.dumps({'run_id':'123','engine_sha':'a'*40}))
-                with patch.object(c,'verify_candidate',return_value=(inv,{'channel':'candidate'})),patch.object(c,'existing',return_value=None),patch.object(c,'sign'),patch.object(c,'put',side_effect=lambda *a,**k:calls.append(a[1])),patch.object(c,'download',side_effect=RuntimeError('network failed')),patch.dict(os.environ,{'MACOS_EVIDENCE':'https://example.org/report','GITHUB_RUN_ID':'456'}):
+                with patch.object(c,'verify_candidate',return_value=(inv,{'channel':'candidate'})),patch.object(c,'macos_evidence'),patch.object(c,'existing',return_value=None),patch.object(c,'sign'),patch.object(c,'put',side_effect=lambda *a,**k:calls.append(a[1])),patch.object(c,'download',side_effect=RuntimeError('network failed')),patch.dict(os.environ,{'MACOS_EVIDENCE':'https://example.org/report','GITHUB_RUN_ID':'456'}):
                     with self.assertRaisesRegex(RuntimeError,'network'):c.promote()
                 self.assertFalse(any(k.startswith('channels/') or k=='desktop/latest.yml' for k in calls))
             finally:os.chdir(old)
@@ -126,10 +126,16 @@ class ProtocolTests(unittest.TestCase):
                 for asset in c.assets(m):asset.update(c.digest(payload))
                 c.write_json(root/'manifest.json',m)
                 (root/'latest.yml').write_text('version: 1.0.0\n')
-                inv={'version':'v1.0.0','run_id':'123','engine_sha':'a'*40,
-                     'assets':{'cli/v1.0.0/a':c.digest(payload)},
+                m['generated']='2026-10-26T10:00:00Z';c.write_json(root/'manifest.json',m)
+                notes=root/'payload/releases/v1.0.0/notes.md';notes.parent.mkdir(parents=True);notes.write_text('### Fixed\n\n- A thing.\n')
+                inv={'version':'v1.0.0','run_id':'123','engine_sha':'a'*40,'pipeline':c.PIPELINE,
+                     # Older than the candidate's own manifest: a retry that meets
+                     # that manifest as the live one must still go through.
+                     'min_stable_generated':'2026-10-20T10:00:00Z','native_macos_app':{'sha256':'b'*64,'size':1},
+                     'assets':{'cli/v1.0.0/a':c.digest(payload),'releases/v1.0.0/notes.md':c.digest(notes)},
                      'manifest':c.digest(root/'manifest.json'),'feed':c.digest(root/'latest.yml')}
                 c.write_json(root/'inventory.json',inv)
+                c.write_json('docs/releases/v1.0.0/native-macos.json',{'candidate_run':'123','app_sha256':'b'*64,'version':'v1.0.0','result':'pass'})
                 for name in ['manifest.json','inventory.json']:(root/(name+'.minisig')).write_bytes(b'signature')
                 c.write_json('authorized-run.json',{'run_id':'123','engine_sha':'a'*40})
                 store={};writes=[];fail_once=[True]
@@ -156,12 +162,118 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(store['releases/v1.0.0/manifest.json'],store['channels/stable.json'])
                     self.assertEqual(store['releases/v1.0.0/candidate-manifest.json'],(root/'manifest.json').read_bytes())
                     self.assertEqual(store['desktop/latest.yml'],(root/'latest.yml').read_bytes())
+                    self.assertEqual(store['releases/v1.0.0/notes.md'],notes.read_bytes())
                     published=store['releases/v1.0.0/published.json']
                     self.assertEqual(json.loads(published)['manifest_sha256'],c.digest(Path('stable-manifest.json'))['sha256'])
                     c.promote()
                     self.assertEqual(store['releases/v1.0.0/published.json'],published)
                     self.assertEqual(writes.count('cli/v1.0.0/a'),1)
             finally:os.chdir(old)
+
+    def test_stable_floor_comes_from_the_live_manifest(self):
+        with tempfile.TemporaryDirectory() as td:
+            source=Path(td)/'freshness.go'
+            with patch.object(c,'FLOOR_SOURCE',source):
+                source.write_text('package release\n\nvar MinStableGenerated = "2026-11-13T18:27:12Z"\n')
+                self.assertEqual(c.stable_floor({'generated':'2026-11-13T19:07:13Z'}),'2026-11-13T19:07:13Z')
+                self.assertEqual(c.stable_floor({'generated':'2026-11-13T18:27:12Z'}),'2026-11-13T18:27:12Z')
+                # A committed value beyond the live manifest would make source builds refuse stable.
+                with self.assertRaisesRegex(ValueError,'later than the live stable manifest.*Set it to 2026-11-13T18:00:00Z or earlier'):
+                    c.stable_floor({'generated':'2026-11-13T18:00:00Z'})
+                for bad in [{},{'generated':'2026-11-13'},{'generated':'2026-11-13T19:07:13+00:00'}]:
+                    with self.assertRaisesRegex(ValueError,'Expected a UTC time'):c.stable_floor(bad)
+                source.write_text('package release\n')
+                with self.assertRaisesRegex(ValueError,'no MinStableGenerated'):c.stable_floor({'generated':'2026-11-13T19:07:13Z'})
+        # The repository's own declaration is the one lock reads.
+        with patch.object(c,'FLOOR_SOURCE',Path(__file__).resolve().parents[2]/c.FLOOR_SOURCE):
+            self.assertRegex(c.committed_floor(),r'^\d{4}-')
+
+    def lock(self,stable,runtime=None,notes=None,**env):
+        compare,checks=runtime or ({'status':'ahead'},{'check_runs':[{'name':'tests','status':'completed','conclusion':'success'},{'name':'ab','status':'completed','conclusion':'skipped'}]})
+        def api(path):return compare if '/compare/' in path else checks
+        def download(url,target):
+            if url.endswith('.minisig'):Path(target).write_bytes(b'signature')
+            else:c.write_json(target,stable)
+        old=os.getcwd();root=Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as td:
+            os.chdir(td)
+            try:
+                Path('VERSION.md').write_text('1.0.0\n');Path('kernel').mkdir();Path('kernel/VERSION').write_text('0.2.1\n')
+                values={'VERSION':'v1.0.0','KERNEL_SOURCE':'build','KERNEL_VERSION':'v0.2.1','GITHUB_SHA':'a'*40,'DESKTOP_SHA':'b'*40,
+                        'RUNTIME_SHA':'c'*40,'GITHUB_RUN_ID':'7','GITHUB_REPOSITORY':'AitorConS/jerboa','GITHUB_OUTPUT':'out',**env}
+                with patch.dict(os.environ,values),patch.object(c,'FLOOR_SOURCE',root/c.FLOOR_SOURCE),patch.object(c,'api',side_effect=api) as called,patch.object(c,'release_notes',side_effect=notes) as noted,\
+                        patch.object(c,'download',side_effect=download),patch.object(c,'verify_signature') as verify:
+                    c.lock()
+                    verify.assert_called_once();noted.assert_called_once_with('v1.0.0')
+                    self.assertIn(f'repos/{c.RUNTIME_REPOSITORY}/compare/{"c"*40}...main',[a.args[0] for a in called.call_args_list])
+                return json.loads(Path('release-lock.json').read_text()),Path('out').read_text()
+            finally:os.chdir(old)
+
+    def stable(self,generated='2026-11-13T19:07:13Z',channel='stable'):
+        file={'url':'u','sha256':'a'*64,'size':3}
+        return {'channel':channel,'generated':generated,'components':{'cli':{'version':'v0.9.0'},
+                'kernel':{'version':'v0.2.0','files':{name:dict(file) for name in c.KERNEL_FILES}}}}
+
+    def test_lock_records_the_floor_and_the_published_kernel(self):
+        lock,out=self.lock(self.stable())
+        self.assertEqual(lock['min_stable_generated'],'2026-11-13T19:07:13Z')
+        self.assertIn('min_stable_generated=2026-11-13T19:07:13Z\n',out)
+        self.assertEqual(lock['stable_kernel'],{'version':'v0.2.0','files':{f:{'sha256':'a'*64,'size':3} for f in c.KERNEL_FILES.values()}})
+        # Only the signed stable manifest sets the floor, and it must be dated.
+        with self.assertRaisesRegex(ValueError,'stable channel'):self.lock(self.stable(channel='candidate'))
+        with self.assertRaisesRegex(ValueError,'Expected a UTC time'):self.lock(self.stable(generated=None))
+        with self.assertRaisesRegex(ValueError,'later than the live stable manifest'):self.lock(self.stable(generated='2020-01-01T00:00:00Z'))
+
+    def test_lock_refuses_a_version_without_a_changelog_entry(self):
+        def missing(v):raise ValueError('CHANGELOG.md has no usable entry for 1.0.0')
+        with self.assertRaisesRegex(ValueError,'no usable entry'):self.lock(self.stable(),notes=missing)
+
+    @unittest.skipUnless(c.CHANGELOG_SCRIPT.exists(),'scripts/release/changelog.py is not in this checkout')
+    def test_release_notes_are_the_changelog_entry(self):
+        link='https://example.org/'
+        text=f'# Changelog\n\n## [Unreleased]\n\n## [1.0.0] - 2026-02-10\n\n### Fixed\n\n- A thing (#1).\n\n[Unreleased]: {link}\n[1.0.0]: {link}\n'
+        with tempfile.TemporaryDirectory() as td:
+            log=Path(td)/'CHANGELOG.md';log.write_text(text)
+            self.assertEqual(c.release_notes('v1.0.0',log),'### Fixed\n\n- A thing (#1).\n')
+            # No entry, an empty one, a malformed file and no file all stop the
+            # release and name the command that writes the entry.
+            for version,content in [('v1.1.0',text),('v1.0.0',text.replace('### Fixed\n\n- A thing (#1).\n\n','')),('v1.0.0',text.replace('# Changelog','# Notes')),('v1.0.0',None)]:
+                if content is None:log.unlink()
+                else:log.write_text(content)
+                with self.subTest(version=version),self.assertRaisesRegex(ValueError,r'python3 scripts/release/prepare-release\.py '+version[1:].replace('.','\\.')):
+                    c.release_notes(version,log)
+
+    def test_lock_requires_a_validated_runtime_commit(self):
+        ok={'name':'tests','status':'completed','conclusion':'success'}
+        for compare,runs,message in [
+                ({'status':'diverged'},[ok],'not on the main branch'),({'status':'behind'},[ok],'not on the main branch'),
+                ({'status':'identical'},[],'no successful check run'),
+                ({'status':'ahead'},[{'name':'skip','status':'completed','conclusion':'skipped'}],'no successful check run'),
+                ({'status':'ahead'},[ok,{'name':'macOS','status':'completed','conclusion':'failure'}],'macOS: failure'),
+                ({'status':'ahead'},[ok,{'name':'macOS','status':'in_progress','conclusion':None}],'macOS: in_progress')]:
+            with self.subTest(message=message),self.assertRaisesRegex(ValueError,message):
+                self.lock(self.stable(),(compare,{'check_runs':runs}))
+        self.lock(self.stable(),({'status':'identical'},{'check_runs':[ok,{'name':'n','status':'completed','conclusion':'neutral'}]}))
+
+    def test_promotion_refuses_a_floor_a_later_release_overtook(self):
+        inv={'min_stable_generated':'2026-11-13T19:07:13Z'}
+        c.check_floor({},inv)
+        c.check_floor({'generated':'2026-11-13T19:07:13Z'},inv)
+        c.check_floor({'generated':'2026-11-01T00:00:00Z'},inv)
+        with self.assertRaisesRegex(ValueError,'2026-11-14T00:00:00Z was promoted after this candidate was built.*rebuild the candidate'):
+            c.check_floor({'generated':'2026-11-14T00:00:00Z'},inv)
+
+    def test_floor_is_looked_for_in_every_released_binary(self):
+        with tempfile.TemporaryDirectory() as td:
+            payload=Path(td);m=self.manifest();m['generated']='2026-11-14T00:00:00Z';floor='2026-11-13T19:07:13Z'
+            for name in ['cli','daemon']:
+                for platform,asset in m['components'][name]['platforms'].items():
+                    asset['url']=f'{c.BASE}/{name}/v1.0.0/{platform}'
+                    p=payload/name/'v1.0.0'/platform;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'\x7fELF'+floor.encode()+b'\0')
+            c.verify_floor_embedded(m,payload,floor)
+            (payload/'cli/v1.0.0/darwin-arm64').write_bytes(b'built without the flag 2026-11-12T20:06:52Z')
+            with self.assertRaisesRegex(ValueError,'cli darwin-arm64 was not built with the stable floor.*MinStableGenerated='+floor):
+                c.verify_floor_embedded(m,payload,floor)
 
     def test_candidate_is_never_signed_as_stable(self):
         with tempfile.TemporaryDirectory() as td:
