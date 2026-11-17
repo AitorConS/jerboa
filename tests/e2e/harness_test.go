@@ -395,11 +395,65 @@ func (e *env) daemonLog() string {
 	if err != nil {
 		return "(no daemon log: " + err.Error() + ")"
 	}
-	const keep = 16 << 10
+	const keep = 48 << 10
 	if len(data) > keep {
 		data = append([]byte("[...]\n"), data[len(data)-keep:]...)
 	}
 	return string(data)
+}
+
+// tail returns the last max bytes of s.
+func tail(s string, max int) string {
+	if len(s) > max {
+		return "[...]" + s[len(s)-max:]
+	}
+	return s
+}
+
+// diagnostics describes what a failed test left: the VMs as the daemon
+// lists them, the VMM processes that exist, each VM's console and, for
+// Firecracker, the VMM's own log. Enough to tell from a CI log alone
+// whether the daemon, the VMM or the guest is at fault.
+func (e *env) diagnostics() string {
+	var b strings.Builder
+	if e.daemon == nil {
+		b.WriteString("(the daemon is not running)\n")
+	} else {
+		res := e.runFor(20*time.Second, "ps")
+		fmt.Fprintf(&b, "jerboa ps (exit %d):\n%s%s\n", res.code, res.stdout, res.stderr)
+		res = e.runFor(20*time.Second, "network", "ls")
+		fmt.Fprintf(&b, "jerboa network ls (exit %d):\n%s%s\n", res.code, res.stdout, res.stderr)
+	}
+	ids := map[string]bool{}
+	for id := range e.vmIDs {
+		ids[id] = true
+	}
+	for _, v := range e.tryPS() {
+		ids[v.ID] = true
+	}
+	for id := range ids {
+		fmt.Fprintf(&b, "VM %s: VMM processes %v\n", id, vmmPIDs(id))
+		if e.daemon != nil {
+			res := e.runFor(20*time.Second, "inspect", id)
+			fmt.Fprintf(&b, "  inspect (exit %d): %s\n", res.code, strings.Join(strings.Fields(res.all()), " "))
+			res = e.runFor(20*time.Second, "logs", id)
+			fmt.Fprintf(&b, "  console (exit %d):\n%s\n", res.code, tail(res.all(), 4<<10))
+		}
+		// Linux Firecracker keeps the VMM's log beside its sockets.
+		logs, _ := filepath.Glob(filepath.Join(os.TempDir(), "jerboa-run-*", "fc-"+id+"-vmm.log"))
+		for _, path := range logs {
+			if data, err := os.ReadFile(path); err == nil {
+				fmt.Fprintf(&b, "  %s:\n%s\n", path, tail(string(data), 4<<10))
+			}
+		}
+	}
+	if runtime.GOOS == "linux" {
+		for _, args := range [][]string{{"ip", "-br", "link"}, {"nft", "list", "table", "ip", "jerboa"}} {
+			out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+			fmt.Fprintf(&b, "%s (%v):\n%s\n", strings.Join(args, " "), err, tail(string(out), 4<<10))
+		}
+	}
+	return b.String()
 }
 
 // teardown leaves nothing of the env behind: VMs, VMM processes, networks
@@ -407,6 +461,7 @@ func (e *env) daemonLog() string {
 func (e *env) teardown() {
 	if e.t.Failed() {
 		e.t.Logf("daemon log of %s:\n%s", e.root, e.daemonLog())
+		e.t.Logf("state of %s when the test failed:\n%s", e.root, e.diagnostics())
 	}
 	if e.daemon == nil {
 		// The daemon is what removes bridges and taps: bring one up to clean.

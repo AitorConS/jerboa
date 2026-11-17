@@ -76,7 +76,11 @@ jobs:
     - name: Build CLI binaries
       run: make build
     - name: Run integration tests
-      run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
+      run: |
+        # Through the script: guest networking needs CAP_NET_ADMIN, which
+        # the runner user gets from sudo (see scripts/run-kvm-tests.sh).
+        scripts/run-kvm-tests.sh integration ./tests/integration -test.v -test.timeout 10m
+        go test -tags integration -count=1 -timeout 10m -v ./internal/tools
     if: inputs.suite != 'kernel'
   e2e-tests:
     name: E2E Tests (all scenarios)

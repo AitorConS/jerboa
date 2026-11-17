@@ -69,7 +69,17 @@ func TestPublishedPorts(t *testing.T) {
 		e.vmIDs[strings.TrimSpace(res.stdout)] = true
 	}
 	require.Equalf(t, 1, res.code, "publishing a host port that is taken must fail:\n%s", res.all())
-	require.NotEqual(t, "running", e.vmState("thief"), "the VM whose port could not be published is running")
+	// The daemon ends the VM it had started once the port turned out to be
+	// taken; `run` returns as that begins, so the listing may still show the
+	// VM for a moment.
+	require.Eventuallyf(t, func() bool { return e.vmState("thief") != "running" }, 15*time.Second, 100*time.Millisecond,
+		"the VM whose port could not be published keeps running:\n%s", res.all())
+	for _, v := range e.ps() {
+		if v.Name == "thief" {
+			e.vmIDs[v.ID] = true
+			e.waitNoVMM(v.ID, 15*time.Second)
+		}
+	}
 	require.Equal(t, "lo", lo.status().Marker, "the first VM's port must keep serving")
 
 	// Published on every address: served on loopback and on the host's own.

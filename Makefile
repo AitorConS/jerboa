@@ -24,7 +24,7 @@ test:
 	go test $(shell go list ./... | grep -v '/kernel/') -race -coverprofile=coverage.out -covermode=atomic
 
 test-integration:
-	go test -tags integration -timeout 10m ./tests/integration/...
+	scripts/run-kvm-tests.sh integration ./tests/integration -test.timeout 10m
 
 test-kernel:
 	$(MAKE) -C kernel/tools vdsogen

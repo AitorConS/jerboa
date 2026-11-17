@@ -7,7 +7,7 @@ import os,subprocess
 # store. A pull request that changes them runs the KVM jobs before the merge,
 # not after it.
 E2E_COVERED=('cmd/jerboa/','cmd/jerboad/','internal/apiserver/','internal/builder/','internal/compose/',
-             'internal/dnsserver/','internal/network/','internal/vm/','internal/volume/','scripts/run-e2e.sh')
+             'internal/dnsserver/','internal/network/','internal/vm/','internal/volume/','scripts/run-e2e.sh','scripts/run-kvm-tests.sh')
 
 def classify(paths):
     enabled=any(not (p.startswith('docs/') or p.endswith('.md')) for p in paths)

@@ -190,7 +190,11 @@ jobs:
     - name: Build CLI binaries
       run: make build
     - name: Run integration tests
-      run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
+      run: |
+        # Through the script: guest networking needs CAP_NET_ADMIN, which
+        # the runner user gets from sudo (see scripts/run-kvm-tests.sh).
+        scripts/run-kvm-tests.sh integration ./tests/integration -test.v -test.timeout 10m
+        go test -tags integration -count=1 -timeout 10m -v ./internal/tools
     # Self-hosted KVM runner: never for pull requests from forks, whose
     # workflow changes it would run. A maintainer pushes such a branch here.
     # A fork can edit these lines, so the runner job-started hook
