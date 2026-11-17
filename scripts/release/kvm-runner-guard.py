@@ -16,7 +16,9 @@ Install (on the runner machine, as root):
   JERBOA_KVM_REPOSITORY=AitorConS/jerboa
 
 Install from a reviewed revision of main and re-install after changing this
-file: the runner never reads it from a checkout.
+file: the runner never reads it from a checkout. `kvm-runner-guard.py
+check-installed`, which the release candidate workflow runs on the runner,
+fails when the installed copy differs from the checkout's.
 
 Optional settings in the same .env file:
   JERBOA_KVM_WORKFLOWS  workflow files allowed to run here (default below)
@@ -63,7 +65,37 @@ def refusal(env):
     return None
 
 
+def installed(env, current=__file__):
+    """Compare the hook installed on this runner with this file.
+
+    Returns ('ok' | 'unknown' | 'stale', message). It runs as a job step, from
+    a checkout, so it is a reminder for the runner's owner and no protection:
+    what protects the runner is the installed hook itself."""
+    hook = env.get('ACTIONS_RUNNER_HOOK_JOB_STARTED', '')
+    if not hook:
+        return 'unknown', ('ACTIONS_RUNNER_HOOK_JOB_STARTED is not visible to this job, so the installed KVM runner guard '
+                           'cannot be compared with this revision; check on the runner that it is installed (see the header '
+                           'of scripts/release/kvm-runner-guard.py)')
+    try:
+        with open(hook, 'rb') as a, open(current, 'rb') as b:
+            same = a.read() == b.read()
+    except OSError as e:
+        return 'stale', f'cannot read the installed KVM runner guard {hook}: {e}'
+    if same:
+        return 'ok', f'KVM runner guard: {hook} is this revision\'s'
+    return 'stale', (f'the KVM runner guard installed at {hook} is not scripts/release/kvm-runner-guard.py of this revision. '
+                     'On the runner, from a reviewed checkout of main: sudo install -o root -g root -m 0755 '
+                     f'scripts/release/kvm-runner-guard.py {hook} ; then restart the runner service and re-run this job')
+
+
 def main():
+    if sys.argv[1:] == ['check-installed']:
+        state, message = installed(os.environ)
+        if state == 'stale':
+            print(f'::error::{message}', file=sys.stderr)
+            sys.exit(1)
+        print(f'::warning::{message}' if state == 'unknown' else message)
+        return
     reason = refusal(os.environ)
     if reason:
         print(f'::error::KVM runner guard refused this job: {reason}', file=sys.stderr)

@@ -63,6 +63,29 @@ class WorkflowContracts(unittest.TestCase):
   self.assertEqual(scope.classify(['tests/integration/lifecycle_test.go']),(True,True))
   self.assertEqual(scope.classify(['tests/e2e/build_test.go']),(True,True))
   self.assertEqual(scope.classify(['.github/workflows/release.yml']),(True,True))
+  self.assertEqual(scope.classify(['tests/upgrade/guest.sh']),(True,True))
+  self.assertEqual(scope.classify(['scripts/install.sh']),(True,True))
+ def test_upgrade_from_stable_gates_validation_and_candidates(self):
+  text=(ROOT/'.github/workflows/validate.yml').read_text()
+  job=text.split('  upgrade-e2e:\n',1)[1].split('  release-tests:\n',1)[0]
+  self.assertIn('tests/upgrade/run.py',job)
+  self.assertIn('environment: kvm',job)
+  # The installer never runs on the runner itself.
+  self.assertNotIn('install.sh',job)
+  self.assertNotIn('sudo ',job.replace('sudo usermod',''))
+  result=text.split('  result:\n',1)[1]
+  self.assertIn('    - upgrade-e2e\n',result.split('    steps:',1)[0])
+  # A release candidate runs the same validation in full before anything
+  # is built for it.
+  release=(ROOT/'.github/workflows/release.yml').read_text()
+  self.assertIn('uses: ./.github/workflows/validate.yml\n    with:\n      full: true',release)
+  for name in ['build-release','kernel-stage']:
+   needs=release.split('  '+name+':\n',1)[1].split('    steps:',1)[0]
+   self.assertIn('validate',needs)
+  # The state-compatibility tests run with the unit tests.
+  self.assertIn('go test ./cmd/... ./internal/...',text)
+  guest=(ROOT/'tests/upgrade/guest.sh').read_text()
+  self.assertIn('https://releases.jerboa.dev/install.sh',guest)
  def test_package_matrix_builds_each_arch(self):
   with tempfile.TemporaryDirectory() as d:
    out=Path(d)/'out'
@@ -85,7 +108,18 @@ class WorkflowContracts(unittest.TestCase):
   # Only a signature made for the package index counts, and the base
   # index may not be older than the last publication.
   verify=publish.index('bin/jerboa-verify -purpose packages dist/publish/packages.json')
-  self.assertIn('PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL }}',publish)
+  # An unset variable is a record of 0, not "no check".
+  self.assertIn("PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL || '0' }}",publish)
+  self.assertNotIn('PKG_INDEX_MIN_SERIAL: ${{ vars.PKG_INDEX_MIN_SERIAL }}',publish)
+  # The published serial is recorded by the job when it holds a token that
+  # may, and otherwise the summary carries the command.
+  record=publish[publish.index('    - name: Record the published serial'):]
+  self.assertLess(publish.index('cmp dist/publish/packages.json dist/public/packages.json'),publish.index('    - name: Record the published serial'))
+  self.assertIn('SERIAL: ${{ steps.publish.outputs.serial }}',record)
+  self.assertIn('VARIABLES_TOKEN: ${{ secrets.PKG_INDEX_VARIABLES_TOKEN }}',record)
+  self.assertIn('GH_TOKEN="$VARIABLES_TOKEN" gh variable set PKG_INDEX_MIN_SERIAL --body "$SERIAL"',record)
+  self.assertIn('::warning::',record)
+  self.assertIn('GITHUB_STEP_SUMMARY',record)
   self.assertLess(publish.index('--pattern packages.json.minisig'),verify)
   self.assertLess(verify,publish.index('scripts/package-index.py'))
  def test_package_index_is_immutable(self):
@@ -152,6 +186,79 @@ class WorkflowContracts(unittest.TestCase):
    for bad in [{'purpose':'stable','serial':3,'packages':{}},{'serial':3,'packages':{}},{'purpose':'jerboa-package-index','serial':'3','packages':{}}]:
     (Path(dst)/'packages.json').write_text(json.dumps(bad))
     r=publish(src,dst);self.assertNotEqual(r.returncode,0,bad)
+ def test_package_index_floor_cannot_fall_behind(self):
+  script=ROOT/'scripts/package-index.py'
+  def stage(root,version):
+   d=Path(root)/version;d.mkdir(parents=True)
+   data=version.encode()
+   (d/'files.tar.gz').write_bytes(data)
+   (d/'meta.json').write_text(json.dumps({'name':'pkg','version':version,'platform':'linux/amd64','sha256':hashlib.sha256(data).hexdigest(),'size':len(data)}))
+  def publish(src,dst,floor):
+   env={k:v for k,v in os.environ.items() if k!='PKG_INDEX_MIN_SERIAL'}
+   if floor is not None:env['PKG_INDEX_MIN_SERIAL']=floor
+   return subprocess.run([sys.executable,str(script),src,dst,'o/r'],capture_output=True,text=True,env=env)
+  def serial(dst):return json.loads((Path(dst)/'packages.json').read_text())['serial']
+  with tempfile.TemporaryDirectory() as src,tempfile.TemporaryDirectory() as dst:
+   # The workflow passes 0 while the variable does not exist: the first
+   # serial is published against it.
+   stage(src,'1.0.0')
+   r=publish(src,dst,'0');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(serial(dst),1)
+   # The variable was not raised: the next publication stops, changes
+   # nothing and says exactly what to run.
+   stage(src,'2.0.0');before=(Path(dst)/'packages.json').read_text()
+   for floor in ['0',' 0 ']:
+    r=publish(src,dst,floor);self.assertNotEqual(r.returncode,0)
+    self.assertIn('was not raised after the last publication',r.stderr)
+    self.assertIn('gh variable set PKG_INDEX_MIN_SERIAL --body 1\n',r.stderr)
+    self.assertIn('Never lower the variable',r.stderr)
+    self.assertEqual(r.stdout,'')
+    self.assertEqual((Path(dst)/'packages.json').read_text(),before)
+    self.assertFalse((Path(dst)/'pkg-2.0.0-linux-amd64.tar.gz').exists())
+   # Raised: the publication goes through. Without the variable in the
+   # environment (local use) nothing is compared.
+   r=publish(src,dst,'1');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(serial(dst),2)
+   stage(src,'3.0.0')
+   r=publish(src,dst,None);self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(serial(dst),3)
+ def test_release_binaries_are_built_with_the_stable_floor(self):
+  # Clients refuse stable manifests older than the floor compiled into
+  # them. The candidate takes it from the live manifest (lock) and every
+  # jerboa and jerboad it builds must be linked with it; assembly then
+  # looks for it in each binary.
+  flag='-X github.com/AitorConS/jerboa/internal/release.MinStableGenerated='
+  spec=importlib.util.spec_from_file_location('candidate',Path(__file__).with_name('candidate.py'))
+  candidate=importlib.util.module_from_spec(spec);spec.loader.exec_module(candidate)
+  self.assertEqual(candidate.FLOOR_FLAG,flag)
+  text=(ROOT/'.github/workflows/release.yml').read_text()
+  self.assertIn('min_stable_generated: ${{ steps.lock.outputs.min_stable_generated }}',text.split('  validate:\n',1)[0])
+  builds=0
+  for path in [ROOT/'.github/workflows/release.yml',ROOT/'scripts/build-macos.sh',ROOT/'distro/build.sh',ROOT/'scripts/build-macos-reproducible.py']:
+   source=path.read_text()
+   # A build command, with its continuation lines.
+   for command in re.findall(r'(?m)^.*\bgo[", ]+build\b(?:.*\\\n)*.*$',source):
+    if not re.search(r'\./cmd/(jerboa|jerboad|\{name\})(\s|"|\]|$)',command):continue
+    builds+=1
+    with self.subTest(file=path.name,command=command.strip()[:60]):
+     self.assertTrue(flag in command or '$floor' in command or '${floor}' in command or ' flags,' in command,command)
+   if path.suffix!='.yml':
+    self.assertIn(flag.split('=')[0]+'=',source)
+    self.assertIn('JERBOA_MIN_STABLE_GENERATED',source)
+  self.assertEqual(builds,6)
+  def job(name,next_job):return text.split('  '+name+':\n',1)[1].split('  '+next_job+':\n',1)[0]
+  self.assertIn('MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}',job('build-release','build-distro'))
+  self.assertEqual(job('build-release','build-distro').count(flag+'${MIN_STABLE_GENERATED}'),2)
+  self.assertIn('JERBOA_MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}',job('build-macos','determinism'))
+  # The distro bakes the daemon build-release produced.
+  self.assertIn('JERBOA_DAEMON_BINARY: dist/jerboad-linux-amd64',job('build-distro','build-macos'))
+ def test_candidate_checks_the_installed_runner_guard(self):
+  text=(ROOT/'.github/workflows/release.yml').read_text()
+  boot=text.split('  kernel-test:',1)[1].split('  build-release:',1)[0]
+  self.assertLess(boot.index('kvm-runner-guard.py check-installed'),boot.index('validate-kernel.py'))
+ def test_promotion_runs_from_a_checkout_that_holds_the_evidence(self):
+  # promote reads docs/releases/<version>/native-macos.json from its own
+  # checkout of main, never from the candidate.
+  text=(ROOT/'.github/workflows/promote.yml').read_text()
+  self.assertLess(text.index('actions/checkout@'),text.index('candidate.py promote'))
+  self.assertNotIn('ref:',text)
  def test_distro_inputs_are_pinned(self):
   # The WSL rootfs is signed into releases: its base image and Firecracker
   # are pinned and checked, Firecracker to the same digest install.sh uses.

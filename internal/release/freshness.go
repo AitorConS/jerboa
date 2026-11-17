@@ -19,13 +19,19 @@ const stateFile = "release-state.json"
 
 // MinStableGenerated is the oldest stable manifest generation time this
 // binary accepts, whatever its local state: a machine that has never fetched
-// a manifest (or whose state was lost) still refuses one older than the
-// release this source was last updated after. It is the commit time of the
-// engine of v0.58.0, before which no stable manifest of that release or a
-// later one can have been generated; raise it to the engine commit time of
-// the newest promoted release when preparing a candidate (see
-// docs/release-process.md). A var so a build can set it with -X.
-var MinStableGenerated = "2026-11-12T20:06:52Z"
+// a manifest (or whose state was lost) still refuses an older one.
+//
+// Release builds do not use the value written here: the candidate workflow
+// reads the generation time of the stable manifest that is live when the
+// candidate is built and sets it with -X in every jerboa and jerboad it
+// compiles; assembly refuses a binary without it and promotion refuses a
+// candidate whose value a later release has overtaken (see
+// docs/release-process.md). The value below is what a build from source
+// gets: the commit time of the engine of v0.59.0, before which no stable
+// manifest of that release or a later one can have been generated. It may be
+// raised to the engine commit time of a newer promoted release, never beyond
+// the live manifest's generation time (the candidate workflow refuses that).
+var MinStableGenerated = "2026-11-13T18:27:12Z"
 
 // InstallerStateFile is where scripts/install.sh records the stable manifest
 // it installed from, in the same format as stateFile. Default reads it as a

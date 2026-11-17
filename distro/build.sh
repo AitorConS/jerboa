@@ -41,8 +41,11 @@ if [ -n "${JERBOA_DAEMON_BINARY:-}" ]; then
     chmod +x "${ctx}/jerboad"
     "${ctx}/jerboad" --version | grep -F -- "${version}"
 else
+    # A release candidate passes its own binary above; a build that sets the
+    # stable-manifest floor (release.MinStableGenerated) gets it here too.
+    floor="${JERBOA_MIN_STABLE_GENERATED:+ -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${JERBOA_MIN_STABLE_GENERATED}}"
     GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -C "${root}" -trimpath \
-        -ldflags="-s -w -X main.version=${version}" \
+        -ldflags="-s -w -X main.version=${version}${floor}" \
         -o "${ctx}/jerboad" ./cmd/jerboad
 fi
 

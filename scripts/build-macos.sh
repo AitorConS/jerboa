@@ -23,8 +23,11 @@ make -C kernel PLATFORM=virt kernel tools
 make -C kernel/platform/virt PLATFORM=virt "$root/kernel/output/platform/virt/boot-stub.img"
 dest="$root/dist/macos-arm64"
 mkdir -p "$dest/tools"
-CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$dest/jerboa" ./cmd/jerboa
-CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$dest/jerboad" ./cmd/jerboad
+# A release candidate sets the stable-manifest floor of its binaries (see
+# release.MinStableGenerated); other builds keep the value in the source.
+floor=${JERBOA_MIN_STABLE_GENERATED:+ -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=$JERBOA_MIN_STABLE_GENERATED}
+CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version$floor" -o "$dest/jerboa" ./cmd/jerboa
+CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=$version$floor" -o "$dest/jerboad" ./cmd/jerboad
 cp kernel/output/tools/bin/mkfs kernel/output/tools/bin/dump "$dest/tools/"
 cp kernel/output/platform/virt/bin/kernel.img "$dest/tools/kernel.img"
 cp kernel/output/platform/virt/boot-stub.img "$dest/tools/boot.img"

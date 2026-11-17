@@ -11,6 +11,16 @@ from unittest.mock import patch
 
 import candidate as c
 
+FLOOR = '2026-01-02T03:04:05Z'
+
+# The inventory's fields per pipeline generation (candidate.PIPELINE). A
+# promotion only accepts candidates of its own generation, which is what makes
+# candidates assembled before a pipeline change get rebuilt.
+INVENTORY_FIELDS = {2: {
+    'version', 'engine_sha', 'desktop_sha', 'runtime_sha', 'kernel_version', 'kernel_source', 'run_id',
+    'repository', 'toolchains', 'min_stable_generated', 'stable_kernel', 'pipeline', 'kernel_toolset',
+    'kernel_boot', 'date', 'assets', 'manifest', 'feed', 'native_macos_app', 'macos_x86_tools'}}
+
 
 class KernelCandidateTests(unittest.TestCase):
     def setUp(self):
@@ -22,7 +32,9 @@ class KernelCandidateTests(unittest.TestCase):
         self.spec = {'version': 'v1.0.0', 'engine_sha': 'a' * 40,
                      'desktop_sha': 'b' * 40, 'runtime_sha': 'c' * 40,
                      'kernel_version': 'v0.2.1', 'kernel_source': 'build',
-                     'run_id': '123', 'repository': 'AitorConS/jerboa'}
+                     'run_id': '123', 'repository': 'AitorConS/jerboa',
+                     'toolchains': {'go': '1.27.4'}, 'min_stable_generated': FLOOR,
+                     'stable_kernel': {'version': 'v0.2.0', 'files': {}}}
         c.write_json('release-lock.json', self.spec)
         Path('scripts').mkdir()
         Path('scripts/install.sh').write_text('#!/bin/sh\n# tested bootstrap\nMIN_GENERATED=""\n')
@@ -164,7 +176,8 @@ class KernelCandidateTests(unittest.TestCase):
                 else:
                     name = ('jerboa' if component == 'cli' else 'jerboad') + '-' + platform + ('.exe' if platform.startswith('windows') else '')
                     folder = 'dist'
-                p = Path(folder) / name; p.parent.mkdir(exist_ok=True); p.write_bytes(name.encode())
+                # Release builds carry the candidate's stable floor.
+                p = Path(folder) / name; p.parent.mkdir(exist_ok=True); p.write_bytes(name.encode() + b'\0' + FLOOR.encode())
         Path('desktop-windows/jerboa-desktop-setup-1.0.0.exe.blockmap').write_bytes(b'blockmap')
         Path('native-macos').mkdir()
         Path('native-macos/jerboa-desktop-1.0.0-macos-arm64.zip').write_bytes(b'app')
@@ -174,11 +187,85 @@ class KernelCandidateTests(unittest.TestCase):
                 archive.add(Path('kernel-candidate') / filename, arcname='root/.jerboa/tools/' + name)
             data = b'daemon'; info = tarfile.TarInfo('usr/local/bin/jerboad'); info.size = len(data)
             archive.addfile(info, io.BytesIO(data))
-        with patch.object(c, 'sign'), patch.object(c, 'run', return_value='jerboa v1.0.0\n'), patch.object(c, 'download') as download:
+        with patch.object(c, 'sign'), patch.object(c, 'run', return_value='jerboa v1.0.0\n'), patch.object(c, 'download') as download, \
+                patch.object(c, 'release_notes', return_value='### Fixed\n\n- A thing.\n') as notes:
             c.assemble()
+            notes.assert_called_once_with('v1.0.0')
             download.assert_not_called()
         with patch.object(c, 'verify_signature'):
             return c.verify_candidate('candidate')
+
+    def evidence(self, inv, **changes):
+        c.write_json(f'docs/releases/{inv["version"]}/native-macos.json', {
+            'candidate_run': inv['run_id'], 'app_sha256': inv['native_macos_app']['sha256'],
+            'version': inv['version'], 'result': 'pass', **changes})
+
+    def test_inventory_fields_are_pinned_to_the_pipeline_generation(self):
+        inv, _ = self.assemble()
+        self.assertIn(c.PIPELINE, INVENTORY_FIELDS, 'add the inventory fields of the new PIPELINE to INVENTORY_FIELDS')
+        self.assertEqual(set(inv), INVENTORY_FIELDS[c.PIPELINE],
+                         'the inventory changed: candidates assembled before this change do not have the same '
+                         'fields, so bump candidate.PIPELINE (promotion then makes them be rebuilt) and add the '
+                         'new set to INVENTORY_FIELDS')
+        self.assertEqual(inv['pipeline'], c.PIPELINE)
+        # The lock's fields all reach the inventory, floor included.
+        self.assertEqual(inv['min_stable_generated'], FLOOR)
+
+    def test_candidate_of_another_pipeline_is_not_promotable(self):
+        self.assemble()
+        original = json.loads(Path('candidate/inventory.json').read_text())
+        for change, message in [({'pipeline': c.PIPELINE - 1}, 'release pipeline 1 and promotion is at'),
+                                ({'pipeline': None}, 'release pipeline'),
+                                ({'pipeline': c.PIPELINE + 1}, 'dispatch "Build release candidate" again'),
+                                ({'min_stable_generated': None}, 'does not record the stable floor'),
+                                ({'min_stable_generated': 'yesterday'}, 'Expected a UTC time'),
+                                ({'assets': {k: v for k, v in original['assets'].items() if not k.endswith('/notes.md')}}, 'no release notes')]:
+            inv = dict(original)
+            for key, value in change.items():
+                if value is None: del inv[key]
+                else: inv[key] = value
+            c.write_json('candidate/inventory.json', inv)
+            with self.subTest(change=change), patch.object(c, 'verify_signature'), self.assertRaisesRegex(ValueError, message):
+                c.verify_candidate('candidate')
+
+    def test_assembly_refuses_binaries_without_the_stable_floor(self):
+        self.stage()
+        self.host_binaries()
+        for name in ['jerboa-windows-amd64.exe', 'jerboad-darwin-arm64']:
+            with self.subTest(binary=name):
+                shutil.rmtree('candidate', ignore_errors=True)
+                for d in ['native-macos', 'distro']: shutil.rmtree(d, ignore_errors=True)
+                original = Path.write_bytes
+                def write(path, data, skip=name):
+                    return original(path, skip.encode() if path.name == skip and path.parent.name == 'dist' else data)
+                with patch.object(Path, 'write_bytes', write), self.assertRaisesRegex(ValueError, 'not built with the stable floor'):
+                    self.assemble_only()
+                self.assertFalse(Path('candidate/inventory.json').exists())
+
+    def test_assembly_refuses_a_manifest_older_than_the_floor(self):
+        self.stage()
+        self.host_binaries()
+        with patch.object(c, 'generated_now', return_value='2026-01-01T00:00:00Z'), \
+                self.assertRaisesRegex(ValueError, 'older than its own stable floor'):
+            self.assemble_only()
+
+    def test_built_kernel_is_checked_against_the_published_one_before_anything_else(self):
+        def strip(*args): shutil.copyfile(args[2], args[4])
+        def staged():
+            shutil.rmtree('kernel-candidate', ignore_errors=True)
+            with patch.object(c, 'run', side_effect=strip): c.kernel()
+        staged()
+        files = json.loads(Path('kernel-candidate/toolset.json').read_text())['files']
+        # The same version with the same bytes is a rebuild of the published kernel.
+        self.spec['stable_kernel'] = {'version': 'v0.2.1', 'files': files}
+        c.write_json('release-lock.json', self.spec); staged()
+        changed = {**files, 'kernel.img': {'sha256': '0' * 64, 'size': 1}}
+        for published, message in [({'version': 'v0.2.1', 'files': changed}, 'already published with different bytes: raise kernel/VERSION'),
+                                   ({'version': 'v0.3.0', 'files': files}, 'older than the published v0.3.0')]:
+            self.spec['stable_kernel'] = published
+            c.write_json('release-lock.json', self.spec)
+            with self.subTest(published=published['version']), self.assertRaisesRegex(ValueError, message):
+                staged()
 
     def test_assembly_and_inventory_preserve_tested_kernel_bytes(self):
         inv, manifest = self.assemble()
@@ -196,6 +283,9 @@ class KernelCandidateTests(unittest.TestCase):
         installer = Path('candidate/payload/releases/v1.0.0/install.sh').read_text()
         self.assertIn(f'MIN_GENERATED="{manifest["generated"]}"\n', installer)
         self.assertIn('releases/v1.0.0/install.sh', inv['assets'])
+        # The changelog entry travels in the signed inventory as the release notes.
+        self.assertEqual(Path('candidate/payload/releases/v1.0.0/notes.md').read_text(), '### Fixed\n\n- A thing.\n')
+        self.assertEqual(inv['assets']['releases/v1.0.0/notes.md'], c.digest('candidate/payload/releases/v1.0.0/notes.md'))
         for name, filename in c.KERNEL_FILES.items():
             self.assertEqual(manifest['components']['kernel']['files'][name]['sha256'], self.record['files'][filename]['sha256'])
         # CLI and daemon binaries ship a zstd variant beside them, covered by
@@ -219,6 +309,7 @@ class KernelCandidateTests(unittest.TestCase):
 
     def test_promotion_publishes_new_kernel_before_advancing_stable(self):
         inv, manifest = self.assemble()
+        self.evidence(inv)
         c.write_json('authorized-run.json', {'run_id': inv['run_id'], 'engine_sha': inv['engine_sha']})
         for name in ['manifest.json', 'inventory.json']:
             Path('candidate/' + name + '.minisig').write_bytes(b'signature')
@@ -292,7 +383,26 @@ class KernelCandidateTests(unittest.TestCase):
 
     def test_promotion_rejects_kernel_downgrade_and_reused_version_before_writing(self):
         inv, manifest = self.assemble()
+        self.evidence(inv)
         c.write_json('authorized-run.json', {'run_id': inv['run_id'], 'engine_sha': inv['engine_sha']})
+        # A release promoted after this candidate was built overtakes the
+        # floor of its binaries: nothing is written, and the message says what to do.
+        old = {'generated': '2026-01-02T03:04:06Z', 'components': {'cli': {'version': 'v0.9.0'}, 'kernel': manifest['components']['kernel']}}
+        c.write_json('old.json', old)
+        with patch.object(c, 'verify_signature'), patch.object(c, 'existing', return_value=Path('old.json')), patch.object(c, 'put') as put:
+            with self.assertRaisesRegex(ValueError, 'promoted after this candidate was built.*dispatch "Build release candidate" again'):
+                c.promote()
+            put.assert_not_called()
+        # The native Mac report must be this candidate's, and a pass.
+        for change, message in [({'candidate_run': '999'}, "candidate_run '999'"), ({'app_sha256': '0' * 64}, 'app_sha256'),
+                                ({'version': 'v0.9.9'}, 'version'), ({'result': 'fail'}, "result 'fail'"), (None, 'No native Mac validation report')]:
+            if change is None: Path('docs/releases/v1.0.0/native-macos.json').unlink()
+            else: self.evidence(inv, **change)
+            with self.subTest(evidence=change), patch.object(c, 'verify_signature'), patch.object(c, 'existing', return_value=None), patch.object(c, 'put') as put:
+                with self.assertRaisesRegex(ValueError, message + '.*native-macos.sh'):
+                    c.promote()
+                put.assert_not_called()
+        self.evidence(inv)
         for kernel_version, message in [('v0.2.2', 'kernel downgrade'), ('v0.2.1', 'different bytes')]:
             old = {'components': {'cli': {'version': 'v0.9.0'}, 'kernel': {'version': kernel_version, 'files': {}}}}
             c.write_json('old.json', old)
