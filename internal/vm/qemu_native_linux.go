@@ -21,5 +21,13 @@ func (m *QEMUManager) buildNativeCmd(ctx context.Context, cfg Config, qmp string
 }
 func DefaultQEMUBinary() string { return "qemu-system-x86_64" }
 
-func (m *QEMUManager) prepareHostVM(*VM) (func(), error)        { return nil, nil }
-func (m *QEMUManager) RestoreHostRuntime(context.Context) error { return nil }
+func (m *QEMUManager) prepareHostVM(*VM) (func(), error) { return nil, nil }
+
+// RestoreHostRuntime gives the VMs re-adopted from the previous daemon back
+// what lived in that daemon's process: see restoreAdopted.
+func (m *QEMUManager) RestoreHostRuntime(ctx context.Context) error {
+	restoreAdopted(ctx, m.store.List(), m.hchecker, func(id string) []string {
+		return []string{m.bootDiskPath(id)}
+	})
+	return nil
+}

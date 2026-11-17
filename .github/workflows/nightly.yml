@@ -69,11 +69,59 @@ jobs:
       run: |
         test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
         test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    # The Firecracker tests boot the in-tree kernel, which no step of this
+    # job used to build: they failed every night.
+    - name: Build kernel and tools
+      run: make kernel && make -C kernel tools
     - name: Build CLI binaries
       run: make build
     - name: Run integration tests
-      run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/...
+      run: |
+        # Through the script: guest networking needs CAP_NET_ADMIN, which
+        # the runner user gets from sudo (see scripts/run-kvm-tests.sh).
+        scripts/run-kvm-tests.sh integration ./tests/integration -test.v -test.timeout 10m
+        go test -tags integration -count=1 -timeout 10m -v ./internal/tools
     if: inputs.suite != 'kernel'
+  e2e-tests:
+    name: E2E Tests (all scenarios)
+    needs:
+    - integration-tests
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
+    timeout-minutes: 120
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.4
+        cache: false
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    - name: Build kernel and tools
+      run: make kernel && make -C kernel tools
+    - name: Build CLI binaries
+      run: make build
+    # Every scenario, the slow and host-level ones included: more rounds of
+    # the crash tests, the damaged-state matrix, a full host disk, the
+    # firewall reload. Firecracker is the hypervisor of the tests that do
+    # not run on both.
+    - name: Run E2E tests (all scenarios)
+      run: scripts/run-e2e.sh -test.v -test.timeout 75m
+      env:
+        JERBOA_E2E_SLOW: '1'
+    # The fast set again with QEMU as the hypervisor of every test.
+    - name: Run E2E tests (QEMU)
+      if: always()
+      run: scripts/run-e2e.sh -test.v -test.timeout 30m
+      env:
+        JERBOA_E2E_HYPERVISOR: qemu
+    if: always() && inputs.suite != 'kernel'
   benchmarks:
     name: Benchmark Suite
     runs-on:
@@ -272,6 +320,7 @@ jobs:
     - unit-tests
     - kernel-tests
     - integration-tests
+    - e2e-tests
     - benchmarks
     - image-benchmarks
     - fuzz-extended

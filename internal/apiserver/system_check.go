@@ -237,7 +237,7 @@ func (s *Server) checkVolumes(c *checker, _ []*vm.VM) {
 			}
 		}
 		if staging := s.volStore.Staging(); len(staging) > 0 {
-			c.add("volumes", api.SeverityInfo, "jerboa system prune", "%s left by interrupted volume creations or imports", plural(len(staging), "staging directory", "staging directories"))
+			c.add("volumes", api.SeverityInfo, "jerboa system prune", "%s left by interrupted volume creations, imports or removals", plural(len(staging), "staging directory", "staging directories"))
 		}
 		return plural(len(vols), "volume", "volumes") + " with their disks"
 	})

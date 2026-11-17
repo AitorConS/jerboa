@@ -130,6 +130,30 @@ Which versions exist, and where:
   project back after it was taken down; and a compose state file that does
   not parse is named in the error.
 
+- **On Linux, VMs that keep running across a daemon restart are fully taken
+  back.** A Firecracker VM whose daemon was killed or restarted outside
+  systemd was recorded as stopped while its VMM went on running, with its
+  volume open and its boot disk deleted under it; it is now re-adopted like a
+  QEMU VM, and `jerboa stop` and `jerboa rm` work on it.
+  The published ports of a re-adopted VM, which refused connections after
+  the restart, answer again. (#293)
+- `jerboa compose down --volumes` removes the stack's volume also after a
+  `down` without `--volumes` and a second `up`. The second `up` used to stop
+  recording the volume it reused, and nothing in compose removed it again.
+  (#293)
+- `jerboa volume rm` removes a volume whose disk is gone, which `jerboa
+  doctor` tells you to do; it used to fail with `volume stat`. It still
+  refuses while a VM mounts the volume. (#293)
+- A `jerboa volume rm` interrupted by a daemon crash no longer leaves a volume
+  that is listed but has no disk: the volume is gone, and
+  `jerboa system prune` removes what is left of its files. (#293)
+- On macOS, VMs start when `~/.jerboa` is on a filesystem that does not report
+  holes in files (HFS+, some network mounts). `jerboa run` used to fail with
+  `diskclone: seek data: inappropriate ioctl for device`. (#293)
+- On Linux, an empty `JERBOA_DNS_UPSTREAM` turns off forwarding of guest DNS
+  questions, as it does on macOS. It used to be read as unset, and questions
+  went to `1.1.1.1`. (#293)
+
 ### Security
 
 - `jerboa sign` and `jerboa verify` accepted an empty digest from the daemon,

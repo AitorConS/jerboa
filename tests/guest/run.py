@@ -57,15 +57,15 @@ def main():
     if a.volume_size:
         config["drives"].append({"drive_id": "data", "path_on_host": str(volume),
                                  "is_root_device": False, "is_read_only": False})
-    if a.io_engine:
-        for drive in config["drives"]:
-            drive["io_engine"] = a.io_engine
         if platform.system() == "Darwin":
             mounts = (a.work / "mounts").resolve()
             mounts.write_text("testdata:/data")
             config["firmware"] = {"opt/uni/mounts": str(mounts)}
         else:
             config["boot-source"]["boot_args"] += " mounts.testdata=/data"
+    if a.io_engine:
+        for drive in config["drives"]:
+            drive["io_engine"] = a.io_engine
     config_path = a.work / "config.json"
     config_path.write_text(json.dumps(config))
     with (a.work / "console.log").open("w") as log:

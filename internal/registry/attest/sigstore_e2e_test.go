@@ -21,6 +21,11 @@ import (
 // records an entry in the public Rekor log.
 func TestSigstoreRoundTrip(t *testing.T) {
 	if !credentials.InGitHubActions() {
+		// In a job that cannot request OIDC tokens the test must not pass
+		// by not running: the workflow that runs it exists for nothing else.
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("this GitHub Actions job cannot request OIDC tokens (permissions: id-token: write)")
+		}
 		t.Skip("needs a GitHub Actions job that may request OIDC tokens")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
