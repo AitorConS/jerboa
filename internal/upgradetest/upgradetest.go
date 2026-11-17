@@ -256,14 +256,7 @@ func (f *Fixture) Restore(t testing.TB) {
 		t.Fatalf("upgradetest: %v", err)
 	}
 	t.Cleanup(func() {
-		// Read-only directories would keep RemoveAll from emptying them.
-		_ = filepath.WalkDir(f.Root, func(p string, d fs.DirEntry, err error) error {
-			if err == nil && d.IsDir() {
-				_ = os.Chmod(p, 0o700) //nolint:gosec // a directory of this test
-			}
-			return nil
-		})
-		_ = os.RemoveAll(f.Root)
+		_ = removeTree(f.Root)
 		unlock()
 	})
 	if err := f.restore(); err != nil {
@@ -280,6 +273,22 @@ func (f *Fixture) Reset(t testing.TB) {
 	}
 }
 
+// removeTree removes root and everything under it. Read-only directories
+// keep RemoveAll from emptying them, and a test that runs the go command
+// with the fixture's home leaves a module cache made of them.
+func removeTree(root string) error {
+	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o700) //nolint:gosec // a directory of this test
+		}
+		return nil
+	})
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("remove %s: %w", root, err)
+	}
+	return nil
+}
+
 func (f *Fixture) restore() error {
 	// A run that was killed leaves the directory behind; anything else at
 	// this well-known path is not ours to remove.
@@ -287,7 +296,7 @@ func (f *Fixture) restore() error {
 		if !info.IsDir() || !ownedByUs(info) {
 			return fmt.Errorf("%s exists and is not a directory of this user; remove it", f.Root)
 		}
-		if err := os.RemoveAll(f.Root); err != nil {
+		if err := removeTree(f.Root); err != nil {
 			return fmt.Errorf("remove stale %s: %w", f.Root, err)
 		}
 	} else if !errors.Is(err, fs.ErrNotExist) {
