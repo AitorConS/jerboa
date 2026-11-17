@@ -3,6 +3,7 @@
 package vm
 
 import (
+	"bytes"
 	"errors"
 	"log/slog"
 	"os"
@@ -42,6 +43,23 @@ func processAlive(pid int) bool {
 // for vmID, guarding against PID reuse after the original process died. The
 // VM's QMP socket path is unique per VM and appears on the QEMU command line,
 // so matching it confirms ownership.
+
+// cmdlineOwnsVM reports whether cmdline, the NUL-separated arguments of a
+// process as /proc/<pid>/cmdline holds them, is that of the VMM whose QMP
+// socket is qmpSock (QEMU names it inside its -qmp argument) or whose API
+// socket is fcSock (the argument after Firecracker's --api-sock).
+func cmdlineOwnsVM(cmdline []byte, qmpSock, fcSock string) bool {
+	args := bytes.Split(bytes.TrimRight(cmdline, "\x00"), []byte{0})
+	for i, arg := range args {
+		if qmpSock != "" && bytes.Contains(arg, []byte(qmpSock)) {
+			return true
+		}
+		if fcSock != "" && string(arg) == "--api-sock" && i+1 < len(args) && string(args[i+1]) == fcSock {
+			return true
+		}
+	}
+	return false
+}
 
 // recoverVM decides how to restore a VM the store recorded as running/starting.
 //

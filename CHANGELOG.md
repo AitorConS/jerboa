@@ -130,6 +130,13 @@ Which versions exist, and where:
   project back after it was taken down; and a compose state file that does
   not parse is named in the error.
 
+- **On Linux, VMs that keep running across a daemon restart are fully taken
+  back.** A Firecracker VM whose daemon was killed or restarted outside
+  systemd was recorded as stopped while its VMM went on running, with its
+  volume open and its boot disk deleted under it; it is now re-adopted like a
+  QEMU VM, and `jerboa stop` and `jerboa rm` work on it.
+  The published ports of a re-adopted VM, which refused connections after
+  the restart, answer again. (#293)
 - `jerboa compose down --volumes` removes the stack's volume also after a
   `down` without `--volumes` and a second `up`. The second `up` used to stop
   recording the volume it reused, and nothing in compose removed it again.
