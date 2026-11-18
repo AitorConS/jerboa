@@ -97,7 +97,7 @@ Jerboa on macOS can run VMs with two engines:
 | ARM64 images | Yes | Yes |
 | x86_64 images (emulated) | No | Yes, with `--emulate-x86` |
 | Snapshots | Yes | No |
-| Outbound internet from VMs | Blocked unless you allow it | Allowed |
+| Outbound from VMs | Public internet, not the Mac nor the local network; a policy file changes it | Public internet; the Mac only with `JERBOA_GUEST_HOST_ACCESS=1` |
 | `--cpu-shares` / `--memory-max` | Not supported | Approximate |
 | vCPUs / RAM per VM | 1–8 vCPUs, 64–8192 MiB (what the VMM declares) | No fixed range |
 
@@ -114,10 +114,20 @@ jerboa daemon restart
 Both write the same setting to `~/.jerboa/config.toml`, so the app and the CLI
 always agree.
 
-**Tip:** when the setting is left at its default, the app starts the engine with
-Firecracker but `jerboa daemon start` uses QEMU. If you start the daemon from
-the terminal, set the engine explicitly once with
-`jerboa config set hypervisor firecracker`.
+Left at its default, `auto`, the setting means Firecracker wherever this Mac
+can run it, both in the app and with `jerboa daemon start`, and QEMU
+otherwise. `jerboa daemon status` shows the engine in use and why:
+
+```text
+daemon:   running
+endpoint: unix:///Users/you/.jerboa/jerboad.sock
+version:  0.60.0
+hypervisor: firecracker (...)
+```
+
+When QEMU is in use on a Mac that could run Firecracker (an older
+`hypervisor = "qemu"` in the config), it adds a hint with the command that
+switches: `jerboa config set hypervisor auto`, then restart the daemon.
 
 ## Building images for the Mac
 
@@ -418,7 +428,8 @@ Clear the endpoint override to return to the local engine.
 - The daemon does not start automatically at login.
 - Your Mac cannot connect to VM IPs directly; use published ports.
 - One network per VM.
-- Firecracker blocks outbound traffic by default and cannot emulate x86.
+- Firecracker cannot emulate x86. Its VMs reach the public internet but not
+  the Mac nor the local network unless a policy file allows it.
 - CPU and memory limits are approximate (QEMU) or unavailable (Firecracker).
 - After a daemon crash, running VMs are recovered, but their earlier console
   output is not, and their restart policy no longer applies.

@@ -38,13 +38,22 @@ Endpoint resolution order:
 
 Defaults:
 
-- Linux: `unix:///var/run/jerboad.sock`
+- Linux: `unix:///var/run/jerboad.sock`. A machine set up with `install.sh`
+  does not use this default: the installer runs the daemon on
+  `tcp://127.0.0.1:7890` with a token and writes both to the installing
+  user's `~/.jerboa/config.toml` (see
+  [Getting Started]({% link getting-started.md %}#linux))
+- macOS: `unix://~/.jerboa/jerboad.sock`
 - Windows: `tcp://127.0.0.1:7890` as the configured default, but the client resolves and dials the dedicated WSL2 distro IP when auto-booting the daemon
 
 Authentication token resolution:
 
 1. `JERBOA_AUTH_TOKEN`
 2. `[daemon] token` in `~/.jerboa/config.toml`
+
+`JERBOA_RELEASE_BASE` replaces the release origin (`https://releases.jerboa.dev`)
+that `jerboa version` and `jerboa kernel` read, for a mirror or a staging
+origin. Manifests from it must still carry the release signature.
 
 ---
 
@@ -73,7 +82,12 @@ connections do not survive; snapshots are not portable backups. See
 Create and start a VM from:
 
 - an image reference like `hello:latest`
-- a direct disk image path on the daemon filesystem
+- a disk image path on the daemon's filesystem. This is accepted only from a
+  client connected through the daemon's Unix socket; the path must be
+  absolute, name a regular file, and the file must belong to the calling user
+  (root and the daemon's own user may name any). Over TCP, which is how the
+  Linux installer and Windows connect, it is refused with `image paths are
+  accepted only from local clients; build or pull the image instead`.
 
 Key flags:
 
@@ -92,7 +106,7 @@ Key flags:
 | `-d, --detach` | Detached mode, default `true` |
 | `--network` | Managed network name |
 | `--ip` | Static guest IP, requires `--network`; omitted, the daemon allocates one from the network's subnet |
-| `--health-check` | `tcp:PORT` or `http:PORT:/path` |
+| `--health-check` | `tcp:PORT` or `http:PORT:/path`. Probed every 10 s with a 3 s timeout; 3 failures in a row mark the VM unhealthy. An HTTP probe is healthy on any 2xx or 3xx status and does not follow redirects: a redirect is the answer |
 | `--restart` | `never`, `on-failure`, `always[:max-retries]` |
 | `--verify` | Signature verification mode: `off`, `warn`, `enforce` |
 | `--cpu-shares` | cgroup v2 CPU weight (macOS QEMU: process priority; Firecracker: not supported) |
@@ -289,9 +303,15 @@ Build driver behavior to know:
   `ACTIONS_ID_TOKEN_REQUEST_*`, with which a job requests OIDC tokens.
 - Build steps run in a sandbox: bubblewrap (`bwrap`) on Linux, `sandbox-exec`
   on macOS. A confined step reads the host but writes only to the project
-  directory, the tools' caches (the user cache directory, `~/.npm`,
-  `~/.cargo`, `~/.rustup`, `GOPATH`, `GOCACHE`, `GOMODCACHE`) and a private
-  temporary directory (`TMPDIR`); it cannot read `~/.jerboa`, `~/.aws`,
+  directory, a private temporary directory (`TMPDIR`) and caches that belong
+  to Jerboa, not the tools' own: `npm`, `node-gyp`, `pip`, `go-build`,
+  `go-mod`, `cargo` and `xdg` under `<user cache dir>/jerboa/build-sandbox/`,
+  where the tools are pointed with `npm_config_cache`, `npm_config_devdir`,
+  `PIP_CACHE_DIR`, `GOCACHE`, `GOMODCACHE`, `CARGO_HOME` and
+  `XDG_CACHE_HOME`. Your `~/.npm`, `~/.cargo` and Go caches are therefore
+  neither written nor reused (the first confined build downloads again), and
+  your cargo configuration and registry credentials are copied in. It cannot
+  connect to the daemon's or the VMs' control sockets, and it cannot read `~/.jerboa`, `~/.aws`,
   `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker` or `~/.gnupg`.
   `[build] run` commands have no network unless `[build] network = true`;
   the language tools keep it to fetch dependencies. A step that writes
@@ -772,6 +792,11 @@ The config file supports more fields than the CLI subcommand currently edits. Th
 - `[daemon] distro`
 - `[daemon] jerboad_path`
 - `[daemon] token`
+- `[daemon] metrics_addr`, `ui_addr`, `trace_addr`, `log_format`: what
+  `jerboa daemon start` passes to the daemon it manages. The flags of the same
+  names write them
+- `[daemon] observability_token`: generated when metrics or the dashboard are
+  enabled that way
 
 Those are read by the codepath even though `jerboa config set` does not edit them yet.
 
@@ -840,6 +865,12 @@ The four observability settings are persisted: a later `start` or `restart`
 without them keeps the last values. See
 [Observability]({% link observability.md %}).
 
+`jerboa daemon status` prints whether the daemon answers, its endpoint and
+version, and the hypervisor it runs with the reason it was chosen
+(`hypervisor: firecracker (...)`). When the daemon runs QEMU on a host that
+could run Firecracker, it adds a hint with the command that switches:
+`jerboa config set hypervisor auto`, then restart the daemon.
+
 `jerboa daemon logs` flag:
 
 - `-f, --follow`
@@ -862,6 +893,12 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--hypervisor` | `auto`, `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`; default `auto`: Firecracker where the host can run it, QEMU otherwise) |
 | `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
 | `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
+| `--fc-security` | macOS Firecracker: a JSON policy with the outbound and DNS permissions of guests, replacing the default (public addresses only). See [Using Jerboa on macOS]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker) |
+| `--snapshot-dir` | macOS Firecracker: the private snapshot store |
+| `--snapshot-max-count` | Maximum number of stored snapshots (default `16`; `0` disables the limit) |
+| `--snapshot-max-bytes` | Maximum total bytes of stored snapshots (default 32 GiB; `0` disables the limit) |
+| `--port-publish` | Linux: how published ports reach guests: `auto` (default), `nat`, `nat-lan` or `proxy`. See [Published ports on Linux](#published-ports-on-linux) |
+| `--native-peering` | macOS networks: `auto` (default) links VMs of a network directly when the VMM supports it; `off` sends every frame through the daemon's switch |
 | `--fc-metrics-dir` | Linux only: write each Firecracker VM's device metrics (per-drive bytes, operations, flushes, latency) as JSON lines to `fc-<id>-metrics.json` in this directory, for storage profiling |
 | `--tools-dir` | Toolchain cache/lookup directory (`mkfs`, `boot.img`, `kernel.img`); empty caches under `~/.jerboa/tools` |
 | `--store` | Image store root directory (default `~/.jerboa/images`) |
@@ -877,6 +914,22 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--cluster-token-file` | File (mode `0600`) with the token shared by all cluster nodes (env: `JERBOA_CLUSTER_TOKEN`) |
 | `--insecure-cluster` | Serve gossip without a cluster token (unsafe) |
 | `--join` | Comma-separated seed node addresses to join (e.g. `10.0.0.2:7946,10.0.0.3:7946`) |
+
+Environment the daemon reads:
+
+| Variable | Effect |
+|---|---|
+| `JERBOA_AUTH_TOKEN` | The client auth token, instead of `--auth-token-file` |
+| `JERBOA_OBSERVABILITY_TOKEN`, `JERBOA_CLUSTER_TOKEN` | The tokens of the flags of the same names |
+| `JERBOA_DNS_UPSTREAM` | Resolver that guest questions for names the daemon does not own are forwarded to (default `1.1.1.1:53`). Set it empty to forward nothing |
+| `JERBOA_QEMU_SANDBOX=off` | Linux: run QEMU without its seccomp sandbox. By default QEMU runs with `-sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny` when the binary supports it |
+| `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Off by default |
+| `JERBOA_FIRECRACKER_SECURITY` | macOS: the policy file of `--fc-security`, for a daemon started with `jerboa daemon start` |
+
+Connections are limited before they authenticate: at most 64 handshakes
+pending in total and 8 per peer, 5 seconds to complete one, and a 500 ms delay
+after a failed one. A client beyond the limit is answered `daemon busy: too
+many connections waiting to authenticate; retry shortly`.
 
 Observability and store flags (`--metrics-addr`, `--ui-addr`, `--trace-addr`,
 `--log-format`, `--vm-log-max-bytes`, `--vm-store`) are covered in more detail in
