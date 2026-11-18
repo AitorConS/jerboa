@@ -35,9 +35,11 @@ request itself: a fork can delete them, or add a workflow naming
 `[self-hosted, linux, kvm]`. They document intent; they do not enforce it. What
 enforces it is outside the pull request's reach:
 
-- **Runner job-started hook.** Install `scripts/release/kvm-runner-guard.py` on the
-  runner as its `ACTIONS_RUNNER_HOOK_JOB_STARTED` script, with
-  `JERBOA_KVM_REPOSITORY=AitorConS/jerboa` (see the script's header). Before any step
+- **Runner job-started hook.** Install `scripts/release/kvm-runner-guard.py` and
+  its launcher `kvm-runner-guard.sh` on the runner, with the launcher as the
+  `ACTIONS_RUNNER_HOOK_JOB_STARTED` script (the runner accepts only `.sh`, `.ps1`
+  and `.js` hooks) and `JERBOA_KVM_REPOSITORY=AitorConS/jerboa` (see the
+  script's header). Before any step
   of a job it refuses pull requests whose head is another repository, events other
   than push, pull_request, workflow_dispatch and schedule, and workflows other than
   `main.yml`, `release.yml` and `nightly.yml`. Reinstall it from main when it
