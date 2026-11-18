@@ -37,3 +37,12 @@ func WithFCGuestDNS(fn func([]byte, string) ([]byte, error)) FCOption {
 	return func(m *FirecrackerManager) { m.guestDNS = fn }
 }
 func (m *FirecrackerManager) GuestDNSUpstream() (string, error) { return "", nil }
+
+// RestoreHostRuntime gives the VMs re-adopted from the previous daemon back
+// what lived in that daemon's process: see restoreAdopted.
+func (m *FirecrackerManager) RestoreHostRuntime(ctx context.Context) error {
+	restoreAdopted(ctx, m.store.List(), m.hchecker, func(id string) []string {
+		return []string{m.vmSockPath(id), fcVsockPath(id), fcConfigPath(id), m.vmmLogPath(id), m.rootfsPath(id)}
+	})
+	return nil
+}

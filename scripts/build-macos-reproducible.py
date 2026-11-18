@@ -409,8 +409,14 @@ def build_go(root: pathlib.Path, env: dict, log: Log, lock: dict, version: str) 
                 # No build-root-specific CGO_* flags: their values feed the Go action ID,
                 # hence the build ID and LC_UUID. -trimpath already rewrites cgo paths.
                 CGO_ENABLED="1", GOOS="darwin", GOARCH="arm64", CC="/usr/bin/clang")
+    # A release candidate sets the stable-manifest floor of its binaries (see
+    # release.MinStableGenerated); other builds keep the value in the source.
+    floor = os.environ.get("JERBOA_MIN_STABLE_GENERATED", "")
+    flags = f"-s -w -X main.version={version}"
+    if floor:
+        flags += f" -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated={floor}"
     for name in ("jerboa", "jerboad"):
-        log.run(["go", "build", "-ldflags", f"-s -w -X main.version={version}", "-o", out / name, f"./cmd/{name}"],
+        log.run(["go", "build", "-ldflags", flags, "-o", out / name, f"./cmd/{name}"],
                 genv, cwd=root / "src/jerboa")
     return out
 

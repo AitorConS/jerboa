@@ -146,8 +146,8 @@ func (s *Store) Create(name string, sizeBytes int64) (*Volume, error) {
 // directory is never taken for a volume.
 const stagingPrefix = "."
 
-// SweepStaging removes the staging directories that interrupted creations and
-// imports left behind and returns how many it removed and the bytes they
+// SweepStaging removes the staging directories that interrupted creations,
+// imports and removals left behind and returns how many it removed and the bytes they
 // occupied. A creation or import in progress has a staging directory too, so
 // only those untouched for longer than olderThan are removed; pass 0 only
 // while nothing can be running, such as before the daemon serves requests.
@@ -185,7 +185,7 @@ func (s *Store) stagingDirs() []string {
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() && (strings.HasPrefix(e.Name(), stagingPrefix+"create-") || strings.HasPrefix(e.Name(), stagingPrefix+"import-")) {
+		if e.IsDir() && (strings.HasPrefix(e.Name(), stagingPrefix+"create-") || strings.HasPrefix(e.Name(), stagingPrefix+"import-") || strings.HasPrefix(e.Name(), stagingPrefix+"remove-")) {
 			out = append(out, filepath.Join(s.root, e.Name()))
 		}
 	}
@@ -248,6 +248,17 @@ func (s *Store) Remove(name string) error {
 	}
 	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
 		return fmt.Errorf("volume %q not found", name)
+	}
+	// Renamed out of the way first, so the volume is gone at once or not at
+	// all: deleting it in place, a crash half-way left a name with a record
+	// and no disk. What a crash leaves of the renamed directory is swept
+	// with the other staging directories.
+	// The new name must not exist: renaming a directory over one fails on
+	// macOS. The store is locked, so the time makes it unique.
+	stage := filepath.Join(s.root, fmt.Sprintf("%sremove-%s-%d", stagingPrefix, name, time.Now().UnixNano()))
+	if os.Rename(dir, stage) == nil {
+		durable.SyncDir(s.root)
+		dir = stage
 	}
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("volume remove %s: %w", name, err)

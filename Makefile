@@ -24,12 +24,13 @@ test:
 	go test $(shell go list ./... | grep -v '/kernel/') -race -coverprofile=coverage.out -covermode=atomic
 
 test-integration:
-	go test -tags integration -timeout 10m ./tests/integration/...
+	scripts/run-kvm-tests.sh integration ./tests/integration -test.timeout 10m
 
 test-kernel:
 	$(MAKE) -C kernel/tools vdsogen
 	python3 tests/guest/test_vdsogen.py $(if $(OUTDIR),$(OUTDIR),$(CURDIR)/kernel/output)/tools/bin/vdsogen
 	python3 tests/host/pagecache_eligible/run.py
+	sh tests/host/virtio_net_gso/run.sh
 	@command -v ent >/dev/null || { echo "Fourmilab ent is required (macOS: brew install ent)"; exit 1; }
 	$(MAKE) -C kernel/test/unit test
 	python3 scripts/test-kernel-host-network.py $(if $(OUTDIR),$(OUTDIR),$(CURDIR)/kernel/output)/test/unit/bin
@@ -42,7 +43,7 @@ tidy-check:
 	git diff --exit-code go.mod go.sum || (echo "go.mod/go.sum out of sync — commit the result of 'go mod tidy'" && exit 1)
 
 e2e:
-	go test -tags e2e -timeout 30m ./tests/e2e/...
+	scripts/run-e2e.sh -test.timeout 30m
 
 smoke:
 	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_UNI) ./cmd/jerboa

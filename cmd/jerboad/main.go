@@ -435,6 +435,18 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			return fmt.Errorf("recover snapshot operations: %w", err)
 		}
 	}
+	if runtime.GOOS == "linux" {
+		// Before the re-adopted VMs get their published ports back: kernel
+		// NAT publishes on 127.0.0.1 only while the guard is loaded.
+		if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
+			slog.Warn("jerboad: guest dns address setup failed", "err", err)
+		}
+		// Isolate guest networks from the host's loopback, from each other
+		// and from address spoofing between guests.
+		if err := network.InstallGuard(netconst.DNSAnycastIP); err != nil {
+			slog.Warn("jerboad: guest network guard not installed; guests are not isolated from each other, and published ports use the userspace proxy until it is", "err", err)
+		}
+	}
 	if native, ok := mgr.(interface{ RestoreHostRuntime(context.Context) error }); ok {
 		if err := native.RestoreHostRuntime(ctx); err != nil {
 			return fmt.Errorf("restore native runtime: %w", err)
@@ -570,14 +582,8 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		// setup is best-effort (it is idempotent and usually already in place from a
 		// prior run), and the server starts regardless so a benign "already
 		// assigned" never disables name resolution.
-		if err := network.EnsureDNSAddress(netconst.DNSAnycastIP); err != nil {
-			slog.Warn("jerboad: guest dns address setup failed", "err", err)
-		}
-		// Isolate guest networks from the host's loopback, from each other
-		// and from address spoofing between guests.
-		if err := network.InstallGuard(netconst.DNSAnycastIP); err != nil {
-			slog.Warn("jerboad: guest network guard not installed; guests are not isolated from each other, and published ports use the userspace proxy until it is", "err", err)
-		}
+		// (The address and the guard were set up before the VMs that
+		// outlived the previous daemon got their published ports back.)
 		// A firewall reload ("flush ruleset") removes the guard behind the
 		// daemon: reinstall it, and keep guests off the host's loopback
 		// while it cannot be.
@@ -586,7 +592,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		// restricted/offline environments can point at their own resolver (or set
 		// it empty to disable forwarding).
 		dnsUpstream := "1.1.1.1:53"
-		if v := os.Getenv("JERBOA_DNS_UPSTREAM"); v != "" {
+		if v, set := os.LookupEnv("JERBOA_DNS_UPSTREAM"); set {
 			dnsUpstream = v
 		}
 		dnsSrv := dnsserver.New(scheduler.NewResolver(mgr), dnsUpstream)

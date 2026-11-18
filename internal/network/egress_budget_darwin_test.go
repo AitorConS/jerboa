@@ -74,10 +74,20 @@ func (e *egressStack) send(src [4]byte, srcPort uint16, seq, ack uint32, flags h
 // synAcks collects the SYN-ACKs the gateway sends within d, by destination
 // address and port, with the gateway's sequence number.
 func (e *egressStack) synAcks(d time.Duration) map[tcpip.FullAddress]uint32 {
+	return e.synAcksUntil(d, 0)
+}
+
+// synAcksUntil collects SYN-ACKs for d, or until it has seen want of them
+// when want is not zero: a test that expects a number of answers waits for
+// them as long as a loaded machine needs, not for a fixed time.
+func (e *egressStack) synAcksUntil(d time.Duration, want int) map[tcpip.FullAddress]uint32 {
 	ctx, cancel := context.WithTimeout(context.Background(), d)
 	defer cancel()
 	out := map[tcpip.FullAddress]uint32{}
 	for {
+		if want > 0 && len(out) == want {
+			return out
+		}
 		pkt := e.link.ReadContext(ctx)
 		if pkt == nil {
 			return out
@@ -144,7 +154,7 @@ func TestEgressUnansweredHandshakeIsAbortedAfterItsDeadline(t *testing.T) {
 	for i := range uint16(maxEgressPendingPerVM) {
 		e.send(a, 1000+i, 100, 0, header.TCPFlagSyn)
 	}
-	require.Len(t, e.synAcks(100*time.Millisecond), maxEgressPendingPerVM)
+	require.Len(t, e.synAcksUntil(5*time.Second, maxEgressPendingPerVM), maxEgressPendingPerVM)
 	require.Eventually(t, func() bool {
 		e.pool.mu.Lock()
 		defer e.pool.mu.Unlock()

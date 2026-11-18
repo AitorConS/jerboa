@@ -179,6 +179,17 @@ func addrAlreadyAssigned(out string) bool {
 	return strings.Contains(o, "file exists") || strings.Contains(o, "already assigned")
 }
 
+// tapAlreadyExists reports whether `ip tuntap add` failed because the device
+// is already there. ip asks for the device exclusively, so the kernel answers
+// "Device or resource busy" for an existing tap, not "File exists". A VM
+// whose VMM died with a previous daemon (a restart, an upgrade) left its tap
+// behind, and the VM started again in its place takes it over; a tap that
+// another process really holds is refused when its owner is set, just below.
+func tapAlreadyExists(out string) bool {
+	o := strings.ToLower(out)
+	return strings.Contains(o, "file exists") || strings.Contains(o, "device or resource busy")
+}
+
 // CreateTAPDevice creates a persistent TAP device by name. It is idempotent: a
 // device that already exists is treated as success. Firecracker requires the tap
 // to exist before it opens it; unlike QEMU it does not create taps itself.
@@ -187,7 +198,7 @@ func addrAlreadyAssigned(out string) bool {
 // without the daemon's capabilities, can still open it.
 func CreateTAPDevice(name string) error {
 	out, err := exec.Command("ip", "tuntap", "add", "dev", name, "mode", "tap").CombinedOutput()
-	if err != nil && !strings.Contains(string(out), "File exists") {
+	if err != nil && !tapAlreadyExists(string(out)) {
 		return fmt.Errorf("create tap %s: %w (output: %s)", name, err, strings.TrimSpace(string(out)))
 	}
 	if err := setTAPOwner(name, os.Geteuid()); err != nil {

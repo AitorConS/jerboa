@@ -110,6 +110,10 @@ func TestWatchdog_AFastCallOpensNoSecondConnection(t *testing.T) {
 // connection, not a stuck daemon.
 func TestWatchdog_ADaemonThatGoesAwayIsNotCalledStuck(t *testing.T) {
 	quickWatchdog(t)
+	// The probe must still be waiting when its connection is closed, also on
+	// a machine that stalls for longer than quickWatchdog's 200ms: with the
+	// probe timed out as well, which of the two the call reports is a race.
+	t.Cleanup(api.SetHandshakeTimeout(5 * time.Second))
 	// Each connection is read once and closed shortly after, the call's
 	// and the watchdog's alike.
 	endpoint, _ := fakeDaemon(t, afterRequest(func(net.Conn) { time.Sleep(120 * time.Millisecond) }))

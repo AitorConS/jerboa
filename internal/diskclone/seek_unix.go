@@ -21,7 +21,9 @@ func forEachDataRange(f *os.File, size int64, fn func(start, end int64) error) e
 			if errors.Is(err, unix.ENXIO) {
 				return nil // no data after off: the rest is a hole
 			}
-			if off == 0 && (errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP)) {
+			// ENOTTY is what macOS answers on a filesystem without hole
+			// reporting (HFS+, some network and FUSE mounts).
+			if off == 0 && (errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) || errors.Is(err, unix.ENOTTY)) {
 				return fn(0, size)
 			}
 			return fmt.Errorf("diskclone: seek data: %w", err)

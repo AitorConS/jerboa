@@ -115,7 +115,14 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 					continue
 				}
 				if _, getErr := client.VolumeGet(cmd.Context(), volName); getErr == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, skipping\n", volName)
+					// The name is scoped to this project, so the volume is the
+					// one an earlier up created and a down without --volumes
+					// kept: it stays the stack's, for down --volumes to remove.
+					state.CreatedVolumes = append(state.CreatedVolumes, volName)
+					if err := writeState(composeFile, state); err != nil {
+						return fmt.Errorf("compose: %w", err)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "volume %s already exists, reusing\n", volName)
 					continue
 				} else if !api.IsNotFound(getErr) {
 					return fmt.Errorf("compose up: volume %q: %w", volName, getErr)
@@ -147,7 +154,12 @@ func newComposeUpCmd(socketPath *string) *cobra.Command {
 					continue
 				}
 				if getErr == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "network %s already exists, skipping\n", netName)
+					// As for volumes: left by a down that could not remove it.
+					state.CreatedNetworks = append(state.CreatedNetworks, netName)
+					if err := writeState(composeFile, state); err != nil {
+						return fmt.Errorf("compose: %w", err)
+					}
+					fmt.Fprintf(cmd.OutOrStdout(), "network %s already exists, reusing\n", netName)
 					continue
 				}
 				_, createErr := client.NetworkCreate(cmd.Context(), netName, netCfg.Subnet, driver)
@@ -572,7 +584,7 @@ func readStateFile(path, composeFile string) (compose.State, error) {
 	}
 	var state compose.State
 	if err := json.Unmarshal(data, &state); err != nil {
-		return compose.State{}, fmt.Errorf("parse state: %w", err)
+		return compose.State{}, fmt.Errorf("parse state %s: %w", path, err)
 	}
 	if err := checkState(composeFile, state); err != nil {
 		return compose.State{}, foreign(err.Error())
@@ -675,6 +687,16 @@ func readComposeFile(composeFile string) (compose.File, error) {
 func removeState(composeFile string) error {
 	if err := os.Remove(stateFilePath(composeFile)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("compose: remove state: %w", err)
+	}
+	// A takeover that was interrupted between writing the state here and
+	// removing it from the project directory left a copy there, which would
+	// bring the project back as soon as this one is gone. Only a file that
+	// is this project's state is removed; anything else stays to be reported.
+	legacy := legacyStateFilePath(composeFile)
+	if _, err := readStateFile(legacy, composeFile); err == nil {
+		if err := os.Remove(legacy); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("compose: remove state: %w", err)
+		}
 	}
 	return nil
 }

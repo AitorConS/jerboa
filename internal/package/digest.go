@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/AitorConS/jerboa/internal/durable"
 )
@@ -57,11 +58,25 @@ func fileDigest(path string) ([32]byte, error) {
 	}
 	var sum [32]byte
 	copy(sum[:], h.Sum(nil))
-	// Store only if the file did not change while it was read.
-	if after, err := statID(path); err == nil && after == id {
+	// Store only if the file did not change while it was read, and its
+	// identity can tell a later change apart.
+	if after, err := statID(path); err == nil && after == id && id.settled(time.Now()) {
 		digestCache.Store(key, sum)
 	}
 	return sum, nil
+}
+
+// settleTime is how long a file must have been left alone before its
+// identity is trusted. Filesystems stamp files with a clock that advances in
+// steps (the kernel tick on Linux, up to 10ms): a file written twice within
+// one step, to the same size, keeps the same times, so a digest remembered
+// after the first write would be returned for the second.
+var settleTime = 100 * time.Millisecond
+
+// settled reports whether the file was last changed long enough before now
+// that any change from now on gets different times.
+func (id fileID) settled(now time.Time) bool {
+	return now.UnixNano()-max(id.ModNs, id.ChangeNs) >= settleTime.Nanoseconds()
 }
 
 // FileDigest is fileDigest as a "sha256:<hex>" string, for callers outside

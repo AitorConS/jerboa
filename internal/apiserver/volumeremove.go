@@ -26,6 +26,20 @@ func (s *Server) volumeUnused(disk string) error {
 	}
 	return nil
 }
+
+// volumePathUnmounted is volumeUnused for a disk that no longer exists: no
+// VM may name its path.
+func (s *Server) volumePathUnmounted(disk string) error {
+	for _, v := range s.mgr.List() {
+		for _, mount := range v.Cfg.Volumes {
+			if filepath.Clean(mount.DiskPath) == filepath.Clean(disk) {
+				return fmt.Errorf("volume is referenced by VM %s; remove the VM first", v.ID)
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleVolumeRemove(raw json.RawMessage) (any, *api.RPCError) {
 	s.resourceMu.Lock()
 	defer s.resourceMu.Unlock()
@@ -46,7 +60,14 @@ func (s *Server) handleVolumeRemove(raw json.RawMessage) (any, *api.RPCError) {
 	if p.DiskPath != "" && filepath.Clean(vol.DiskPath) != filepath.Clean(p.DiskPath) {
 		return nil, fail(fmt.Errorf("volume path mismatch"))
 	}
-	if err := s.volumeUnused(vol.DiskPath); err != nil {
+	if _, statErr := os.Stat(vol.DiskPath); os.IsNotExist(statErr) {
+		// A volume that lost its disk (the doctor reports it, with this
+		// command as the remedy) has nothing to compare by inode: it goes
+		// unless a VM still names its path.
+		if err := s.volumePathUnmounted(vol.DiskPath); err != nil {
+			return nil, fail(err)
+		}
+	} else if err := s.volumeUnused(vol.DiskPath); err != nil {
 		return nil, fail(err)
 	}
 	if err := s.volStore.Remove(p.Name); err != nil {

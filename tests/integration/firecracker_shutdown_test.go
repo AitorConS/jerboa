@@ -167,25 +167,19 @@ func TestFirecrackerStopSyncsVolume(t *testing.T) {
 // runner it fails, so the test cannot pass by not running.
 func requireFirecracker(t *testing.T) (string, string) {
 	t.Helper()
-	missing := func(format string, args ...any) {
-		if os.Getenv("CI") != "" {
-			t.Fatalf(format, args...)
-		}
-		t.Skipf(format, args...)
-	}
 	fcBin, err := exec.LookPath("firecracker")
 	if err != nil {
-		missing("firecracker not found in PATH")
+		missing(t, "firecracker not found in PATH")
 	}
 	if f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0); err != nil {
-		missing("/dev/kvm unavailable: %v", err)
+		missing(t, "/dev/kvm unavailable: %v", err)
 	} else {
 		_ = f.Close()
 	}
 	kernel, err := filepath.Abs(filepath.Join("..", "..", "kernel", "output", "platform", "pc", "bin", "kernel.elf"))
 	require.NoError(t, err)
 	if _, err := os.Stat(kernel); err != nil {
-		missing("in-tree Firecracker kernel missing (run make kernel): %v", err)
+		missing(t, "in-tree Firecracker kernel missing (run make kernel): %v", err)
 	}
 	return fcBin, kernel
 }

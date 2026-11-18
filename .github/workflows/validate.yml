@@ -87,6 +87,8 @@ jobs:
       run: go test ./cmd/... ./internal/... -race -shuffle=on -count=1 -coverprofile=coverage.out -covermode=atomic
     - name: Installer platform and verification regressions
       run: python3 scripts/test-install.py
+    - name: Windows installer smoke script regressions
+      run: bash scripts/windows-install-smoke-test.sh
     - name: Coverage summary
       run: go tool cover -func=coverage.out | tail -1
     - name: Enforce coverage threshold (60%)
@@ -188,7 +190,11 @@ jobs:
     - name: Build CLI binaries
       run: make build
     - name: Run integration tests
-      run: go test -tags integration -count=1 -timeout 10m -v ./tests/integration/... ./internal/tools
+      run: |
+        # Through the script: guest networking needs CAP_NET_ADMIN, which
+        # the runner user gets from sudo (see scripts/run-kvm-tests.sh).
+        scripts/run-kvm-tests.sh integration ./tests/integration -test.v -test.timeout 10m
+        go test -tags integration -count=1 -timeout 10m -v ./internal/tools
     # Self-hosted KVM runner: never for pull requests from forks, whose
     # workflow changes it would run. A maintainer pushes such a branch here.
     # A fork can edit these lines, so the runner job-started hook
@@ -230,8 +236,20 @@ jobs:
       run: tar -xzf kernel-linux.tar.gz
     - name: Build CLI binaries
       run: make build
+    # Not a gate: the tests themselves fail, with CI set, for a prerequisite
+    # they need and the runner lacks. This is what to look at when they do.
+    - name: Report E2E prerequisites
+      run: |
+        id
+        grep -E '^Cap(Eff|Amb)' /proc/self/status
+        sudo -n true 2>/dev/null && echo "passwordless sudo: yes" || echo "passwordless sudo: no"
+        for tool in qemu-system-x86_64 firecracker bwrap nft ip gcc; do
+          command -v "$tool" || echo "$tool: NOT FOUND"
+        done
+    # The fast set: every scenario once, the slow and host-level ones
+    # (JERBOA_E2E_SLOW) run nightly.
     - name: Run E2E tests
-      run: go test -tags e2e -count=1 -timeout 30m -v ./tests/e2e/...
+      run: scripts/run-e2e.sh -test.v -test.timeout 30m
     # Self-hosted KVM runner: never for pull requests from forks, whose
     # workflow changes it would run. A maintainer pushes such a branch here.
     # A fork can edit these lines, so the runner job-started hook
@@ -241,6 +259,46 @@ jobs:
     - lint
     - unit-tests
     - kernel-build
+  upgrade-e2e:
+    name: Upgrade from stable
+    environment: kvm
+    runs-on:
+    - self-hosted
+    - linux
+    - kvm
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.4
+        cache: false
+    - name: Check KVM
+      run: |
+        test -e /dev/kvm || (echo "/dev/kvm not found" && exit 1)
+        test -r /dev/kvm && test -w /dev/kvm || (echo "Add runner user to kvm group: sudo usermod -aG kvm \$USER" && exit 1)
+    # A version that is not the stable one, so there is something to upgrade to.
+    - name: Build the binaries under test
+      run: |
+        version="v$(tr -d '[:space:]' < VERSION.md)-ci.${GITHUB_RUN_ID}"
+        echo "UPGRADE_VERSION=$version" >> "$GITHUB_ENV"
+        make build VERSION="$version"
+    # The public installer installs system-wide, so the whole test runs in a
+    # virtual machine made for it; the runner only holds this directory.
+    - name: Install stable, upgrade to this build, go back and forward
+      run: |
+        python3 tests/upgrade/run.py --jerboa dist/jerboa --jerboad dist/jerboad --version "$UPGRADE_VERSION" \
+          --work "$RUNNER_TEMP/upgrade-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+    # Self-hosted KVM runner: never for pull requests from forks, whose
+    # workflow changes it would run. A maintainer pushes such a branch here.
+    # A fork can edit these lines, so the runner job-started hook
+    # (scripts/release/kvm-runner-guard.py) is what enforces it.
+    if: inputs.full && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs:
+    - lint
+    - unit-tests
   release-tests:
     name: Release protocol tests
     runs-on: ubuntu-latest
@@ -254,6 +312,8 @@ jobs:
         cache: true
     - name: Test release and workflow contracts
       run: python3 -m unittest discover -s scripts/release -p "test_*.py"
+    - name: Check the changelog's structure
+      run: python3 scripts/release/changelog.py check
     - name: Lint workflows
       run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 -shellcheck=""
   result:
@@ -269,6 +329,7 @@ jobs:
     - kernel-build
     - integration-tests
     - e2e-tests
+    - upgrade-e2e
     - release-tests
     - kernel-host-tests
     steps:
@@ -278,7 +339,7 @@ jobs:
         import json,os
         jobs=json.loads(os.environ["JOBS"])
         full=os.environ["FULL"]=="true"
-        optional={"kernel-build","kernel-host-tests","integration-tests","e2e-tests"} if not full else set()
+        optional={"kernel-build","kernel-host-tests","integration-tests","e2e-tests","upgrade-e2e"} if not full else set()
         bad={k:v["result"] for k,v in jobs.items() if v["result"]!="success" and not(k in optional and v["result"]=="skipped")}
         if bad and os.environ["FORK"]=="true":
           print("::error::KVM tests do not run for pull requests from forks; a maintainer must push the branch to this repository")

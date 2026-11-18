@@ -217,18 +217,20 @@ func TestEthernetSlowPortHoldsTheSwitchForOneBoundedWait(t *testing.T) {
 	}()
 	frame := make([]byte, 18)
 	binary.BigEndian.PutUint32(frame, 14)
-	var waited time.Duration
+	// Writes that blocked on the port. One bounded wait blocks one write, and
+	// the frames after it are dropped at once; a wait per frame blocks each
+	// write until the port frees a slot, about fifty times in this run. Short
+	// delays are the scheduler's on a loaded machine, so they are not summed.
+	blocked := 0
 	for end := time.Now().Add(10 * ethernetWriteWait); time.Now().Before(end); {
 		began := time.Now()
 		_, err := c.Write(frame)
 		require.NoError(t, err, "a port that drains is not disconnected")
-		if d := time.Since(began); d > time.Millisecond {
-			waited += d
+		if time.Since(began) >= ethernetWriteWait/10 {
+			blocked++
 		}
 	}
-	// One bounded wait plus scheduling slack; a wait per frame would be
-	// close to the whole ten-wait run.
-	require.Less(t, waited, 4*ethernetWriteWait, "the switch waited on the slow port frame after frame")
+	require.Less(t, blocked, 15, "the switch waited on the slow port frame after frame")
 }
 
 // A port that keeps up under backpressure loses nothing.

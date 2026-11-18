@@ -209,7 +209,7 @@ networks:
                     except Exception:pass
                 try:
                     for v in json.loads(cli('ps','--output','json')):
-                        try:cli('kill',v['id'])
+                        try:cli('stop','--force',v['id'])
                         except Exception:pass
                 except Exception:pass
                 daemon.terminate()
