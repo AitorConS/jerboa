@@ -66,7 +66,10 @@ func setNestedVirtualization(content string) (string, bool) {
 	// like Notepad add one. Writing back without it is harmless — WSL reads either.
 	// Keep the original so a no-op returns the file's content untouched.
 	original := content
-	content = strings.TrimPrefix(content, bom)
+	// Every leading mark goes, not only the first: a file that picked up two
+	// would otherwise hide its header again on the next pass and gain a second
+	// [wsl2] section.
+	content = strings.TrimLeft(content, bom)
 	lines := strings.Split(content, "\n")
 	inWSL2 := false
 	wsl2Start := -1 // index of the [wsl2] header line, -1 until found

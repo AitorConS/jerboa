@@ -279,6 +279,7 @@ jobs:
       run: |
         set -euo pipefail
         targets=()
+        failed=()
         for pkg in $(go list ./cmd/... ./internal/...); do
           for fn in $(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
             targets+=("${pkg} ${fn}")
@@ -291,9 +292,17 @@ jobs:
         for target in "${targets[@]}"; do
           read -r pkg fn <<<"$target"
           echo "::group::fuzz ${fn} (${pkg})"
-          go test -run '^$' -fuzz "^${fn}$" -fuzztime="${each}s" "$pkg"
+          # One target that fails does not hide the ones after it: every
+          # target runs, and the job fails at the end naming them all.
+          if ! go test -run '^$' -fuzz "^${fn}$" -fuzztime="${each}s" "$pkg"; then
+            failed+=("${fn} (${pkg})")
+          fi
           echo "::endgroup::"
         done
+        if [ "${#failed[@]}" -gt 0 ]; then
+          printf '::error::fuzz target failed: %s\n' "${failed[@]}"
+          exit 1
+        fi
     - name: Upload any fuzz crashers
       if: failure()
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
