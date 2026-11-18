@@ -24,6 +24,8 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-18
+
 ### Changed
 
 - **`jerboa build` no longer lets a project relax its own build sandbox.** A
@@ -1027,6 +1029,7 @@ release.
 - Windows support through WSL2, and `uni upgrade`.
 
 [Unreleased]: https://github.com/AitorConS/jerboa/commits/main
+[0.60.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.60.0
 [0.59.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.59.0
 [0.58.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.58.0
 [0.57.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.57.0
