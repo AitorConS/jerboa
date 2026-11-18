@@ -113,6 +113,9 @@ write_marker http://127.0.0.1:18081 api-before-upgrade
 api_id="$(jerboa inspect api | jq -r .id)"
 ls /srv/app/.jerboa-compose-*.json >/dev/null 2>&1 || ls /root/.jerboa/compose/*.json >/dev/null 2>&1 \
 	|| fail "compose up left no state"
+# Releases before 0.60.0 keep the compose state next to the compose file.
+old_compose_beside=no
+if ls /srv/app/.jerboa-compose-*.json >/dev/null 2>&1; then old_compose_beside=yes; fi
 snapshot "${work}/before"
 [ "$(jq length "${work}/before/vms.json")" -eq 2 ] || fail "expected two VMs before the upgrade"
 
@@ -218,15 +221,22 @@ bash "${work}/stable-install.sh" --version "${old_version}"
 systemctl is-active --quiet jerboad || fail "${old_version} does not start on the state ${new_version} left"
 snapshot "${work}/downgraded"
 same_state "${work}/upgraded" "${work}/downgraded" "across the downgrade"
-# The old CLI looks for the compose state next to the compose file, where it
-# no longer is: it must say so, and its down must not act on anything.
-if (cd /srv/app && jerboa compose ps compose.yaml) > "${work}/old-compose.log" 2>&1; then
-	fail "${old_version} lists a project whose state it cannot see: $(cat "${work}/old-compose.log")"
+if [ "${old_compose_beside}" = yes ]; then
+	# The old CLI looks for the compose state next to the compose file, where it
+	# no longer is: it must say so, and its down must not act on anything.
+	if (cd /srv/app && jerboa compose ps compose.yaml) > "${work}/old-compose.log" 2>&1; then
+		fail "${old_version} lists a project whose state it cannot see: $(cat "${work}/old-compose.log")"
+	fi
+	grep -q "read state" "${work}/old-compose.log" || fail "${old_version} failed on the compose project without saying why: $(cat "${work}/old-compose.log")"
+	(cd /srv/app && jerboa compose down compose.yaml --volumes) >/dev/null 2>&1 || true
+	snapshot "${work}/downgraded-after"
+	same_state "${work}/upgraded" "${work}/downgraded-after" "by a refused compose down"
+else
+	# The old CLI keeps the compose state where the new one does: it still
+	# manages the project.
+	(cd /srv/app && jerboa compose ps compose.yaml --output json) | jq -e '.[] | select(.service == "api")' >/dev/null \
+		|| fail "${old_version} no longer manages the compose project after the downgrade"
 fi
-grep -q "read state" "${work}/old-compose.log" || fail "${old_version} failed on the compose project without saying why: $(cat "${work}/old-compose.log")"
-(cd /srv/app && jerboa compose down compose.yaml --volumes) >/dev/null 2>&1 || true
-snapshot "${work}/downgraded-after"
-same_state "${work}/upgraded" "${work}/downgraded-after" "by a refused compose down"
 
 step "5a. forward again: nothing was lost on the way"
 upgrade
