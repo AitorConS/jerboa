@@ -428,7 +428,7 @@ func requireNestedVirtEnabled(t *testing.T, content string) {
 // arbitrary files: the result enables the setting and a second pass is a
 // no-op, so repeated installs never keep growing or rewriting the file.
 func FuzzSetNestedVirtualization(f *testing.F) {
-	for _, seed := range []string{"", "[wsl2]\n", "[wsl2]\nnestedVirtualization=false\n", "[a]\n[wsl2]\n[b]\n", bom + "[wsl2]\r\n", "nestedVirtualization=true", "[wsl2]\nNESTEDVIRTUALIZATION = True \n", "[wsl2]\n=\n", "[]\n", "[wsl2]]\n"} {
+	for _, seed := range []string{"", "[wsl2]\n", "[wsl2]\nnestedVirtualization=false\n", "[a]\n[wsl2]\n[b]\n", bom + "[wsl2]\r\n", bom + bom + "[wsl2]", "nestedVirtualization=true", "[wsl2]\nNESTEDVIRTUALIZATION = True \n", "[wsl2]\n=\n", "[]\n", "[wsl2]]\n"} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, input string) {
