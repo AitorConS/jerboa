@@ -172,7 +172,7 @@ def main():
                             "restarted_host": restarted_tree})
         finally:
             if vm:
-                subprocess.run([str(BIN / "jerboa"), "kill", vm], env=env, capture_output=True, timeout=10)
+                subprocess.run([str(BIN / "jerboa"), "stop", "--force", vm], env=env, capture_output=True, timeout=10)
             daemon.terminate()
             try: daemon.wait(timeout=10)
             except subprocess.TimeoutExpired:
