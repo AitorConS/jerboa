@@ -33,6 +33,12 @@ python3 scripts/test-firecracker-network.py
 JERBOA_TEST_GO="$(command -v go)" JERBOA_TEST_OUTPUT="$work/stats" python3 scripts/test-firecracker-stats.py
 python3 scripts/test-jerboa-snapshots.py --bin-dir "$res/bin" --firecracker-bin "$res/bin/firecracker" \
   --tools-dir "$res/bin/tools" --go-bin "$(command -v go)" --output-dir "$work/snapshots"
+# A suite that passes and leaves a VM of the candidate running did not clean up.
+if left=$(pgrep -fl "$work/app/"); then
+  echo "Processes of the candidate app are still running:" >&2; echo "$left" >&2
+  pkill -f "$work/app/" || true
+  exit 1
+fi
 python3 - "$archive" "$candidate_run" "$version" "$report" <<'PY'
 import datetime,hashlib,json,pathlib,sys
 archive,run,version,out=sys.argv[1:]

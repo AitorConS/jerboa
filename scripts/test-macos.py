@@ -197,11 +197,11 @@ def main():
             finally:
                 try:
                     for item in json.loads(cli('ps','--output','json')):
-                        try:cli('kill',item['id'])
+                        try:cli('stop','--force',item['id'])
                         except Exception:pass
                 except Exception:
                     if vm:
-                        try:cli('kill',vm)
+                        try:cli('stop','--force',vm)
                         except Exception:pass
                 daemon.terminate()
                 try:daemon.wait(10)
