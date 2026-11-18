@@ -11,6 +11,9 @@ work=$(mktemp -d)
 engine_pid=
 cleanup() {
   if [ -n "$engine_pid" ]; then kill "$engine_pid" 2>/dev/null || true; wait "$engine_pid" 2>/dev/null || true; fi
+  # Also when a suite failed: nothing of the candidate keeps running once its
+  # files are gone.
+  pkill -f "$work/app/" 2>/dev/null || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -34,9 +37,10 @@ JERBOA_TEST_GO="$(command -v go)" JERBOA_TEST_OUTPUT="$work/stats" python3 scrip
 python3 scripts/test-jerboa-snapshots.py --bin-dir "$res/bin" --firecracker-bin "$res/bin/firecracker" \
   --tools-dir "$res/bin/tools" --go-bin "$(command -v go)" --output-dir "$work/snapshots"
 # A suite that passes and leaves a VM of the candidate running did not clean up.
+# A process on its way out is given a moment before it counts as left behind.
+for _ in 1 2 3 4 5; do pgrep -f "$work/app/" >/dev/null || break; sleep 1; done
 if left=$(pgrep -fl "$work/app/"); then
   echo "Processes of the candidate app are still running:" >&2; echo "$left" >&2
-  pkill -f "$work/app/" || true
   exit 1
 fi
 python3 - "$archive" "$candidate_run" "$version" "$report" <<'PY'

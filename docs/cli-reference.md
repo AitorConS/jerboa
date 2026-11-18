@@ -814,8 +814,9 @@ dedicated WSL2 distro that hosts the daemon, with every command below. On
 macOS it manages the native daemon and has `start`, `stop`, `restart`,
 `status` and `logs` only: the Desktop app installs and removes it (see
 [Using Jerboa on macOS]({% link macos-guide.md %}#the-daemon)). On Linux the
-daemon is a systemd service, managed with `systemctl`; the subcommands
-only report that they are not available there.
+daemon is a systemd service, managed with `systemctl` and read with
+`journalctl -u jerboad`: `daemon status` still reports whether it answers,
+and the other subcommands say they are not available there.
 
 ### `jerboa daemon install`
 

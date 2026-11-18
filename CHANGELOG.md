@@ -30,6 +30,11 @@ Which versions exist, and where:
   could keep the digest of its first contents, so a build could miss the
   change. Digests are now remembered only for files left alone for at least
   100 ms.
+- On Linux, `jerboa daemon logs` said there was no log yet and to run
+  `jerboa daemon start`, which does not exist there. It now says the daemon
+  is a systemd service and names `journalctl -u jerboad` (#306).
+- On Windows, a `.wslconfig` that began with two byte-order marks gained
+  another `[wsl2]` section on every install (#303).
 
 ## [0.60.0] - 2026-11-18
 
