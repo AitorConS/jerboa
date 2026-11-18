@@ -706,7 +706,7 @@ DNS names. Traffic between VMs on a network and published ports still work.
 
 **Fix**: allow the exact destinations in a policy file and restart the daemon
 with it. See
-[Allowing internet access]({% link macos-guide.md %}#allowing-internet-access-firecracker).
+[Allowing internet access]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker).
 
 ### Cannot connect to the VM's IP from the Mac
 
