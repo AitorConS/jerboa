@@ -423,9 +423,27 @@ jerboa compose down stack.yaml --volumes
 
 ---
 
+## Checking and cleaning up
+
+```bash
+jerboa doctor                   # is this machine, the daemon and its data in order?
+jerboa system df                # disk space by kind, and how much nothing uses
+jerboa system prune --dry-run   # what a cleanup would remove
+jerboa system prune             # remove what nothing refers to any more
+```
+
+`doctor` changes nothing and says what to do about each problem. `system
+prune` removes only what you can no longer name unless you add `--vms`, `-a`
+or `--volumes`; it lists what it will remove and asks first. See
+[Maintenance commands]({% link cli-reference.md %}#maintenance-commands).
+
+---
+
 ## Updating
 
-Update CLI and daemon together for 0.51.2: this release uses wire protocol 2.
+Update the CLI and the daemon together: they must speak the same wire protocol
+(3 today), and the CLI reports a mismatch instead of sending commands the
+daemon would misread.
 Before upgrading existing Compose stacks, follow the [stack migration instructions]({% link compose.md %}#upgrading-existing-stacks).
 
 The CLI has no self-update command. How you update depends on the platform:

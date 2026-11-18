@@ -283,6 +283,11 @@ jerboa run service:latest -v service-data:/data -p 127.0.0.1:8080:8080
 With Firecracker a VM can mount up to three volumes. Disk IOPS and throughput
 limits are supported by both engines.
 
+`jerboa system df` shows how much disk the daemon's images, VMs, volumes and
+build cache take, and `jerboa system prune` removes what nothing uses any
+more. `jerboa doctor` checks the installation and the stored data. See
+[Maintenance commands]({% link cli-reference.md %}#maintenance-commands).
+
 ## Stopping VMs
 
 `jerboa stop` asks the guest to shut down, like pressing a power button. Your

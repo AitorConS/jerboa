@@ -435,6 +435,8 @@ Supported package sources (`--source`, default `ops`):
 - `jerboa` — the first-party index; also where `pkg create` and
   `pkg from-docker` store their local packages
 
+`pkg list` and `pkg search` print JSON with `--output-json`.
+
 `pkg from-docker` flags:
 
 - `--file <path>` — the binary inside the image to package. **Optional**: when
@@ -642,6 +644,8 @@ Current behavior to know:
 - `compose down` stops **and removes** the stack's service VMs (no stopped
   remnants left behind), and removes the networks it created
 - `compose down --volumes` additionally removes volumes created by that stack
+- `compose down --force` sends SIGKILL at once instead of stopping the
+  services gracefully, as `jerboa stop --force` does
 - each compose file has its own state, identified by its canonical path and
   kept under `~/.jerboa/compose`; a state file found next to the compose file is
   used only if it passes the checks in [compose.md](compose.md)
@@ -821,9 +825,19 @@ Flags:
 ### `jerboa daemon status`
 ### `jerboa daemon logs`
 
-Daemon start/restart flag:
+`jerboa daemon start` and `jerboa daemon restart` flags:
 
-- `--hypervisor auto|qemu|firecracker`
+| Flag | Description |
+|---|---|
+| `--hypervisor auto\|qemu\|firecracker` | Hypervisor to run; defaults to the configured one, then `auto` |
+| `--metrics-addr <addr>` | Serve Prometheus metrics on this address (e.g. `127.0.0.1:9090`) |
+| `--ui-addr <addr>` | Serve the dashboard on this address (e.g. `127.0.0.1:8080`) |
+| `--trace-addr <addr>` | Export OTLP traces to this address |
+| `--log-format text\|json` | Daemon log format |
+
+The four observability settings are persisted: a later `start` or `restart`
+without them keeps the last values. See
+[Observability]({% link observability.md %}).
 
 `jerboa daemon logs` flag:
 
