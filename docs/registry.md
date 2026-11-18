@@ -105,7 +105,7 @@ jerboa registry signers                         # what is remembered
 jerboa registry signers forget aitorcons/web
 ```
 
-An unsigned image of a repository with nothing remembered pulls as before; `--verify` refuses it. A pull that fails the check removes the image it pulled. Check an image without pulling it:
+An unsigned image of a repository with nothing remembered pulls as before; `--verify` refuses it. The check comes first: a pull that fails it downloads nothing and leaves the image store as it was. Check an image without pulling it:
 
 ```sh
 jerboa registry verify aitorcons/web:v1

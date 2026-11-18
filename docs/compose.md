@@ -50,8 +50,39 @@ volumes:
     size: 1G
 ```
 
+A service can also be reached under other names, and attach to a network
+with the long form:
+
+```yaml
+services:
+  db:
+    image: postgres:latest
+    networks:
+      app:
+        aliases: [database, primary]   # extra names for the service
+        ipv4_address: 10.100.0.20      # same as `ip:` on the service
+
+networks:
+  app:
+    ipam:
+      config:
+        - subnet: 10.100.0.0/24  # same as `subnet:` on the network
+```
+
+With the short form (`networks: [app]`), write the names as `aliases:
+[database]` on the service itself. A network takes one IPv4 subnet. `ipam.config[].gateway` is rejected: the
+gateway is always the first host of the subnet. An alias shared by several
+services is answered with all of them (see
+[Service Discovery]({% link getting-started.md %}#service-discovery-guest-dns)).
+
+A `health_check` is probed every 10 seconds with a 3-second timeout, and
+three failures in a row mark the service unhealthy. An HTTP check passes on
+any 2xx or 3xx status and does not follow redirects.
+
 An `image:` that is a file path (`./disk.img`, or a file next to the compose
 file) is resolved relative to the compose file, not the current directory.
+The daemon accepts a path only from a client on its Unix socket and for a
+file the caller owns; see [`jerboa run`]({% link cli-reference.md %}#jerboa-run-image).
 
 ## What The Parser Enforces
 

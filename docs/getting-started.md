@@ -91,11 +91,45 @@ To build from source, see [Firecracker on macOS]({% link macos-firecracker.md %}
 For a native Linux host, the repo ships a one-shot installer:
 
 ```bash
-sudo scripts/install.sh
+curl -fsSL https://jerboa.dev/install.sh | sudo bash
 jerboa status
 ```
 
-That path provisions the Linux-side runtime, including the daemon service.
+From a checkout, `sudo scripts/install.sh` is the same script. It takes
+`--version latest|X.Y.Z` (default `latest`) and needs Debian or Ubuntu with
+systemd on x86_64.
+
+What it sets up:
+
+- `jerboa` and `jerboad`, checked against the release's signed manifest, plus
+  QEMU and Firecracker
+- a system user `jerboa` (home `/var/lib/jerboa`, in the `kvm` group when the
+  host has `/dev/kvm`) that the daemon runs as: it is not root, and it holds
+  only the network capabilities it needs (`CAP_NET_ADMIN`, `CAP_NET_RAW`,
+  `CAP_NET_BIND_SERVICE`)
+- the service `jerboad.service`, listening on `tcp://127.0.0.1:7890`. Because
+  every local process can reach loopback, the daemon requires a token, kept in
+  `/etc/jerboa/daemon.env` (`0640`, `root:jerboa`)
+- `~/.jerboa/config.toml` for the user who ran `sudo`, with that endpoint and
+  token, so `jerboa` works at once. An existing config file is left untouched:
+  set `[daemon] endpoint` and `token` in it yourself. Other users of the
+  machine need the same two lines
+
+Environment variables change the defaults:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HYPERVISOR` | `auto` | `auto` picks Firecracker where `/dev/kvm` exists and QEMU otherwise; `firecracker` fails without KVM; `qemu` |
+| `JERBOA_PORT` | `7890` | The daemon's loopback TCP port |
+| `FIRECRACKER_VERSION`, `FC_ARCH` | `v1.17.0`, `x86_64` | The Firecracker release to install. Anything other than the defaults also needs `FIRECRACKER_SHA256`, the SHA-256 of its archive |
+| `RELEASE_BASE` | `https://releases.jerboa.dev` | The release origin |
+
+```bash
+curl -fsSL https://jerboa.dev/install.sh | sudo HYPERVISOR=qemu JERBOA_PORT=7900 bash
+```
+
+Read the daemon's log with `journalctl -u jerboad`, and restart it with
+`sudo systemctl restart jerboad`.
 
 If you are building from source instead:
 
@@ -133,11 +167,16 @@ instead of downloading the release artifact from the signed manifest.
 
 ### Linux daemon
 
-Typical native daemon start:
+A machine set up with the installer already runs the daemon as a service (see
+[Install](#linux)); nothing below is needed there. To run a daemon by hand,
+for instance one built from source:
 
 ```bash
 sudo jerboad --host unix:///var/run/jerboad.sock
 ```
+
+A second daemon pointed at an endpoint that another one is serving refuses to
+start (`a daemon is already listening on ...`).
 
 Useful daemon flags:
 
@@ -317,6 +356,10 @@ elsewhere.
 
 ### Network isolation (Linux)
 
+Guests on Linux are IPv4 only: a network's bridge has IPv6 and router
+advertisements turned off, and frames that are neither IPv4 nor ARP are
+dropped.
+
 VMs join only networks created with `jerboa network create`. On Linux the
 daemon installs nftables rules (tables `inet jerboa_guard` and
 `bridge jerboa_guard`) that keep guests away from the host's `127.0.0.1`, stop
@@ -372,8 +415,16 @@ How it works:
   the caller's network (VM name, ID or alias, shared aliases included) is
   answered by the daemon for every record type and never forwarded: a type
   the VM has no record of gets an empty answer
-- names the daemon does not own are forwarded to an upstream resolver, so
-  ordinary internet lookups still work. A guest can have a limited number of
+- a name that several running VMs share, such as an alias given to every
+  replica of a service, is answered with all their addresses, in an order
+  that rotates between questions and with at most 16 per answer
+- a name can carry the caller's own network: from a VM on `app`, `db.app` is
+  `db`, with the network name as you wrote it (in a compose file too). The
+  suffix never reaches into another network
+- names the daemon does not own are forwarded to an upstream resolver
+  (`1.1.1.1:53`), so ordinary internet lookups still work. Start the daemon
+  with `JERBOA_DNS_UPSTREAM=<host:port>` to use another resolver, or with the
+  variable set empty to forward nothing, for a host without internet access. A guest can have a limited number of
   forwarded questions outstanding; beyond that its further forwarded questions
   are dropped (DNS clients retry), while names of its network are still
   answered
