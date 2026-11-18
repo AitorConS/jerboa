@@ -567,7 +567,7 @@ def assemble():
                 source = Path('dist') / name; key = f'{component}/{v}/{name}'
                 stage(zstd_variant(source, root / 'zst' / (name + '.zst')), key + ZSTD_SUFFIX)
             components[component]['platforms'][platform] = stage(source, key)
-    components['distro'] = {'version': v, 'kernel': spec['kernel_version'], **stage('distro/jerboa-rootfs-amd64.tar.gz', f'distro/{v}/jerboa-rootfs-amd64.tar.gz')}
+    components['distro'] = {'version': v, 'kernel': spec['kernel_version'], **stage('distro-rootfs/jerboa-rootfs-amd64.tar.gz', f'distro/{v}/jerboa-rootfs-amd64.tar.gz')}
     # Keep bootstrap bytes in the signed candidate inventory; promotion must
     # never read an installer from a newer checkout.
     stage(pin_installer(Path('scripts/install.sh'), root / 'install.sh', manifest['generated']), f'releases/{v}/install.sh')
