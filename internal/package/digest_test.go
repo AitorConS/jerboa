@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +37,8 @@ func TestSaveAndSeedDigests(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "elsewhere")
 	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o644))
 	files := []File{{HostPath: a, GuestPath: "bin/app"}, {HostPath: outside}, {GuestPath: "data", IsDir: true}}
+	// Digests are remembered only for files left alone for settleTime.
+	time.Sleep(settleTime + 50*time.Millisecond)
 	for _, f := range files[:2] {
 		_, err := fileDigest(f.HostPath)
 		require.NoError(t, err)
@@ -64,4 +67,34 @@ func TestSaveAndSeedDigests(t *testing.T) {
 	_, ok = digestCache.Load(digestKey{a, id})
 	require.False(t, ok)
 	require.False(t, archiveVerified(dir, "abc", files[:1]))
+}
+
+// A file written a moment ago may be written again with the same size and get
+// the same times, so its digest is not remembered: the next call reads it.
+func TestFileDigestIsNotRememberedForAFileJustWritten(t *testing.T) {
+	resetDigestCache()
+	p := filepath.Join(t.TempDir(), "f")
+	require.NoError(t, os.WriteFile(p, []byte("one"), 0o644))
+	_, err := fileDigest(p)
+	require.NoError(t, err)
+	id, err := statID(p)
+	require.NoError(t, err)
+	_, ok := digestCache.Load(digestKey{p, id})
+	require.False(t, ok, "a digest was remembered %v after the file was written", settleTime)
+	require.NoError(t, SaveDigests(filepath.Dir(p), []File{{HostPath: p}}, ""))
+	require.Empty(t, readDigestIndex(filepath.Dir(p)).Files, "nor is it saved for other processes")
+
+	time.Sleep(settleTime + 50*time.Millisecond)
+	_, err = fileDigest(p)
+	require.NoError(t, err)
+	_, ok = digestCache.Load(digestKey{p, id})
+	require.True(t, ok, "a file left alone is remembered")
+}
+
+func TestFileIDSettled(t *testing.T) {
+	now := time.Unix(1000, 0)
+	at := func(d time.Duration) int64 { return now.Add(d).UnixNano() }
+	require.True(t, fileID{ModNs: at(-settleTime), ChangeNs: at(-time.Hour)}.settled(now))
+	require.False(t, fileID{ModNs: at(-time.Hour), ChangeNs: at(-settleTime + 1)}.settled(now), "the later of the two times counts")
+	require.False(t, fileID{ModNs: at(time.Minute)}.settled(now), "a time in the future is not settled")
 }

@@ -24,6 +24,13 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Fixed
+
+- A package file rewritten twice within a few milliseconds to the same size
+  could keep the digest of its first contents, so a build could miss the
+  change. Digests are now remembered only for files left alone for at least
+  100 ms.
+
 ## [0.60.0] - 2026-11-18
 
 ### Changed
