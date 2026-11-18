@@ -138,7 +138,11 @@ jobs:
         go-version: 1.27.4
         cache: false
     - name: Run benchmarks
-      run: go test ./... -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
+      # -run '^$': benchmarks only. Without it every unit test of the repository
+      # also ran three times here and the job never finished in its time.
+      run: |
+        set -o pipefail
+        go test ./... -run '^$' -bench=. -benchmem -benchtime=5s -count=3 | tee benchmark-results.txt
     - name: Upload benchmark results
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
       with:
@@ -259,7 +263,7 @@ jobs:
   fuzz-extended:
     name: Fuzz (extended)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -268,15 +272,27 @@ jobs:
       with:
         go-version: 1.27.4
         cache: true
-    - name: Fuzz every target for several minutes
+    # The targets share a fixed budget, so the job takes the same time however
+    # many there are: three minutes each stopped fitting long ago, and the job
+    # was cancelled every night after the first few.
+    - name: Fuzz every target within a shared budget
       run: |
         set -euo pipefail
+        targets=()
         for pkg in $(go list ./cmd/... ./internal/...); do
           for fn in $(go test -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true); do
-            echo "::group::fuzz ${fn} (${pkg})"
-            go test -run '^$' -fuzz "^${fn}$" -fuzztime=3m "$pkg"
-            echo "::endgroup::"
+            targets+=("${pkg} ${fn}")
           done
+        done
+        [ "${#targets[@]}" -gt 0 ] || { echo "::error::no fuzz target found"; exit 1; }
+        each=$(( 2400 / ${#targets[@]} ))
+        [ "$each" -ge 10 ] || each=10
+        echo "${#targets[@]} targets, ${each}s each"
+        for target in "${targets[@]}"; do
+          read -r pkg fn <<<"$target"
+          echo "::group::fuzz ${fn} (${pkg})"
+          go test -run '^$' -fuzz "^${fn}$" -fuzztime="${each}s" "$pkg"
+          echo "::endgroup::"
         done
     - name: Upload any fuzz crashers
       if: failure()
