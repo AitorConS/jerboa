@@ -79,6 +79,13 @@ func TestDaemonLogs_Missing(t *testing.T) {
 	cmd.SetErr(&buf)
 	err := cmd.RunE(cmd, nil)
 	require.Error(t, err)
+	if runtime.GOOS == "linux" {
+		// There is no launch log on Linux: the daemon is a service, and the
+		// answer names where its log is instead of a command that is not there.
+		require.Contains(t, err.Error(), "journalctl -u jerboad")
+		require.NotContains(t, err.Error(), "jerboa daemon start")
+		return
+	}
 	require.Contains(t, err.Error(), "no log yet")
 }
 
