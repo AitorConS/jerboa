@@ -94,7 +94,11 @@ func TestFileDigestIsNotRememberedForAFileJustWritten(t *testing.T) {
 func TestFileIDSettled(t *testing.T) {
 	now := time.Unix(1000, 0)
 	at := func(d time.Duration) int64 { return now.Add(d).UnixNano() }
-	require.True(t, fileID{ModNs: at(-settleTime), ChangeNs: at(-time.Hour)}.settled(now))
-	require.False(t, fileID{ModNs: at(-time.Hour), ChangeNs: at(-settleTime + 1)}.settled(now), "the later of the two times counts")
+	require.True(t, fileID{ModNs: at(-time.Hour), ChangeNs: at(-settleTime)}.settled(now))
+	require.False(t, fileID{ModNs: at(-time.Hour), ChangeNs: at(-settleTime + 1)}.settled(now), "the change time decides")
+	require.True(t, fileID{ModNs: at(time.Minute), ChangeNs: at(-time.Hour)}.settled(now),
+		"a modification time set in the future does not keep a file from being remembered")
+	require.True(t, fileID{ModNs: at(-settleTime)}.settled(now), "without a change time the modification time decides")
+	require.False(t, fileID{ModNs: at(-settleTime + 1)}.settled(now))
 	require.False(t, fileID{ModNs: at(time.Minute)}.settled(now), "a time in the future is not settled")
 }

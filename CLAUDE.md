@@ -51,7 +51,7 @@ Rank what you find in this order.
 - Every error is handled or returned with context (`fmt.Errorf("...: %w", err)`). A discarded error needs a reason in a comment.
 - Concurrency: shared state has one owner or one lock; a goroutine has a way to stop; a context is passed down and respected; nothing sleeps to wait for another goroutine.
 - Lifecycle operations (start, stop, restore, remove) are safe to run against each other and to repeat. Two of them racing must leave exactly one winner and a clear error for the other.
-- Behaviour is the same on Linux, macOS and Windows/WSL unless the change says otherwise. Paths, signals, file modes and process trees differ; a change that only considers one platform is incomplete.
+- Code shared by Linux, macOS and Windows/WSL behaves the same on all three unless the change says otherwise. Paths, signals, file modes and process trees differ; a change to shared code that only considers one platform is incomplete. Networking, the daemon lifecycle and snapshots are platform-specific by design: do not ask for parity there.
 - Limits: sizes, counts and durations that come from outside are bounded before they are used to allocate, loop or wait.
 
 ### 2. Security
@@ -68,13 +68,13 @@ another process could have written.
 - The daemon socket and the files under the data directory keep their permissions. A change that widens who can reach either needs to say why.
 - Network exposure does not grow silently: a new listener, a wider bind address or a relaxed firewall rule is a finding unless the pull request states it as the purpose.
 - New dependencies are a decision, not a detail. Ask what they replace, who maintains them, and whether the standard library would do.
-- Workflows: third-party actions are pinned to a commit SHA; `permissions` are the minimum the job needs; nothing from a pull request (titles, branch names, file contents) is interpolated into a `run` script; secrets and protected environments are not reachable from code a fork controls. `scripts/release/test_workflows.py` holds these rules, and a change that weakens one of its assertions is a finding.
+- Workflows: third-party actions are pinned to a commit SHA; `permissions` are the minimum the job needs; nothing from a pull request (titles, branch names, file contents) is interpolated into a `run` script; secrets and protected environments are not reachable from code a fork controls. `scripts/release/test_workflows.py` asserts the part of this that concerns the self-hosted runners and the signing secrets (fork isolation, which jobs reach the secrets, pinned release inputs); a change that weakens one of its assertions is a finding. The rest is checked by reading the workflow.
 
 ### 3. State and failure
 
 Jerboa must survive a crash, a full disk and a killed daemon at any instant.
 
-- State files are written with `internal/durable` (`WriteFile`), never with a hand-made rename. `os.WriteFile` is for files nobody reads back after a crash.
+- State files are written with `internal/durable`, never with a hand-made rename: `WriteFile` for state, `WriteFileNoSync` for a cache that can be rebuilt. `os.WriteFile` is for files nobody reads back after a crash.
 - After any interruption the state on disk is the old one or the new one, never a mix, and the daemon recovers on start without the user repairing anything. Temporary and staging files are cleaned up on recovery.
 - A format that is written to disk is read back by the next version and by the previous one: the upgrade and downgrade path is part of the change (`tests/upgrade`).
 - Cleanup runs on every exit path, including the error ones. A resource acquired before a failure (process, tap device, lock, mount, temp directory) is released.
@@ -95,8 +95,8 @@ adds or fixes, find the test that would fail without it.
 
 - A bug fix comes with a test that reproduces the bug.
 - Code that writes state, parses outside input or handles a lifecycle operation comes with failure-mode tests: the interrupted write (`durabletest`), the truncated or malformed input, the operation that races another. Parsers of outside input have a fuzz target, and an input a fuzzer found is kept as a seed.
-- Tests assert what the user would observe, not how the code is arranged. A test that cannot fail, that asserts only "no error", or that sleeps to pass is a finding.
-- Tests do not depend on the network, on wall-clock timing, on the order of a map, or on the developer's own `~/.jerboa`.
+- Tests assert what the user would observe, not how the code is arranged. A test that cannot fail, that asserts only "no error", or that sleeps in the hope something has happened by then is a finding.
+- Tests do not depend on the network, on how fast the machine is, on the order of a map, or on the developer's own `~/.jerboa`. A test of behaviour that is itself about time (a settle period, a timeout, a watchdog) may wait for it, with the duration taken from the code under test.
 - A weakened or deleted assertion, a skipped test, a longer timeout or a retry added to make CI green needs a stated reason. Without one it is the most important finding in the review.
 - The pull request says what was verified and what was not. Code that only runs under KVM, on Windows or on macOS and was not run there is called out.
 

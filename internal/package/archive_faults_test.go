@@ -44,10 +44,11 @@ func tarGz(t testing.TB, entries ...tarEntry) []byte {
 		}
 		if len(e.body) > 0 {
 			_, err := tw.Write(e.body)
-			if errors.Is(err, tar.ErrWriteTooLong) {
-				// The writer decided this entry has no body: a name that
-				// ends in a slash is a directory to it whatever the type
-				// says.
+			if errors.Is(err, tar.ErrWriteTooLong) && h.Typeflag == 0 && strings.HasSuffix(h.Name, "/") {
+				// A header of the legacy regular type whose name ends in a
+				// slash is a directory to the writer, which then refuses its
+				// body. Any other entry whose body does not fit its header
+				// is a mistake in the test and fails it.
 				t.Skipf("the tar writer refuses a body for this header: %v", err)
 			}
 			require.NoError(t, err)

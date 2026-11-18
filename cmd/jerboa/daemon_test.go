@@ -127,6 +127,7 @@ func TestWaitPortReleased_ReturnsWhenUnreachable(t *testing.T) {
 
 func TestErrNotWindows(t *testing.T) {
 	require.Contains(t, errNotWindows("start").Error(), "only runs on Windows")
+	require.Contains(t, errLogsOnLinux().Error(), "journalctl -u jerboad")
 }
 
 func TestPreserveDataBackup(t *testing.T) {

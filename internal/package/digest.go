@@ -39,6 +39,12 @@ var digestCache sync.Map // digestKey -> [32]byte
 // fileDigest returns the SHA-256 of the file at path, reading it only when no
 // digest is known for the file's current identity.
 func fileDigest(path string) ([32]byte, error) {
+	// Taken before the file is identified: what must be old enough is the
+	// file as it was when its identity was read, not as it is once hashing
+	// ends. Hashing a large file takes longer than settleTime, and a rewrite
+	// that lands in the same clock step as the write before it would then
+	// pass as settled.
+	start := time.Now()
 	id, err := statID(path)
 	if err != nil {
 		return [32]byte{}, err
@@ -60,7 +66,7 @@ func fileDigest(path string) ([32]byte, error) {
 	copy(sum[:], h.Sum(nil))
 	// Store only if the file did not change while it was read, and its
 	// identity can tell a later change apart.
-	if after, err := statID(path); err == nil && after == id && id.settled(time.Now()) {
+	if after, err := statID(path); err == nil && after == id && id.settled(start) {
 		digestCache.Store(key, sum)
 	}
 	return sum, nil
@@ -71,12 +77,26 @@ func fileDigest(path string) ([32]byte, error) {
 // steps (the kernel tick on Linux, up to 10ms): a file written twice within
 // one step, to the same size, keeps the same times, so a digest remembered
 // after the first write would be returned for the second.
+//
+// This covers filesystems whose timestamps are finer than settleTime, which
+// is every one Jerboa keeps its stores on. On one with whole-second stamps
+// (FAT, HFS+, some network mounts) two same-size writes within a second can
+// still be told apart only by reading the file.
 var settleTime = 100 * time.Millisecond
 
 // settled reports whether the file was last changed long enough before now
 // that any change from now on gets different times.
+//
+// The change time decides where there is one: the kernel sets it on every
+// write and nothing else can, while the modification time can be set to any
+// value, and a file stamped in the future (clock skew, a restored archive)
+// would otherwise never be remembered and be read again on every build.
 func (id fileID) settled(now time.Time) bool {
-	return now.UnixNano()-max(id.ModNs, id.ChangeNs) >= settleTime.Nanoseconds()
+	last := id.ChangeNs
+	if last == 0 {
+		last = id.ModNs
+	}
+	return now.UnixNano()-last >= settleTime.Nanoseconds()
 }
 
 // FileDigest is fileDigest as a "sha256:<hex>" string, for callers outside

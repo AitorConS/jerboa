@@ -555,6 +555,9 @@ func newDaemonLogsCmd() *cobra.Command {
 		Short: "Show the daemon launch log",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if runtime.GOOS == "linux" {
+				return errLogsOnLinux()
+			}
 			path := daemonLogPath()
 			f, err := os.Open(path) //nolint:gosec // fixed, client-owned log path
 			if err != nil {
@@ -720,6 +723,13 @@ func waitPortReleased(ctx context.Context, endpoint, token string, d time.Durati
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// errLogsOnLinux says where the log is on Linux, where the daemon is a
+// service this command never started and there is no launch log to read.
+func errLogsOnLinux() error {
+	return errors.New("daemon logs reads the launch log of the WSL2 or macOS daemon; " +
+		"on Linux the daemon is a systemd service: journalctl -u jerboad")
 }
 
 func errNotWindows(action string) error {
