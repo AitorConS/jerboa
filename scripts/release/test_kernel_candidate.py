@@ -181,8 +181,8 @@ class KernelCandidateTests(unittest.TestCase):
         Path('desktop-windows/jerboa-desktop-setup-1.0.0.exe.blockmap').write_bytes(b'blockmap')
         Path('native-macos').mkdir()
         Path('native-macos/jerboa-desktop-1.0.0-macos-arm64.zip').write_bytes(b'app')
-        Path('distro').mkdir()
-        with tarfile.open('distro/jerboa-rootfs-amd64.tar.gz', 'w:gz') as archive:
+        Path('distro-rootfs').mkdir()
+        with tarfile.open('distro-rootfs/jerboa-rootfs-amd64.tar.gz', 'w:gz') as archive:
             for name, filename in c.KERNEL_FILES.items():
                 archive.add(Path('kernel-candidate') / filename, arcname='root/.jerboa/tools/' + name)
             data = b'daemon'; info = tarfile.TarInfo('usr/local/bin/jerboad'); info.size = len(data)
@@ -234,7 +234,7 @@ class KernelCandidateTests(unittest.TestCase):
         for name in ['jerboa-windows-amd64.exe', 'jerboad-darwin-arm64']:
             with self.subTest(binary=name):
                 shutil.rmtree('candidate', ignore_errors=True)
-                for d in ['native-macos', 'distro']: shutil.rmtree(d, ignore_errors=True)
+                for d in ['native-macos', 'distro-rootfs']: shutil.rmtree(d, ignore_errors=True)
                 original = Path.write_bytes
                 def write(path, data, skip=name):
                     return original(path, skip.encode() if path.name == skip and path.parent.name == 'dist' else data)

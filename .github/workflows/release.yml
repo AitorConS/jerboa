@@ -683,7 +683,7 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: distro-rootfs
-        path: distro
+        path: distro-rootfs
     - name: Silent-install the desktop app
       shell: powershell
       run: |
@@ -700,7 +700,7 @@ jobs:
         JERBOA_BIN: /c/jerboa-desktop/resources/bin
       run: |
         set -euo pipefail
-        export JERBOA_ROOTFS="$(pwd)/distro/jerboa-rootfs-amd64.tar.gz"
+        export JERBOA_ROOTFS="$(pwd)/distro-rootfs/jerboa-rootfs-amd64.tar.gz"
         export JERBOA_EXAMPLES="$(pwd)/examples"
         test -f "$JERBOA_ROOTFS" || { echo "rootfs not found at $JERBOA_ROOTFS"; exit 1; }
         bash scripts/windows-install-smoke.sh
@@ -824,7 +824,7 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: distro-rootfs
-        path: distro
+        path: distro-rootfs
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
@@ -858,7 +858,7 @@ jobs:
         check "$BINARIES_MACOS" artifacts/binaries-macos
         check "$DESKTOP_WINDOWS" desktop-windows
         check "$DESKTOP_MACOS" desktop-macos
-        check "$DISTRO_ROOTFS" distro
+        check "$DISTRO_ROOTFS" distro-rootfs
         check "$MACOS_APP" native-macos
         if [ "$KERNEL_SOURCE" = build ]; then
           check "$MKFS_LINUX_ARM64" mkfs-linux-arm64

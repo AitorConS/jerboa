@@ -76,6 +76,17 @@ class WorkflowBindsArtifacts(unittest.TestCase):
                 uses=[i for i in [job.find(m) for m in ['candidate.py','stage-candidate.mjs','validate-kernel.py','tar -xzf']] if i>=0]
                 self.assertLess(job.index('artifact-digest.py verify'),min(uses))
 
+    def test_downloads_never_land_in_a_directory_of_the_checkout(self):
+        # A download directory is verified as a whole, so one that the checkout
+        # already fills (distro/ holds the rootfs build) can never match.
+        tracked=subprocess.run(['git','ls-files'],cwd=ROOT,check=True,capture_output=True,text=True).stdout.split('\n')
+        for workflow in ['release.yml','validate.yml','promote.yml']:
+            text=(ROOT/'.github/workflows'/workflow).read_text()
+            for path in re.findall(r'uses: actions/download-artifact@.*\n(?:      .*\n)*?        path: (\S+)',text):
+                if path=='.':continue
+                with self.subTest(workflow=workflow,path=path):
+                    self.assertFalse([f for f in tracked if f.startswith(path.rstrip('/')+'/')])
+
     def test_producers_export_the_digest_of_what_they_upload(self):
         text=(ROOT/'.github/workflows/release.yml').read_text()
         j=jobs(text)
