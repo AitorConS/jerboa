@@ -19,11 +19,52 @@ errors before the image exists, and `jerboa logs` / `jerboa run --attach`
 print an explanation automatically when they recognize a known guest failure —
 so in many cases the fix is already on your screen.
 
+When something is wrong and no error on this page matches, start with
+`jerboa doctor`: it checks the machine, the daemon and everything the daemon
+stores, and prints what to do about each problem it finds (see
+[Start here: `jerboa doctor`](#start-here-jerboa-doctor)).
+
 ## Table of contents
 {: .no_toc .text-delta }
 
 1. TOC
 {:toc}
+
+---
+
+## Start here: `jerboa doctor`
+
+```sh
+jerboa doctor          # changes nothing; exits non-zero when it finds a problem
+jerboa doctor --deep   # also re-reads every image disk against its digest
+```
+
+It reports on the CLI's config and credentials files, hardware virtualization,
+whether the daemon answers and runs the same version as the CLI, the
+hypervisor, free disk space, and the consistency of images, VMs, volumes,
+networks and snapshots. Each finding comes with the command that fixes it.
+When the daemon does not answer, the local checks still run and the daemon is
+reported as the problem, with the command that starts it on this platform.
+See the [CLI reference]({% link cli-reference.md %}#jerboa-doctor).
+
+### The host is running out of disk space
+
+`jerboa doctor` warns when little space is left where the daemon keeps its
+data. This is the host's disk, not the guest's (for the guest, see
+[`no space left on device`](#no-space-left-on-device)).
+
+```sh
+jerboa system df                # what takes the space, and how much nothing uses
+jerboa system prune --dry-run   # what a prune would remove
+jerboa system prune             # remove what nothing refers to any more
+```
+
+A plain `prune` only removes what you can no longer name: images a rebuild
+left without a name, boot disks of VMs that are gone, build cache no image
+needs, and leftovers of interrupted operations. To go further, add `--vms`
+(every stopped VM), `-a` (every image no VM uses) or `--volumes` (every volume
+no VM mounts; **their data is lost**). It prints the exact list and asks
+before removing anything.
 
 ---
 
@@ -665,7 +706,7 @@ DNS names. Traffic between VMs on a network and published ports still work.
 
 **Fix**: allow the exact destinations in a policy file and restart the daemon
 with it. See
-[Allowing internet access]({% link macos-guide.md %}#allowing-internet-access-firecracker).
+[Allowing internet access]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker).
 
 ### Cannot connect to the VM's IP from the Mac
 
@@ -699,6 +740,9 @@ on the same VM.
 
 ## Still Stuck?
 
+- `jerboa doctor` checks the installation and the daemon's data, and
+  `jerboa doctor --output json` gives the same findings in a form to attach to
+  a report.
 - Re-run the build with `-V/--verbose` to see the raw driver and packaging
   output, and read the preflight report.
 - `jerboa build . --name app --smoke` boots the image once right after

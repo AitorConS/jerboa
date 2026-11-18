@@ -102,6 +102,11 @@ jerboa compose logs stack.yaml api
 jerboa compose down stack.yaml --volumes
 ```
 
+`compose down` flags: `--volumes` also removes the volumes the stack created,
+and `--force` sends SIGKILL at once instead of stopping the services
+gracefully. `compose logs --raw` prints the output with its terminal control
+sequences.
+
 Current limits:
 
 - `compose logs` is snapshot-only

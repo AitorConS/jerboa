@@ -111,7 +111,7 @@ Important constraints:
 
 - no SLIRP fallback
 - `-p` requires `--network`
-- UDP mappings are parsed but not forwarded yet
+- UDP mappings are forwarded by kernel NAT only; the userspace proxy skips them with a warning
 
 ### Desktop Agent
 

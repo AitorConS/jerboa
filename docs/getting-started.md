@@ -290,8 +290,11 @@ jerboa run myapp:latest --network app --ip 10.100.0.10 -p 8080:80
 Important (Linux and Windows):
 
 - `-p/--port` requires `--network`
-- TCP forwarding works today
-- UDP port mappings are accepted syntactically but are currently skipped by the forwarder with a warning
+- TCP and UDP ports are published through kernel NAT (nftables), the default
+  on Linux where it is available
+- On WSL2, with `jerboad --port-publish proxy`, or where kernel NAT is missing,
+  the userspace proxy forwards TCP only and skips UDP mappings with a warning
+  (see [Published ports on Linux]({% link cli-reference.md %}#published-ports-on-linux))
 
 **macOS:** `-p` works without `--network`, and both TCP and UDP ports are
 forwarded. Firecracker VMs cannot reach the internet unless you allow it. See
@@ -420,9 +423,27 @@ jerboa compose down stack.yaml --volumes
 
 ---
 
+## Checking and cleaning up
+
+```bash
+jerboa doctor                   # is this machine, the daemon and its data in order?
+jerboa system df                # disk space by kind, and how much nothing uses
+jerboa system prune --dry-run   # what a cleanup would remove
+jerboa system prune             # remove what nothing refers to any more
+```
+
+`doctor` changes nothing and says what to do about each problem. `system
+prune` removes only what you can no longer name unless you add `--vms`, `-a`
+or `--volumes`; it lists what it will remove and asks first. See
+[Maintenance commands]({% link cli-reference.md %}#maintenance-commands).
+
+---
+
 ## Updating
 
-Update CLI and daemon together for 0.51.2: this release uses wire protocol 2.
+Update the CLI and the daemon together: they must speak the same wire protocol
+(3 today), and the CLI reports a mismatch instead of sending commands the
+daemon would misread.
 Before upgrading existing Compose stacks, follow the [stack migration instructions]({% link compose.md %}#upgrading-existing-stacks).
 
 The CLI has no self-update command. How you update depends on the platform:

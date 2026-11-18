@@ -435,6 +435,8 @@ Supported package sources (`--source`, default `ops`):
 - `jerboa` — the first-party index; also where `pkg create` and
   `pkg from-docker` store their local packages
 
+`pkg list` and `pkg search` print JSON with `--output-json`.
+
 `pkg from-docker` flags:
 
 - `--file <path>` — the binary inside the image to package. **Optional**: when
@@ -613,6 +615,12 @@ Notes:
 - Re-running `volume seed` reformats and re-populates the volume, discarding any
   data written since the last seed — use it to reset a volume to a clean state.
 
+### `jerboa volume migrate <name>`
+
+Copy a legacy volume, one that an older CLI kept on the client side, into the
+daemon's store. Stop every VM that uses the source first. The source is kept,
+and an existing destination is never overwritten.
+
 ### `jerboa volume ls`
 ### `jerboa volume inspect <name>`
 ### `jerboa volume rm <name>`
@@ -636,6 +644,8 @@ Current behavior to know:
 - `compose down` stops **and removes** the stack's service VMs (no stopped
   remnants left behind), and removes the networks it created
 - `compose down --volumes` additionally removes volumes created by that stack
+- `compose down --force` sends SIGKILL at once instead of stopping the
+  services gracefully, as `jerboa stop --force` does
 - each compose file has its own state, identified by its canonical path and
   kept under `~/.jerboa/compose`; a state file found next to the compose file is
   used only if it passes the checks in [compose.md](compose.md)
@@ -772,9 +782,15 @@ Firecracker still requires KVM.
 
 ---
 
-## Windows Daemon Commands
+## Daemon Commands
 
-These commands exist only on Windows.
+`jerboa daemon` exists on Windows and on macOS. On Windows it manages the
+dedicated WSL2 distro that hosts the daemon, with every command below. On
+macOS it manages the native daemon and has `start`, `stop`, `restart`,
+`status` and `logs` only: the Desktop app installs and removes it (see
+[Using Jerboa on macOS]({% link macos-guide.md %}#the-daemon)). On Linux the
+daemon is a systemd service, managed with `systemctl`; the subcommands
+only report that they are not available there.
 
 ### `jerboa daemon install`
 
@@ -809,9 +825,19 @@ Flags:
 ### `jerboa daemon status`
 ### `jerboa daemon logs`
 
-Daemon start/restart flag:
+`jerboa daemon start` and `jerboa daemon restart` flags:
 
-- `--hypervisor auto|qemu|firecracker`
+| Flag | Description |
+|---|---|
+| `--hypervisor auto\|qemu\|firecracker` | Hypervisor to run; defaults to the configured one, then `auto` |
+| `--metrics-addr <addr>` | Serve Prometheus metrics on this address (e.g. `127.0.0.1:9090`) |
+| `--ui-addr <addr>` | Serve the dashboard on this address (e.g. `127.0.0.1:8080`) |
+| `--trace-addr <addr>` | Export OTLP traces to this address |
+| `--log-format text\|json` | Daemon log format |
+
+The four observability settings are persisted: a later `start` or `restart`
+without them keeps the last values. See
+[Observability]({% link observability.md %}).
 
 `jerboa daemon logs` flag:
 
@@ -864,7 +890,7 @@ Root commands currently exposed by the built CLI:
 - `build`
 - `compose`
 - `config`
-- `daemon` (Windows only)
+- `daemon` (manages the daemon on Windows and macOS)
 - `dns`
 - `doctor`
 - `exec`
@@ -886,6 +912,7 @@ Root commands currently exposed by the built CLI:
 - `rmi`
 - `run`
 - `sign`
+- `snapshot` (works on macOS with Firecracker)
 - `stats`
 - `status`
 - `stop`
