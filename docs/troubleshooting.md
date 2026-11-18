@@ -380,6 +380,63 @@ the program requires; make sure the program runs in **foreground** mode
 
 ## Run-Time Errors
 
+### `the daemon is not answering; it may be stuck`
+
+A command was waiting for the daemon and the daemon stopped answering at all,
+as opposed to taking long over the command: the CLI checks after 10 seconds
+without an answer and every 30 seconds from then on.
+
+**Fix**: `jerboa daemon restart` on Windows and macOS,
+`sudo systemctl restart jerboad` on Linux. Running VMs are recovered when the
+daemon comes back. If it happens again, keep the daemon's log
+(`jerboa daemon logs`, or `journalctl -u jerboad` on Linux).
+
+### `the daemon did not answer the handshake within 15s`
+
+Something accepted the connection and never spoke the protocol: a daemon that
+is hung, or another program listening on the daemon's address.
+
+**Fix**: check what is behind the endpoint (`jerboa daemon status` prints it)
+and restart the daemon.
+
+### `daemon busy: too many connections waiting to authenticate; retry shortly`
+
+The daemon holds a limited number of connections that have not yet proved
+they have the token: 64 in total and 8 from one peer, each with 5 seconds to
+finish. Many commands started at the same moment, a script in a tight loop, or
+a client with the wrong token retrying, fill it.
+
+**Fix**: retry. If it persists, look for the process that keeps connecting
+with a wrong or missing token (`[daemon] token` in `~/.jerboa/config.toml`, or
+`JERBOA_AUTH_TOKEN`).
+
+### `a daemon is already listening on ...`
+
+`jerboad` was started on an endpoint that another daemon is serving. It
+refuses rather than take the socket from under it.
+
+**Fix**: use the running daemon, or stop it first. On an installed Linux
+machine the service owns the endpoint: `sudo systemctl restart jerboad`.
+
+### `record running state: ...` when starting a VM
+
+The daemon could not save the VM's state, almost always because the disk that
+holds its data is full. The VM is not left running without a record.
+
+**Fix**: free space (`jerboa system df`, `jerboa system prune`) and start it
+again.
+
+### `image paths are accepted only from local clients`
+
+`jerboa run /path/to/disk.img`, or a compose `image:` that is a file path,
+reached a daemon over TCP. That is the normal connection on Windows and on a
+Linux machine set up with the installer. The daemon boots a disk file only
+for a caller it can identify, through its Unix socket, and only a file that
+caller owns.
+
+**Fix**: build or pull the image and run it by name
+(`jerboa build . --name app`, then `jerboa run app:latest`).
+
 ### `--port requires --network`
 
 On Linux and Windows, port publishing goes through the managed network's
@@ -617,8 +674,11 @@ endpoint the managed distro actually uses.
 Firecracker requires KVM (`/dev/kvm`) inside the WSL2 distro, which needs
 nested virtualization support on the host.
 
-**Fix**: use QEMU (the default) — it falls back to TCG emulation without KVM —
-or enable nested virtualization for WSL2.
+**Fix**: use QEMU, which falls back to TCG emulation without KVM, or enable
+nested virtualization for WSL2. With `hypervisor` left at `auto`, the default,
+the daemon picks QEMU by itself on a host that cannot run Firecracker; this
+error means Firecracker was selected explicitly
+(`jerboa config set hypervisor auto`, then `jerboa daemon restart`).
 
 ---
 
@@ -674,12 +734,13 @@ jerboa run myimage:latest --emulate-x86
 ### `native qemu executable missing` / `native firecracker executable missing`
 
 The daemon is configured for an engine that is not installed. This usually
-means `hypervisor` is `qemu` (the CLI's default) but QEMU is not installed.
+means `hypervisor` was set to `qemu` but QEMU is not installed. The default,
+`auto`, uses Firecracker on a Mac that has it.
 
 **Fix**: select Firecracker, which ships with the app, or install QEMU:
 
 ```sh
-jerboa config set hypervisor firecracker   # or: brew install qemu
+jerboa config set hypervisor auto   # or: brew install qemu
 jerboa daemon start
 ```
 
@@ -699,14 +760,20 @@ start it from a logged-in desktop session (not from a plain SSH login).
 manage the local daemon. To talk to a remote daemon, use regular commands with
 `--host` instead.
 
-### VMs cannot reach the internet (Firecracker)
+### A VM cannot reach the Mac, the local network or the internet (Firecracker)
 
-By default Firecracker VMs cannot open outbound connections or resolve external
-DNS names. Traffic between VMs on a network and published ports still work.
+By default a Firecracker VM reaches the public internet and resolves external
+DNS names, but not the Mac itself nor private, shared and link-local
+addresses: a connection to your router, to another machine of your network or
+to a service on the Mac through the VM's gateway is refused. If the internet
+is unreachable too, the daemon was started with a policy file
+(`JERBOA_FIRECRACKER_SECURITY` or `jerboad --fc-security`), which replaces
+the default entirely. Traffic between VMs on a network and published ports
+always work.
 
 **Fix**: allow the exact destinations in a policy file and restart the daemon
-with it. See
-[Allowing internet access]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker).
+with it, or start it without one to go back to the default. See
+[Restricting or widening outbound access]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker).
 
 ### Cannot connect to the VM's IP from the Mac
 

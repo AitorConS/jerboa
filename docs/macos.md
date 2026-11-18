@@ -87,7 +87,7 @@ On a release, `build-macos` in the candidate workflow builds the runtime and thi
 | Environment and volume mounts | ARM64 MMIO `fw_cfg`; persistent TFS volumes and ephemeral root disks |
 | Networks, IPAM and static guest IPs | Private Ethernet switches and gVisor IP stacks, without a kernel TAP driver |
 | Guest service DNS | Network-scoped DNS over the virtual gateway; supports the previous preview resolver too |
-| Guest outbound networking | Userspace TCP/UDP forwarding; gateway IP reaches host loopback services |
+| Guest outbound networking | Userspace TCP/UDP forwarding to public addresses; the Mac's loopback through the gateway and private addresses only when the daemon runs with `JERBOA_GUEST_HOST_ACCESS=1` |
 | Published TCP and UDP ports | Host listeners forwarded into the VM's network; bind failures reject the run |
 | TCP/HTTP health checks | Direct guest service checks through the userspace stack; no public port required |
 | Restart policies | `never`, `always`, `on-failure`, backoff/max retries; PCI pvpanic reports ARM64 failure |

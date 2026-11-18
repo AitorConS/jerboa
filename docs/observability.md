@@ -42,13 +42,16 @@ Endpoints:
 
 The repo currently exports daemon/VM/image/network counters and gauges, including:
 
-- VM state gauges
-- VM lifecycle counters
-- image count
-- active port-forward count
-- bridge count
-- daemon build info
-- daemon start time
+| Metric | What it counts |
+|---|---|
+| `jerboa_vms_created_total`, `jerboa_vms_starting_total`, `jerboa_vms_running_total`, `jerboa_vms_stopping_total`, `jerboa_vms_stopped_total` | VMs currently in each state (gauges, despite the suffix) |
+| `jerboa_vm_starts_total`, `jerboa_vm_stops_total`, `jerboa_vm_restarts_total`, `jerboa_vm_errors_total` | VM lifecycle events |
+| `jerboa_images_total` | Images in the store |
+| `jerboa_push_total`, `jerboa_pull_total`, `jerboa_push_errors_total`, `jerboa_pull_errors_total` | Registry pushes and pulls, and the ones that failed |
+| `jerboa_port_forwards_active` | Published ports being forwarded |
+| `jerboa_bridge_count` | Network bridges |
+| `jerboa_build_info` | The daemon's version, as labels |
+| `jerboa_start_time_seconds` | When the daemon started |
 
 ## Tracing
 
@@ -152,4 +155,8 @@ Use:
 jerboad --vm-store sqlite
 ```
 
-The daemon migrates file-backed VM state into SQLite on first use.
+The daemon migrates file-backed VM state into SQLite on first use. The file
+registry is left as it was, so going back to `--vm-store file` finds the
+records it had. Each VM is taken over once: the database remembers which ones
+it migrated, and a VM you remove afterwards does not come back from the file
+it left behind. The database file is created readable by its owner only.
