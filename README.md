@@ -43,8 +43,12 @@ Docker imports, package provenance and Firecracker acceptance.
 - **Run** VMs on:
   - QEMU (KVM on Linux when available; HVF for native ARM64 guests on macOS)
   - Firecracker (Linux/KVM and native macOS ARM64/HVF fork)
+- **Distribute** images through a registry (`registry.jerboa.dev` by default):
+  - `push` uploads an image's recipe and only the files the registry lacks; `pull` rebuilds the disk locally and verifies it byte for byte
+  - Sigstore signatures from trusted publishers, verified before anything is downloaded
 - **Manage**:
   - images and volumes
+  - in-place VM snapshots (macOS, Firecracker)
   - bridge networks with TAP-backed guest connectivity
   - internal DNS for service discovery
   - compose stacks
@@ -52,12 +56,15 @@ Docker imports, package provenance and Firecracker acceptance.
   - live VM serial logs and stats
   - Prometheus metrics and OTLP traces from the daemon
   - a read-only dashboard
+- **Maintain**:
+  - `jerboa doctor` checks the machine, the daemon and its stored data
+  - `jerboa system df` and `jerboa system prune` show and reclaim disk space
 
 ### Runtime constraints worth knowing up front
 
 - Stable releases target Linux and Windows/WSL2; native macOS ARM64 is a development preview.
 - On Linux, port publishing requires a managed network (`-p/--port` requires `--network`) — there is no SLIRP fallback.
-- Linux supports TCP forwarding; UDP mappings are skipped with a warning by the current Linux forwarder.
+- Linux publishes TCP and UDP ports through kernel NAT (nftables), the default where it is available. The userspace proxy, used with `jerboad --port-publish proxy`, on WSL2 and where kernel NAT is missing, forwards TCP only and skips UDP mappings with a warning.
 - macOS provides userspace networks, guest DNS, TCP/UDP forwarding and optional explicit x86 emulation.
 - macOS uses CPU priority and an RSS watchdog as resource controls; these do not provide Linux cgroup isolation guarantees.
 
@@ -142,7 +149,7 @@ The desktop app can also manage this runtime for you from its GUI.
 
 ## Building From Source
 
-Requires **Go 1.25+**.
+Requires **Go 1.27+** (`go.mod` pins the toolchain).
 
 ```bash
 git clone https://github.com/AitorConS/jerboa.git
@@ -178,18 +185,24 @@ cmd/jerboa/         CLI commands
 cmd/jerboad/        daemon entrypoint
 cmd/jerboa-agent/   local HTTP/SSE sidecar for the desktop app
 cmd/jerboa-sign/    image signing tool
+cmd/jerboa-verify/  release manifest verification
 cmd/jerboa-manifest/manifest tooling
+cmd/jerboa-smoke/, cmd/jerboa-bench/, cmd/jerboa-determinism/   test and measurement tools
 internal/vm/        VM lifecycle: QEMU, Firecracker, stats, persistence
 internal/image/     image store and build pipeline
 internal/network/   bridge, TAP, IPAM, port forwarder
 internal/compose/   compose parser and ordering
+internal/registry/, internal/ociregistry/, internal/ociblob/   image registry client
+internal/snapshot/, internal/volume/   snapshots and volumes
+internal/durable/   crash-safe state files
+internal/release/, internal/signing/   signed releases and updates
 internal/wsldistro/ and internal/wslboot/   Windows/WSL2 integration
 kernel/             Nanos-derived kernel tree and tooling
 distro/             Windows WSL2 distro rootfs build
-scripts/            installers and package build scripts
+scripts/            installers, package build scripts and release tooling (scripts/release/)
 examples/           sample projects (Go, Node, Python, Ruby, databases, ...)
 docs/               documentation source consumed by Jerboa_Public_Docs
-tests/integration/, tests/e2e/   higher-level test suites
+tests/integration/, tests/e2e/, tests/upgrade/   higher-level test suites
 ```
 
 ## Documentation

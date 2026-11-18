@@ -613,6 +613,12 @@ Notes:
 - Re-running `volume seed` reformats and re-populates the volume, discarding any
   data written since the last seed — use it to reset a volume to a clean state.
 
+### `jerboa volume migrate <name>`
+
+Copy a legacy volume, one that an older CLI kept on the client side, into the
+daemon's store. Stop every VM that uses the source first. The source is kept,
+and an existing destination is never overwritten.
+
 ### `jerboa volume ls`
 ### `jerboa volume inspect <name>`
 ### `jerboa volume rm <name>`
@@ -772,9 +778,15 @@ Firecracker still requires KVM.
 
 ---
 
-## Windows Daemon Commands
+## Daemon Commands
 
-These commands exist only on Windows.
+`jerboa daemon` exists on Windows and on macOS. On Windows it manages the
+dedicated WSL2 distro that hosts the daemon, with every command below. On
+macOS it manages the native daemon and has `start`, `stop`, `restart`,
+`status` and `logs` only: the Desktop app installs and removes it (see
+[Using Jerboa on macOS]({% link macos-guide.md %}#the-daemon)). On Linux the
+daemon is a systemd service, managed with `systemctl`; the subcommands
+only report that they are not available there.
 
 ### `jerboa daemon install`
 
@@ -864,7 +876,7 @@ Root commands currently exposed by the built CLI:
 - `build`
 - `compose`
 - `config`
-- `daemon` (Windows only)
+- `daemon` (manages the daemon on Windows and macOS)
 - `dns`
 - `doctor`
 - `exec`
@@ -886,6 +898,7 @@ Root commands currently exposed by the built CLI:
 - `rmi`
 - `run`
 - `sign`
+- `snapshot` (works on macOS with Firecracker)
 - `stats`
 - `status`
 - `stop`

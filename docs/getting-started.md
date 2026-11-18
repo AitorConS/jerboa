@@ -290,8 +290,11 @@ jerboa run myapp:latest --network app --ip 10.100.0.10 -p 8080:80
 Important (Linux and Windows):
 
 - `-p/--port` requires `--network`
-- TCP forwarding works today
-- UDP port mappings are accepted syntactically but are currently skipped by the forwarder with a warning
+- TCP and UDP ports are published through kernel NAT (nftables), the default
+  on Linux where it is available
+- On WSL2, with `jerboad --port-publish proxy`, or where kernel NAT is missing,
+  the userspace proxy forwards TCP only and skips UDP mappings with a warning
+  (see [Published ports on Linux]({% link cli-reference.md %}#published-ports-on-linux))
 
 **macOS:** `-p` works without `--network`, and both TCP and UDP ports are
 forwarded. Firecracker VMs cannot reach the internet unless you allow it. See
