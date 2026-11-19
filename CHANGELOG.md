@@ -39,6 +39,17 @@ Which versions exist, and where:
   distro now install `nftables`. Inside WSL2, whose kernel has no nftables
   bridge family, the guard is loaded without its per-guest address binding
   and is not enforced.
+- **On Linux, guests no longer reach the host or private networks.** By
+  default a guest reaches the host only for guest DNS and with replies to
+  connections the host opened (published ports, health checks), and opens no
+  connection to private, shared or link-local addresses outside its own
+  network (the LAN, VPNs, Docker networks, `169.254.169.254`), as on macOS.
+  Guests on the same network, the internet and published ports work as
+  before. A guest that used a service on the host or the LAN needs
+  `JERBOA_GUEST_HOST_ACCESS=1` for the daemon
+  (`sudo systemctl edit jerboad`, then `Environment=...` under `[Service]`,
+  then `sudo systemctl restart jerboad`). The rules apply when the daemon
+  starts with the new version.
 
 ### Fixed
 
@@ -60,6 +71,12 @@ Which versions exist, and where:
   reach guests of other Jerboa networks, and other hosts could route to
   guests directly. The guard is now required (see Changed above), and
   `nftables` is installed with Jerboa.
+- On Linux, a guest could connect to every host service not bound to
+  loopback (the daemon API inside WSL2, the dashboard, databases), to the
+  LAN and to cloud metadata endpoints, and could fill the daemon's
+  pre-authentication connection slots. The guard now drops new connections
+  from guests to the host, other than guest DNS, and to non-public
+  addresses outside their network.
 
 ## [0.60.0] - 2026-11-18
 

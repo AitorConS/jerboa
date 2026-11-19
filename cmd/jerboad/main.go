@@ -361,7 +361,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		mgr = vm.NewFirecrackerManager(fcBin, fcKernelPath, fcOpts...)
 	case "qemu":
 		// JERBOA_GUEST_HOST_ACCESS=1 restores guest access to the host's
-		// loopback and private addresses on macOS.
+		// loopback and private addresses on macOS (Linux: the guard, below).
 		hostAccess := os.Getenv("JERBOA_GUEST_HOST_ACCESS") == "1"
 		mgr = vm.NewQEMUManager(qemuBin, vm.WithStore(vmStore), vm.WithMetrics(collectors), vm.WithKernel(filepath.Join(toolsDir, "kernel.img")), vm.WithDiskDir(vmDiskDir), vm.WithTrustedImages(trusted), vm.WithGuestHostAccess(hostAccess))
 	default:
@@ -446,6 +446,9 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 		// start while it is not loaded, unless the operator opted out.
 		guardOpts := network.GuardOptions{
 			AllowUnguarded: os.Getenv(network.AllowUnguardedEnv) == "1",
+			// As on macOS: guests reach the host and private networks
+			// only when the operator says so.
+			HostAccess: os.Getenv("JERBOA_GUEST_HOST_ACCESS") == "1",
 		}
 		if err := network.InstallGuard(netconst.DNSAnycastIP, guardOpts); err != nil {
 			if !network.CheckGuard().Enforced {

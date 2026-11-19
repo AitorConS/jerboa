@@ -21,6 +21,11 @@ import (
 //     the bridges have route_localnet set for kernel port publishing, and a
 //     packet to 127.0.0.0/8 that arrives on another interface is spoofed;
 //   - the guest DNS address answers only on loopback and jerboa bridges;
+//   - a guest reaches the host only for DNS and for replies to connections
+//     the host opened (published ports, health checks), and opens no
+//     connection to private, shared (CGNAT) or link-local addresses outside
+//     its own network: the same default as macOS, lifted by
+//     JERBOA_GUEST_HOST_ACCESS=1;
 //   - traffic is not routed between two jerboa networks, and hosts outside
 //     only reach guests through published ports or replies;
 //   - a guest can only send IPv4 and ARP frames, with its own MAC and IPv4
@@ -55,6 +60,9 @@ var guard struct {
 	// noBridge is set where the kernel has no nftables bridge family
 	// (WSL): the bridge table and the tap bindings are left out.
 	noBridge bool
+	// hostAccess leaves out the rules that keep guests off the host and
+	// off private networks (GuardOptions.HostAccess).
+	hostAccess bool
 	// taps holds the set elements GuardTap bound to each tap, so a
 	// reinstall restores the bindings of the guests that are running.
 	taps map[string]string
@@ -97,6 +105,44 @@ func probeGuard() error {
 type rulesetOptions struct {
 	// noBridge leaves the bridge table out (no nftables bridge family).
 	noBridge bool
+	// hostAccess leaves out the drops of new connections from guests to the
+	// host and to private networks.
+	hostAccess bool
+}
+
+// nonPublicDestinations are the addresses a guest opens no connection to
+// outside its own network: the list macOS applies (nonPublicEgress in
+// internal/vm). Elements must not overlap: nft refuses an anonymous interval
+// set whose elements do, and with it the whole guard.
+const nonPublicDestinations = "0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/3"
+
+// guestInputRules keep guests off the host's services: replies to
+// connections the host opened (published ports through the proxy or kernel
+// NAT, health checks) and guest DNS are accepted, anything else a guest
+// starts towards the host is dropped.
+func guestInputRules(dnsIP string, o rulesetOptions) string {
+	if o.hostAccess {
+		return ""
+	}
+	return `
+		iifname "jerboa-br*" ct state established,related accept
+		iifname "jerboa-br*" ip daddr ` + dnsIP + ` udp dport 53 accept
+		iifname "jerboa-br*" ip daddr ` + dnsIP + ` tcp dport 53 accept
+		iifname "jerboa-br*" drop`
+}
+
+// guestForwardRules drop new connections a guest routes to non-public
+// addresses. Traffic that stays on jerboa bridges is left to the rules
+// above and below (the same network is bridged, not routed; other networks
+// are dropped by bridgeIsolationRule), and replies (published ports with
+// nat-lan, whose clients are often on private addresses) are accepted.
+func guestForwardRules(o rulesetOptions) string {
+	if o.hostAccess {
+		return ""
+	}
+	return `
+		iifname "jerboa-br*" oifname != "jerboa-br*" ct state established,related accept
+		iifname "jerboa-br*" oifname != "jerboa-br*" ip daddr { ` + nonPublicDestinations + ` } drop`
 }
 
 func guardRuleset(dnsIP string, o rulesetOptions) string {
@@ -106,7 +152,7 @@ func guardRuleset(dnsIP string, o rulesetOptions) string {
 		iifname != "lo" ip daddr 127.0.0.0/8 drop
 	}
 	chain input {
-		type filter hook input priority filter; policy accept;
+		type filter hook input priority filter; policy accept;` + guestInputRules(dnsIP, o) + `
 		ip daddr ` + dnsIP + ` iifname "lo" return
 		ip daddr ` + dnsIP + ` iifname "jerboa-br*" return
 		ip daddr ` + dnsIP + ` drop
@@ -115,7 +161,7 @@ func guardRuleset(dnsIP string, o rulesetOptions) string {
 		type filter hook forward priority filter; policy accept;
 		oifname "jerboa-br*" ct status dnat accept
 		oifname "jerboa-br*" ct state established,related accept
-		oifname "jerboa-br*" iifname != "jerboa-br*" drop
+		oifname "jerboa-br*" iifname != "jerboa-br*" drop` + guestForwardRules(o) + `
 	}
 }
 `
@@ -163,6 +209,7 @@ func InstallGuard(dnsIP string, opts GuardOptions) error {
 	defer guard.mu.Unlock()
 	guard.dnsIP = parsed.String()
 	guard.allowUnguarded = opts.AllowUnguarded
+	guard.hostAccess = opts.HostAccess
 	guard.noBridge = guardIsWSL()
 	if !guardHasNft() {
 		return errNoNft
@@ -180,7 +227,7 @@ func installGuardLocked(dnsIP string) error {
 			"flush chain bridge " + guardTable + " prerouting\n" +
 			"delete chain bridge " + guardTable + " prerouting\n"
 	}
-	script += guardRuleset(dnsIP, rulesetOptions{noBridge: guard.noBridge})
+	script += guardRuleset(dnsIP, rulesetOptions{noBridge: guard.noBridge, hostAccess: guard.hostAccess})
 	bridges := existingBridges()
 	for _, b := range bridges {
 		script += bridgeIsolationRule(b)
@@ -386,6 +433,7 @@ func CheckGuard() GuardState {
 		Configured:     guard.dnsIP != "",
 		AllowUnguarded: guard.allowUnguarded,
 		NoBridgeFamily: guard.noBridge,
+		HostAccess:     guard.hostAccess,
 		Enforced:       !guard.allowUnguarded && !guard.noBridge,
 	}
 	if st.Configured {

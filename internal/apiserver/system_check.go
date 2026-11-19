@@ -307,6 +307,10 @@ func checkGuard(c *checker, state func() network.GuardState) {
 			c.add("network isolation", api.SeverityInfo, "",
 				"guest network guard loaded; this kernel has no nftables bridge family (WSL), so guests are not bound to their own MAC and IP address")
 		}
+		if st.Err == nil && st.HostAccess {
+			c.add("network isolation", api.SeverityInfo, "unset JERBOA_GUEST_HOST_ACCESS and restart the daemon to keep guests off them",
+				"guest network guard loaded; JERBOA_GUEST_HOST_ACCESS=1 lets guests open connections to the host and to private networks")
+		}
 		return "guest network guard loaded"
 	})
 }

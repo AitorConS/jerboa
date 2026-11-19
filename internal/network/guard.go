@@ -12,6 +12,10 @@ type GuardOptions struct {
 	// loaded ($JERBOA_ALLOW_UNGUARDED_NETWORK=1). Without it a VM on a
 	// network does not start until the guard is loaded.
 	AllowUnguarded bool
+	// HostAccess lets guests open connections to the host and to private,
+	// shared and link-local addresses ($JERBOA_GUEST_HOST_ACCESS=1, as on
+	// macOS). The loopback drop and the isolation between networks stay.
+	HostAccess bool
 }
 
 // GuardState is what `jerboa doctor` reports about the guard.
@@ -29,4 +33,6 @@ type GuardState struct {
 	// NoBridgeFamily is set on WSL, whose kernel has no nftables bridge
 	// family: guests are not bound to their MAC and IPv4 address there.
 	NoBridgeFamily bool
+	// HostAccess mirrors GuardOptions.HostAccess.
+	HostAccess bool
 }

@@ -209,8 +209,12 @@ func newGuardedNetwork(t *testing.T) *guardedNetwork {
 	requireNetAdmin(t)
 	// nat, not auto: without kernel NAT the daemon must refuse to start
 	// rather than fall back to the proxy, where there is no route_localnet
-	// and nothing here would be tested.
-	e := newEnv(t, withDaemonArgs("--port-publish", "nat"))
+	// and nothing here would be tested. JERBOA_GUEST_HOST_ACCESS=1: the
+	// control datagram for the gateway is new traffic from the bridge to
+	// the host, which the guard drops by default; the loopback drop must
+	// hold with host access too (TestGuestsStayOffTheHost covers the
+	// default).
+	e := newEnv(t, withDaemonArgs("--port-publish", "nat"), withDaemonEnv("JERBOA_GUEST_HOST_ACCESS=1"))
 	e.buildProbe()
 	netName, subnet := e.network()
 	n := &guardedNetwork{e: e}
@@ -335,4 +339,64 @@ func TestGuardComesBackAfterItIsRemoved(t *testing.T) {
 
 	n.requireLoopbackClosed("after the guard came back")
 	require.Equal(t, "web", n.web.status().Marker, "the published port must answer on 127.0.0.1 again")
+}
+
+// listenOn accepts TCP connections on ip and greets each one, so a guest's
+// dial reports whether it got through.
+func listenOn(t *testing.T, ip string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp4", net.JoinHostPort(ip, "0"))
+	require.NoErrorf(t, err, "listen on %s", ip)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = c.Write([]byte("host\n"))
+			_ = c.Close()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// TestGuestsStayOffTheHost checks the guard's default towards the host: a
+// guest opens no connection to a service on its gateway address or on the
+// host's own address, while guest DNS and published ports keep working.
+// With JERBOA_GUEST_HOST_ACCESS=1 the same connection goes through, which
+// is also the control that the listener is reachable at all.
+func TestGuestsStayOffTheHost(t *testing.T) {
+	requireNetAdmin(t)
+	for _, c := range []struct {
+		name    string
+		opts    []envOption
+		reaches bool
+	}{
+		{"default", nil, false},
+		{"host access", []envOption{withDaemonEnv("JERBOA_GUEST_HOST_ACCESS=1")}, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t, c.opts...)
+			e.buildProbe()
+			netName, _ := e.network()
+			g := e.startGuest(guestOpts{name: "web", network: netName, env: []string{"PROBE_MARKER=web"}})
+			gateway := e.inspect(g.id).GatewayIP
+			require.NotEmpty(t, gateway)
+
+			// Published port and guest DNS: what a guest needs of the host.
+			require.Equal(t, "web", g.status().Marker)
+			require.NotEmpty(t, g.resolve("web").Addrs, "guest DNS must answer with the guard loaded")
+
+			for _, addr := range []string{listenOn(t, gateway), listenOn(t, hostAddress(t))} {
+				res := g.dial(addr)
+				if c.reaches {
+					require.Truef(t, res.OK, "with JERBOA_GUEST_HOST_ACCESS=1 the guest must reach %s: %s", addr, res.Error)
+					require.Equal(t, "host", res.Banner)
+				} else {
+					require.Falsef(t, res.OK, "the guest opened a connection to the host service at %s", addr)
+				}
+			}
+		})
+	}
 }

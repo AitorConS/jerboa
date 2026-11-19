@@ -88,15 +88,15 @@ func withFakeGuard(t *testing.T, k *fakeGuardKernel, dnsIP string, installed boo
 	}
 	guard.mu.Lock()
 	prevInstalled, prevDNS, prevBridges, prevTaps := guard.installed, guard.dnsIP, guard.bridges, guard.taps
-	prevAllow, prevNoBridge := guard.allowUnguarded, guard.noBridge
+	prevAllow, prevNoBridge, prevHostAccess := guard.allowUnguarded, guard.noBridge, guard.hostAccess
 	guard.installed, guard.dnsIP, guard.bridges, guard.taps = installed, dnsIP, map[string]bool{}, map[string]string{}
-	guard.allowUnguarded, guard.noBridge = false, false
+	guard.allowUnguarded, guard.noBridge, guard.hostAccess = false, false, false
 	guard.mu.Unlock()
 	t.Cleanup(func() {
 		guardNft, guardProbe, guardHasNft = prevNft, prevProbe, prevHasNft
 		guard.mu.Lock()
 		guard.installed, guard.dnsIP, guard.bridges, guard.taps = prevInstalled, prevDNS, prevBridges, prevTaps
-		guard.allowUnguarded, guard.noBridge = prevAllow, prevNoBridge
+		guard.allowUnguarded, guard.noBridge, guard.hostAccess = prevAllow, prevNoBridge, prevHostAccess
 		guard.mu.Unlock()
 	})
 }
@@ -324,4 +324,31 @@ func TestGuardOnWSLLeavesTheBridgeFamilyOut(t *testing.T) {
 	k.loaded, k.failNft = false, true
 	k.mu.Unlock()
 	require.NoError(t, RequireGuard(), "a guard that cannot load on WSL must not block guests")
+}
+
+// The host-access opt-out is kept by InstallGuard and applied by every
+// reinstall, and reported by CheckGuard.
+func TestInstallGuardAppliesHostAccess(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "", false)
+	prevWSL := guardIsWSL
+	guardIsWSL = func() bool { return false }
+	t.Cleanup(func() { guardIsWSL = prevWSL })
+
+	require.NoError(t, InstallGuard("10.53.0.53", GuardOptions{}))
+	k.mu.Lock()
+	require.Contains(t, k.scripts[len(k.scripts)-1], `iifname "jerboa-br*" drop`)
+	k.mu.Unlock()
+
+	require.NoError(t, InstallGuard("10.53.0.53", GuardOptions{HostAccess: true}))
+	k.mu.Lock()
+	k.loaded = false // a firewall reload
+	k.mu.Unlock()
+	require.NoError(t, EnsureGuard())
+	k.mu.Lock()
+	last := k.scripts[len(k.scripts)-1]
+	k.mu.Unlock()
+	require.NotContains(t, last, `iifname "jerboa-br*" drop`)
+	require.Contains(t, last, `iifname != "lo" ip daddr 127.0.0.0/8 drop`)
+	require.True(t, CheckGuard().HostAccess)
 }

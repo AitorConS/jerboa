@@ -387,6 +387,23 @@ ports it translates until the guard is back.
 IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
 are in use.
 
+The same rules keep guests off the host and off private networks, as on macOS.
+A guest reaches the host only for guest DNS (`10.53.0.53`, port 53) and with
+replies to connections the host opened (published ports, health checks): a
+connection it opens to any address of the host, its gateway included, is
+dropped, whatever service listens there. It also opens no connection to
+private, shared or link-local addresses (`10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`, and `0.0.0.0/8`,
+`127.0.0.0/8`, `224.0.0.0/3`) outside its own network, so the LAN, VPNs,
+Docker networks and cloud metadata endpoints are out of reach. Guests on the
+same network, public addresses, and published ports (`--port-publish nat-lan`
+included) are not affected. A guest reaches another guest by its address or
+name on a shared network, not through a port published on the host. To lift
+this, start the daemon with `JERBOA_GUEST_HOST_ACCESS=1`
+(`sudo systemctl edit jerboad`, add `[Service]` and
+`Environment=JERBOA_GUEST_HOST_ACCESS=1`, then `sudo systemctl restart jerboad`);
+the loopback rule and the isolation between networks stay.
+
 Inside the WSL2 distro the kernel has no nftables bridge family: only the
 `inet jerboa_guard` table is installed, so guests are not bound to their own
 MAC and IP address there, and VMs start even when the rules cannot be loaded

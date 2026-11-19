@@ -26,6 +26,7 @@ func TestCheckGuardFindings(t *testing.T) {
 		"opted out":     {network.GuardState{Configured: true, AllowUnguarded: true, Err: notLoaded}, api.SeverityWarning, network.AllowUnguardedEnv},
 		"wsl, missing":  {network.GuardState{Configured: true, NoBridgeFamily: true, Err: notLoaded}, api.SeverityWarning, "nftables"},
 		"wsl, loaded":   {network.GuardState{Configured: true, NoBridgeFamily: true}, api.SeverityInfo, ""},
+		"host access":   {network.GuardState{Configured: true, Enforced: true, HostAccess: true}, api.SeverityInfo, "JERBOA_GUEST_HOST_ACCESS"},
 		"no guard here": {network.GuardState{}, "", ""},
 	} {
 		ch := &checker{}

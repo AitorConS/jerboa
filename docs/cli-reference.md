@@ -924,7 +924,7 @@ Environment the daemon reads:
 | `JERBOA_DNS_UPSTREAM` | Resolver that guest questions for names the daemon does not own are forwarded to (default `1.1.1.1:53`). Set it empty to forward nothing |
 | `JERBOA_QEMU_SANDBOX=off` | Linux: run QEMU without its seccomp sandbox. By default QEMU runs with `-sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny` when the binary supports it |
 | `JERBOA_ALLOW_UNGUARDED_NETWORK=1` | Linux: let VMs on networks start while the guest network guard (nftables) is not loaded. Without it such VMs fail to start until `nft` works. Guests then run without isolation: see [Network isolation]({% link getting-started.md %}#network-isolation-linux) |
-| `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Off by default |
+| `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Linux: let guests open connections to the host's addresses (not its loopback) and to private, shared and link-local addresses outside their network. Off by default |
 | `JERBOA_FIRECRACKER_SECURITY` | macOS: the policy file of `--fc-security`, for a daemon started with `jerboa daemon start` |
 
 Connections are limited before they authenticate: at most 64 handshakes

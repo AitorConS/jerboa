@@ -630,6 +630,26 @@ sudo systemctl edit jerboad     # add: [Service]
 sudo systemctl restart jerboad
 ```
 
+### A guest cannot reach a service on the host or the LAN (Linux)
+
+Connections time out from inside the guest to an address of the host (its
+gateway included), to the LAN, a VPN, a Docker network or `169.254.169.254`,
+while public addresses and other guests of its network answer. That is the
+default since the guest network guard keeps guests off the host and off
+private networks (see
+[Network isolation]({% link getting-started.md %}#network-isolation-linux)).
+
+**Fix**: reach other guests by their address or name on a shared network
+instead of through a port published on the host. If the guest must reach the
+host or private networks, start the daemon with
+`JERBOA_GUEST_HOST_ACCESS=1`:
+
+```sh
+sudo systemctl edit jerboad     # add: [Service]
+                                #      Environment=JERBOA_GUEST_HOST_ACCESS=1
+sudo systemctl restart jerboad
+```
+
 ### Published ports stop answering on `127.0.0.1` (Linux)
 
 The daemon log shows `guard: not loaded; route_localnet turned off on jerboa
