@@ -16,6 +16,11 @@ const (
 	defaultHealthInterval = 10 * time.Second
 	defaultHealthTimeout  = 3 * time.Second
 	defaultHealthRetries  = 3
+
+	// Upper bounds for the values a caller may ask for.
+	maxHealthInterval = 24 * time.Hour
+	maxHealthTimeout  = time.Hour
+	maxHealthRetries  = 1000
 )
 
 type healthProbe struct {
@@ -40,13 +45,16 @@ func (h *HealthChecker) Start(ctx context.Context, v *VM) {
 		return
 	}
 	cfg := *v.Cfg.HealthCheck
-	if cfg.Interval == 0 {
+	// Not only zero: a record written before these values were validated can
+	// hold a negative one, and the daemon starts the probe again for every
+	// machine it adopts at startup.
+	if cfg.Interval <= 0 {
 		cfg.Interval = defaultHealthInterval
 	}
-	if cfg.Timeout == 0 {
+	if cfg.Timeout <= 0 {
 		cfg.Timeout = defaultHealthTimeout
 	}
-	if cfg.Retries == 0 {
+	if cfg.Retries <= 0 {
 		cfg.Retries = defaultHealthRetries
 	}
 
