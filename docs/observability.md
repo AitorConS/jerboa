@@ -100,11 +100,11 @@ in again. Requests from an address inside a jerboa network's subnet, which is
 where guests connect from, are refused with 403 whatever they carry. The
 dashboard lists which environment variables a VM has, not their values.
 
-Sign-in attempts are checked one at a time and a wrong one takes half a
-second, so the token cannot be guessed faster than two tries a second however
-many run in parallel. An attempt that waits more than 10 seconds for its turn
-gets `429`; try again. A bearer token sent to the dashboard is limited per
-address as on `/metrics`.
+Wrong sign-ins and bearer tokens sent to the dashboard are limited per
+address, as on `/metrics`: after 10 wrong tokens an address gets `429` until
+it slows down to one try a second (IPv6 addresses count by their /56). Other
+addresses are not affected, so one client guessing cannot keep you from
+signing in.
 
 Routes:
 

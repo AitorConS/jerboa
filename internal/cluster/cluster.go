@@ -704,14 +704,16 @@ func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if cluster.token != "" && !limiter.Allow(r) {
+		if cluster.token != "" && !limiter.Take(r) {
 			httpauth.Refuse(w)
 			return
 		}
 		if !cluster.authorized(r) {
-			limiter.Fail(r)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		if cluster.token != "" {
+			limiter.Refund(r)
 		}
 		payload, err := decodeGossip(http.MaxBytesReader(w, r.Body, maxGossipBody))
 		if err != nil {
