@@ -187,6 +187,9 @@ project markers (go.mod, package.json, etc.).`,
 				}
 			}
 
+			// builtBinary is set when binaryPath is a build output, written
+			// where the build steps could replace it.
+			var builtBinary bool
 			if info.IsDir() {
 				// The policy files as they were before any build step ran: a
 				// step must not change them, nor create one bubblewrap could
@@ -196,6 +199,7 @@ project markers (go.mod, package.json, etc.).`,
 					sp.Start("Building project")
 					var cleanupBinary bool
 					binaryPath, programPath, pkgFiles, cleanupBinary, err = buildStages(cmd, cfg, sandbox, srcPath, pkgFiles, platform, pkgSource, pkgs, infoW, subW)
+					builtBinary = cleanupBinary
 					if cleanupBinary && binaryPath != "" {
 						defer func() { _ = os.Remove(binaryPath) }()
 					}
@@ -214,6 +218,7 @@ project markers (go.mod, package.json, etc.).`,
 					var driverEnv map[string]string
 					var cleanupBinary bool
 					binaryPath, programPath, buildEntrypoint, programArgs, driverEnv, cleanupBinary, err = buildSingle(cmd, srcPath, cfg, sandbox, lang, platform, &pkgFiles, pkgSource, pkgs, infoW, subW)
+					builtBinary = cleanupBinary
 					if cleanupBinary && binaryPath != "" {
 						defer func() { _ = os.Remove(binaryPath) }()
 					}
@@ -359,7 +364,22 @@ project markers (go.mod, package.json, etc.).`,
 			}
 			defer func() { _ = client.Close() }()
 
-			pr := buildContextReader(binaryPath, programPath, pkgFiles)
+			program := pkg.File{HostPath: binaryPath}
+			if builtBinary {
+				// What the build produced, as it is now: the context streams
+				// it only if it is still this file.
+				walked, err := os.Lstat(binaryPath)
+				if err != nil {
+					sp.Fail("Image assembly failed")
+					return fmt.Errorf("build: %w", err)
+				}
+				if !walked.Mode().IsRegular() {
+					sp.Fail("Image assembly failed")
+					return fmt.Errorf("build: the build output %s is not a regular file: did a build step replace it?", binaryPath)
+				}
+				program.Walked = walked
+			}
+			pr := buildContextReader(program, programPath, pkgFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
 				Name:     name,

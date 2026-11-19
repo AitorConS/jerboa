@@ -1,8 +1,12 @@
 package pkg
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -225,4 +229,78 @@ func TestDefaultOpsStore(t *testing.T) {
 	info, err := os.Stat(want)
 	require.NoError(t, err, "DefaultOpsStore should create the store directory")
 	require.True(t, info.IsDir())
+}
+
+// A link whose ".." follows a component the archive has not created yet is
+// checked lexically when it is created, and a later entry can turn that
+// component into a link ("q -> .") so the ".." climbs out of the package:
+// "a/b/y -> q/../q/../../../secret" stays in the package as written, and
+// leaves it once "a/b/q -> ." and "a/q -> ." exist.
+func TestOpsExtract_LinkClimbingThroughALinkPlantedLater(t *testing.T) {
+	origLinks := symlinksSupported
+	symlinksSupported = true
+	t.Cleanup(func() { symlinksSupported = origLinks })
+
+	root := t.TempDir()
+	store, err := NewOpsStore(root)
+	require.NoError(t, err)
+	dir := store.PackageDir("evil", "pkg", "1.0")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	// Where the link leads on disk: next to the package, outside it.
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(dir), "secret"), []byte("host secret"), 0o600))
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, d := range []string{"pkg/", "pkg/sysroot/", "pkg/sysroot/a/", "pkg/sysroot/a/b/"} {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: d, Typeflag: tar.TypeDir, Mode: 0o755}))
+	}
+	for _, l := range []struct{ name, target string }{
+		{"pkg/sysroot/a/b/y", "q/../q/../../../secret"},
+		{"pkg/sysroot/a/b/q", "."},
+		{"pkg/sysroot/a/q", "."},
+	} {
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: l.name, Typeflag: tar.TypeSymlink, Linkname: l.target, Mode: 0o777}))
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, gz.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ArchSlug()+".tar.gz"), buf.Bytes(), 0o644))
+	require.NoError(t, store.Extract("evil", "pkg", "1.0"))
+
+	y := filepath.Join(dir, "sysroot", "a", "b", "y")
+	_, err = os.Lstat(y)
+	require.ErrorIs(t, err, fs.ErrNotExist, "the link leading out of the package is on disk")
+	// The harmless links stay.
+	_, err = os.Lstat(filepath.Join(dir, "sysroot", "a", "b", "q"))
+	require.NoError(t, err)
+}
+
+// After extraction every link is resolved again, and those leading out of
+// the package, or nowhere, are removed, whatever let them through.
+func TestRemoveEscapingLinks(t *testing.T) {
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "sysroot", "lib")
+	require.NoError(t, os.MkdirAll(lib, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(lib, "libz.so.1.3"), []byte("lib"), 0o644))
+	secret := filepath.Join(t.TempDir(), "id_rsa")
+	require.NoError(t, os.WriteFile(secret, []byte("host secret"), 0o600))
+	links := map[string]string{
+		"libz.so.1": "libz.so.1.3",
+		"leak":      secret,
+		"climb":     "../../../" + filepath.Base(filepath.Dir(secret)),
+		"dangling":  "gone",
+		"loop":      "loop",
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(lib, name)); err != nil {
+			t.Skipf("symlink creation unavailable: %v", err)
+		}
+	}
+	require.NoError(t, removeEscapingLinks(dir))
+	_, err := os.Lstat(filepath.Join(lib, "libz.so.1"))
+	require.NoError(t, err, "a link inside the package stays")
+	for _, name := range []string{"leak", "climb", "dangling", "loop"} {
+		_, err := os.Lstat(filepath.Join(lib, name))
+		require.ErrorIs(t, err, fs.ErrNotExist, name)
+	}
 }

@@ -702,6 +702,12 @@ func (s *Server) handleRun(ctx context.Context, params json.RawMessage) (any, *a
 	imageLayout := ""
 	var minDiskSize int64
 	if m := resolvedManifest; m != nil {
+		// The image's run defaults may come from a registry, and reach the
+		// hypervisor's command line: checked here too, for images stored
+		// before pulls checked them.
+		if err := image.ValidateRunConfig(m.Config); err != nil {
+			return nil, &api.RPCError{Code: -32602, Message: fmt.Sprintf("image %s: %v: rebuild it, or remove it with jerboa rmi", p.Image, err)}
+		}
 		imageLayout = m.Layout
 		minDiskSize = m.Config.MinDiskSize
 		if validator, ok := s.mgr.(interface{ ValidateImageLayout(string, bool) error }); ok {

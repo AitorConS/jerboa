@@ -4,10 +4,13 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -109,6 +112,15 @@ func TestSandboxConfinesSteps(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(outside, "no"))
 	ok, _ = run("read", secret)
 	require.False(t, ok, "reading a credential store")
+	// A credential store that is a single file.
+	vaultToken := filepath.Join(home, ".vault-token")
+	require.NoError(t, os.WriteFile(vaultToken, []byte("x"), 0o600))
+	ok, _ = run("read", vaultToken)
+	require.False(t, ok, "reading a token file")
+	netrc := filepath.Join(home, ".netrc")
+	require.NoError(t, os.WriteFile(netrc, []byte("x"), 0o600))
+	ok, _ = run("read", netrc)
+	require.True(t, ok, "reading what package managers fetch private dependencies with")
 
 	// The user's tool homes hold programs that run outside the sandbox.
 	cargoBin := filepath.Join(home, ".cargo", "bin")
@@ -147,4 +159,80 @@ func TestSeatbeltProfileKeepsThePolicyReadOnly(t *testing.T) {
 	deny := `(deny file-write* (literal "` + filepath.Join(realPath(dir), UnignoreFile) + `"))`
 	require.Contains(t, p, deny, "a file that does not exist yet must not be creatable either")
 	require.Greater(t, strings.Index(p, deny), strings.Index(p, "(allow file-write*"), "the deny must come after the allow it overrides")
+}
+
+// A step that leaves a process behind (on macOS it keeps running once the
+// step exits, and could change the project while the build reads it) has it
+// killed when the step ends.
+func TestSandboxKillsWhatAStepLeavesBehind(t *testing.T) {
+	if sandboxName() == "bubblewrap" {
+		// The step has its own pid namespace: the kernel ends what it left
+		// behind when it exits, and its pids mean nothing out here.
+		t.Skip("bubblewrap's pid namespace ends the step's processes itself")
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", "")
+	work := t.TempDir()
+	pidFile := filepath.Join(work, "pid")
+	cmd, done, err := Sandbox{}.Command(context.Background(), Step{Dir: work}, "sh", "-c",
+		"sleep 300 </dev/null >/dev/null 2>&1 & echo $! > "+pidFile)
+	require.NoError(t, err)
+	require.NoError(t, cmd.Run())
+	data, err := os.ReadFile(pidFile)
+	require.NoError(t, err)
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	require.NoError(t, err)
+	require.NoError(t, syscall.Kill(pid, 0), "the background process runs until the step ends")
+
+	done()
+	// SIGKILL is delivered asynchronously; the orphan is then reaped by init.
+	require.Eventually(t, func() bool {
+		return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+	}, 10*time.Second, 20*time.Millisecond, "the process the step left behind is still running")
+}
+
+func TestOpenRegularRefusesWhatIsNotAFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	require.NoError(t, os.WriteFile(file, []byte("x"), 0o600))
+	link := filepath.Join(dir, "link")
+	require.NoError(t, os.Symlink(file, link))
+	fifo := filepath.Join(dir, "fifo")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+
+	f, info, err := OpenRegular(file)
+	require.NoError(t, err)
+	require.True(t, info.Mode().IsRegular())
+	require.NoError(t, f.Close())
+	for _, p := range []string{link, fifo, dir} {
+		_, _, err := OpenRegular(p)
+		require.Error(t, err, p)
+	}
+}
+
+// A build output replaced by a link is not copied out as the program.
+func TestCopyFileRefusesALink(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "credentials.json")
+	require.NoError(t, os.WriteFile(secret, []byte("secret"), 0o600))
+	out := filepath.Join(dir, "app")
+	require.NoError(t, os.Symlink(secret, out))
+	dst := filepath.Join(dir, "copy")
+	require.Error(t, copyFile(out, dst))
+	data, _ := os.ReadFile(dst)
+	require.NotContains(t, string(data), "secret")
+}
+
+// A project created where a removed one was gets caches of its own.
+func TestToolCachesOfARecreatedProjectAreFresh(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("CARGO_HOME", "")
+	project := filepath.Join(t.TempDir(), "app")
+	require.NoError(t, os.Mkdir(project, 0o755))
+	first := toolCacheVars(t, project)["GOMODCACHE"]
+	// Keep an inode alive so the new directory cannot reuse the old one's.
+	require.NoError(t, os.Rename(project, project+".old"))
+	require.NoError(t, os.Mkdir(project, 0o755))
+	require.NotEqual(t, first, toolCacheVars(t, project)["GOMODCACHE"])
 }

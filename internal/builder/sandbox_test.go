@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -96,7 +97,8 @@ func TestToolCachesAreJerboasOwn(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(cargo, "config.toml"), []byte("[net]\n"), 0o644))
 	t.Setenv("CARGO_HOME", "")
 
-	dirs, env, err := toolCaches()
+	project := t.TempDir()
+	dirs, env, err := toolCaches(project)
 	require.NoError(t, err)
 	cacheDir, err := os.UserCacheDir()
 	require.NoError(t, err)
@@ -120,9 +122,46 @@ func TestToolCachesAreJerboasOwn(t *testing.T) {
 
 	// A config a step left behind is replaced by the user's.
 	require.NoError(t, os.WriteFile(filepath.Join(vars["CARGO_HOME"], "credentials.toml"), []byte("planted"), 0o600))
-	_, _, err = toolCaches()
+	_, _, err = toolCaches(project)
 	require.NoError(t, err)
 	require.NoFileExists(t, filepath.Join(vars["CARGO_HOME"], "credentials.toml"))
+}
+
+// toolCacheVars returns the cache environment toolCaches gives project.
+func toolCacheVars(t *testing.T, project string) map[string]string {
+	t.Helper()
+	_, env, err := toolCaches(project)
+	require.NoError(t, err)
+	vars := map[string]string{}
+	for _, kv := range env {
+		k, v, _ := strings.Cut(kv, "=")
+		vars[k] = v
+	}
+	return vars
+}
+
+func TestToolCachesArePerProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("CARGO_HOME", "")
+	root := t.TempDir()
+	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
+	require.NoError(t, os.MkdirAll(a, 0o755))
+	require.NoError(t, os.MkdirAll(b, 0o755))
+
+	va, vb := toolCacheVars(t, a), toolCacheVars(t, b)
+	for _, k := range []string{"npm_config_cache", "npm_config_devdir", "PIP_CACHE_DIR", "GOCACHE", "GOMODCACHE", "CARGO_HOME", "XDG_CACHE_HOME"} {
+		require.NotEmpty(t, va[k], k)
+		require.NotEqual(t, va[k], vb[k], "%s is shared by two projects", k)
+		require.False(t, within(va[k], vb[k]) || within(vb[k], va[k]), "%s of one project lies in the other's", k)
+	}
+
+	// The same project, reached again or through a symlink, keeps its caches.
+	require.Equal(t, va, toolCacheVars(t, a))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(a, link))
+	require.Equal(t, va, toolCacheVars(t, link))
 }
 
 func TestControlSocketsCoverTheDaemon(t *testing.T) {
@@ -245,4 +284,55 @@ func TestConfinedStepsLoseBrokerAddresses(t *testing.T) {
 	require.NoError(t, err)
 	defer done()
 	require.Equal(t, []string{"DOCKER_HOST=x"}, cmd.Env)
+}
+
+// The credential stores no package manager reads are hidden from build
+// steps; those package managers use for private dependencies are not.
+func TestHiddenPathsCoverToolTokensButNotPackageCredentials(t *testing.T) {
+	home := t.TempDir()
+	hidden := []string{".config/gh", ".config/hub", ".vault-token", ".terraform.d", ".pypirc", ".docker", ".config/gcloud", ".azure"}
+	readable := []string{".netrc", ".npmrc", ".ssh", ".git-credentials", ".cargo"}
+	for _, rel := range append(append([]string{}, hidden...), readable...) {
+		p := filepath.Join(home, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o700))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+	got := hiddenPaths(home, Step{Dir: t.TempDir()})
+	for _, rel := range hidden {
+		require.Contains(t, got, filepath.Join(home, rel))
+	}
+	for _, rel := range readable {
+		require.NotContains(t, got, filepath.Join(home, rel))
+	}
+}
+
+// Caches not used for cacheIdleLimit are removed, read-only directories
+// (the Go module cache) included; recent ones and the one in use stay.
+func TestPruneIdleCaches(t *testing.T) {
+	parent := t.TempDir()
+	now := time.Now()
+	mk := func(name string, age time.Duration) string {
+		d := filepath.Join(parent, name)
+		ro := filepath.Join(d, "go-mod", "example.com", "m@v1")
+		require.NoError(t, os.MkdirAll(ro, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ro, "go.mod"), []byte("module m\n"), 0o444))
+		require.NoError(t, os.Chmod(ro, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+		require.NoError(t, os.Chtimes(d, now.Add(-age), now.Add(-age)))
+		return d
+	}
+	old := mk("old", cacheIdleLimit+time.Hour)
+	recent := mk("recent", time.Hour)
+	inUse := mk("inuse", 2*cacheIdleLimit)
+	outside := filepath.Join(t.TempDir(), "keep")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(old, "link")))
+	aged := now.Add(-cacheIdleLimit - time.Hour)
+	require.NoError(t, os.Chtimes(old, aged, aged))
+
+	pruneIdleCaches(parent, inUse, now)
+	require.NoDirExists(t, old)
+	require.DirExists(t, recent)
+	require.DirExists(t, inUse)
+	require.FileExists(t, outside, "a link in a cache leads nowhere outside it")
 }

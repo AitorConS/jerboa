@@ -763,7 +763,7 @@ Examples:
 				}
 			}
 
-			pr := buildContextReader(binaryPath, programPath, pkgFiles)
+			pr := buildContextReader(pkg.File{HostPath: binaryPath}, programPath, pkgFiles)
 			defer func() { _ = pr.Close() }()
 			res, err := client.ImageBuild(cmd.Context(), api.BuildParams{
 				Name:        "pkg-load",

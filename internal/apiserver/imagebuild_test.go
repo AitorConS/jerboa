@@ -55,6 +55,21 @@ func buildContextTar(t *testing.T, files map[string][]byte) *bytes.Buffer {
 	return &buf
 }
 
+// buildStoreDir is a temporary image store directory removed after the test.
+// Serve returns before the connections it accepted are done, so a build the
+// server is still finishing may write to the store while the test ends;
+// removal is retried until it is quiet.
+func buildStoreDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "jerboa-build-store-*")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.Eventually(t, func() bool { return os.RemoveAll(dir) == nil }, 10*time.Second, 50*time.Millisecond,
+			"the image store directory could not be removed")
+	})
+	return dir
+}
+
 func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	t.Helper()
 	socketPath := filepath.Join(t.TempDir(), "jerboad.sock")
@@ -134,7 +149,7 @@ func startSeedServer(t *testing.T, volStore *volume.Store) *api.Client {
 }
 
 func TestImageBuild_RoundTrip(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
@@ -177,7 +192,7 @@ func buildImage(t *testing.T, client *api.Client, name, tag string) {
 }
 
 func TestImage_ListAndRemove(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
@@ -203,7 +218,7 @@ func TestImage_ListAndRemove(t *testing.T) {
 }
 
 func TestVMRun_ByRef(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
@@ -222,7 +237,7 @@ func TestVMRun_ByRef(t *testing.T) {
 // `docker rmi`. Regression for the E2E finding where `jerboa rmi <img>`
 // succeeded while a VM was running on that image.
 func TestImageRemove_InUse(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
@@ -242,7 +257,7 @@ func TestImageRemove_InUse(t *testing.T) {
 }
 
 func TestVMRun_ByRef_NotFound(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
@@ -252,7 +267,7 @@ func TestVMRun_ByRef_NotFound(t *testing.T) {
 }
 
 func TestImageBuild_MissingProgram(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 
@@ -393,7 +408,7 @@ func validBuildELF() []byte {
 }
 
 func TestImageBuildRejectsPlatformBeforeMkfs(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 	_, err = client.ImageBuild(context.Background(), api.BuildParams{Name: "bad", Program: "app", Platform: "linux/amd64"}, buildContextTar(t, map[string][]byte{"app": validBuildELF()}))
@@ -404,7 +419,7 @@ func TestImageBuildRejectsPlatformBeforeMkfs(t *testing.T) {
 }
 
 func TestImageBuildPackageMetadataRoundTrip(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 	refs := []pkg.Reference{{Source: "jerboa", Name: "service", Version: "1.2.3", Platform: "linux/arm64", SHA256: strings.Repeat("a", 64), Provenance: &pkg.Provenance{Kind: "local"}}}
@@ -461,7 +476,7 @@ func TestImageBuild_RebuildPrunesReplacedImage(t *testing.T) {
 
 // The SBOM a build sends is stored with the image and returned by Image.SBOM.
 func TestImageBuild_SBOM(t *testing.T) {
-	store, err := image.NewStore(t.TempDir())
+	store, err := image.NewStore(buildStoreDir(t))
 	require.NoError(t, err)
 	client := startBuildServer(t, store)
 	ctx := context.Background()

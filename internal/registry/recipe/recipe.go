@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"sort"
@@ -134,14 +135,24 @@ func (r *Recipe) Validate() error {
 	if _, ok := cas.ParseDigest(r.DiskDigest); !ok || r.DiskSize <= 0 {
 		return fmt.Errorf("recipe: invalid disk digest or size")
 	}
+	// The run defaults reach the hypervisor's command line when the image
+	// runs.
+	if err := image.ValidateRunConfig(r.Config); err != nil {
+		return fmt.Errorf("recipe: %w", err)
+	}
 	if err := pkg.ValidateReferences(r.Packages, r.Platform); err != nil {
 		return fmt.Errorf("recipe: %w", err)
 	}
 	listed := map[string]bool{}
+	var total int64
 	for i, b := range r.Blobs {
 		if _, ok := cas.ParseDigest(b.Digest); !ok || b.Size < 0 {
 			return fmt.Errorf("recipe: invalid blob %q", b.Digest)
 		}
+		if b.Size > math.MaxInt64-total {
+			return fmt.Errorf("recipe: blob sizes add up to more than can be counted")
+		}
+		total += b.Size
 		if i > 0 && r.Blobs[i-1].Digest >= b.Digest {
 			return fmt.Errorf("recipe: blobs must be sorted and unique")
 		}
@@ -175,6 +186,50 @@ func (r *Recipe) Validate() error {
 		if !used[d] {
 			return fmt.Errorf("recipe: blob %s is listed but not used", d)
 		}
+	}
+	return nil
+}
+
+// Limits bounds what one recipe may make a pull download and assemble.
+type Limits struct {
+	// MaxBlobs is the number of files the recipe may list.
+	MaxBlobs int
+	// MaxBytes is the total size of those files.
+	MaxBytes int64
+	// MaxDiskSize is the size of the assembled disk, and of the disk a VM
+	// of the image is given at least (Config.MinDiskSize).
+	MaxDiskSize int64
+}
+
+// DefaultLimits are generous for any image: an application's files are one
+// blob each, and a Node or Python application can hold tens of thousands.
+var DefaultLimits = Limits{MaxBlobs: 100_000, MaxBytes: 64 << 30, MaxDiskSize: 64 << 30}
+
+// BlobBytes returns the total size of the recipe's blobs. Validate has
+// checked that it does not overflow.
+func (r *Recipe) BlobBytes() int64 {
+	var n int64
+	for _, b := range r.Blobs {
+		n += b.Size
+	}
+	return n
+}
+
+// CheckLimits refuses a recipe that exceeds l, naming the limit, so a
+// registry cannot make a pull fill the disk or run without end. A zero
+// field of l is no limit.
+func (r *Recipe) CheckLimits(l Limits) error {
+	if l.MaxBlobs > 0 && len(r.Blobs) > l.MaxBlobs {
+		return fmt.Errorf("recipe: lists %d files, more than the %d a pull accepts (JERBOA_PULL_MAX_BLOBS)", len(r.Blobs), l.MaxBlobs)
+	}
+	if n := r.BlobBytes(); l.MaxBytes > 0 && n > l.MaxBytes {
+		return fmt.Errorf("recipe: its files add up to %d bytes, more than the %d a pull accepts (JERBOA_PULL_MAX_BYTES)", n, l.MaxBytes)
+	}
+	if l.MaxDiskSize > 0 && r.DiskSize > l.MaxDiskSize {
+		return fmt.Errorf("recipe: its disk is %d bytes, more than the %d a pull accepts (JERBOA_PULL_MAX_DISK_SIZE)", r.DiskSize, l.MaxDiskSize)
+	}
+	if l.MaxDiskSize > 0 && r.Config.MinDiskSize > l.MaxDiskSize {
+		return fmt.Errorf("recipe: asks for a %d-byte VM disk, more than the %d a pull accepts (JERBOA_PULL_MAX_DISK_SIZE)", r.Config.MinDiskSize, l.MaxDiskSize)
 	}
 	return nil
 }

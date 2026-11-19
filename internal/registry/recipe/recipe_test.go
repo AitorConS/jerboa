@@ -4,6 +4,7 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/binary"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,4 +171,81 @@ func TestAssembledManifestReadsOnlyRecipeBlobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, checkAssembledHosts(f.r, f.store, `(a:(contents:(host:"`+p+`")))`))
 	require.ErrorContains(t, checkAssembledHosts(f.r, f.store, `(a:(contents:(host:"/etc/passwd")))`), "host path")
+}
+
+func TestCheckLimitsBoundsWhatAPullFetches(t *testing.T) {
+	f := build(t)
+	r := *f.r
+	require.NoError(t, r.CheckLimits(DefaultLimits))
+	require.NoError(t, r.CheckLimits(Limits{}), "a zero limit is no limit")
+
+	cases := map[string]struct {
+		limits Limits
+		edit   func(r *Recipe)
+		want   string
+	}{
+		"too many files":    {Limits{MaxBlobs: len(r.Blobs) - 1}, nil, "JERBOA_PULL_MAX_BLOBS"},
+		"files too large":   {Limits{MaxBytes: r.BlobBytes() - 1}, nil, "JERBOA_PULL_MAX_BYTES"},
+		"disk too large":    {DefaultLimits, func(r *Recipe) { r.DiskSize = DefaultLimits.MaxDiskSize + 1 }, "JERBOA_PULL_MAX_DISK_SIZE"},
+		"VM disk too large": {DefaultLimits, func(r *Recipe) { r.Config.MinDiskSize = DefaultLimits.MaxDiskSize + 1 }, "JERBOA_PULL_MAX_DISK_SIZE"},
+		"files beyond the default": {DefaultLimits, func(r *Recipe) {
+			r.Blobs = append([]Blob{}, r.Blobs...)
+			r.Blobs[0].Size = DefaultLimits.MaxBytes
+		}, "JERBOA_PULL_MAX_BYTES"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := *f.r
+			if c.edit != nil {
+				c.edit(&r)
+			}
+			err := r.CheckLimits(c.limits)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), c.want)
+		})
+	}
+}
+
+func TestValidateRefusesBlobSizesThatOverflow(t *testing.T) {
+	f := build(t)
+	r := *f.r
+	r.Blobs = append([]Blob{}, r.Blobs...)
+	r.Blobs[0].Size = math.MaxInt64
+	r.Blobs[1].Size = 1
+	require.ErrorContains(t, r.Validate(), "add up")
+}
+
+// A recipe's run defaults reach the hypervisor's command line when the
+// pulled image runs: they are checked like the rest of the recipe, and the
+// ones official images carry stay valid.
+func TestValidateChecksRunDefaults(t *testing.T) {
+	f := build(t)
+	for _, cfg := range []image.Config{
+		{Memory: "256M", CPUs: 1},
+		{Memory: "1G", CPUs: 2},
+		{Memory: "512Mi", CPUs: 1, MinDiskSize: 1 << 30},
+		{},
+	} {
+		r := *f.r
+		r.Config = cfg
+		require.NoError(t, r.Validate(), "%+v", cfg)
+	}
+	for name, cfg := range map[string]image.Config{
+		"memory with options": {Memory: "1G,maxmem=64G", CPUs: 1},
+		"memory too large":    {Memory: "4096T", CPUs: 1},
+		"memory not a size":   {Memory: "lots", CPUs: 1},
+		"negative CPUs":       {Memory: "256M", CPUs: -1},
+		"too many CPUs":       {Memory: "256M", CPUs: 100000},
+		"negative disk":       {Memory: "256M", CPUs: 1, MinDiskSize: -1},
+		"disk too large":      {Memory: "256M", CPUs: 1, MinDiskSize: image.MaxMinDiskSize + 1},
+	} {
+		r := *f.r
+		r.Config = cfg
+		require.Error(t, r.Validate(), name)
+		// And a pulled recipe carrying it does not parse.
+		data, err := r.Encode()
+		require.NoError(t, err)
+		_, err = Parse(data)
+		require.Error(t, err, name)
+	}
 }

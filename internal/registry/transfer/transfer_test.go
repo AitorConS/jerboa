@@ -424,11 +424,137 @@ func TestPushIndexRefusesWhatCannotBeIndexed(t *testing.T) {
 
 	// A registry that does not advertise indexes.
 	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": "http://cdn.invalid"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": "https://cdn.invalid"})
 	}))
 	defer old.Close()
 	ref, err := naming.ParseImageReference(strings.TrimPrefix(old.URL, "http://") + "/alice/web:multi")
 	require.NoError(t, err)
 	_, err = PushIndex(ctx, IndexOptions{Client: client.New(ref.Registry), Token: "t", Ref: ref, Sources: []naming.ImageReference{ref}})
 	require.ErrorContains(t, err, "does not support image indexes")
+}
+
+// pushV1 pushes a one-version image and returns its recipe.
+func pushV1(t *testing.T, e *env) *recipe.Recipe {
+	t.Helper()
+	local := newStore(t)
+	v1 := e.build(t, local, "version 1")
+	_, err := Push(context.Background(), PushOptions{Client: e.cl, Token: "t", Ref: e.ref(t, "v1"), Store: local, Recipe: v1, Mkfs: e.mkfsFor})
+	require.NoError(t, err)
+	r, err := recipe.Load(local, v1)
+	require.NoError(t, err)
+	return r
+}
+
+// requireNothingFetched checks a refused pull stored none of r's blobs and
+// assembled no disk.
+func requireNothingFetched(t *testing.T, store *cas.Store, r *recipe.Recipe, out string) {
+	t.Helper()
+	for _, b := range r.Blobs {
+		require.False(t, store.Has(b.Digest), "blob %s was fetched", b.Digest)
+	}
+	require.NoFileExists(t, out)
+}
+
+func TestPullRefusesARecipeBeyondItsLimits(t *testing.T) {
+	e := newEnv(t)
+	r := pushV1(t, e)
+	cases := map[string]struct {
+		limits recipe.Limits
+		want   string
+	}{
+		"files":     {recipe.Limits{MaxBlobs: len(r.Blobs) - 1}, EnvPullMaxBlobs},
+		"bytes":     {recipe.Limits{MaxBytes: r.BlobBytes() - 1}, EnvPullMaxBytes},
+		"disk size": {recipe.Limits{MaxDiskSize: r.DiskSize - 1}, EnvPullMaxDiskSize},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			remote := newStore(t)
+			out := filepath.Join(t.TempDir(), "disk.img")
+			_, err := Pull(context.Background(), PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: remote, Mkfs: e.mkfsFor, Out: out, Limits: c.limits})
+			require.Error(t, err)
+			require.Contains(t, err.Error(), c.want)
+			requireNothingFetched(t, remote, r, out)
+		})
+	}
+	// Within the limits it pulls.
+	remote := newStore(t)
+	_, err := Pull(context.Background(), PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: remote, Mkfs: e.mkfsFor,
+		Out: filepath.Join(t.TempDir(), "disk.img"), Limits: recipe.Limits{MaxBlobs: len(r.Blobs), MaxBytes: r.BlobBytes(), MaxDiskSize: r.DiskSize}})
+	require.NoError(t, err)
+}
+
+func TestPullRefusesWhatDoesNotFitOnDisk(t *testing.T) {
+	e := newEnv(t)
+	r := pushV1(t, e)
+	remote := newStore(t)
+	out := filepath.Join(t.TempDir(), "disk.img")
+
+	var need int64
+	for _, b := range r.Blobs {
+		need += b.Size
+	}
+	need += assembledDiskNeed(r)
+	free := need - 1
+	orig := freeSpace
+	t.Cleanup(func() { freeSpace = orig })
+	// Store and disk on one filesystem: what both need counts together.
+	freeSpace = func(string) (int64, uint64, bool) { return free, 1, true }
+	_, err := Pull(context.Background(), PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: remote, Mkfs: e.mkfsFor, Out: out})
+	require.ErrorContains(t, err, "free some space")
+	requireNothingFetched(t, remote, r, out)
+
+	free = need
+	_, err = Pull(context.Background(), PullOptions{Client: e.cl, Ref: e.ref(t, "v1"), Store: remote, Mkfs: e.mkfsFor, Out: out})
+	require.NoError(t, err)
+}
+
+func TestLimitsFromEnv(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	l, err := LimitsFromEnv(env(nil))
+	require.NoError(t, err)
+	require.Equal(t, recipe.DefaultLimits, l)
+
+	l, err = LimitsFromEnv(env(map[string]string{EnvPullMaxBlobs: "10", EnvPullMaxBytes: "2G", EnvPullMaxDiskSize: "512m"}))
+	require.NoError(t, err)
+	require.Equal(t, recipe.Limits{MaxBlobs: 10, MaxBytes: 2 << 30, MaxDiskSize: 512 << 20}, l)
+
+	for _, bad := range []map[string]string{
+		{EnvPullMaxBlobs: "0"}, {EnvPullMaxBlobs: "many"}, {EnvPullMaxBytes: "-1"}, {EnvPullMaxDiskSize: "1T"},
+	} {
+		_, err := LimitsFromEnv(env(bad))
+		require.Error(t, err, bad)
+	}
+}
+
+// A large declared disk with little in it needs the space of its content,
+// not of its size.
+func TestAssembledDiskNeed(t *testing.T) {
+	r := &recipe.Recipe{DiskSize: 40 << 30, Blobs: []recipe.Blob{{Size: 100 << 20}}}
+	require.Equal(t, int64(100<<20+assembledDiskMargin), assembledDiskNeed(r))
+	r.Blobs = []recipe.Blob{{Size: 1 << 30}}
+	require.Equal(t, int64(1<<30+1<<27), assembledDiskNeed(r), "an eighth of the content for metadata")
+	r.Blobs = []recipe.Blob{{Size: 32 << 30}}
+	require.Equal(t, int64(36<<30), assembledDiskNeed(r))
+	r.Blobs = []recipe.Blob{{Size: 39 << 30}}
+	require.Equal(t, r.DiskSize, assembledDiskNeed(r), "never more than the declared size")
+	r = &recipe.Recipe{DiskSize: 16 << 20}
+	require.Equal(t, r.DiskSize, assembledDiskNeed(r))
+}
+
+// The store and the disk count together only when they share a filesystem.
+func TestCheckSpaceCountsEachFilesystem(t *testing.T) {
+	store := newStore(t)
+	out := filepath.Join(t.TempDir(), "disk.img")
+	orig := freeSpace
+	t.Cleanup(func() { freeSpace = orig })
+	freeSpace = func(dir string) (int64, uint64, bool) {
+		if dir == store.Root() {
+			return 100, 1, true
+		}
+		return 100, 2, true
+	}
+	require.NoError(t, checkSpace(store, 100, out, 100))
+	require.ErrorContains(t, checkSpace(store, 100, out, 101), "free some space")
+	freeSpace = func(string) (int64, uint64, bool) { return 150, 1, true }
+	require.ErrorContains(t, checkSpace(store, 100, out, 100), "free some space")
 }

@@ -64,17 +64,21 @@ func findProgramBinary(pkgFiles []pkg.File, programPath string) (hostPath, guest
 // programPath is the in-image path the daemon places the program at (empty
 // means /program). A package file that is the program itself at that same path
 // is not streamed a second time: the daemon writes the program there anyway.
-func buildContextReader(binaryPath, programPath string, pkgFiles []pkg.File) *io.PipeReader {
+//
+// program.Walked is set when the program is a build output, which the build
+// steps could have replaced: it is then streamed only if it is still the
+// file checked after the build.
+func buildContextReader(program pkg.File, programPath string, pkgFiles []pkg.File) *io.PipeReader {
 	pr, pw := io.Pipe()
 	go func() {
 		tw := tar.NewWriter(pw)
 		err := func() error {
-			if err := addFileToTar(tw, binaryPath, buildProgramPath); err != nil {
+			if err := addFileToTar(tw, program, buildProgramPath); err != nil {
 				return err
 			}
 			files := make([]pkg.File, 0, len(pkgFiles))
 			for _, f := range pkgFiles {
-				if isProgramFile(f, binaryPath, programPath) {
+				if isProgramFile(f, program.HostPath, programPath) {
 					continue
 				}
 				files = append(files, f)
@@ -119,7 +123,7 @@ func writePkgFiles(tw *tar.Writer, files []pkg.File) error {
 			}
 			continue
 		}
-		if err := addFileToTar(tw, f.HostPath, guestPath); err != nil {
+		if err := addFileToTar(tw, f, guestPath); err != nil {
 			return err
 		}
 	}
@@ -141,17 +145,14 @@ func addDirToTar(tw *tar.Writer, guestPath string) error {
 	return nil
 }
 
-// addFileToTar writes hostPath into tw under the slash-separated guestPath.
-func addFileToTar(tw *tar.Writer, hostPath, guestPath string) error {
-	f, err := os.Open(hostPath)
+// addFileToTar writes f's host file into tw under the slash-separated
+// guestPath.
+func addFileToTar(tw *tar.Writer, f pkg.File, guestPath string) error {
+	file, info, err := openBuildFile(f)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", hostPath, err)
+		return err
 	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return fmt.Errorf("stat %s: %w", hostPath, err)
-	}
+	defer func() { _ = file.Close() }()
 	hdr := &tar.Header{
 		Name:     filepath.ToSlash(guestPath),
 		Mode:     int64(info.Mode().Perm()),
@@ -161,10 +162,58 @@ func addFileToTar(tw *tar.Writer, hostPath, guestPath string) error {
 	if err := tw.WriteHeader(hdr); err != nil {
 		return fmt.Errorf("tar header %s: %w", guestPath, err)
 	}
-	if _, err := io.Copy(tw, f); err != nil {
+	if _, err := io.Copy(tw, file); err != nil {
 		return fmt.Errorf("tar copy %s: %w", guestPath, err)
 	}
 	return nil
+}
+
+// openBuildFile opens f's host file for streaming into the build context.
+// A file listed from the project (f.Walked set) must still be the file that
+// was checked then: the project's build steps can write there, and on macOS
+// a step can leave a process behind that swaps a checked file for a link to
+// a host secret. Such a file is opened without following a link in its last
+// component, and a link that was listed is resolved again and must still
+// lead to a file inside f.LinkRoot. Package files come from the package
+// store, which build steps cannot write to; they are opened as they are, and
+// must be regular files.
+func openBuildFile(f pkg.File) (*os.File, os.FileInfo, error) {
+	if f.Walked == nil {
+		file, err := os.Open(f.HostPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open %s: %w", f.HostPath, err)
+		}
+		info, err := file.Stat()
+		if err != nil {
+			_ = file.Close()
+			return nil, nil, fmt.Errorf("stat %s: %w", f.HostPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			_ = file.Close()
+			return nil, nil, fmt.Errorf("open %s: not a regular file", f.HostPath)
+		}
+		return file, info, nil
+	}
+	path := f.HostPath
+	if f.LinkRoot != "" {
+		target, ok, err := linkedProjectFile(f.LinkRoot, f.HostPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			return nil, nil, fmt.Errorf("source symlink %s no longer points to a regular file inside the project: did a build step change it?", f.HostPath)
+		}
+		path = target
+	}
+	file, info, err := builder.OpenRegular(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w (it was a regular file when the build listed it: did a build step replace it?)", err)
+	}
+	if !os.SameFile(f.Walked, info) {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("open %s: the file changed after the build listed it: did a build step replace it?", f.HostPath)
+	}
+	return file, info, nil
 }
 
 // runtimeBinaryCandidates maps a language to an ordered list of binary names to
@@ -256,23 +305,23 @@ func findRuntimeBinary(pkgFiles []pkg.File, lang builder.Lang) (hostPath, guestP
 	return "", "", fmt.Errorf("runtime binary %q (or variant) not found in package files", candidates[0])
 }
 
-// symlinkToProjectFile reports whether the symlink at path resolves to a
-// regular file inside the project directory dir.
-func symlinkToProjectFile(dir, path string) (bool, error) {
+// linkedProjectFile resolves the symlink at path and reports whether it
+// leads to a regular file inside the project directory dir, and which.
+func linkedProjectFile(dir, path string) (string, bool, error) {
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return false, nil //nolint:nilerr // a dangling link is reported as unsupported
+		return "", false, nil //nolint:nilerr // a dangling link is reported as unsupported
 	}
 	root, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return false, fmt.Errorf("resolve project dir: %w", err)
+		return "", false, fmt.Errorf("resolve project dir: %w", err)
 	}
 	rel, err := filepath.Rel(root, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false, nil //nolint:nilerr // outside the project
+		return "", false, nil //nolint:nilerr // outside the project
 	}
-	info, err := os.Stat(target)
-	return err == nil && info.Mode().IsRegular(), nil
+	info, err := os.Lstat(target)
+	return target, err == nil && info.Mode().IsRegular(), nil
 }
 
 // sourceFiles collects application source files from dir for inclusion in the image.
@@ -320,18 +369,27 @@ func sourceFiles(dir string, lang builder.Lang, include *builder.IncludeMatcher)
 		// entry would be tarred as TypeReg and then block or fail during
 		// os.Open/io.Copy. A symlink to a regular file inside the project is
 		// packaged with its target's content; filepath.Walk does not follow it.
+		// The file is streamed later, after other build steps may have run;
+		// what was checked here is kept, so that the stream refuses a file
+		// replaced in the meantime (see openBuildFile).
+		f := pkg.File{HostPath: path, GuestPath: rel, FromContext: true, Walked: info}
 		if info.Mode()&os.ModeSymlink != 0 {
-			ok, lerr := symlinkToProjectFile(dir, path)
+			target, ok, lerr := linkedProjectFile(dir, path)
 			if lerr != nil {
 				return lerr
 			}
 			if !ok {
 				return fmt.Errorf("unsupported source symlink %q: it must point to a regular file inside the project", rel)
 			}
+			walked, serr := os.Lstat(target)
+			if serr != nil {
+				return fmt.Errorf("source symlink %q: %w", rel, serr)
+			}
+			f.Walked, f.LinkRoot = walked, dir
 		} else if !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported non-regular source file %q", rel)
 		}
-		files = append(files, pkg.File{HostPath: path, GuestPath: rel, FromContext: true})
+		files = append(files, f)
 		return nil
 	})
 	if err != nil {

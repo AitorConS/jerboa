@@ -50,6 +50,32 @@ Which versions exist, and where:
   (`sudo systemctl edit jerboad`, then `Environment=...` under `[Service]`,
   then `sudo systemctl restart jerboad`). The rules apply when the daemon
   starts with the new version.
+- **Each project's confined build steps get tool caches of their own.** The
+  npm, pip, Go and cargo caches under `<user cache dir>/jerboa/build-sandbox/`
+  are now kept per project, so the first build of each project after
+  upgrading downloads its dependencies again. A project created where a
+  removed one was gets fresh caches, and caches not used for 30 days are
+  removed by the next build, the old shared ones (`npm`, `node-gyp`, `pip`,
+  `go-build`, `go-mod`, `cargo`, `xdg` directly under `build-sandbox/`)
+  included.
+- **Pulls have limits.** A pulled image may list at most 100000 files, adding
+  up to at most 64 GiB, with a disk, and a VM disk it asks for, of at most
+  64 GiB. Raise them with `JERBOA_PULL_MAX_BLOBS`, `JERBOA_PULL_MAX_BYTES`
+  and `JERBOA_PULL_MAX_DISK_SIZE` in the daemon's environment. A pull whose
+  files and disk do not fit in the free space now fails before downloading.
+- **Build steps no longer get well-known tokens from the environment nor
+  read the GitHub CLI's login.** `GITHUB_TOKEN`, `GH_TOKEN`, the AWS, Google
+  Cloud and Azure credentials, `VAULT_TOKEN`, `CLOUDFLARE_API_TOKEN`,
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and every `JERBOA_*TOKEN*` or
+  `JERBOA_*SECRET*` variable are removed from the environment of `[build]
+  run` commands and the language tools, and confined steps cannot read
+  `~/.config/gh`, `~/.config/hub`, `~/.vault-token`, `~/.terraform.d` or
+  `~/.pypirc`. A build that used one of these to fetch private dependencies
+  passes the token under the name its package manager reads instead, for
+  example `NODE_AUTH_TOKEN="$GITHUB_TOKEN" jerboa build .`, and fetches
+  private git dependencies over SSH or with `~/.git-credentials` rather than
+  through `gh auth git-credential`. The full list is in the CLI reference
+  under `jerboa build`.
 
 ### Security
 
@@ -135,6 +161,50 @@ Which versions exist, and where:
   command line, where any local user could read them with `ps`. QEMU now
   reads them from a file only the daemon's user can read, deleted when the
   VM exits. The guest sees the same variables as before.
+- One project's build scripts could alter the Go modules or cargo crates that
+  the confined build steps of every other project read from the shared tool
+  cache, and so change what a later build of another project compiled. The
+  caches are now per project.
+- A build step, or a process it left running, could replace a project file
+  after the build had checked it, for example with a link to
+  `~/.jerboa/credentials.json`, and the build then packed that file into the
+  image. Project files and build outputs are now streamed only if they are
+  still the files that were checked, without following a link put in their
+  place, and confined steps run in their own process group, which is killed
+  when the step ends.
+- A registry could make a pull download and assemble without bound: nothing
+  limited the number or size of a recipe's files or the size of its disk.
+  These are now checked against the daemon's limits, and against the free
+  space, before anything is downloaded.
+- Build steps, which run the project's code with network access, received
+  the caller's whole environment apart from Jerboa's own tokens, and could
+  read the GitHub CLI's, Vault's and Terraform's tokens. Well-known secret
+  variables are now removed and those files hidden.
+- An ops package could keep a symlink that leads out of its directory: a
+  link whose `..` followed a path the archive created as a link only later
+  was checked as written. Such links are now refused, and after extraction
+  every link is resolved again and removed if it leads outside the package
+  or nowhere.
+- A pulled image's run defaults (memory, CPUs, VM disk size) were handed to
+  the hypervisor as the registry wrote them; QEMU took the memory string as
+  is. They are now checked when the recipe is read and again when the image
+  runs: a memory size from 1 MiB to 1 TiB, at most 256 CPUs, a VM disk of at
+  most 16 TiB.
+- The CDN a registry names in its discovery document must be HTTPS, unless
+  it is on loopback, as the registry's own host must; tags read from it are
+  not covered by any digest. Registry reads whose body stops arriving for
+  60 seconds fail and are retried instead of hanging the pull.
+- `jerboa login --token-stdin` reads a personal access token from standard
+  input. `--token <pat>`, which put the token in the process list and the
+  shell history, still works but is deprecated and prints a warning.
+- `jerboa pkg push` showed a package index's whole error answer, of any
+  size and over several lines. It now shows at most 1 KiB of it, on one
+  line, without control characters.
+
+### Deprecated
+
+- `jerboa login --token <pat>`: pipe the token to `jerboa login
+  --token-stdin`, or set `JERBOA_REGISTRY_TOKEN`.
 
 ### Fixed
 

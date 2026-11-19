@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
 	"github.com/AitorConS/jerboa/internal/registry/client"
@@ -221,6 +223,100 @@ type PullOptions struct {
 	// image index pulls that platform's recipe, and any other pull fails
 	// unless its recipe is for it. Empty means the host's, for an index.
 	Platform string
+	// Limits bounds what the recipe may make the pull download and
+	// assemble; the zero value means recipe.DefaultLimits.
+	Limits recipe.Limits
+}
+
+// Environment variables that change the daemon's pull limits.
+const (
+	EnvPullMaxBlobs    = "JERBOA_PULL_MAX_BLOBS"
+	EnvPullMaxBytes    = "JERBOA_PULL_MAX_BYTES"
+	EnvPullMaxDiskSize = "JERBOA_PULL_MAX_DISK_SIZE"
+)
+
+// LimitsFromEnv returns recipe.DefaultLimits with what the environment, read
+// through getenv, changes: JERBOA_PULL_MAX_BLOBS (a count),
+// JERBOA_PULL_MAX_BYTES and JERBOA_PULL_MAX_DISK_SIZE (bytes, or with a k, m
+// or g suffix such as 128G).
+func LimitsFromEnv(getenv func(string) string) (recipe.Limits, error) {
+	l := recipe.DefaultLimits
+	if v := strings.TrimSpace(getenv(EnvPullMaxBlobs)); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return l, fmt.Errorf("%s=%q: want a positive number of files", EnvPullMaxBlobs, v)
+		}
+		l.MaxBlobs = n
+	}
+	for _, e := range []struct {
+		name string
+		dst  *int64
+	}{{EnvPullMaxBytes, &l.MaxBytes}, {EnvPullMaxDiskSize, &l.MaxDiskSize}} {
+		if v := strings.TrimSpace(getenv(e.name)); v != "" {
+			n, err := image.ParseDiskSize(v)
+			if err != nil {
+				return l, fmt.Errorf("%s=%q: want a size such as 128G", e.name, v)
+			}
+			*e.dst = n
+		}
+	}
+	return l, nil
+}
+
+// freeSpace is statfsSpace, replaceable so tests can report a full disk.
+var freeSpace = statfsSpace
+
+// assembledDiskMargin is room counted for the filesystem's own metadata on
+// top of the files mkfs writes into the disk.
+const assembledDiskMargin = 64 << 20
+
+// assembledDiskNeed is how much space the assembled disk can take: mkfs
+// writes the recipe's files and the filesystem's metadata, and leaves the
+// rest of the declared size unallocated where the filesystem holding out
+// keeps files sparse. Counting the declared size would refuse a pull of a
+// large, mostly empty disk that fits.
+func assembledDiskNeed(r *recipe.Recipe) int64 {
+	content := r.BlobBytes()
+	margin := max(int64(assembledDiskMargin), content/8)
+	if content > r.DiskSize-margin {
+		return r.DiskSize
+	}
+	return content + margin
+}
+
+// checkSpace refuses a pull whose missing blobs and assembled disk do not
+// fit in the free space of the filesystems they are written to: the store's
+// and the one holding out. Where the free space cannot be told, it lets the
+// pull go ahead.
+func checkSpace(store *cas.Store, missingBytes int64, out string, diskSize int64) error {
+	type need struct {
+		dir        string
+		free, want int64
+	}
+	byFS := map[uint64]*need{}
+	var order []uint64
+	for _, w := range []struct {
+		dir  string
+		want int64
+	}{{store.Root(), missingBytes}, {filepath.Dir(out), diskSize}} {
+		free, fs, ok := freeSpace(w.dir)
+		if !ok {
+			continue
+		}
+		n := byFS[fs]
+		if n == nil {
+			n = &need{dir: w.dir, free: free}
+			byFS[fs] = n
+			order = append(order, fs)
+		}
+		n.want += w.want
+	}
+	for _, fs := range order {
+		if n := byFS[fs]; n.want > n.free {
+			return fmt.Errorf("pull: needs %d bytes on the filesystem of %s and %d are free: free some space (jerboa system prune) and pull again", n.want, n.dir, n.free)
+		}
+	}
+	return nil
 }
 
 // PullResult reports what a pull fetched.
@@ -285,6 +381,15 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 	if o.Platform != "" && r.Platform != o.Platform {
 		return res, fmt.Errorf("pull: %s is an image for %s, not %s", o.Ref, r.Platform, o.Platform)
 	}
+	// Before anything else is downloaded: the registry decides how much the
+	// recipe asks for.
+	limits := o.Limits
+	if limits == (recipe.Limits{}) {
+		limits = recipe.DefaultLimits
+	}
+	if err := r.CheckLimits(limits); err != nil {
+		return res, fmt.Errorf("pull: %s: %w", o.Ref, err)
+	}
 	res.Recipe, res.Parsed, res.Blobs = digest, r, len(r.Blobs)
 	if _, err := o.Store.PutBytes(data); err != nil {
 		return res, fmt.Errorf("pull: %w", err)
@@ -292,10 +397,12 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 
 	sizes := map[string]int64{}
 	var missing []string
+	var missingBytes int64
 	for _, b := range r.Blobs {
 		sizes[b.Digest] = b.Size
 		if !o.Store.Has(b.Digest) {
 			missing = append(missing, b.Digest)
+			missingBytes += b.Size
 		}
 	}
 	// Nothing to fetch and the disk already assembled: the recipe, checked
@@ -304,6 +411,9 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 	if len(missing) == 0 && o.Have != nil && o.Have(r.DiskDigest) {
 		res.AlreadyCached = true
 		return res, nil
+	}
+	if err := checkSpace(o.Store, missingBytes, o.Out, assembledDiskNeed(r)); err != nil {
+		return res, err
 	}
 	if len(missing) > 0 {
 		if err := fetch(ctx, o, d.CDN, digest, missing, sizes, &res); err != nil {

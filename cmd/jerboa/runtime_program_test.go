@@ -79,7 +79,7 @@ func TestBuildContextReaderStreamsRuntimeOnce(t *testing.T) {
 		{HostPath: node, GuestPath: "node"},
 		{HostPath: app, GuestPath: "app.js", FromContext: true},
 	}
-	pr := buildContextReader(node, "node", files)
+	pr := buildContextReader(pkg.File{HostPath: node}, "node", files)
 	defer func() { _ = pr.Close() }()
 	got := tarEntries(t, pr)
 	require.Equal(t, map[string]int64{buildProgramPath: 4096, "app.js": 10}, got)
@@ -91,7 +91,7 @@ func TestBuildContextReaderKeepsCopyAtAnotherPath(t *testing.T) {
 	dir := t.TempDir()
 	node := writeTestFile(t, dir, "files/node", 4096)
 	files := []pkg.File{{HostPath: node, GuestPath: "node"}}
-	pr := buildContextReader(node, "", files)
+	pr := buildContextReader(pkg.File{HostPath: node}, "", files)
 	defer func() { _ = pr.Close() }()
 	got := tarEntries(t, pr)
 	require.Equal(t, map[string]int64{buildProgramPath: 4096, "node": 4096}, got)

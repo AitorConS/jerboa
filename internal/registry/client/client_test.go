@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/AitorConS/jerboa/internal/httpclient"
 	"github.com/AitorConS/jerboa/internal/registry/client"
 	"github.com/AitorConS/jerboa/internal/registry/registrytest"
 )
@@ -213,4 +215,83 @@ func TestDiscoverAsksTheRegistryOnceAWhile(t *testing.T) {
 	_, err = client.New(host).Discover(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 3, asked)
+}
+
+// The CDN a registry names serves tags, which no digest protects: it must
+// be HTTPS, as the registry's own host must, unless it is on loopback.
+func TestDiscoverRequiresAnHTTPSCDN(t *testing.T) {
+	for cdn, ok := range map[string]bool{
+		"https://cdn.example":         true,
+		"https://cdn.example:8443/x":  true,
+		"http://127.0.0.1:9000":       true,
+		"http://localhost:9000":       true,
+		"http://[::1]:9000":           true,
+		"http://cdn.example":          false,
+		"http://10.0.0.1":             false,
+		"ftp://cdn.example":           false,
+		"cdn.example":                 false,
+		"https://user:pw@cdn.example": false,
+		"https://":                    false,
+	} {
+		t.Run(cdn, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, `{"api":1,"cdn":"`+cdn+`"}`)
+			}))
+			defer srv.Close()
+			client.ForgetDiscoveries()
+			t.Cleanup(client.ForgetDiscoveries)
+			_, err := client.New(strings.TrimPrefix(srv.URL, "http://")).Discover(context.Background())
+			if ok {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "CDN")
+			}
+		})
+	}
+}
+
+// stallingServer answers with headers and a first byte of the body, then
+// sends nothing more until the test ends.
+func stallingServer(t *testing.T, status int) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Length", "4")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte("a"))
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+	return srv
+}
+
+// A connection that stops sending the body fails the read once the stall
+// timeout passes, instead of holding the pull forever.
+func TestReadsFailWhenTheBodyStalls(t *testing.T) {
+	orig := httpclient.DefaultStallTimeout
+	httpclient.DefaultStallTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { httpclient.DefaultStallTimeout = orig })
+	noWait := func(int) time.Duration { return 0 }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	t.Run("range", func(t *testing.T) {
+		srv := stallingServer(t, http.StatusPartialContent)
+		c := client.New(srv.URL)
+		c.Backoff = noWait
+		_, err := c.ReadRange(ctx, srv.URL, "sha256:"+strings.Repeat("a", 64), 0, 4)
+		var stall *httpclient.StallError
+		require.ErrorAs(t, err, &stall)
+		require.NoError(t, ctx.Err(), "the read ended because of the stall, not the test's deadline")
+	})
+	t.Run("request", func(t *testing.T) {
+		srv := stallingServer(t, http.StatusOK)
+		c := &client.Client{Base: srv.URL, Backoff: noWait}
+		_, err := c.Recipe(ctx, srv.URL, "sha256:"+strings.Repeat("a", 64))
+		var stall *httpclient.StallError
+		require.ErrorAs(t, err, &stall)
+		require.NoError(t, ctx.Err(), "the read ended because of the stall, not the test's deadline")
+	})
 }

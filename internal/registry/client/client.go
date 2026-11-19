@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -68,10 +69,31 @@ func New(host string) *Client {
 	if hh, _, err := net.SplitHostPort(host); err == nil {
 		h = hh
 	}
-	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+	if isLoopback(h) {
 		scheme = "http"
 	}
 	return &Client{Base: scheme + "://" + host, UserAgent: "jerboa"}
+}
+
+// isLoopback reports whether hostname (without a port) is one of the
+// loopback names a registry may be reached at over plain HTTP.
+func isLoopback(hostname string) bool {
+	return hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1"
+}
+
+// checkCDN checks the CDN origin a registry names: HTTPS, unless it is on
+// the loopback interface, as for the registry's own host. Recipes and packs
+// are checked against their digests either way, but the tag a pull resolves
+// is not, and plain HTTP would let anyone on the path choose it.
+func checkCDN(cdn string) error {
+	u, err := url.Parse(cdn)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("the registry names an invalid CDN %q", cdn)
+	}
+	if u.Scheme == "https" || (u.Scheme == "http" && isLoopback(u.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("the registry names a CDN that is not HTTPS: %q", cdn)
 }
 
 func (c *Client) backoff(attempt int) time.Duration {
@@ -201,6 +223,9 @@ func (c *Client) discover(ctx context.Context) (Discovery, error) {
 		return d, fmt.Errorf("registry %s does not name its CDN", c.Base)
 	}
 	d.CDN = strings.TrimRight(d.CDN, "/")
+	if err := checkCDN(d.CDN); err != nil {
+		return d, fmt.Errorf("registry %s: %w", c.Base, err)
+	}
 	return d, nil
 }
 
@@ -579,6 +604,10 @@ func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, 
 
 // readRangeOnce is one attempt of ReadRange; retry says another may succeed.
 func (c *Client) readRangeOnce(ctx context.Context, cdn, packDigest string, offset, length int64) (data []byte, retry bool, err error) {
+	// Canceled when the body stops arriving, so a stalled connection fails
+	// the attempt instead of holding the pull forever.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cdn+"/packs/"+strings.TrimPrefix(packDigest, "sha256:"), nil)
 	if err != nil {
 		return nil, false, fmt.Errorf("registry: %w", err)
@@ -594,7 +623,7 @@ func (c *Client) readRangeOnce(ctx context.Context, cdn, packDigest string, offs
 		retry = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
 		return nil, retry, fmt.Errorf("registry: read pack %s: HTTP %d, want 206", packDigest, resp.StatusCode)
 	}
-	data, err = io.ReadAll(io.LimitReader(resp.Body, length+1))
+	data, err = readStalling(resp.Body, length+1, cancel)
 	if err != nil {
 		return nil, true, fmt.Errorf("registry: read pack: %w", err)
 	}
@@ -606,6 +635,17 @@ func (c *Client) readRangeOnce(ctx context.Context, cdn, packDigest string, offs
 		return nil, true, fmt.Errorf("registry: read pack %s: got %d bytes, want %d", packDigest, len(data), length)
 	}
 	return data, false, nil
+}
+
+// readStalling reads at most limit bytes of body, and fails with an
+// httpclient.StallError when none arrive for httpclient.DefaultStallTimeout:
+// cancel must cancel the request body was read from.
+func readStalling(body io.Reader, limit int64, cancel context.CancelFunc) ([]byte, error) {
+	var buf bytes.Buffer
+	if _, err := httpclient.CopyWithStall(&buf, io.LimitReader(body, limit), 0, cancel); err != nil {
+		return nil, err //nolint:wrapcheck // the callers wrap it
+	}
+	return buf.Bytes(), nil
 }
 
 func jsonBody(v any) []byte {
@@ -643,7 +683,11 @@ func (c *Client) once(ctx context.Context, method, url, token string, body []byt
 	if body != nil {
 		r = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, r)
+	// Canceled when the answer stops arriving (see readStalling); ctx
+	// itself still tells whether the caller gave up.
+	reqCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, method, url, r)
 	if err != nil {
 		return false, fmt.Errorf("registry: %w", err)
 	}
@@ -659,9 +703,9 @@ func (c *Client) once(ctx context.Context, method, url, token string, body []byt
 		return ctx.Err() == nil, fmt.Errorf("registry: %s %s: %w", method, url, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	data, err := readStalling(resp.Body, maxResponseBytes, cancel)
 	if err != nil {
-		return true, fmt.Errorf("registry: %s %s: %w", method, url, err)
+		return ctx.Err() == nil, fmt.Errorf("registry: %s %s: %w", method, url, err)
 	}
 	if resp.StatusCode >= 300 {
 		e := &Error{Status: resp.StatusCode, Code: "HTTP", Message: http.StatusText(resp.StatusCode)}

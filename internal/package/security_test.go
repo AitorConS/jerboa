@@ -484,4 +484,5 @@ func TestPhysicallyWithin(t *testing.T) {
 	require.True(t, physicallyWithin(dir, base, "s/libc.so.6"))
 	require.False(t, physicallyWithin(dir, base, "s/../x"), "a .. after a link climbs from the link's target")
 	require.False(t, physicallyWithin(dir, base, "../../../x"))
+	require.False(t, physicallyWithin(dir, base, "q/../x"), "a .. after a component not on disk yet, which a later entry could make a link")
 }

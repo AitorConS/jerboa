@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -25,18 +26,36 @@ func registryArg(args []string) string {
 }
 
 func newLoginCmd() *cobra.Command {
-	var token string
+	var (
+		token      string
+		tokenStdin bool
+	)
 	cmd := &cobra.Command{
 		Use:   "login [registry]",
 		Short: "Log in to an image registry with GitHub, or store a personal access token",
 		Long: `Logs in to an image registry (default ` + naming.DefaultRegistry + `).
 
-Without --token, opens GitHub's device flow: approve the code shown in a
+Without --token-stdin, opens GitHub's device flow: approve the code shown in a
 browser and the registry issues a token for your GitHub account, which may push
-to your user and the organizations you belong to. With --token (or ` + credentials.EnvToken + `),
-stores a personal access token, as CI does.`,
+to your user and the organizations you belong to. With --token-stdin, stores
+the personal access token read from the first line of standard input, as CI
+does; a CI job can also set ` + credentials.EnvToken + ` and skip the login.
+--token is deprecated: a token on the command line is visible to other users
+of the machine in the process list and stays in the shell history.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if token != "" && tokenStdin {
+				return fmt.Errorf("login: use --token-stdin or --token, not both")
+			}
+			if token != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: --token puts the token in the process list and the shell history; use --token-stdin or %s\n", credentials.EnvToken)
+			}
+			if tokenStdin {
+				var err error
+				if token, err = readTokenLine(cmd.InOrStdin()); err != nil {
+					return fmt.Errorf("login: --token-stdin: %w", err)
+				}
+			}
 			registry := registryArg(args)
 			cl := client.New(registry)
 			d, err := cl.Discover(cmd.Context())
@@ -66,8 +85,30 @@ stores a personal access token, as CI does.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&token, "token", "", "store this personal access token instead of logging in with GitHub")
+	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "store the personal access token read from the first line of standard input instead of logging in with GitHub")
+	cmd.Flags().StringVar(&token, "token", "", "deprecated, use --token-stdin or "+credentials.EnvToken+": store this personal access token (visible in the process list)")
 	return cmd
+}
+
+// maxTokenLine bounds the line --token-stdin reads.
+const maxTokenLine = 64 << 10
+
+// readTokenLine reads one line from r, without its line ending and the
+// surrounding spaces, and fails if it is empty.
+func readTokenLine(r io.Reader) (string, error) {
+	sc := bufio.NewScanner(io.LimitReader(r, maxTokenLine+1))
+	sc.Buffer(make([]byte, 0, 4096), maxTokenLine)
+	if !sc.Scan() {
+		if err := sc.Err(); err != nil {
+			return "", fmt.Errorf("read the token: %w", err)
+		}
+		return "", fmt.Errorf("standard input is empty: pipe the token in, e.g. printf '%%s\\n' \"$TOKEN\" | jerboa login --token-stdin")
+	}
+	token := strings.TrimSpace(sc.Text())
+	if token == "" {
+		return "", fmt.Errorf("the first line of standard input is empty")
+	}
+	return token, nil
 }
 
 // githubLogin signs in to registry with GitHub and returns its refresh token
@@ -107,17 +148,17 @@ func githubLogin(ctx context.Context, w io.Writer, registry string, cl *client.C
 // registry's app is refused. official returns the default registry's app.
 func githubClientID(ctx context.Context, registry string, d client.Discovery, official func(context.Context) (string, error)) (string, error) {
 	if d.GitHubClientID == "" {
-		return "", fmt.Errorf("%s does not offer GitHub login; use --token", registry)
+		return "", fmt.Errorf("%s does not offer GitHub login; use --token-stdin", registry)
 	}
 	if registry == naming.DefaultRegistry {
 		return d.GitHubClientID, nil
 	}
 	id, err := official(ctx)
 	if err != nil {
-		return "", fmt.Errorf("checking %s's GitHub app against %s: %w; use --token", registry, naming.DefaultRegistry, err)
+		return "", fmt.Errorf("checking %s's GitHub app against %s: %w; use --token-stdin", registry, naming.DefaultRegistry, err)
 	}
 	if d.GitHubClientID == id {
-		return "", fmt.Errorf("%s offers %s's GitHub app, and a token for it would let %s act as you on %s; use --token",
+		return "", fmt.Errorf("%s offers %s's GitHub app, and a token for it would let %s act as you on %s; use --token-stdin",
 			registry, naming.DefaultRegistry, registry, naming.DefaultRegistry)
 	}
 	return d.GitHubClientID, nil

@@ -2,6 +2,8 @@ package builder
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -79,7 +81,7 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 		return cmd, func() {}, nil
 	}
 
-	caches, cacheEnv, err := toolCaches()
+	caches, cacheEnv, err := toolCaches(st.Dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox: %w", err)
 	}
@@ -102,7 +104,6 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox: %w", err)
 	}
-	done := func() { _ = os.RemoveAll(tmp) }
 	env = append(env, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 	sockets := append(controlSockets(s.Sockets), brokerMasks(st, tmp)...)
 	argv, ok := confine(st, tmp, sockets, name, args)
@@ -114,9 +115,16 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 		})
 		argv = append([]string{name}, args...)
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // the sandbox launcher and the build tool
 	cmd.Dir = st.Dir
 	cmd.Env = env
+	endGroup := ownProcessGroup(cmd, cancel)
+	done := func() {
+		endGroup()
+		cancel()
+		_ = os.RemoveAll(tmp)
+	}
 	return cmd, done, nil
 }
 
@@ -134,11 +142,14 @@ func (s Sandbox) Describe() string {
 }
 
 // credentialPaths lists, relative to the home directory, the credential
-// stores a build step has no reason to read: Jerboa's own and cloud
-// providers'. Those package managers use to fetch private dependencies
-// (~/.ssh, ~/.netrc, ~/.npmrc, git credentials) stay readable.
+// stores a build step has no reason to read: Jerboa's own, cloud providers',
+// the GitHub CLIs' (gh, hub), Vault's and Terraform's tokens, and PyPI
+// upload credentials (twine's; pip does not read ~/.pypirc). Those package
+// managers use to fetch private dependencies (~/.ssh, ~/.netrc, ~/.npmrc,
+// ~/.cargo/credentials, ~/.git-credentials) stay readable.
 var credentialPaths = []string{
 	".jerboa", ".aws", ".azure", ".config/gcloud", ".kube", ".docker", ".gnupg",
+	".config/gh", ".config/hub", ".vault-token", ".terraform.d", ".pypirc",
 }
 
 // hiddenPaths returns the credential stores under home that exist and that
@@ -184,12 +195,18 @@ func within(path, dir string) bool {
 // could leave code behind for the user's next build. The user's cargo
 // configuration and registry credentials are copied in, so cargo still sees
 // them.
-func toolCaches() ([]string, []string, error) {
-	base, err := os.UserCacheDir()
+//
+// Each project gets caches of its own, keyed by its real path and the
+// directory's identity: a step writes to the extracted modules and crates it
+// reads back, so a cache shared by every project would let one project's
+// build scripts alter the sources a later build of another project compiles,
+// and a project created where a removed one was gets fresh caches. Caches
+// not used for cacheIdleLimit are removed.
+func toolCaches(project string) ([]string, []string, error) {
+	base, err := projectCacheDir(project)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cache directory: %w", err)
+		return nil, nil, err
 	}
-	base = filepath.Join(base, "jerboa", "build-sandbox")
 	vars := []struct{ name, dir string }{
 		{"npm_config_cache", "npm"},
 		{"npm_config_devdir", "node-gyp"},
@@ -209,7 +226,30 @@ func toolCaches() ([]string, []string, error) {
 		env = append(env, v.name+"="+d)
 	}
 	copyCargoConfig(filepath.Join(base, "cargo"))
+	markCacheUsed(base)
 	return dirs, env, nil
+}
+
+// projectCacheDir returns the directory that holds the tool caches of the
+// project at dir: a name derived from the project's path with symlinks
+// resolved and from the directory's identity, so two paths to one project
+// share it, two projects never do, and neither does a project created where
+// a removed one was.
+func projectCacheDir(dir string) (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("cache directory: %w", err)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("cache directory: %w", err)
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("cache directory: resolve project %s: %w", abs, err)
+	}
+	sum := sha256.Sum256([]byte(real + "\x00" + dirIdentity(real)))
+	return filepath.Join(base, "jerboa", "build-sandbox", hex.EncodeToString(sum[:16])), nil
 }
 
 // copyCargoConfig copies the user's cargo configuration and registry

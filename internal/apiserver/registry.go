@@ -100,6 +100,10 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 			return nil, rpcErr(err)
 		}
 	}
+	limits, err := transfer.LimitsFromEnv(os.Getenv)
+	if err != nil {
+		return nil, rpcErr(fmt.Errorf("pull: the daemon's environment: %w", err))
+	}
 	out, err := s.imgStore.TempFile(".pull-*.img")
 	if err != nil {
 		return nil, rpcErr(err)
@@ -108,7 +112,7 @@ func (s *Server) handleImagePull(ctx context.Context, params json.RawMessage) (a
 	res, err := transfer.Pull(ctx, transfer.PullOptions{
 		Client: client.New(ref.Registry), Ref: ref, Store: s.recipes, Mkfs: s.registryMkfs, Out: out,
 		NoCount: p.NoCount || transfer.DoNotTrack(), Platform: p.Platform, Recipe: p.Recipe,
-		Have: s.imgStore.Has,
+		Have: s.imgStore.Has, Limits: limits,
 	})
 	if err != nil {
 		return nil, rpcErr(err)

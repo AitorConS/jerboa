@@ -31,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/AitorConS/jerboa/internal/durable"
 	"github.com/AitorConS/jerboa/internal/httpclient"
@@ -920,12 +921,43 @@ func (s *Store) Push(name, version string, indexURL string) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("pkg push: HTTP %d: %s", resp.StatusCode, string(respBody))
+		// What the index says is only a hint for the error: a body that
+		// cannot be read leaves the status code alone.
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody+1))
+		return fmt.Errorf("pkg push: HTTP %d: %s", resp.StatusCode, errorBodyText(respBody))
 	}
 
 	slog.Info("package pushed", "name", name, "version", version, "url", indexURL)
 	return nil
+}
+
+// maxErrorBody bounds how much of an error answer from a package index is
+// read and shown.
+const maxErrorBody = 1 << 10
+
+// errorBodyText makes an error answer from a package index fit one line of
+// terminal output: at most maxErrorBody bytes, whitespace (newlines
+// included) collapsed to single spaces, and every character that is not
+// printable, terminal control sequences' ESC among them, dropped.
+func errorBodyText(body []byte) string {
+	cut := len(body) > maxErrorBody
+	if cut {
+		body = body[:maxErrorBody]
+	}
+	text := strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return ' '
+		}
+		if !unicode.IsPrint(r) {
+			return -1
+		}
+		return r
+	}, strings.ToValidUTF8(string(body), ""))
+	text = strings.Join(strings.Fields(text), " ")
+	if cut {
+		text += " (truncated)"
+	}
+	return text
 }
 
 // DockerImageConfig is the subset of an OCI image config used to derive a
