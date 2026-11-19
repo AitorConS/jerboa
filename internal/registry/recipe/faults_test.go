@@ -276,3 +276,19 @@ func FuzzParse(f *testing.F) {
 		require.True(t, listed[r.Toolset.Kernel])
 	})
 }
+
+// mkfs assembles a recipe someone else published: it gets the store root it
+// is confined to and none of the daemon's credentials.
+func TestAssembleGivesMkfsNoCredentials(t *testing.T) {
+	for _, name := range []string{"JERBOA_AUTH_TOKEN", "JERBOA_CLUSTER_TOKEN", "JERBOA_OBSERVABILITY_TOKEN", "JERBOA_REGISTRY_TOKEN"} {
+		t.Setenv(name, "s3cr3t")
+	}
+	f := build(t)
+	envFile := filepath.Join(t.TempDir(), "env")
+	out := filepath.Join(t.TempDir(), "disk.img")
+	require.Error(t, Assemble(context.Background(), f.r, f.store, scriptMkfs(t, "cat > /dev/null; env > '"+envFile+"'"), out))
+	data, err := os.ReadFile(envFile)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "s3cr3t")
+	assert.Contains(t, string(data), HostRootEnv+"="+f.store.Root())
+}

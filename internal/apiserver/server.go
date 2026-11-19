@@ -1372,7 +1372,9 @@ func portMapsToSpec(pms []vm.PortMap) []api.PortMapSpec {
 	return out
 }
 
-// parseSig converts a signal name ("SIGTERM", "15") to an os.Signal.
+// parseSig converts a signal name ("SIGTERM", "15") to an os.Signal. Names
+// and numbers are the host's: SIGUSR1 is 10 on Linux and 30 on macOS, where
+// 10 is SIGBUS.
 func parseSig(s string) (syscall.Signal, error) {
 	sigMap := map[string]syscall.Signal{
 		"SIGTERM": syscall.SIGTERM,
@@ -1380,8 +1382,8 @@ func parseSig(s string) (syscall.Signal, error) {
 		"SIGKILL": syscall.SIGKILL,
 		"SIGHUP":  syscall.SIGHUP,
 		"SIGQUIT": syscall.SIGQUIT,
-		"SIGUSR1": syscall.Signal(10),
-		"SIGUSR2": syscall.Signal(12),
+		"SIGUSR1": syscall.SIGUSR1,
+		"SIGUSR2": syscall.SIGUSR2,
 	}
 	if sig, ok := sigMap[s]; ok {
 		return sig, nil

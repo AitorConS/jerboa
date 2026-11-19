@@ -27,6 +27,18 @@ func TestNativeQEMUUsesHVFAndPrivateNetworkStream(t *testing.T) {
 	}
 }
 
+// The guest environment reaches native QEMU as a file: its values, which can
+// be secrets, never appear in the process arguments.
+func TestNativeQEMUPassesEnvAsFile(t *testing.T) {
+	m := NewQEMUManager(DefaultQEMUBinary(), WithKernel("/tools/kernel.img"))
+	cfg := Config{ImagePath: "/images/a.img", Memory: "256M", nativeSocket: "/tmp/net.sock", nativeMAC: "02:01:02:03:04:05",
+		Env: []string{"API_TOKEN=s3cr3t-value"}, envFile: "/tmp/run/env-vm1"}
+	args := strings.Join(m.buildCmd(context.Background(), cfg, "unix:/tmp/qmp.sock").Args, " ")
+	require.Contains(t, args, "-fw_cfg name=opt/uni/env,file=/tmp/run/env-vm1")
+	require.NotContains(t, args, "s3cr3t-value")
+	require.NotContains(t, args, "API_TOKEN")
+}
+
 func TestNativeValidatesArchitectureAndLimits(t *testing.T) {
 	kernel := filepath.Join(t.TempDir(), "kernel.img")
 	header := make([]byte, 64)

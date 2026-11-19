@@ -189,29 +189,19 @@ func TestBuildVolumeArgs_Empty(t *testing.T) {
 	require.Empty(t, args)
 }
 
-func TestBuildEnvArgs_Single(t *testing.T) {
-	args := buildEnvArgs([]string{"KEY=VAL"})
-	require.Len(t, args, 2)
-	require.Equal(t, "-fw_cfg", args[0])
-	require.Contains(t, args[1], "name=opt/uni/env,string=KEY=VAL")
+func TestBuildEnvArgs_PassesFileNotValues(t *testing.T) {
+	args := buildEnvArgs("/run/jerboa-run-0/env-vm1")
+	require.Equal(t, []string{"-fw_cfg", "name=opt/uni/env,file=/run/jerboa-run-0/env-vm1"}, args)
 }
 
-func TestBuildEnvArgs_Multiple(t *testing.T) {
-	args := buildEnvArgs([]string{"A=1", "B=2"})
-	require.Len(t, args, 2)
-	require.Contains(t, args[1], "A=1\nB=2")
-}
-
-func TestBuildEnvArgs_EscapesCommas(t *testing.T) {
-	// A comma in an env value must be doubled so QEMU's fw_cfg option parser
-	// keeps it as part of the value instead of treating it as a separator.
-	args := buildEnvArgs([]string{"PATH=/a,/b"})
-	require.Contains(t, args[1], "PATH=/a,,/b")
+func TestBuildEnvArgs_EscapesCommasInPath(t *testing.T) {
+	// QEMU's option parser splits on commas; a doubled comma stays in the path.
+	args := buildEnvArgs("/tmp/a,b/env-vm1")
+	require.Equal(t, "name=opt/uni/env,file=/tmp/a,,b/env-vm1", args[1])
 }
 
 func TestBuildEnvArgs_Empty(t *testing.T) {
-	args := buildEnvArgs(nil)
-	require.Nil(t, args)
+	require.Nil(t, buildEnvArgs(""))
 }
 
 func TestBuildNetArgs_TAP(t *testing.T) {

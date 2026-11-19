@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/image"
 )
 
@@ -50,7 +51,9 @@ func directFunc(mkfsBin, bootImg, kernelImg string) image.MkfsFunc {
 				f.Close()
 			}
 		}
-		cmd := exec.CommandContext(ctx, mkfsBin,
+		// mkfs reads the package being built: no credentials and, on Linux,
+		// none of the daemon's capabilities.
+		cmd := childproc.Command(ctx, mkfsBin,
 			"-b", selectedBoot,
 			"-k", selectedKernel,
 			imgPath,

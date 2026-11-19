@@ -17,12 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/network"
 )
 
-// defaultCommandFunc starts VMMs; on Linux it drops the daemon's ambient
-// capabilities first (see VMMExecArg).
-var defaultCommandFunc CommandFunc = vmmCommand
+// defaultCommandFunc starts VMMs with a minimal environment; on Linux it drops
+// the daemon's ambient capabilities first (see childproc.ReexecArg).
+var defaultCommandFunc CommandFunc = childproc.Command
 
 const gracePeriod = 30 * time.Second
 
@@ -195,6 +196,22 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 		go func(done <-chan struct{}) { <-done; _ = os.Remove(bootPath) }(v.Done())
 		bootCfg.ImagePath = bootPath
 		bootCfg.privateBootDisk = true
+	}
+	// The guest environment can hold secrets (-e TOKEN=...). On QEMU's command
+	// line any local user could read them with ps, so they reach QEMU through
+	// a 0600 file in the private runtime dir instead, removed when the VM exits.
+	if len(bootCfg.Env) > 0 {
+		envPath := guestEnvFilePath(v.ID)
+		if err := writeGuestEnvFile(envPath, bootCfg.Env); err != nil {
+			_ = v.transition(StateStopped)
+			return fmt.Errorf("qemu start %s: %w", id, err)
+		}
+		defer func() {
+			if !launched {
+				removeGuestEnvFile(v.ID)
+			}
+		}()
+		bootCfg.envFile = envPath
 	}
 	cmd := m.buildCmd(ctx, bootCfg, qmpAddr)
 
@@ -518,7 +535,7 @@ func (m *QEMUManager) buildCmd(ctx context.Context, cfg Config, qmpAddr string) 
 	}
 
 	args = append(args, buildNetArgs(cfg)...)
-	args = append(args, buildEnvArgs(cfg.Env)...)
+	args = append(args, buildEnvArgs(cfg.envFile)...)
 	args = append(args, buildNetworkCfgArgs(cfg)...)
 	args = append(args, buildVolumeArgs(cfg)...)
 	args = append(args, buildMountArgs(cfg.Volumes)...)
@@ -550,7 +567,9 @@ func qemuSandboxArgs(qemuBin string) []string {
 		return nil
 	}
 	sandboxProbe.Do(func() {
-		out, err := exec.Command(qemuBin, "-help").Output() //nolint:gosec,noctx // configured QEMU binary, short probe
+		probe := exec.Command(qemuBin, "-help") //nolint:gosec,noctx // configured QEMU binary, short probe
+		probe.Env = childproc.Minimal()
+		out, err := probe.Output()
 		if err != nil || !strings.Contains(string(out), "-sandbox") {
 			slog.Warn("QEMU has no seccomp sandbox support; VMs run without it", "qemu", qemuBin)
 			return
@@ -665,15 +684,45 @@ func buildMountArgs(vols []VolumeMount) []string {
 	return []string{"-fw_cfg", "name=opt/uni/mounts,string=" + escapeFwCfgValue(encoded)}
 }
 
-// buildEnvArgs encodes environment variables as QEMU fw_cfg entries.
-// The guest kernel reads them from the "opt/uni/env" fw_cfg key.
-// Each call produces zero or one -fw_cfg argument; format is "KEY=VALUE\n" joined.
-func buildEnvArgs(env []string) []string {
-	if len(env) == 0 {
+// buildEnvArgs passes the guest environment to QEMU as the fw_cfg file
+// "opt/uni/env", read by the guest kernel (env_inject_from_fw_cfg). envFile is
+// written by writeGuestEnvFile; the values themselves never appear on the
+// command line, where any local user could read them. No file, no argument.
+func buildEnvArgs(envFile string) []string {
+	if envFile == "" {
 		return nil
 	}
-	encoded := strings.Join(env, "\n")
-	return []string{"-fw_cfg", "name=opt/uni/env,string=" + escapeFwCfgValue(encoded)}
+	return []string{"-fw_cfg", "name=opt/uni/env,file=" + escapeFwCfgValue(envFile)}
+}
+
+// guestEnvFilePath is where a QEMU VM's guest environment is kept while it
+// runs: in the private (0700) runtime dir, next to its QMP socket.
+func guestEnvFilePath(id string) string {
+	return filepath.Join(qmpRuntimeDir(), "env-"+id)
+}
+
+// writeGuestEnvFile writes env as "KEY=VALUE" lines joined by '\n', the bytes
+// QEMU used to get from "string=" (QEMU adds no terminator to either), with
+// mode 0600. A file left by an earlier run is replaced, never followed.
+func writeGuestEnvFile(path string, env []string) error {
+	_ = os.Remove(path)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // path is in the daemon's private runtime dir
+	if err != nil {
+		return fmt.Errorf("write guest environment: %w", err)
+	}
+	_, werr := f.WriteString(strings.Join(env, "\n"))
+	cerr := f.Close()
+	if werr != nil || cerr != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("write guest environment %s: %w", path, errors.Join(werr, cerr))
+	}
+	return nil
+}
+
+// removeGuestEnvFile deletes a VM's guest environment file, if any. QEMU reads
+// it once at startup, so it goes when the VM's process does.
+func removeGuestEnvFile(id string) {
+	_ = os.Remove(guestEnvFilePath(id))
 }
 
 // escapeFwCfgValue escapes a value for use inside a QEMU -fw_cfg "string=" field.
@@ -726,6 +775,7 @@ func (m *QEMUManager) monitor(v *VM, cmd *exec.Cmd) {
 	v.portFwd = nil
 	v.mu.Unlock()
 	removeQMPSocket(qmpAddr)
+	removeGuestEnvFile(v.ID)
 	if cleanup != nil {
 		cleanup()
 	}
