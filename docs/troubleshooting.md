@@ -585,6 +585,22 @@ spaces or other characters that earlier versions accepted are now refused.
 **Fix**: rename the service in the compose file. Bring a stack started under
 the old name down with the old file first.
 
+### jerboad says the cluster or observability token is too short
+
+The daemon refuses a cluster token shorter than 32 characters, and an
+observability token shorter than 32 characters when metrics or the dashboard
+listen off loopback, because anyone who reaches the port can try tokens.
+Earlier versions accepted them.
+
+**Fix**: generate a token with `openssl rand -hex 32` and put it where the
+daemon reads it: the `--cluster-token-file` of every node (or
+`JERBOA_CLUSTER_TOKEN`) and restart all of them, or
+`--observability-token-file` / `JERBOA_OBSERVABILITY_TOKEN`. For a daemon
+started by `jerboa daemon start`, set `observability_token` in
+`~/.jerboa/config.toml`, or delete it and a new one is generated. Update your
+Prometheus scrape configuration with the new token. Binding metrics and the
+dashboard to `127.0.0.1` also lifts the observability check.
+
 ### The dashboard asks for the token again after an upgrade
 
 The dashboard's cookie no longer holds the observability token; it holds a

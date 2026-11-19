@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/httpauth"
 )
 
 type MemberStatus string
@@ -692,13 +694,22 @@ func (c *SwimCluster) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(c.token)) == 1
 }
 
+// RegisterGossipHandler serves cluster's gossip endpoint on mux. A source
+// address that keeps presenting a wrong token is answered 429 without its
+// token being checked, so the token cannot be guessed at network speed.
 func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
+	limiter := httpauth.NewFailureLimiter()
 	mux.HandleFunc("/cluster/gossip", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if cluster.token != "" && !limiter.Allow(r) {
+			httpauth.Refuse(w)
+			return
+		}
 		if !cluster.authorized(r) {
+			limiter.Fail(r)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

@@ -908,10 +908,10 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--log-format` | Log format: `text` (default) or `json` |
 | `--metrics-addr` | HTTP address for Prometheus metrics (e.g. `127.0.0.1:9090`); empty disables metrics. Off loopback it needs an observability token |
 | `--ui-addr` | HTTP address for the web dashboard (e.g. `127.0.0.1:8080`); empty disables it. It needs an observability token, on loopback too |
-| `--observability-token-file` | File (mode `0600`) with the read-only token for metrics and the dashboard (env: `JERBOA_OBSERVABILITY_TOKEN`) |
+| `--observability-token-file` | File (mode `0600`) with the read-only token for metrics and the dashboard (env: `JERBOA_OBSERVABILITY_TOKEN`). When metrics or the dashboard listen off loopback it must be at least 32 characters (`openssl rand -hex 32`), unless `--insecure` is passed |
 | `--trace-addr` | OTLP gRPC address for trace export (e.g. `localhost:4317`); empty disables tracing |
 | `--cluster-addr` | HTTP address for the cluster gossip endpoint (e.g. `:7946`); empty disables cluster. Requires a cluster token |
-| `--cluster-token-file` | File (mode `0600`) with the token shared by all cluster nodes (env: `JERBOA_CLUSTER_TOKEN`) |
+| `--cluster-token-file` | File (mode `0600`) with the token shared by all cluster nodes (env: `JERBOA_CLUSTER_TOKEN`). It must be at least 32 characters (`openssl rand -hex 32`) |
 | `--insecure-cluster` | Serve gossip without a cluster token (unsafe) |
 | `--join` | Comma-separated seed node addresses to join (e.g. `10.0.0.2:7946,10.0.0.3:7946`) |
 

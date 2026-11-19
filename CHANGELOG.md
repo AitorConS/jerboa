@@ -26,6 +26,17 @@ Which versions exist, and where:
 
 ### Security
 
+- **`jerboad` refuses a cluster token shorter than 32 characters, and an
+  observability token shorter than 32 characters when `--metrics-addr` or
+  `--ui-addr` is off loopback.** A daemon configured with one stops at start
+  and says so. Generate a token with `openssl rand -hex 32`, put it in the
+  `--cluster-token-file` of every node (or `JERBOA_CLUSTER_TOKEN`) or in
+  `--observability-token-file` / `JERBOA_OBSERVABILITY_TOKEN` (for a daemon
+  that `jerboa daemon start` runs, `observability_token` in
+  `~/.jerboa/config.toml`), and update your Prometheus scrape configuration.
+  Wrong tokens are now limited too: an address that sends 10 wrong tokens to
+  `/metrics`, the dashboard or cluster gossip gets `429` until it slows down
+  to one try a second, and dashboard sign-ins are checked one at a time.
 - The dashboard's sign-in cookie is bound to the address the browser signed
   in from (every loopback address counts as one), so a guest's web app that
   received the cookie on a published port cannot replay it. The dashboard and

@@ -17,6 +17,9 @@ import (
 // host, so a cookie holding the token would reach other listeners there. The
 // dashboard keeps its own session cookie instead.
 //
+// A source address that keeps sending wrong tokens is answered 429 without its
+// token being checked (see FailureLimiter).
+//
 // An empty token disables the check and returns next unchanged, so a caller can
 // pass an operator-supplied token through unconditionally: no token configured
 // means the endpoint stays open exactly as it was before.
@@ -24,8 +27,14 @@ func Bearer(token string, next http.Handler) http.Handler {
 	if token == "" {
 		return next
 	}
+	limiter := NewFailureLimiter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow(r) {
+			Refuse(w)
+			return
+		}
 		if !Authorized(token, r) {
+			limiter.Fail(r)
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return

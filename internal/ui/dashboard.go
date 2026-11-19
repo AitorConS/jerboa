@@ -324,15 +324,26 @@ func NewServer(addr, token string, mgr vm.Manager, version string, opts ...Optio
 	}
 	h := NewHandler(mgr, addr, version)
 	s := newSessions(addr)
-	authorized := func(r *http.Request) bool {
-		return token == "" || httpauth.Authorized(token, r) || s.valid(r)
-	}
+	limiter := httpauth.NewFailureLimiter()
 	mux := http.NewServeMux()
 	mux.Handle("/ui/login", loginHandler(token, s))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if authorized(r) {
+		if token == "" || s.valid(r) {
 			h.ServeHTTP(w, r)
 			return
+		}
+		// A bearer token is a guess until it matches: a source that keeps
+		// guessing wrong is refused before its next one is checked.
+		if r.Header.Get("Authorization") != "" {
+			if !limiter.Allow(r) {
+				httpauth.Refuse(w)
+				return
+			}
+			if httpauth.Authorized(token, r) {
+				h.ServeHTTP(w, r)
+				return
+			}
+			limiter.Fail(r)
 		}
 		// Send a browser without the token to the sign-in form instead of a
 		// bare 401; API clients still get the 401.
@@ -365,10 +376,24 @@ func refuseGuests(isGuest func(net.IP) bool, next http.Handler) http.Handler {
 	})
 }
 
+// loginFailureDelay is how long a wrong sign-in holds the only turn to check
+// one; loginQueueWait is how long an attempt waits for that turn.
+var (
+	loginFailureDelay = 500 * time.Millisecond
+	loginQueueWait    = 10 * time.Second
+)
+
 // loginHandler serves a form that checks the observability token and, when it
 // is right, gives the browser a session cookie for the dashboard's page loads
 // and fetches (see sessions; the cookie never holds the token itself).
+//
+// Sign-in attempts are checked one at a time, and a wrong one keeps the turn
+// for loginFailureDelay, so however many run in parallel the token cannot be
+// guessed faster than one try per delay. An attempt that cannot get its turn
+// within loginQueueWait, or whose client goes away, gives up without being
+// checked, so waiting attempts cannot pile up.
 func loginHandler(token string, s *sessions) http.Handler {
+	turn := make(chan struct{}, 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			http.Redirect(w, r, "/ui", http.StatusSeeOther)
@@ -378,14 +403,27 @@ func loginHandler(token string, s *sessions) http.Handler {
 		if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, 4096)
 			got := r.PostFormValue("token")
+			wait := time.NewTimer(loginQueueWait)
+			select {
+			case turn <- struct{}{}:
+				wait.Stop()
+			case <-wait.C:
+				httpauth.Refuse(w)
+				return
+			case <-r.Context().Done():
+				wait.Stop()
+				return
+			}
 			probe := &http.Request{Header: http.Header{"Authorization": {"Bearer " + got}}}
 			if httpauth.Authorized(token, probe) {
+				<-turn
 				s.issue(w, r)
 				http.Redirect(w, r, "/ui", http.StatusSeeOther)
 				return
 			}
 			failed = true
-			time.Sleep(500 * time.Millisecond)
+			time.Sleep(loginFailureDelay)
+			<-turn
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")

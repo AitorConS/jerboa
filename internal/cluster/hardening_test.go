@@ -311,3 +311,27 @@ func TestGossip_DeadMemberComesBackOnFreshEvidence(t *testing.T) {
 	m, _ = memberByID(c, "node-b")
 	require.Equal(t, StatusLeft, m.Status)
 }
+
+// Wrong gossip tokens were answered at once, as fast as a peer could send
+// them. A source that keeps failing is now refused before its token is
+// checked, without holding the request.
+func TestGossipHandler_WrongTokensAreRateLimited(t *testing.T) {
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0, WithToken("s3cret"))
+	mux := http.NewServeMux()
+	RegisterGossipHandler(mux, c)
+	post := func(token string) int {
+		req := httptest.NewRequest(http.MethodPost, "/cluster/gossip", bytes.NewReader([]byte(`{"member_id":"x","members":[]}`)))
+		req.RemoteAddr = "192.0.2.9:4000"
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	codes := map[int]int{}
+	for i := range 50 {
+		codes[post(fmt.Sprintf("guess-%d", i))]++
+	}
+	require.Positive(t, codes[http.StatusUnauthorized])
+	require.Positive(t, codes[http.StatusTooManyRequests], "a source guessing tokens is never slowed down")
+	require.Equal(t, http.StatusTooManyRequests, post("s3cret"), "the right token is not confirmed to a source over its budget")
+}

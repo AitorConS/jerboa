@@ -4,11 +4,13 @@ package ui
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -212,4 +214,79 @@ func TestServer_GuestSourcesAreRefused(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func postLogin(h http.Handler, token string) int {
+	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+func setLoginTiming(t *testing.T, delay, queue time.Duration) {
+	t.Helper()
+	oldDelay, oldQueue := loginFailureDelay, loginQueueWait
+	loginFailureDelay, loginQueueWait = delay, queue
+	t.Cleanup(func() { loginFailureDelay, loginQueueWait = oldDelay, oldQueue })
+}
+
+// Each wrong sign-in slept 500 ms, but in its own goroutine: parallel
+// attempts were checked in parallel. Wrong attempts now take turns.
+func TestLogin_WrongAttemptsAreSerialised(t *testing.T) {
+	setLoginTiming(t, 100*time.Millisecond, time.Minute)
+	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
+	const attempts = 5
+	start := time.Now()
+	var wg sync.WaitGroup
+	codes := make([]int, attempts)
+	for i := range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = postLogin(h, fmt.Sprintf("guess-%d", i))
+		}()
+	}
+	wg.Wait()
+	for _, code := range codes {
+		require.Equal(t, http.StatusUnauthorized, code)
+	}
+	require.GreaterOrEqual(t, time.Since(start), attempts*loginFailureDelay)
+	// The right token is still accepted afterwards.
+	require.Equal(t, http.StatusSeeOther, postLogin(h, "s3cret"))
+}
+
+func TestLogin_WaitingAttemptsGiveUp(t *testing.T) {
+	setLoginTiming(t, 300*time.Millisecond, 20*time.Millisecond)
+	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
+	const attempts = 5
+	var wg sync.WaitGroup
+	codes := make([]int, attempts)
+	for i := range attempts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			codes[i] = postLogin(h, fmt.Sprintf("guess-%d", i))
+		}()
+	}
+	wg.Wait()
+	require.Contains(t, codes, http.StatusUnauthorized)
+	require.Contains(t, codes, http.StatusTooManyRequests, "attempts queue without bound")
+}
+
+func TestServer_BearerGuessesAreRateLimited(t *testing.T) {
+	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
+	get := func(token string) int {
+		req := httptest.NewRequest(http.MethodGet, "/ui/api/vms", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	codes := map[int]int{}
+	for i := range 50 {
+		codes[get(fmt.Sprintf("guess-%d", i))]++
+	}
+	require.Positive(t, codes[http.StatusTooManyRequests])
+	require.Equal(t, http.StatusTooManyRequests, get("s3cret"))
 }
