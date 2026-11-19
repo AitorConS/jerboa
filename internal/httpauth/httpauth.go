@@ -29,16 +29,16 @@ func Bearer(token string, next http.Handler) http.Handler {
 	}
 	limiter := NewFailureLimiter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow(r) {
+		if !limiter.Take(r) {
 			Refuse(w)
 			return
 		}
 		if !Authorized(token, r) {
-			limiter.Fail(r)
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		limiter.Refund(r)
 		next.ServeHTTP(w, r)
 	})
 }

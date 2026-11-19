@@ -149,6 +149,36 @@ func (l *FailureLimiter) Fail(r *http.Request) {
 	}
 }
 
+// Take charges one attempt to r's source before its token is checked, and
+// reports false, charging nothing, when the source has none left: refuse the
+// request without checking the token. Checking and charging under one lock
+// means parallel attempts from one source cannot all be checked before any is
+// charged. Call Refund when the token was right.
+func (l *FailureLimiter) Take(r *http.Request) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if b := l.budgetLocked(sourceOf(r), now, false); b != nil && b.tokens < 1 {
+		return false
+	}
+	b := l.budgetLocked(sourceOf(r), now, true)
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// Refund gives back the attempt Take charged to r's source, whose token was
+// right.
+func (l *FailureLimiter) Refund(r *http.Request) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if b := l.budgetLocked(sourceOf(r), l.now(), false); b != nil {
+		b.tokens = min(b.tokens+1, failureBurst)
+	}
+}
+
 // Refuse answers a request from a source over its budget.
 func Refuse(w http.ResponseWriter) {
 	w.Header().Set("Retry-After", "1")

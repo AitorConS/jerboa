@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,4 +95,40 @@ func TestFailureLimiter_IPv6SourcesShareTheirPrefix(t *testing.T) {
 	require.True(t, l.Allow(from("[2001:db8:0:100::1]:1", "")), "the next /56")
 	require.Len(t, l.sources, 1)
 	require.Equal(t, "192.0.2.7", sourceOf(from("[::ffff:192.0.2.7]:1", "")))
+}
+
+// Parallel attempts from one source are charged as they are checked: no more
+// than the burst get through, however many run at once.
+func TestFailureLimiter_TakeIsAtomic(t *testing.T) {
+	l := NewFailureLimiter()
+	var taken atomic.Int32
+	var wg sync.WaitGroup
+	for range 200 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if l.Take(from("192.0.2.7:1000", "")) {
+				taken.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	require.LessOrEqual(t, taken.Load(), int32(failureBurst+1), "one refill may land during the run")
+	require.Positive(t, taken.Load())
+}
+
+// A right token costs nothing: Refund gives back what Take charged.
+func TestFailureLimiter_RefundRestoresTheBudget(t *testing.T) {
+	l := NewFailureLimiter()
+	now := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return now }
+	req := from("192.0.2.7:1000", "")
+	for range 3 * failureBurst {
+		require.True(t, l.Take(req))
+		l.Refund(req)
+	}
+	for range failureBurst {
+		require.True(t, l.Take(req))
+	}
+	require.False(t, l.Take(req))
 }

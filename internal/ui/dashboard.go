@@ -335,15 +335,15 @@ func NewServer(addr, token string, mgr vm.Manager, version string, opts ...Optio
 		// A bearer token is a guess until it matches: a source that keeps
 		// guessing wrong is refused before its next one is checked.
 		if r.Header.Get("Authorization") != "" {
-			if !limiter.Allow(r) {
+			if !limiter.Take(r) {
 				httpauth.Refuse(w)
 				return
 			}
 			if httpauth.Authorized(token, r) {
+				limiter.Refund(r)
 				h.ServeHTTP(w, r)
 				return
 			}
-			limiter.Fail(r)
 		}
 		// Send a browser without the token to the sign-in form instead of a
 		// bare 401; API clients still get the 401.
@@ -394,17 +394,17 @@ func loginHandler(token string, s *sessions, limiter *httpauth.FailureLimiter) h
 		if r.Method == http.MethodPost {
 			r.Body = http.MaxBytesReader(w, r.Body, 4096)
 			got := r.PostFormValue("token")
-			if !limiter.Allow(r) {
+			if !limiter.Take(r) {
 				httpauth.Refuse(w)
 				return
 			}
 			probe := &http.Request{Header: http.Header{"Authorization": {"Bearer " + got}}}
 			if httpauth.Authorized(token, probe) {
+				limiter.Refund(r)
 				s.issue(w, r)
 				http.Redirect(w, r, "/ui", http.StatusSeeOther)
 				return
 			}
-			limiter.Fail(r)
 			failed = true
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
