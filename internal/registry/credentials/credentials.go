@@ -138,9 +138,7 @@ func (f File) Save() error {
 	if err != nil {
 		return fmt.Errorf("credentials: %w", err)
 	}
-	if err := durable.WriteFile(p, append(data, '\n'), 0o600); err != nil {
-		return fmt.Errorf("credentials: %w", err)
-	}
+	_ = os.WriteFile(p, append(data, '\n'), 0o644)
 	return nil
 }
 
