@@ -249,3 +249,65 @@ func TestGossip_TooManyEntriesIsRejected(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.Len(t, c.Members(), 1)
 }
+
+// A relayed "dead" about a known member used to be taken as is, and nothing
+// brought the member back: one false claim from any token holder kept a live
+// member dead for good. Each node now declares death from its own timers.
+func TestGossip_RelayedDeadIsNotTakenOnTrust(t *testing.T) {
+	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{entry("node-b", "10.0.0.2:7946", time.Now())}})
+
+	dead := entry("node-b", "10.0.0.2:7946", time.Now())
+	dead.Status = StatusDead
+	c.HandleGossip(gossipPayload{MemberID: "node-c", Members: []memberEntry{dead}})
+	m, _ := memberByID(c, "node-b")
+	require.Equal(t, StatusAlive, m.Status)
+
+	// The member really stops talking: this node's own timers declare it dead.
+	c.mu.Lock()
+	c.members["node-b"].LastSeen = time.Now().Add(-c.deadTimeout - time.Second)
+	c.mu.Unlock()
+	c.checkSuspicions()
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, StatusDead, m.Status)
+}
+
+func TestGossip_DeadMemberComesBackOnFreshEvidence(t *testing.T) {
+	stale := time.Now().Add(-time.Hour)
+	setup := func() *SwimCluster {
+		c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
+		c.mu.Lock()
+		c.members["node-b"] = &Member{ID: "node-b", Addr: "10.0.0.2:7946", Status: StatusDead, LastSeen: stale}
+		c.mu.Unlock()
+		return c
+	}
+
+	// A relay that saw node-b no later than this node did changes nothing.
+	c := setup()
+	c.HandleGossip(gossipPayload{MemberID: "node-c", Members: []memberEntry{entry("node-b", "10.0.0.2:7946", stale)}})
+	m, _ := memberByID(c, "node-b")
+	require.Equal(t, StatusDead, m.Status)
+
+	// A relay that saw it later than this node's record revives it.
+	c.HandleGossip(gossipPayload{MemberID: "node-c", Members: []memberEntry{entry("node-b", "10.0.0.2:7946", time.Now())}})
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, StatusAlive, m.Status)
+
+	// The member's own gossip revives it even when its entry carries no newer
+	// time (a node does not stamp its own entry), and the next timer check
+	// does not kill it again.
+	c = setup()
+	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{{ID: "node-b", Addr: "10.0.0.2:7946", Status: StatusAlive, LastSeen: time.Time{}.Format(time.RFC3339)}}})
+	c.checkSuspicions()
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, StatusAlive, m.Status)
+
+	// A member that left stays gone.
+	c = setup()
+	c.mu.Lock()
+	c.members["node-b"].Status = StatusLeft
+	c.mu.Unlock()
+	c.HandleGossip(gossipPayload{MemberID: "node-b", Members: []memberEntry{entry("node-b", "10.0.0.2:7946", time.Now())}})
+	m, _ = memberByID(c, "node-b")
+	require.Equal(t, StatusLeft, m.Status)
+}

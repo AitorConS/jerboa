@@ -116,7 +116,10 @@ The token proves that a caller belongs to the cluster, not which node it is,
 so a node never lets a peer's claim rewrite another member's record. A known
 member's address does not change over gossip (a restarted node joins under a
 new ID), and a member is marked `left` only when it says so itself in a reply
-from its recorded address. Any member can still mark another one dead.
+from its recorded address. No node takes another's word that a member is
+dead: each one declares a member dead when it has had no news of it, first-hand
+or relayed, for 30 seconds. A member marked dead comes back when it gossips
+again or a peer relays newer news of it; one that left does not.
 
 A node only sends gossip, including `--join` requests, to addresses that pass a
 fixed policy, checked again on every connection after DNS resolution:

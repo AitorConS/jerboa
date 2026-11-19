@@ -137,32 +137,6 @@ func TestSwimCluster_HandleGossip_SuspectRecovery(t *testing.T) {
 	require.Equal(t, StatusAlive, remote.Status)
 }
 
-func TestSwimCluster_HandleGossip_DeadPropagation(t *testing.T) {
-	c1 := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
-	c2ID := "node-2"
-
-	c1.mu.Lock()
-	c1.members[c2ID] = &Member{ID: c2ID, Addr: "10.0.0.2:7946", Status: StatusAlive, LastSeen: time.Now()}
-	c1.mu.Unlock()
-
-	payload := gossipPayload{
-		MemberID: "relay-node",
-		Members: []memberEntry{
-			{ID: c2ID, Addr: "10.0.0.2:7946", Status: StatusDead, LastSeen: time.Now().Format(time.RFC3339)},
-		},
-	}
-	c1.HandleGossip(payload)
-
-	members := c1.Members()
-	var remote Member
-	for _, m := range members {
-		if m.ID == c2ID {
-			remote = m
-		}
-	}
-	require.Equal(t, StatusDead, remote.Status)
-}
-
 func TestSwimCluster_Leave(t *testing.T) {
 	c := NewSwimCluster("127.0.0.1:7946", 0, 0, 0)
 	ctx, cancel := context.WithCancel(context.Background())

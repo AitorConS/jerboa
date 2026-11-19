@@ -31,6 +31,11 @@ Which versions exist, and where:
   received the cookie on a published port cannot replay it. The dashboard and
   its `/ui/api/` routes refuse requests from inside a jerboa network's subnet
   with 403. A browser whose address changes is asked to sign in again.
+- A cluster node no longer takes another node's claim that a member is dead.
+  One false claim used to keep a live member dead for good, and a member
+  declared dead after a network split never came back. Each node now declares
+  death from its own timers, and a dead member comes back when it gossips
+  again or a peer relays newer news of it.
 
 ### Fixed
 
