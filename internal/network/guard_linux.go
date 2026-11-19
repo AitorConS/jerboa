@@ -425,7 +425,10 @@ func RequireGuard() error {
 		"to run guests without isolation instead, start jerboad with %s=1", err, AllowUnguardedEnv)
 }
 
-// CheckGuard loads the guard if it can and reports its state.
+// CheckGuard reports the guard's state. It only asks the kernel: loading or
+// reinstalling the guard is left to RequireGuard and the watchdog, so a
+// diagnostic (jerboa doctor) changes no firewall state and does not hold
+// guard.mu, and with it VM starts and stops, through an nft load.
 func CheckGuard() GuardState {
 	guard.mu.Lock()
 	defer guard.mu.Unlock()
@@ -437,7 +440,11 @@ func CheckGuard() GuardState {
 		Enforced:       !guard.allowUnguarded && !guard.noBridge,
 	}
 	if st.Configured {
-		st.Err = loadGuardLocked()
+		if guardHasNft() {
+			st.Err = guardProbe()
+		} else {
+			st.Err = errNoNft
+		}
 	}
 	return st
 }

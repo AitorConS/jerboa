@@ -355,3 +355,15 @@ func TestInstallGuardAppliesHostAccess(t *testing.T) {
 	require.Contains(t, last, `iifname != "lo" ip daddr 127.0.0.0/8 drop`)
 	require.True(t, CheckGuard().HostAccess)
 }
+
+// jerboa doctor only asks the kernel: tables removed behind the daemon are
+// reported, not reinstalled (that is the watchdog's and RequireGuard's job).
+func TestCheckGuardDoesNotReinstall(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "10.53.0.53", true)
+	require.ErrorContains(t, CheckGuard().Err, "not loaded")
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	require.False(t, k.loaded)
+	require.Empty(t, k.scripts, "the check ran nft")
+}
