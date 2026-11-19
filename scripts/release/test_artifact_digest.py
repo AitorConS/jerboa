@@ -90,6 +90,12 @@ class ArtifactDigestTests(unittest.TestCase):
                 r=self.copy(b,'.',name);self.assertNotEqual(r.returncode,0);self.assertIn('Refusing',r.stderr)
                 self.assertFalse((self.work/name).exists())
         r=self.copy(a,'../outside');self.assertNotEqual(r.returncode,0);self.assertIn('outside the working directory',r.stderr)
+        # Case-insensitive filesystems (NTFS, APFS): Scripts/ is scripts/.
+        c=self.root/'artifacts'/'case';c.mkdir();(c/'new.py').write_text('evil')
+        for dest in ['Scripts/release','SCRIPTS','dist/../Scripts','.GitHub/workflows']:
+            with self.subTest(dest=dest):
+                r=self.copy(c,dest);self.assertNotEqual(r.returncode,0);self.assertIn('Refusing',r.stderr)
+        self.assertFalse((self.work/'scripts'/'release'/'new.py').exists())
         self.assertEqual(script.read_text(),'trusted')
 
     def test_copy_refuses_links_and_empty_artifacts(self):

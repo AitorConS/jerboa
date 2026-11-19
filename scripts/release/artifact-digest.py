@@ -35,6 +35,7 @@ import sys
 # Top-level entries of a checkout that an artifact may never be copied into.
 PROTECTED = {'.git', '.github', 'scripts', 'cmd', 'internal', 'kernel', 'distro', 'tests',
              'bin', 'go.mod', 'go.sum', 'Makefile'}
+PROTECTED_FOLDED = {p.casefold() for p in PROTECTED}
 
 
 def entries(paths):
@@ -110,12 +111,15 @@ def copy(src, dest, names=()):
     cwd = Path.cwd().resolve()
     targets = {}
     for name in files:
+        if '..' in Path(name).parts:
+            raise ValueError(f'Refusing artifact entry {name}')
         target = (Path(dest) / name).resolve()
         try:
             rel = target.relative_to(cwd)
         except ValueError:
             raise ValueError(f'Refusing to copy {name} outside the working directory: {target}') from None
-        if not rel.parts or rel.parts[0] in PROTECTED:
+        # Case-folded: on NTFS and APFS, Scripts/ is scripts/.
+        if not rel.parts or rel.parts[0].casefold() in PROTECTED_FOLDED:
             raise ValueError(f'Refusing to copy {name} into {rel.as_posix() or "."}')
         if target.exists() or target.is_symlink():
             raise ValueError(f'Refusing to overwrite {rel.as_posix()}')
