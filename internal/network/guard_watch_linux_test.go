@@ -253,9 +253,12 @@ func TestRequireGuardLoadsTheGuardLate(t *testing.T) {
 	require.Error(t, RequireGuard())
 	guardHasNft = func() bool { return true }
 	require.NoError(t, RequireGuard())
+	// CheckGuard probes the fake kernel, which takes k.mu: read loaded first
+	// and release the lock before calling it.
 	k.mu.Lock()
-	defer k.mu.Unlock()
-	require.True(t, k.loaded)
+	loaded := k.loaded
+	k.mu.Unlock()
+	require.True(t, loaded)
 	require.NoError(t, CheckGuard().Err)
 }
 
