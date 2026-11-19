@@ -34,7 +34,7 @@ func TestParseImageReference(t *testing.T) {
 		_, err := ParseImageReference(bad)
 		require.Error(t, err, bad)
 	}
-	// A registry is host[:port] and nothing else. With "@", the host dialled
+	// A registry is host[:port] and nothing else. With "@", the host dialed
 	// is the part after it while the name shown starts with the part before.
 	for _, bad := range []string{
 		"registry.jerboa.dev@evil.example/jerboa/web@" + d,

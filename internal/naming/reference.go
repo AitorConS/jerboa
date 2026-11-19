@@ -16,7 +16,7 @@ var (
 	digestRE     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	// A registry is a host name or an IPv4 address, or an IPv6 address in
 	// brackets, with an optional port. Nothing else: "user@host" would be
-	// dialled as host while the reference shows the text before the "@".
+	// dialed as host while the reference shows the text before the "@".
 	registryRE = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?$`)
 )
 
