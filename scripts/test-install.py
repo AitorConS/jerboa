@@ -126,6 +126,9 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     (root/'calls').write_text('')
     run()
     calls=(root/'calls').read_text()
+    # nft loads the guest network guard: without it VMs on networks do not start.
+    packages=[line.split() for line in calls.splitlines() if line.startswith('apt-get ') and ' install ' in line]
+    assert packages and all('nftables' in p for p in packages),packages
     assert '/cli/v0.51.2/jerboa-linux-amd64.zst' in calls and '/daemon/v0.51.2/jerboad-linux-amd64.zst' in calls
     assert not any(line.split()[-3].endswith('-linux-amd64') for line in calls.splitlines() if line.startswith('curl'))
     for overrides in [dict(CORRUPT_ZST='1'),dict(FAIL_ZST='1')]:

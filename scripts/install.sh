@@ -315,13 +315,14 @@ fi
 
 log "installing runtime dependencies"
 # Same set the distro image installs (distro/Dockerfile), minus the build-time
-# tooling: qemu, networking for firecracker's tap device, e2fsprogs for the
-# image toolchain, and certs/curl for jerboad's runtime downloads.
+# tooling: qemu, networking for firecracker's tap device, nftables for the
+# guest network guard (VMs on networks do not start without it), e2fsprogs
+# for the image toolchain, and certs/curl for jerboad's runtime downloads.
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
 	qemu-system-x86 qemu-utils \
-	iproute2 iptables \
+	iproute2 iptables nftables \
 	e2fsprogs \
 	kmod \
 	ca-certificates curl jq minisign
