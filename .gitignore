@@ -47,3 +47,4 @@ __pycache__/
 
 # Local development rules for coding agents; kept per machine, not shared
 /AGENTS.md
+/CLAUDE.local.md
