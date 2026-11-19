@@ -44,3 +44,6 @@ __pycache__/
 /candidate/
 /release-lock.json
 /kernel-linux.tar.gz
+
+# Local development rules for coding agents; kept per machine, not shared
+/AGENTS.md
