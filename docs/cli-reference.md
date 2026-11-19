@@ -323,7 +323,9 @@ Build driver behavior to know:
   to Jerboa, not the tools' own: `npm`, `node-gyp`, `pip`, `go-build`,
   `go-mod`, `cargo` and `xdg` under
   `<user cache dir>/jerboa/build-sandbox/<project>/`, where `<project>` is
-  derived from the project's real path (symlinks resolved), and where the
+  derived from the project's real path (symlinks resolved) and directory
+  (one created where a removed project was gets fresh caches; caches not
+  used for 30 days are removed by the next build), and where the
   tools are pointed with `npm_config_cache`, `npm_config_devdir`,
   `PIP_CACHE_DIR`, `GOCACHE`, `GOMODCACHE`, `CARGO_HOME` and
   `XDG_CACHE_HOME`. Each project has caches of its own, so one project's

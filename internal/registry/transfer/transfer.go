@@ -266,6 +266,24 @@ func LimitsFromEnv(getenv func(string) string) (recipe.Limits, error) {
 // freeSpace is statfsSpace, replaceable so tests can report a full disk.
 var freeSpace = statfsSpace
 
+// assembledDiskMargin is room counted for the filesystem's own metadata on
+// top of the files mkfs writes into the disk.
+const assembledDiskMargin = 64 << 20
+
+// assembledDiskNeed is how much space the assembled disk can take: mkfs
+// writes the recipe's files and the filesystem's metadata, and leaves the
+// rest of the declared size unallocated where the filesystem holding out
+// keeps files sparse. Counting the declared size would refuse a pull of a
+// large, mostly empty disk that fits.
+func assembledDiskNeed(r *recipe.Recipe) int64 {
+	content := r.BlobBytes()
+	margin := max(int64(assembledDiskMargin), content/8)
+	if content > r.DiskSize-margin {
+		return r.DiskSize
+	}
+	return content + margin
+}
+
 // checkSpace refuses a pull whose missing blobs and assembled disk do not
 // fit in the free space of the filesystems they are written to: the store's
 // and the one holding out. Where the free space cannot be told, it lets the
@@ -394,7 +412,7 @@ func Pull(ctx context.Context, o PullOptions) (PullResult, error) {
 		res.AlreadyCached = true
 		return res, nil
 	}
-	if err := checkSpace(o.Store, missingBytes, o.Out, r.DiskSize); err != nil {
+	if err := checkSpace(o.Store, missingBytes, o.Out, assembledDiskNeed(r)); err != nil {
 		return res, err
 	}
 	if len(missing) > 0 {

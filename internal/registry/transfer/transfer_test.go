@@ -493,7 +493,7 @@ func TestPullRefusesWhatDoesNotFitOnDisk(t *testing.T) {
 	for _, b := range r.Blobs {
 		need += b.Size
 	}
-	need += r.DiskSize
+	need += assembledDiskNeed(r)
 	free := need - 1
 	orig := freeSpace
 	t.Cleanup(func() { freeSpace = orig })
@@ -524,4 +524,37 @@ func TestLimitsFromEnv(t *testing.T) {
 		_, err := LimitsFromEnv(env(bad))
 		require.Error(t, err, bad)
 	}
+}
+
+// A large declared disk with little in it needs the space of its content,
+// not of its size.
+func TestAssembledDiskNeed(t *testing.T) {
+	r := &recipe.Recipe{DiskSize: 40 << 30, Blobs: []recipe.Blob{{Size: 100 << 20}}}
+	require.Equal(t, int64(100<<20+assembledDiskMargin), assembledDiskNeed(r))
+	r.Blobs = []recipe.Blob{{Size: 1 << 30}}
+	require.Equal(t, int64(1<<30+1<<27), assembledDiskNeed(r), "an eighth of the content for metadata")
+	r.Blobs = []recipe.Blob{{Size: 32 << 30}}
+	require.Equal(t, int64(36<<30), assembledDiskNeed(r))
+	r.Blobs = []recipe.Blob{{Size: 39 << 30}}
+	require.Equal(t, r.DiskSize, assembledDiskNeed(r), "never more than the declared size")
+	r = &recipe.Recipe{DiskSize: 16 << 20}
+	require.Equal(t, r.DiskSize, assembledDiskNeed(r))
+}
+
+// The store and the disk count together only when they share a filesystem.
+func TestCheckSpaceCountsEachFilesystem(t *testing.T) {
+	store := newStore(t)
+	out := filepath.Join(t.TempDir(), "disk.img")
+	orig := freeSpace
+	t.Cleanup(func() { freeSpace = orig })
+	freeSpace = func(dir string) (int64, uint64, bool) {
+		if dir == store.Root() {
+			return 100, 1, true
+		}
+		return 100, 2, true
+	}
+	require.NoError(t, checkSpace(store, 100, out, 100))
+	require.ErrorContains(t, checkSpace(store, 100, out, 101), "free some space")
+	freeSpace = func(string) (int64, uint64, bool) { return 150, 1, true }
+	require.ErrorContains(t, checkSpace(store, 100, out, 100), "free some space")
 }

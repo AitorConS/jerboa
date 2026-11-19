@@ -29,10 +29,11 @@ Which versions exist, and where:
 - **Each project's confined build steps get tool caches of their own.** The
   npm, pip, Go and cargo caches under `<user cache dir>/jerboa/build-sandbox/`
   are now kept per project, so the first build of each project after
-  upgrading downloads its dependencies again. The old shared caches
-  (`npm`, `node-gyp`, `pip`, `go-build`, `go-mod`, `cargo`, `xdg` directly
-  under `build-sandbox/`) are no longer used and can be deleted; `go-mod` is
-  read-only, so `chmod -R u+w` it first.
+  upgrading downloads its dependencies again. A project created where a
+  removed one was gets fresh caches, and caches not used for 30 days are
+  removed by the next build, the old shared ones (`npm`, `node-gyp`, `pip`,
+  `go-build`, `go-mod`, `cargo`, `xdg` directly under `build-sandbox/`)
+  included.
 - **Pulls have limits.** A pulled image may list at most 100000 files, adding
   up to at most 64 GiB, with a disk, and a VM disk it asks for, of at most
   64 GiB. Raise them with `JERBOA_PULL_MAX_BLOBS`, `JERBOA_PULL_MAX_BYTES`

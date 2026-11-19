@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -303,4 +304,35 @@ func TestHiddenPathsCoverToolTokensButNotPackageCredentials(t *testing.T) {
 	for _, rel := range readable {
 		require.NotContains(t, got, filepath.Join(home, rel))
 	}
+}
+
+// Caches not used for cacheIdleLimit are removed, read-only directories
+// (the Go module cache) included; recent ones and the one in use stay.
+func TestPruneIdleCaches(t *testing.T) {
+	parent := t.TempDir()
+	now := time.Now()
+	mk := func(name string, age time.Duration) string {
+		d := filepath.Join(parent, name)
+		ro := filepath.Join(d, "go-mod", "example.com", "m@v1")
+		require.NoError(t, os.MkdirAll(ro, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(ro, "go.mod"), []byte("module m\n"), 0o444))
+		require.NoError(t, os.Chmod(ro, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+		require.NoError(t, os.Chtimes(d, now.Add(-age), now.Add(-age)))
+		return d
+	}
+	old := mk("old", cacheIdleLimit+time.Hour)
+	recent := mk("recent", time.Hour)
+	inUse := mk("inuse", 2*cacheIdleLimit)
+	outside := filepath.Join(t.TempDir(), "keep")
+	require.NoError(t, os.WriteFile(outside, []byte("x"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(old, "link")))
+	aged := now.Add(-cacheIdleLimit - time.Hour)
+	require.NoError(t, os.Chtimes(old, aged, aged))
+
+	pruneIdleCaches(parent, inUse, now)
+	require.NoDirExists(t, old)
+	require.DirExists(t, recent)
+	require.DirExists(t, inUse)
+	require.FileExists(t, outside, "a link in a cache leads nowhere outside it")
 }

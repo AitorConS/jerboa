@@ -222,3 +222,17 @@ func TestCopyFileRefusesALink(t *testing.T) {
 	data, _ := os.ReadFile(dst)
 	require.NotContains(t, string(data), "secret")
 }
+
+// A project created where a removed one was gets caches of its own.
+func TestToolCachesOfARecreatedProjectAreFresh(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", "")
+	t.Setenv("CARGO_HOME", "")
+	project := filepath.Join(t.TempDir(), "app")
+	require.NoError(t, os.Mkdir(project, 0o755))
+	first := toolCacheVars(t, project)["GOMODCACHE"]
+	// Keep an inode alive so the new directory cannot reuse the old one's.
+	require.NoError(t, os.Rename(project, project+".old"))
+	require.NoError(t, os.Mkdir(project, 0o755))
+	require.NotEqual(t, first, toolCacheVars(t, project)["GOMODCACHE"])
+}

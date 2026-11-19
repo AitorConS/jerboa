@@ -196,10 +196,12 @@ func within(path, dir string) bool {
 // configuration and registry credentials are copied in, so cargo still sees
 // them.
 //
-// Each project gets caches of its own, keyed by its real path: a step writes
-// to the extracted modules and crates it reads back, so a cache shared by
-// every project would let one project's build scripts alter the sources a
-// later build of another project compiles.
+// Each project gets caches of its own, keyed by its real path and the
+// directory's identity: a step writes to the extracted modules and crates it
+// reads back, so a cache shared by every project would let one project's
+// build scripts alter the sources a later build of another project compiles,
+// and a project created where a removed one was gets fresh caches. Caches
+// not used for cacheIdleLimit are removed.
 func toolCaches(project string) ([]string, []string, error) {
 	base, err := projectCacheDir(project)
 	if err != nil {
@@ -224,12 +226,15 @@ func toolCaches(project string) ([]string, []string, error) {
 		env = append(env, v.name+"="+d)
 	}
 	copyCargoConfig(filepath.Join(base, "cargo"))
+	markCacheUsed(base)
 	return dirs, env, nil
 }
 
 // projectCacheDir returns the directory that holds the tool caches of the
 // project at dir: a name derived from the project's path with symlinks
-// resolved, so two paths to one project share it and two projects never do.
+// resolved and from the directory's identity, so two paths to one project
+// share it, two projects never do, and neither does a project created where
+// a removed one was.
 func projectCacheDir(dir string) (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -243,7 +248,7 @@ func projectCacheDir(dir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cache directory: resolve project %s: %w", abs, err)
 	}
-	sum := sha256.Sum256([]byte(real))
+	sum := sha256.Sum256([]byte(real + "\x00" + dirIdentity(real)))
 	return filepath.Join(base, "jerboa", "build-sandbox", hex.EncodeToString(sum[:16])), nil
 }
 
