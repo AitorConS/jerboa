@@ -52,6 +52,11 @@ Which versions exist, and where:
   through `gh auth git-credential`. The full list is in the CLI reference
   under `jerboa build`.
 
+### Deprecated
+
+- `jerboa login --token <pat>`: pipe the token to `jerboa login
+  --token-stdin`, or set `JERBOA_REGISTRY_TOKEN`.
+
 ### Security
 
 - One project's build scripts could alter the Go modules or cargo crates that
@@ -87,6 +92,12 @@ Which versions exist, and where:
   it is on loopback, as the registry's own host must; tags read from it are
   not covered by any digest. Registry reads whose body stops arriving for
   60 seconds fail and are retried instead of hanging the pull.
+- `jerboa login --token-stdin` reads a personal access token from standard
+  input. `--token <pat>`, which put the token in the process list and the
+  shell history, still works but is deprecated and prints a warning.
+- `jerboa pkg push` showed a package index's whole error answer, of any
+  size and over several lines. It now shows at most 1 KiB of it, on one
+  line, without control characters.
 
 ### Fixed
 

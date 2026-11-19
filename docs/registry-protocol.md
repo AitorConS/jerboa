@@ -132,7 +132,7 @@ The registry runs the [GitHub device flow](https://docs.github.com/en/apps/oauth
 3. The `jrt_` refresh token lasts 90 days and can be revoked.
 
 **Older registries** advertise `github_client_id` instead of `"login": "device"`. With them the client runs the device flow itself with that app and posts the GitHub token to `POST /auth/github` with `{"access_token": "<github token>"}`, which answers as in step 2.
-- A registry accepts any GitHub token issued to its app. So the client refuses to log in to another registry that advertises the default registry's `github_client_id`, and refuses when it cannot check. Such a registry can still be used with `--token`.
+- A registry accepts any GitHub token issued to its app. So the client refuses to log in to another registry that advertises the default registry's `github_client_id`, and refuses when it cannot check. Such a registry can still be used with a personal access token (`jerboa login --token-stdin`).
 - Registries that run the flow themselves answer `POST /auth/github` with `410`.
 
 ### Personal access tokens (CI)

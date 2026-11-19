@@ -872,6 +872,33 @@ func TestStore_Push_ServerError(t *testing.T) {
 	require.Contains(t, err.Error(), "HTTP 500")
 }
 
+// An index's error answer is shown bounded and on one line, without the
+// terminal control sequences it may carry.
+func TestStore_Push_ServerErrorBodyIsBoundedAndSafe(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+	binaryPath := filepath.Join(t.TempDir(), "failpush")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary content"), 0o755))
+	require.NoError(t, store.Create("failpush", "1.0.0", binaryPath, nil, "", ""))
+
+	hostile := "denied\nError: forged line\x1b]52;c;cGF5bG9hZA==\x07\x1b[2J\r\u009b" + strings.Repeat("x", 1<<20)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(hostile))
+	}))
+	t.Cleanup(ts.Close)
+
+	err = store.Push("failpush", "1.0.0", ts.URL)
+	require.Error(t, err)
+	msg := err.Error()
+	require.Contains(t, msg, "HTTP 403: denied Error: forged line")
+	require.Less(t, len(msg), 2*maxErrorBody)
+	require.Contains(t, msg, "(truncated)")
+	for _, c := range []string{"\n", "\r", "\x1b", "\x07", "\u009b"} {
+		require.NotContains(t, msg, c)
+	}
+}
+
 func TestIndex_Search_Empty(t *testing.T) {
 	idx := &Index{Packages: map[string][]Package{}}
 	results := idx.Search("anything")

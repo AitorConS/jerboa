@@ -184,6 +184,14 @@ Store the printed token as a secret and expose it as `JERBOA_REGISTRY_TOKEN`:
 
 `JERBOA_REGISTRY_TOKEN` is only sent to `registry.jerboa.dev`. For another registry, also set `JERBOA_REGISTRY_HOST` to its host.
 
+To store a token on a machine instead, pipe it in, so it never appears on the command line:
+
+```sh
+printf '%s\n' "$TOKEN" | jerboa login --token-stdin
+```
+
+`jerboa login --token <pat>` still works, but is deprecated: the token is visible to other users in the process list and stays in the shell history.
+
 ### A registry behind Cloudflare Access
 
 A private deployment (a staging registry, say) can sit behind Cloudflare Access, which answers only requests that carry a service token. Set all three:

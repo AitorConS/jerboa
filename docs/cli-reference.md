@@ -445,7 +445,7 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 
 | Command | Description |
 |---|---|
-| `login [registry]` | Log in with GitHub (device flow: approve the code shown in a browser). `--token <pat>`, or `JERBOA_REGISTRY_TOKEN`, uses a personal access token instead, as CI does |
+| `login [registry]` | Log in with GitHub (device flow: approve the code shown in a browser). `--token-stdin` stores the personal access token read from the first line of standard input instead (`printf '%s\n' "$TOKEN" \| jerboa login --token-stdin`); a CI job can set `JERBOA_REGISTRY_TOKEN` and skip the login. `--token <pat>` still works but is deprecated and prints a warning: a token on the command line is visible in the process list and stays in the shell history |
 | `logout [registry]` | Forget the stored credential |
 | `tag <image> <target>` | Give a stored image another name, e.g. the reference to push it as |
 | `push <[registry/]namespace/repository[:tag]>` | Push a tagged image; you may push to your GitHub user and to organizations you belong to. `push --index <target> <image>…` tags an image index of images already pushed, one per platform. A trusted publisher's push (GitHub Actions, with the job's OIDC token) is signed with Sigstore (provenance and SBOM attestations); `--sign=false` skips it (v0.57.0 and later) |
