@@ -100,25 +100,32 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
-        path: .
+        path: ${{ runner.temp }}/artifacts/release-lock
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: needs.inputs.outputs.kernel_source == 'build'
       with:
         name: kernel-linux
-        path: .
+        path: ${{ runner.temp }}/artifacts/kernel-linux
+    # Every download lands in a directory of its own outside the checkout, so
+    # an artifact another job of the run re-uploaded cannot replace a script
+    # this job runs; only verified files are then copied into place.
     - name: Check downloads against their producing jobs
       run: |-
-        python3 scripts/release/artifact-digest.py verify "$RELEASE_LOCK" release-lock.json
+        set -euo pipefail
+        A="$RUNNER_TEMP/artifacts"
+        python3 scripts/release/artifact-digest.py verify "$RELEASE_LOCK" "$A/release-lock"
         if [ "$KERNEL_SOURCE" = build ]; then
-          python3 scripts/release/artifact-digest.py verify "$KERNEL_LINUX" kernel-linux.tar.gz
+          python3 scripts/release/artifact-digest.py verify "$KERNEL_LINUX" "$A/kernel-linux"
         fi
+        python3 scripts/release/artifact-digest.py copy "$A/release-lock" . release-lock.json
       env:
         RELEASE_LOCK: ${{ needs.inputs.outputs.release_lock_sha256 }}
         KERNEL_LINUX: ${{ needs.validate.outputs.kernel_linux_sha256 }}
         KERNEL_SOURCE: ${{ needs.inputs.outputs.kernel_source }}
+    # Only the build output: the archive is kernel-build's, checked above.
     - name: Restore validated build output
       if: needs.inputs.outputs.kernel_source == 'build'
-      run: tar -xzf kernel-linux.tar.gz
+      run: tar -xzf "$RUNNER_TEMP/artifacts/kernel-linux/kernel-linux.tar.gz" kernel/output
     - name: Stage toolset and record hashes
       run: python3 scripts/release/candidate.py kernel
     - name: Record artifact digest
@@ -132,7 +139,7 @@ jobs:
         retention-days: 30
   kernel-test:
     name: Boot selected QEMU and Firecracker kernels
-    needs: [kernel-stage]
+    needs: [inputs, kernel-stage]
     environment: kvm
     runs-on: [self-hosted, linux, kvm]
     timeout-minutes: 15
@@ -143,14 +150,21 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
-        path: .
+        path: ${{ runner.temp }}/artifacts/release-lock
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: selected-kernel
-        path: kernel-candidate
-    - name: Check the download is the selected toolset
-      run: python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" kernel-candidate
+        path: ${{ runner.temp }}/artifacts/selected-kernel
+    - name: Check the downloads are the lock and the selected toolset
+      run: |-
+        set -euo pipefail
+        A="$RUNNER_TEMP/artifacts"
+        python3 scripts/release/artifact-digest.py verify "$RELEASE_LOCK" "$A/release-lock"
+        python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" "$A/selected-kernel"
+        python3 scripts/release/artifact-digest.py copy "$A/release-lock" . release-lock.json
+        python3 scripts/release/artifact-digest.py copy "$A/selected-kernel" kernel-candidate
       env:
+        RELEASE_LOCK: ${{ needs.inputs.outputs.release_lock_sha256 }}
         SELECTED_KERNEL: ${{ needs.kernel-stage.outputs.selected_kernel_sha256 }}
     - name: Check KVM and runner tools
       run: |
@@ -220,7 +234,7 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
-        go build -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
+        go build -trimpath -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
           -o dist/jerboa-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboa
     - name: Build jerboad
@@ -230,7 +244,7 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
-        go build -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
+        go build -trimpath -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
           -o dist/jerboad-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboad
     - name: Record CLI candidate hash
@@ -272,21 +286,30 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: validated-kernel
-        path: kernel-candidate
+        path: ${{ runner.temp }}/artifacts/validated-kernel
     # The KVM runner only adds its boot report: everything else must match
     # the toolset selected on a GitHub-hosted runner.
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: selected-kernel
-        path: kernel-selected
+        path: ${{ runner.temp }}/artifacts/selected-kernel
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-linux-amd64
-        path: dist
+        path: ${{ runner.temp }}/artifacts/binaries-linux-amd64
+    # validated-kernel has no digest to check (the KVM runner made it): copy
+    # refuses links and overwrites, and the next step compares it with the
+    # selected toolset.
     - name: Check downloads against their producing jobs
       run: |-
-        python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" kernel-selected
-        python3 scripts/release/artifact-digest.py verify "$BINARIES" dist
+        set -euo pipefail
+        A="$RUNNER_TEMP/artifacts"
+        python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" "$A/selected-kernel"
+        python3 scripts/release/artifact-digest.py verify "$BINARIES" "$A/binaries-linux-amd64"
+        python3 scripts/release/artifact-digest.py copy "$A/selected-kernel" kernel-selected
+        python3 scripts/release/artifact-digest.py copy "$A/validated-kernel" kernel-candidate
+        python3 scripts/release/artifact-digest.py copy "$A/binaries-linux-amd64" dist \
+          jerboa-linux-amd64 jerboad-linux-amd64
       env:
         SELECTED_KERNEL: ${{ needs.kernel-stage.outputs.selected_kernel_sha256 }}
         BINARIES: ${{ needs.build-release.outputs.binaries_linux_amd64 }}
@@ -378,17 +401,20 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
-        path: jerboa
+        path: ${{ runner.temp }}/artifacts/release-lock
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: selected-kernel
-        path: jerboa/kernel-selected
+        path: ${{ runner.temp }}/artifacts/selected-kernel
     - name: Stage the candidate's x86 guest kernel
       working-directory: jerboa
       run: |-
         set -euo pipefail
-        python3 scripts/release/artifact-digest.py verify "$RELEASE_LOCK" release-lock.json
-        python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" kernel-selected
+        A="$RUNNER_TEMP/artifacts"
+        python3 scripts/release/artifact-digest.py verify "$RELEASE_LOCK" "$A/release-lock"
+        python3 scripts/release/artifact-digest.py verify "$SELECTED_KERNEL" "$A/selected-kernel"
+        python3 scripts/release/artifact-digest.py copy "$A/release-lock" . release-lock.json
+        python3 scripts/release/artifact-digest.py copy "$A/selected-kernel" kernel-selected
         python3 scripts/release/candidate.py x86 --out dist/macos-arm64/tools/x86
       env:
         RELEASE_LOCK: ${{ needs.inputs.outputs.release_lock_sha256 }}
@@ -548,9 +574,14 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-windows-amd64
-        path: cli
+        path: ${{ runner.temp }}/artifacts/binaries-windows-amd64
     - name: Check the download against its producing job
-      run: python scripts/release/artifact-digest.py verify "$BINARIES" cli
+      run: |-
+        set -euo pipefail
+        A="$RUNNER_TEMP/artifacts"
+        python scripts/release/artifact-digest.py verify "$BINARIES" "$A/binaries-windows-amd64"
+        python scripts/release/artifact-digest.py copy "$A/binaries-windows-amd64" cli \
+          jerboa-windows-amd64.exe manifest.json
       env:
         BINARIES: ${{ needs.build-release.outputs.binaries_windows_amd64 }}
     - name: Stage candidate CLI with explicit version and checksum
@@ -679,11 +710,22 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: desktop-windows
-        path: desktop/dist
+        path: ${{ runner.temp }}/artifacts/desktop-windows
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: distro-rootfs
-        path: distro-rootfs
+        path: ${{ runner.temp }}/artifacts/distro-rootfs
+    - name: Check downloads against their producing jobs
+      run: |-
+        set -euo pipefail
+        A="$RUNNER_TEMP/artifacts"
+        python scripts/release/artifact-digest.py verify "$DESKTOP_WINDOWS" "$A/desktop-windows"
+        python scripts/release/artifact-digest.py verify "$DISTRO_ROOTFS" "$A/distro-rootfs"
+        python scripts/release/artifact-digest.py copy "$A/desktop-windows" desktop/dist
+        python scripts/release/artifact-digest.py copy "$A/distro-rootfs" distro-rootfs jerboa-rootfs-amd64.tar.gz
+      env:
+        DESKTOP_WINDOWS: ${{ needs.windows.outputs.desktop_windows_sha256 }}
+        DISTRO_ROOTFS: ${{ needs.build-distro.outputs.distro_rootfs_sha256 }}
     - name: Silent-install the desktop app
       shell: powershell
       run: |
@@ -785,12 +827,12 @@ jobs:
       if: needs.inputs.outputs.kernel_source == 'build'
       with:
         name: mkfs-linux-arm64
-        path: mkfs-linux-arm64
+        path: ${{ runner.temp }}/artifacts/mkfs-linux-arm64
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       if: needs.inputs.outputs.kernel_source == 'build'
       with:
         name: mkfs-darwin-arm64
-        path: mkfs-darwin-arm64
+        path: ${{ runner.temp }}/artifacts/mkfs-darwin-arm64
     - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
       with:
         go-version: 1.27.4
@@ -800,72 +842,87 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-linux-amd64
-        path: artifacts/binaries-linux-amd64
+        path: ${{ runner.temp }}/artifacts/binaries-linux-amd64
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-linux-arm64
-        path: artifacts/binaries-linux-arm64
+        path: ${{ runner.temp }}/artifacts/binaries-linux-arm64
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-windows-amd64
-        path: artifacts/binaries-windows-amd64
+        path: ${{ runner.temp }}/artifacts/binaries-windows-amd64
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: binaries-macos
-        path: artifacts/binaries-macos
+        path: ${{ runner.temp }}/artifacts/binaries-macos
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: desktop-windows
-        path: desktop-windows
+        path: ${{ runner.temp }}/artifacts/desktop-windows
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: desktop-macos
-        path: desktop-macos
+        path: ${{ runner.temp }}/artifacts/desktop-macos
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: distro-rootfs
-        path: distro-rootfs
+        path: ${{ runner.temp }}/artifacts/distro-rootfs
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-lock
-        path: .
+        path: ${{ runner.temp }}/artifacts/release-lock
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: validated-kernel
-        path: kernel-candidate
+        path: ${{ runner.temp }}/artifacts/validated-kernel
     # The KVM runner only adds its boot report: everything else must match
     # the toolset selected on a GitHub-hosted runner.
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: selected-kernel
-        path: kernel-selected
+        path: ${{ runner.temp }}/artifacts/selected-kernel
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: macos-app
-        path: native-macos
+        path: ${{ runner.temp }}/artifacts/macos-app
     # Nothing downloaded is used, executed or signed before it matches the
     # digest its GitHub-hosted producer recorded. validated-kernel comes from
     # the KVM runner and is checked against the selected toolset instead.
+    # Downloads stay outside the checkout: only checked files are copied into
+    # the places assembly reads.
     - name: Check downloads against their producing jobs
       run: |-
         set -euo pipefail
-        check() { python3 scripts/release/artifact-digest.py verify "$@"; }
-        check "$RELEASE_LOCK" release-lock.json
-        check "$SELECTED_KERNEL" kernel-selected
-        check "$BINARIES_LINUX_AMD64" artifacts/binaries-linux-amd64
-        check "$BINARIES_LINUX_ARM64" artifacts/binaries-linux-arm64
-        check "$BINARIES_WINDOWS_AMD64" artifacts/binaries-windows-amd64
-        check "$BINARIES_MACOS" artifacts/binaries-macos
+        A="$RUNNER_TEMP/artifacts"
+        check() { python3 scripts/release/artifact-digest.py verify "$1" "$A/$2"; }
+        place() { python3 scripts/release/artifact-digest.py copy "$A/$1" "${@:2}"; }
+        check "$RELEASE_LOCK" release-lock
+        check "$SELECTED_KERNEL" selected-kernel
+        check "$BINARIES_LINUX_AMD64" binaries-linux-amd64
+        check "$BINARIES_LINUX_ARM64" binaries-linux-arm64
+        check "$BINARIES_WINDOWS_AMD64" binaries-windows-amd64
+        check "$BINARIES_MACOS" binaries-macos
         check "$DESKTOP_WINDOWS" desktop-windows
         check "$DESKTOP_MACOS" desktop-macos
         check "$DISTRO_ROOTFS" distro-rootfs
-        check "$MACOS_APP" native-macos
+        check "$MACOS_APP" macos-app
         if [ "$KERNEL_SOURCE" = build ]; then
           check "$MKFS_LINUX_ARM64" mkfs-linux-arm64
           check "$MKFS_DARWIN_ARM64" mkfs-darwin-arm64
+          place mkfs-linux-arm64 mkfs-linux-arm64 mkfs
+          place mkfs-darwin-arm64 mkfs-darwin-arm64 mkfs
         fi
-        mkdir -p dist
-        cp -p artifacts/binaries-*/* dist/
+        place release-lock . release-lock.json
+        place selected-kernel kernel-selected
+        place validated-kernel kernel-candidate
+        place binaries-linux-amd64 dist jerboa-linux-amd64 jerboad-linux-amd64
+        place binaries-linux-arm64 dist jerboa-linux-arm64 jerboad-linux-arm64
+        place binaries-windows-amd64 dist jerboa-windows-amd64.exe manifest.json
+        place binaries-macos dist jerboa-darwin-arm64 jerboad-darwin-arm64
+        place desktop-windows desktop-windows
+        place desktop-macos desktop-macos
+        place distro-rootfs distro-rootfs jerboa-rootfs-amd64.tar.gz
+        place macos-app native-macos
       env:
         KERNEL_SOURCE: ${{ needs.inputs.outputs.kernel_source }}
         RELEASE_LOCK: ${{ needs.inputs.outputs.release_lock_sha256 }}

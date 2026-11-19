@@ -42,7 +42,13 @@ enforces it is outside the pull request's reach:
   script's header). Before any step
   of a job it refuses pull requests whose head is another repository, events other
   than push, pull_request, workflow_dispatch and schedule, and workflows other than
-  `main.yml`, `release.yml` and `nightly.yml`. Reinstall it from main when it
+  `main.yml`, `release.yml` and `nightly.yml`. Push, `workflow_dispatch` and
+  schedule jobs run only when both the ref and the workflow file are
+  `refs/heads/main`: they wait for no review (the nightly KVM jobs carry no
+  `environment: kvm`, so the scheduled run never waits for a person), and a
+  dispatch can name any branch. Test a branch on the runner through its pull
+  request, whose jobs wait for the `kvm` review. The check only takes effect
+  once the guard is reinstalled on the runner. Reinstall it from main when it
   changes: the candidate's `kernel-test` job compares the installed copy with the
   revision being released (`kvm-runner-guard.py check-installed`) and fails with
   the install command when they differ. A unit test fails when a workflow with
@@ -288,7 +294,21 @@ can set, and the consumer checks the download against it before using, executing
 or signing anything (`verify`; `validate.yml` exports `kernel_linux_sha256` for
 `kernel-linux`). Assembly downloads every artifact by its own name, never by
 pattern. The KVM runner's `validated-kernel` is not trusted on its own: it must
-equal the verified `selected-kernel` apart from its boot report. A missing or
+equal the verified `selected-kernel` apart from its boot report.
+
+Every workflow downloads each artifact into a directory of its own outside the
+checkout, `${{ runner.temp }}/artifacts/<name>`, never over the checkout: an
+artifact unpacked there could replace `scripts/release/` before the scripts
+that check it and sign the release run. The download is verified where it
+lands, and only then `artifact-digest.py copy` puts its files where the
+scripts read them (`release-lock.json`, `kernel-selected/`, `dist/`, ...).
+`copy` refuses symlinks and special files, never overwrites a file, never
+writes outside the working directory or into what the job runs or builds from
+(`scripts/`, `.github/`, `cmd/`, `internal/`, `kernel/`, `go.mod`, `go.sum`,
+`Makefile`, `bin/`, ...), and, given file names, refuses an artifact that holds
+anything else. The kernel archive is unpacked from its download directory and
+only its `kernel/output` is extracted. `test_workflows.py` fails on a
+download step whose `path` is anything else. A missing or
 different digest fails the job; rebuild the candidate rather than re-running only
 the consumer. The release binaries assembly runs for their version check get an
 environment without the signing seed or other credentials.

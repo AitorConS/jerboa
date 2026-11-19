@@ -111,6 +111,15 @@ Which versions exist, and where:
   pre-authentication connection slots. The guard now drops new connections
   from guests to the host, other than guest DNS, and to non-public
   addresses outside their network.
+- `install.sh --version X.Y.Z` now refuses a release manifest that is not
+  signed for the stable channel, as it already did without `--version`.
+  Release candidates are signed with the same key for their own channel, so
+  a candidate's manifest could be served as that version's release manifest.
+  Every published release manifest says stable: nothing changes for a real
+  release.
+- Released `jerboa` and `jerboad` for Linux and Windows are built with
+  `-trimpath`, like `make build` and the macOS builds: they no longer carry
+  the build machine's file paths.
 - QEMU, Firecracker and `mkfs` now start with a minimal environment
   (`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`, `LANG`,
   `LANGUAGE`, `LC_*`, `TZ`) instead of the daemon's whole environment, which

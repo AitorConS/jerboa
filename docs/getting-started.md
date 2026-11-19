@@ -101,7 +101,8 @@ systemd on x86_64.
 
 What it sets up:
 
-- `jerboa` and `jerboad`, checked against the release's signed manifest, plus
+- `jerboa` and `jerboad`, checked against the release's signed manifest (which
+  must be signed for the stable channel, also with `--version X.Y.Z`), plus
   QEMU and Firecracker
 - a system user `jerboa` (home `/var/lib/jerboa`, in the `kvm` group when the
   host has `/dev/kvm`) that the daemon runs as: it is not root, and it holds
