@@ -80,7 +80,7 @@ After a successful pull, the daemon tells the registry that the repository was p
 A pull by digest also checks that the repository you named has published that recipe, so `aitorcons/web@sha256:…` never runs another repository's image.
 
 A reference is `[registry/]namespace/repository[:tag|@sha256:<digest>]`:
-- The registry defaults to `registry.jerboa.dev`.
+- The registry defaults to `registry.jerboa.dev`. A registry is a host name or an IP address with an optional port (an IPv6 address goes in brackets). It is read in lowercase, and a trailing dot or a `:443` port is dropped, so `REGISTRY.JERBOA.DEV:443/jerboa/web` is the same image as `jerboa/web` and is held to the same signing rule.
 - The tag defaults to `latest`.
 - A digest names an exact recipe and never changes.
 

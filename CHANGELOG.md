@@ -52,13 +52,18 @@ Which versions exist, and where:
   through `gh auth git-credential`. The full list is in the CLI reference
   under `jerboa build`.
 
-### Deprecated
-
-- `jerboa login --token <pat>`: pipe the token to `jerboa login
-  --token-stdin`, or set `JERBOA_REGISTRY_TOKEN`.
-
 ### Security
 
+- The registry part of an image reference is now checked and read in one
+  spelling. `registry.jerboa.dev:443/jerboa/web`, `REGISTRY.JERBOA.DEV/...`
+  and `registry.jerboa.dev./...` reached the official registry without the
+  rule that `jerboa/` images must be signed by the official workflow, and with
+  a signer remembered apart from the one of `jerboa/web`. They are now the
+  same reference as `jerboa/web`. A registry containing `@`, as in
+  `registry.jerboa.dev@other.example/jerboa/web@sha256:…`, connected to
+  `other.example` while the image was listed under a name starting with
+  `registry.jerboa.dev`; such a reference is refused with `invalid registry
+  (want host[:port])`.
 - One project's build scripts could alter the Go modules or cargo crates that
   the confined build steps of every other project read from the shared tool
   cache, and so change what a later build of another project compiled. The
@@ -98,6 +103,11 @@ Which versions exist, and where:
 - `jerboa pkg push` showed a package index's whole error answer, of any
   size and over several lines. It now shows at most 1 KiB of it, on one
   line, without control characters.
+
+### Deprecated
+
+- `jerboa login --token <pat>`: pipe the token to `jerboa login
+  --token-stdin`, or set `JERBOA_REGISTRY_TOKEN`.
 
 ### Fixed
 
