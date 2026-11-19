@@ -284,3 +284,23 @@ func TestConfinedStepsLoseBrokerAddresses(t *testing.T) {
 	defer done()
 	require.Equal(t, []string{"DOCKER_HOST=x"}, cmd.Env)
 }
+
+// The credential stores no package manager reads are hidden from build
+// steps; those package managers use for private dependencies are not.
+func TestHiddenPathsCoverToolTokensButNotPackageCredentials(t *testing.T) {
+	home := t.TempDir()
+	hidden := []string{".config/gh", ".config/hub", ".vault-token", ".terraform.d", ".pypirc", ".docker", ".config/gcloud", ".azure"}
+	readable := []string{".netrc", ".npmrc", ".ssh", ".git-credentials", ".cargo"}
+	for _, rel := range append(append([]string{}, hidden...), readable...) {
+		p := filepath.Join(home, rel)
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o700))
+		require.NoError(t, os.WriteFile(p, []byte("x"), 0o600))
+	}
+	got := hiddenPaths(home, Step{Dir: t.TempDir()})
+	for _, rel := range hidden {
+		require.Contains(t, got, filepath.Join(home, rel))
+	}
+	for _, rel := range readable {
+		require.NotContains(t, got, filepath.Join(home, rel))
+	}
+}

@@ -299,8 +299,24 @@ Build driver behavior to know:
   `[build] install_scripts = true` for dependencies that need their install scripts.
 - Build steps (`[build] run`, `npm`, `pip`, `cargo`, `go build`) run without
   Jerboa's own credentials in their environment (`JERBOA_REGISTRY_TOKEN`,
-  `JERBOA_AUTH_TOKEN` and the other `JERBOA_*` tokens), nor GitHub Actions'
-  `ACTIONS_ID_TOKEN_REQUEST_*`, with which a job requests OIDC tokens.
+  `JERBOA_AUTH_TOKEN` and every other `JERBOA_*` variable whose name holds
+  `TOKEN` or `SECRET`, and `JERBOA_MINISIGN_SEED`), nor GitHub Actions'
+  `ACTIONS_ID_TOKEN_REQUEST_*`, with which a job requests OIDC tokens, nor
+  well-known tokens and keys: `GITHUB_TOKEN`, `GH_TOKEN`,
+  `GH_ENTERPRISE_TOKEN`, `GITHUB_ENTERPRISE_TOKEN`, `AWS_ACCESS_KEY_ID`,
+  `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_SECURITY_TOKEN`,
+  `AWS_WEB_IDENTITY_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`,
+  `GOOGLE_CREDENTIALS`, `CLOUDSDK_AUTH_ACCESS_TOKEN`, `AZURE_CLIENT_SECRET`,
+  `AZURE_CLIENT_CERTIFICATE_PASSWORD`, `AZURE_CLIENT_CERTIFICATE_PATH`,
+  `AZURE_PASSWORD`, `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_STORAGE_KEY`,
+  `AZURE_STORAGE_CONNECTION_STRING`, `AZURE_STORAGE_SAS_TOKEN`,
+  `VAULT_TOKEN`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_API_KEY`,
+  `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. There is no setting that passes
+  one of these through. A build that needs a token to fetch private
+  dependencies gets it under the name its package manager reads, which is
+  passed: for example `NODE_AUTH_TOKEN="$GITHUB_TOKEN" jerboa build .` with
+  an `.npmrc` that uses `${NODE_AUTH_TOKEN}`, or `NPM_TOKEN`,
+  `CARGO_REGISTRIES_<NAME>_TOKEN`, `~/.netrc` or `~/.git-credentials`.
 - Build steps run in a sandbox: bubblewrap (`bwrap`) on Linux, `sandbox-exec`
   on macOS. A confined step reads the host but writes only to the project
   directory, a private temporary directory (`TMPDIR`) and caches that belong
@@ -317,7 +333,13 @@ Build driver behavior to know:
   again), and your cargo configuration and registry credentials are copied
   in. A project's caches stay until you delete them. It cannot
   connect to the daemon's or the VMs' control sockets, and it cannot read `~/.jerboa`, `~/.aws`,
-  `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker` or `~/.gnupg`.
+  `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.gnupg`,
+  `~/.config/gh`, `~/.config/hub`, `~/.vault-token`, `~/.terraform.d` or
+  `~/.pypirc`. `~/.ssh`, `~/.netrc`, `~/.npmrc`, `~/.cargo/credentials*`
+  and `~/.git-credentials` stay readable, for private dependencies; a git
+  credential helper that reads `~/.config/gh` (`gh auth git-credential`)
+  does not work in a build step, so fetch those over SSH or with
+  `~/.git-credentials`.
   `[build] run` commands have no network unless `[build] network = true`;
   the language tools keep it to fetch dependencies. A step that writes
   elsewhere (for example straight to `/tmp`) fails: write under `TMPDIR` or

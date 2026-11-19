@@ -142,11 +142,14 @@ func (s Sandbox) Describe() string {
 }
 
 // credentialPaths lists, relative to the home directory, the credential
-// stores a build step has no reason to read: Jerboa's own and cloud
-// providers'. Those package managers use to fetch private dependencies
-// (~/.ssh, ~/.netrc, ~/.npmrc, git credentials) stay readable.
+// stores a build step has no reason to read: Jerboa's own, cloud providers',
+// the GitHub CLIs' (gh, hub), Vault's and Terraform's tokens, and PyPI
+// upload credentials (twine's; pip does not read ~/.pypirc). Those package
+// managers use to fetch private dependencies (~/.ssh, ~/.netrc, ~/.npmrc,
+// ~/.cargo/credentials, ~/.git-credentials) stay readable.
 var credentialPaths = []string{
 	".jerboa", ".aws", ".azure", ".config/gcloud", ".kube", ".docker", ".gnupg",
+	".config/gh", ".config/hub", ".vault-token", ".terraform.d", ".pypirc",
 }
 
 // hiddenPaths returns the credential stores under home that exist and that

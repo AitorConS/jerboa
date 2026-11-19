@@ -38,6 +38,19 @@ Which versions exist, and where:
   64 GiB. Raise them with `JERBOA_PULL_MAX_BLOBS`, `JERBOA_PULL_MAX_BYTES`
   and `JERBOA_PULL_MAX_DISK_SIZE` in the daemon's environment. A pull whose
   files and disk do not fit in the free space now fails before downloading.
+- **Build steps no longer get well-known tokens from the environment nor
+  read the GitHub CLI's login.** `GITHUB_TOKEN`, `GH_TOKEN`, the AWS, Google
+  Cloud and Azure credentials, `VAULT_TOKEN`, `CLOUDFLARE_API_TOKEN`,
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and every `JERBOA_*TOKEN*` or
+  `JERBOA_*SECRET*` variable are removed from the environment of `[build]
+  run` commands and the language tools, and confined steps cannot read
+  `~/.config/gh`, `~/.config/hub`, `~/.vault-token`, `~/.terraform.d` or
+  `~/.pypirc`. A build that used one of these to fetch private dependencies
+  passes the token under the name its package manager reads instead, for
+  example `NODE_AUTH_TOKEN="$GITHUB_TOKEN" jerboa build .`, and fetches
+  private git dependencies over SSH or with `~/.git-credentials` rather than
+  through `gh auth git-credential`. The full list is in the CLI reference
+  under `jerboa build`.
 
 ### Security
 
@@ -56,6 +69,10 @@ Which versions exist, and where:
   limited the number or size of a recipe's files or the size of its disk.
   These are now checked against the daemon's limits, and against the free
   space, before anything is downloaded.
+- Build steps, which run the project's code with network access, received
+  the caller's whole environment apart from Jerboa's own tokens, and could
+  read the GitHub CLI's, Vault's and Terraform's tokens. Well-known secret
+  variables are now removed and those files hidden.
 
 ### Fixed
 

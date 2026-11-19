@@ -112,6 +112,15 @@ func TestSandboxConfinesSteps(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(outside, "no"))
 	ok, _ = run("read", secret)
 	require.False(t, ok, "reading a credential store")
+	// A credential store that is a single file.
+	vaultToken := filepath.Join(home, ".vault-token")
+	require.NoError(t, os.WriteFile(vaultToken, []byte("x"), 0o600))
+	ok, _ = run("read", vaultToken)
+	require.False(t, ok, "reading a token file")
+	netrc := filepath.Join(home, ".netrc")
+	require.NoError(t, os.WriteFile(netrc, []byte("x"), 0o600))
+	ok, _ = run("read", netrc)
+	require.True(t, ok, "reading what package managers fetch private dependencies with")
 
 	// The user's tool homes hold programs that run outside the sandbox.
 	cargoBin := filepath.Join(home, ".cargo", "bin")
