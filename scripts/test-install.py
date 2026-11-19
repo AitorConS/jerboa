@@ -141,7 +141,16 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     # signed manifest published with that release.
     run('--version','0.51.1',ok=False,NO_RELEASE_MANIFEST='1')
     run('--version','0.51.1',ok=False)
-    (root/'release-manifest').write_text(json.dumps({'components':{key:{'version':'v0.51.1','platforms':{'linux-amd64':{'sha256':digest,'size':len(b'binary')}}} for key in ['cli','daemon']}}))
+    pinned={'channel':'stable','generated':'2026-09-01T10:00:00Z','components':{key:{'version':'v0.51.1','platforms':{'linux-amd64':{'sha256':digest,'size':len(b'binary')}}} for key in ['cli','daemon']}}
+    # Candidates are signed with the release key too: a pinned version's
+    # manifest must be signed for the stable channel, however old it is.
+    for channel in ['candidate',None]:
+        (root/'release-manifest').write_text(json.dumps({**pinned,'channel':channel}))
+        (root/'calls').write_text('')
+        result=run('--version','0.51.1',ok=False)
+        assert 'not signed for the stable channel' in result.stderr,result.stderr
+        assert 'linux-amd64' not in (root/'calls').read_text()
+    (root/'release-manifest').write_text(json.dumps(pinned))
     run('--version','0.51.1',ok=False,CORRUPT='1')
     run('--version','0.51.1',ok=False,BAD_SIGNATURE='1')
     (root/'calls').write_text('')
@@ -242,8 +251,15 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
         (root/'calls').write_text('')
         run(ok=False)
         assert 'sudo installer' not in (root/'calls').read_text()
-    # A pinned version is checked against its own release manifest instead.
+    # A pinned version is checked against its own release manifest instead,
+    # for its channel but not its age.
     run('--version','0.51.2')
+    for channel in ['candidate',None]:
+        serve(channel=channel)
+        (root/'calls').write_text('')
+        result=run('--version','0.51.2',ok=False)
+        assert 'not signed for the stable channel' in result.stderr,result.stderr
+        assert 'sudo installer' not in (root/'calls').read_text()
     serve()
     manifest['components'].pop('macos')
     (root/'manifest').write_text(json.dumps(manifest))

@@ -8,6 +8,13 @@ runner before any step of a job, from a copy the runner owner installed, so a
 pull request cannot change it. A non-zero exit fails the job before its steps
 run.
 
+Jobs not started by a pull request (push, workflow_dispatch, schedule) wait
+for no review: nightly.yml's KVM jobs have no `environment: kvm`, so that the
+scheduled run does not wait for a person, and anyone who can dispatch a
+workflow picks its ref. Those jobs therefore run only for refs/heads/main,
+whose changes were reviewed; a branch is tested on this runner through its
+pull request, which waits for the `kvm` environment's review.
+
 Install (on the runner machine, as root):
 
   install -o root -g root -m 0755 scripts/release/kvm-runner-guard.py /usr/local/libexec/jerboa-kvm-runner-guard
@@ -35,6 +42,7 @@ import sys
 
 DEFAULT_WORKFLOWS = 'main.yml release.yml nightly.yml'
 DEFAULT_EVENTS = 'push pull_request workflow_dispatch schedule'
+MAIN_REF = 'refs/heads/main'
 INSTALL = ('On the runner, from a reviewed checkout of main, install both files as the header of '
            'scripts/release/kvm-runner-guard.py says, restart the runner service and re-run this job')
 
@@ -69,6 +77,13 @@ def refusal(env):
         # A fork's pull request runs the fork's workflow files.
         if head.get('full_name') != expected:
             return f'pull request from {head.get("full_name")!r}, not from {expected!r}'
+        return None
+    # Anything else runs unreviewed: only main's code and workflow files.
+    ref = env.get('GITHUB_REF', '')
+    workflow_at = workflow_ref.split('@', 1)[1] if '@' in workflow_ref else ''
+    if ref != MAIN_REF or workflow_at != MAIN_REF:
+        return (f'{event_name} jobs run here only on {MAIN_REF}, not on ref {ref!r} '
+                f'(workflow {workflow_ref!r}); test a branch through its pull request')
     return None
 
 

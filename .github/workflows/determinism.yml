@@ -75,13 +75,14 @@ jobs:
       with:
         pattern: determinism-*
         merge-multiple: true
-        path: digests
+        path: ${{ runner.temp }}/artifacts/determinism
     - name: Compare
       run: |
         python3 - <<'PY'
-        import json, pathlib, sys
+        import json, os, pathlib, sys
+        digests = pathlib.Path(os.environ['RUNNER_TEMP'], 'artifacts', 'determinism')
         results = {p.stem.removeprefix('digests-'): json.loads(p.read_text())
-                   for p in sorted(pathlib.Path('digests').glob('digests-*.json'))}
+                   for p in sorted(digests.glob('digests-*.json'))}
         if len(results) != 3:
             sys.exit(f'expected 3 hosts, got {sorted(results)}')
         reference = next(iter(results.values()))
