@@ -367,26 +367,35 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 // one that leads nowhere today could lead outside once something is
 // created where it points.
 func removeEscapingLinks(dir string) error {
-	realDir, err := filepath.EvalSymlinks(dir)
+	// Resolved and removed through the root, so neither the check nor the
+	// removal can be led outside dir by a component swapped mid-walk: a link
+	// the root cannot follow leads outside dir or nowhere.
+	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return fmt.Errorf("resolve package dir: %w", err)
+		return fmt.Errorf("open package dir: %w", err)
 	}
-	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+	defer func() { _ = root.Close() }()
+	err = fs.WalkDir(root.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.Type()&fs.ModeSymlink == 0 {
 			return nil
 		}
-		if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil && withinDir(realDir, resolved) {
+		if _, serr := root.Stat(rel); serr == nil {
 			return nil
 		}
+		path := filepath.Join(dir, rel)
 		slog.Warn("ops extract: removing symlink that leads outside the package or nowhere", "path", path)
-		if err := os.Remove(path); err != nil {
+		if err := root.Remove(rel); err != nil {
 			return fmt.Errorf("remove escaping symlink %s: %w", path, err)
 		}
 		return nil
 	})
+	if err != nil {
+		return fmt.Errorf("sweep package links: %w", err)
+	}
+	return nil
 }
 
 // symlinksSupported reports whether Extract creates tar symlinks as links;

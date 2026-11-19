@@ -604,7 +604,7 @@ func (c *Client) ReadRange(ctx context.Context, cdn, packDigest string, offset, 
 
 // readRangeOnce is one attempt of ReadRange; retry says another may succeed.
 func (c *Client) readRangeOnce(ctx context.Context, cdn, packDigest string, offset, length int64) (data []byte, retry bool, err error) {
-	// Cancelled when the body stops arriving, so a stalled connection fails
+	// Canceled when the body stops arriving, so a stalled connection fails
 	// the attempt instead of holding the pull forever.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -683,7 +683,7 @@ func (c *Client) once(ctx context.Context, method, url, token string, body []byt
 	if body != nil {
 		r = bytes.NewReader(body)
 	}
-	// Cancelled when the answer stops arriving (see readStalling); ctx
+	// Canceled when the answer stops arriving (see readStalling); ctx
 	// itself still tells whether the caller gave up.
 	reqCtx, cancel := context.WithCancel(ctx)
 	defer cancel()

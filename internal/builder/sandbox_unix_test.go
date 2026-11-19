@@ -165,6 +165,11 @@ func TestSeatbeltProfileKeepsThePolicyReadOnly(t *testing.T) {
 // step exits, and could change the project while the build reads it) has it
 // killed when the step ends.
 func TestSandboxKillsWhatAStepLeavesBehind(t *testing.T) {
+	if sandboxName() == "bubblewrap" {
+		// The step has its own pid namespace: the kernel ends what it left
+		// behind when it exits, and its pids mean nothing out here.
+		t.Skip("bubblewrap's pid namespace ends the step's processes itself")
+	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", "")
 	work := t.TempDir()

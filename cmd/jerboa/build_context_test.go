@@ -5,7 +5,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/AitorConS/jerboa/internal/builder"
@@ -123,6 +122,6 @@ func TestBuildContextRefusesAReplacedBuildOutput(t *testing.T) {
 	entries, err := lfTarEntries(r)
 	require.Error(t, err)
 	for name, content := range entries {
-		require.False(t, strings.Contains(content, "secret"), name)
+		require.NotContains(t, content, "secret", name)
 	}
 }

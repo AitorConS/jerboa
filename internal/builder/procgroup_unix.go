@@ -5,6 +5,7 @@ package builder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -21,7 +22,7 @@ import (
 // once the step is gone, so it ends as it would have.
 //
 // A process that leaves the group on purpose (setsid) is not reached; this
-// is defence in depth, not confinement.
+// is defense in depth, not confinement.
 func ownProcessGroup(cmd *exec.Cmd, cancel context.CancelFunc) func() {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
@@ -65,7 +66,7 @@ func killProcessGroup(p *os.Process) error {
 		return nil
 	}
 	if err := syscall.Kill(-p.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return err
+		return fmt.Errorf("kill process group %d: %w", p.Pid, err)
 	}
 	return nil
 }
