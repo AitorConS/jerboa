@@ -89,6 +89,8 @@ func recoverVM(s Store, v *VM, pid int) (needsSave bool) {
 	v.StoppedAt = &now
 	v.DaemonRecovered = true
 	close(v.done)
+	// Its guest environment file outlived it; nothing reads it now.
+	removeGuestEnvFile(v.ID)
 	// The process died with the previous daemon; its network resources may be
 	// orphaned. Best-effort reconcile so stale TAPs/forwards don't leak.
 	go reconcileNetwork(v.ID, v.Cfg)
@@ -145,6 +147,7 @@ func adoptMonitor(s Store, v *VM) {
 			cleanup()
 		}
 		removeQMPSocket(qmpAddr)
+		removeGuestEnvFile(v.ID)
 		// The adopted process is gone; tear down its (bridge-safe) network
 		// resources just like the normal monitor would on a clean exit.
 		reconcileNetwork(v.ID, v.Cfg)

@@ -138,6 +138,9 @@ type Config struct {
 	// MinDiskSize is the size in bytes the private boot disk is extended to
 	// when the image's disk is smaller (the image's disk_size).
 	MinDiskSize int64 `json:"min_disk_size,omitempty"`
+	// envFile is the 0600 file holding Env for the QEMU fw_cfg (set only on
+	// the launch copy of the config); see writeGuestEnvFile.
+	envFile string
 	// ImageLayout is the layout of the image's disk ("" standard, "compact").
 	// QEMU boots a compact image by loading the kernel itself (PVH on x86).
 	ImageLayout string `json:"image_layout,omitempty"`

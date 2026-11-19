@@ -36,6 +36,14 @@ Which versions exist, and where:
 - On Windows, a `.wslconfig` that began with two byte-order marks gained
   another `[wsl2]` section on every install (#303).
 
+### Security
+
+- With the QEMU hypervisor (Linux, and macOS with `hypervisor qemu`), the
+  environment variables given with `-e`, often secrets, were on QEMU's
+  command line, where any local user could read them with `ps`. QEMU now
+  reads them from a file only the daemon's user can read, deleted when the
+  VM exits. The guest sees the same variables as before.
+
 ## [0.60.0] - 2026-11-18
 
 ### Changed
