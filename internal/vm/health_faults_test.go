@@ -287,6 +287,33 @@ func TestFaults_HealthLoopDeclaresUnhealthyAndStops(t *testing.T) {
 	}, 30*time.Second, time.Millisecond, "a stopped probe is still running")
 }
 
+// A record written before the values were validated can hold a negative
+// interval, timeout or retry count. Starting its probe must not panic (a
+// panic there ends the daemon, and it adopts the same record at every start):
+// the defaults apply instead.
+func TestFaults_HealthStoredNegativeValuesUseTheDefaults(t *testing.T) {
+	_, port, err := net.SplitHostPort(closedPort(t))
+	require.NoError(t, err)
+	portNum, err := strconv.Atoi(port)
+	require.NoError(t, err)
+
+	h := NewHealthChecker()
+	v := &VM{ID: "negative", done: make(chan struct{}), Cfg: Config{
+		HealthCheck: &HealthCheckConfig{Type: "tcp", Port: portNum, Interval: -time.Second, Timeout: -time.Second, Retries: -1},
+	}}
+	h.Start(context.Background(), v)
+	t.Cleanup(func() { h.Stop(v.ID) })
+
+	h.mu.Lock()
+	p := h.probes[v.ID]
+	h.mu.Unlock()
+	require.NotNil(t, p)
+	assert.Equal(t, defaultHealthInterval, p.cfg.Interval)
+	assert.Equal(t, defaultHealthTimeout, p.cfg.Timeout)
+	assert.Equal(t, defaultHealthRetries, p.cfg.Retries)
+	assert.Equal(t, -time.Second, v.Cfg.HealthCheck.Interval, "the VM's own configuration is not rewritten")
+}
+
 func TestFaults_HealthLoopEndsWithItsContext(t *testing.T) {
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
