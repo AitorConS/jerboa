@@ -82,6 +82,17 @@ func validateVMConfig(cfg Config) error {
 		if (hc.Type != "tcp" && hc.Type != "http") || hc.Port < 1 || hc.Port > 65535 {
 			return fmt.Errorf("invalid health check: expected tcp/http and port 1-65535")
 		}
+		// Zero means the default. A negative interval makes time.NewTicker
+		// panic in the probe's goroutine, which takes the daemon down.
+		if hc.Interval < 0 || hc.Interval > maxHealthInterval {
+			return fmt.Errorf("invalid health check: interval must be between 0 and %s", maxHealthInterval)
+		}
+		if hc.Timeout < 0 || hc.Timeout > maxHealthTimeout {
+			return fmt.Errorf("invalid health check: timeout must be between 0 and %s", maxHealthTimeout)
+		}
+		if hc.Retries < 0 || hc.Retries > maxHealthRetries {
+			return fmt.Errorf("invalid health check: retries must be between 0 and %d", maxHealthRetries)
+		}
 	}
 	for i, pm := range cfg.PortMaps {
 		if pm.Protocol != "" && pm.Protocol != ProtocolTCP && pm.Protocol != ProtocolUDP {
