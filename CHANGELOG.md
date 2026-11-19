@@ -36,6 +36,15 @@ Which versions exist, and where:
   `other.example` while the image was listed under a name starting with
   `registry.jerboa.dev`; such a reference is refused with `invalid registry
   (want host[:port])`.
+- `install.sh --version X.Y.Z` now refuses a release manifest that is not
+  signed for the stable channel, as it already did without `--version`.
+  Release candidates are signed with the same key for their own channel, so
+  a candidate's manifest could be served as that version's release manifest.
+  Every published release manifest says stable: nothing changes for a real
+  release.
+- Released `jerboa` and `jerboad` for Linux and Windows are built with
+  `-trimpath`, like `make build` and the macOS builds: they no longer carry
+  the build machine's file paths.
 
 ### Fixed
 
@@ -53,18 +62,6 @@ Which versions exist, and where:
   is a systemd service and names `journalctl -u jerboad` (#306).
 - On Windows, a `.wslconfig` that began with two byte-order marks gained
   another `[wsl2]` section on every install (#303).
-
-### Security
-
-- `install.sh --version X.Y.Z` now refuses a release manifest that is not
-  signed for the stable channel, as it already did without `--version`.
-  Release candidates are signed with the same key for their own channel, so
-  a candidate's manifest could be served as that version's release manifest.
-  Every published release manifest says stable: nothing changes for a real
-  release.
-- Released `jerboa` and `jerboad` for Linux and Windows are built with
-  `-trimpath`, like `make build` and the macOS builds: they no longer carry
-  the build machine's file paths.
 
 ## [0.60.0] - 2026-11-18
 
