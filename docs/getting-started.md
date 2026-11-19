@@ -384,8 +384,23 @@ is loaded; while the tables cannot be reinstalled the daemon turns it off
 again: guests never reach the host's loopback, and if the `ip jerboa` NAT table
 is still loaded, host clients connecting through `127.0.0.1` cannot reach the
 ports it translates until the guard is back.
-IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
-are in use.
+IPv4 forwarding (`net.ipv4.ip_forward`) is turned on host-wide when a network's
+bridge is created, and stays on: Jerboa does not turn it off again, nor add a
+forward policy of its own. A host that did not route before then routes
+between all its interfaces, not only for guests, unless its firewall drops
+forwarded traffic. Jerboa leaves that to you because it cannot tell whether
+other software (Docker, libvirt, a VPN or subnet router) relies on the host
+routing. If nothing else on the host should route, drop new forwarded
+connections that do not involve a Jerboa bridge:
+
+```sh
+sudo nft add table inet hostfwd
+sudo nft add chain inet hostfwd forward '{ type filter hook forward priority filter; policy accept; }'
+sudo nft add rule inet hostfwd forward 'iifname != "jerboa-br*" oifname != "jerboa-br*" ct state new drop'
+```
+
+Rules added this way do not survive a reboot or a `flush ruleset`; add them to
+your firewall's configuration to keep them.
 
 The same rules keep guests off the host and off private networks, as on macOS.
 A guest reaches the host only for guest DNS (`10.53.0.53`, port 53) and with
