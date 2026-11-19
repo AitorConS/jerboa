@@ -127,28 +127,6 @@ func (l *FailureLimiter) fullLocked() bool {
 	return n >= maxFailureSources-1
 }
 
-// Allow reports whether r's source may have its token checked. A false answer
-// means the source used up its budget of failures: refuse the request without
-// checking the token (Refuse writes the usual answer).
-func (l *FailureLimiter) Allow(r *http.Request) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.budgetLocked(sourceOf(r), l.now(), false)
-	return b == nil || b.tokens >= 1
-}
-
-// Fail records a wrong token from r's source.
-func (l *FailureLimiter) Fail(r *http.Request) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.budgetLocked(sourceOf(r), l.now(), true)
-	if b.tokens >= 1 {
-		b.tokens--
-	} else {
-		b.tokens = 0
-	}
-}
-
 // Take charges one attempt to r's source before its token is checked, and
 // reports false, charging nothing, when the source has none left: refuse the
 // request without checking the token. Checking and charging under one lock

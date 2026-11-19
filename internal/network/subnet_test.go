@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -127,4 +128,27 @@ func TestHoldsAddressDoesNotCacheAFailedRead(t *testing.T) {
 		_, err := s.HoldsAddress(net.ParseIP("10.100.0.5"))
 		require.Error(t, err)
 	}
+}
+
+// A network created other than through this store (another Store on the same
+// directory) is seen once the cache expires.
+func TestHoldsAddressSeesOutsideChangesAfterTheTTL(t *testing.T) {
+	prev := subnetCacheTTL
+	subnetCacheTTL = 50 * time.Millisecond
+	t.Cleanup(func() { subnetCacheTTL = prev })
+	root := t.TempDir()
+	s, err := NewStore(root)
+	require.NoError(t, err)
+	other, err := NewStore(root)
+	require.NoError(t, err)
+	held, err := s.HoldsAddress(net.ParseIP("10.100.0.5"))
+	require.NoError(t, err)
+	require.False(t, held)
+
+	_, err = other.Create("app", "10.100.0.0/24", "bridge")
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		held, err := s.HoldsAddress(net.ParseIP("10.100.0.5"))
+		return err == nil && held
+	}, 5*time.Second, 10*time.Millisecond)
 }
