@@ -59,14 +59,22 @@ UNIT=/etc/systemd/system/jerboad.service
 die() { echo "error: $*" >&2; exit 1; }
 log() { echo "==> $*"; }
 
+# check_channel refuses a signed manifest made for another channel: release
+# candidates are signed with the same key, for the candidate channel, and one
+# must never be installed as a release. Every release manifest, the one of a
+# pinned version included (releases/<version>/manifest.json), says stable.
+check_channel() {
+	[ "$(jq -r '.channel // empty' "$1")" = stable ] \
+		|| die "the release manifest is not signed for the stable channel"
+}
+
 # check_fresh refuses a signed manifest for another channel, or one generated
 # before this script's release or before the newest one already accepted from
 # this origin (recorded in the state file), so a superseded signed manifest
 # cannot be served in place of the current one.
 check_fresh() {
 	local manifest="$1" state="$2" generated last
-	[ "$(jq -r '.channel // empty' "${manifest}")" = stable ] \
-		|| die "the release manifest is not signed for the stable channel"
+	check_channel "${manifest}"
 	generated="$(jq -r '.generated // empty' "${manifest}")"
 	[[ "${generated}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
 		|| die "the release manifest has no valid generation time"
@@ -159,6 +167,7 @@ install_macos() {
 	fetch "${manifest}.minisig" "${tmp}/manifest.json.minisig"
 	minisign -Vm "${tmp}/manifest.json" -x "${tmp}/manifest.json.minisig" -P "${PUBLIC_KEY}" >/dev/null \
 		|| die "release manifest signature verification failed"
+	check_channel "${tmp}/manifest.json"
 	state="${HOME}/.jerboa/release-state.json"
 	[ "${VERSION}" != latest ] || check_fresh "${tmp}/manifest.json" "${state}"
 	resolved="$(jq -er '.components.macos.version' "${tmp}/manifest.json")" \
@@ -347,6 +356,9 @@ if [ "${VERSION}" != "$(jq -er '.components.cli.version' "${tmp}/stable.json")" 
 		|| die "${VERSION} has no signed release manifest; install a newer version"
 	minisign -Vm "${tmp}/release.json" -x "${tmp}/release.json.minisig" -P "${PUBLIC_KEY}" >/dev/null \
 		|| die "release manifest signature verification failed"
+	# Pinned versions skip the freshness check (older releases are older),
+	# never the channel.
+	check_channel "${tmp}/release.json"
 	manifest="${tmp}/release.json"
 fi
 

@@ -36,6 +36,15 @@ Which versions exist, and where:
 - On Windows, a `.wslconfig` that began with two byte-order marks gained
   another `[wsl2]` section on every install (#303).
 
+### Security
+
+- `install.sh --version X.Y.Z` now refuses a release manifest that is not
+  signed for the stable channel, as it already did without `--version`.
+  Release candidates are signed with the same key for their own channel, so
+  a candidate's manifest could be served as that version's release manifest.
+  Every published release manifest says stable: nothing changes for a real
+  release.
+
 ## [0.60.0] - 2026-11-18
 
 ### Changed
