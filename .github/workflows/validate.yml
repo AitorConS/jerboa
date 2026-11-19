@@ -180,13 +180,13 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: kernel-linux
-        path: .
+        path: ${{ runner.temp }}/artifacts/kernel-linux
     - name: Check the download is kernel-build's
-      run: python3 scripts/release/artifact-digest.py verify "$KERNEL_LINUX" kernel-linux.tar.gz
+      run: python3 scripts/release/artifact-digest.py verify "$KERNEL_LINUX" "$RUNNER_TEMP/artifacts/kernel-linux"
       env:
         KERNEL_LINUX: ${{ needs.kernel-build.outputs.kernel_linux_sha256 }}
     - name: Restore tested kernel
-      run: tar -xzf kernel-linux.tar.gz
+      run: tar -xzf "$RUNNER_TEMP/artifacts/kernel-linux/kernel-linux.tar.gz" kernel/output
     - name: Build CLI binaries
       run: make build
     - name: Run integration tests
@@ -227,13 +227,13 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: kernel-linux
-        path: .
+        path: ${{ runner.temp }}/artifacts/kernel-linux
     - name: Check the download is kernel-build's
-      run: python3 scripts/release/artifact-digest.py verify "$KERNEL_LINUX" kernel-linux.tar.gz
+      run: python3 scripts/release/artifact-digest.py verify "$KERNEL_LINUX" "$RUNNER_TEMP/artifacts/kernel-linux"
       env:
         KERNEL_LINUX: ${{ needs.kernel-build.outputs.kernel_linux_sha256 }}
     - name: Restore tested kernel
-      run: tar -xzf kernel-linux.tar.gz
+      run: tar -xzf "$RUNNER_TEMP/artifacts/kernel-linux/kernel-linux.tar.gz" kernel/output
     - name: Build CLI binaries
       run: make build
     # Not a gate: the tests themselves fail, with CI set, for a prerequisite

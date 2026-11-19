@@ -9,6 +9,15 @@ trusted consumer checks the downloaded files against it before using them.
 
   artifact-digest.py record OUTPUT_NAME PATH...   append OUTPUT_NAME=<digest> to $GITHUB_OUTPUT
   artifact-digest.py verify EXPECTED PATH...      fail unless PATH... has that digest
+  artifact-digest.py copy SRC DEST [NAME...]       copy a downloaded artifact into place
+
+Artifacts are downloaded into a directory of their own outside the checkout
+(${{ runner.temp }}/artifacts/<name>), so no artifact can replace a script,
+workflow or source file a later step runs; copy then puts its regular files
+under DEST, relative to the working directory. With NAMEs, SRC must hold
+exactly those files. It never overwrites a file, never writes outside the
+working directory or into what the job runs or builds from (PROTECTED), and
+refuses symlinks and special files.
 
 A PATH that is a file contributes one entry named after its basename (how
 upload-artifact stores a single file, or files of one directory); a directory
@@ -20,7 +29,13 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
+
+# Top-level entries of a checkout that an artifact may never be copied into.
+PROTECTED = {'.git', '.github', 'scripts', 'cmd', 'internal', 'kernel', 'distro', 'tests',
+             'bin', 'go.mod', 'go.sum', 'Makefile'}
+PROTECTED_FOLDED = {p.casefold() for p in PROTECTED}
 
 
 def entries(paths):
@@ -79,11 +94,50 @@ def verify(expected, paths):
     print('Verified', ' '.join(paths), actual)
 
 
+def copy(src, dest, names=()):
+    src = Path(src)
+    if src.is_symlink() or not src.is_dir():
+        raise ValueError('Artifact directory missing: ' + str(src))
+    files = {}
+    for p in sorted(src.rglob('*')):
+        if p.is_symlink() or not (p.is_file() or p.is_dir()):
+            raise ValueError('Unexpected artifact entry: ' + str(p))
+        if p.is_file():
+            files[p.relative_to(src).as_posix()] = p
+    if not files:
+        raise ValueError('Artifact is empty: ' + str(src))
+    if names and set(files) != set(names):
+        raise ValueError(f'Artifact {src} holds {sorted(files)}, expected exactly {sorted(names)}')
+    cwd = Path.cwd().resolve()
+    targets = {}
+    for name in files:
+        if '..' in Path(name).parts:
+            raise ValueError(f'Refusing artifact entry {name}')
+        target = (Path(dest) / name).resolve()
+        try:
+            rel = target.relative_to(cwd)
+        except ValueError:
+            raise ValueError(f'Refusing to copy {name} outside the working directory: {target}') from None
+        # Case-folded: on NTFS and APFS, Scripts/ is scripts/.
+        if not rel.parts or rel.parts[0].casefold() in PROTECTED_FOLDED:
+            raise ValueError(f'Refusing to copy {name} into {rel.as_posix() or "."}')
+        if target.exists() or target.is_symlink():
+            raise ValueError(f'Refusing to overwrite {rel.as_posix()}')
+        targets[name] = target
+    for name, target in targets.items():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(files[name], target)
+        print('Copied', name, 'to', target.relative_to(cwd).as_posix())
+
+
 def main(argv):
-    if len(argv) < 3 or argv[0] not in ('record', 'verify'):
+    if len(argv) < 3 or argv[0] not in ('record', 'verify', 'copy'):
         raise SystemExit(__doc__)
     try:
-        (record if argv[0] == 'record' else verify)(argv[1], argv[2:])
+        if argv[0] == 'copy':
+            copy(argv[1], argv[2], argv[3:])
+        else:
+            (record if argv[0] == 'record' else verify)(argv[1], argv[2:])
     except ValueError as e:
         raise SystemExit('error: ' + str(e))
 

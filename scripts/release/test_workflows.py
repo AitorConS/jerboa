@@ -252,6 +252,26 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('JERBOA_MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}',job('build-macos','determinism'))
   # The distro bakes the daemon build-release produced.
   self.assertIn('JERBOA_DAEMON_BINARY: dist/jerboad-linux-amd64',job('build-distro','build-macos'))
+ def test_security_policy_names_the_embedded_release_key(self):
+  # SECURITY.md tells people how to check a download: the key it gives must
+  # be the one the installer and the CLI trust.
+  policy=(ROOT/'SECURITY.md').read_text()
+  installer=re.search(r'(?m)^PUBLIC_KEY="(RW[A-Za-z0-9+/=]+)"$',(ROOT/'scripts/install.sh').read_text()).group(1)
+  cli=re.search(r'const PublicKeyB64 = "(RW[A-Za-z0-9+/=]+)"',(ROOT/'internal/release/config.go').read_text()).group(1)
+  self.assertEqual(installer,cli)
+  self.assertEqual(set(re.findall(r'RW[A-Za-z0-9+/=]{50,}',policy)),{cli})
+  self.assertIn('https://github.com/AitorConS/jerboa/security/advisories/new',policy)
+ def test_release_binaries_carry_no_build_paths(self):
+  # Released jerboa and jerboad are built like `make build`: without the
+  # runner's checkout and module cache paths.
+  text=(ROOT/'.github/workflows/release.yml').read_text()
+  builds=re.findall(r'(?m)^.*\bgo build\b(?:.*\\\n)*.*\./cmd/jerboad?$',text)
+  self.assertEqual(len(builds),2)
+  for command in builds:
+   with self.subTest(command=command.strip()[:60]):
+    self.assertIn('go build -trimpath ',command)
+    self.assertIn('-X main.version=${CLI_VERSION}',command)
+  self.assertIn('BUILDFLAGS       := -trimpath',(ROOT/'Makefile').read_text())
  def test_candidate_checks_the_installed_runner_guard(self):
   text=(ROOT/'.github/workflows/release.yml').read_text()
   boot=text.split('  kernel-test:',1)[1].split('  build-release:',1)[0]
@@ -317,4 +337,30 @@ class WorkflowContracts(unittest.TestCase):
   script=(ROOT/'scripts/release/windows-runner.sh').read_text()
   self.assertIn('echo "::add-mask::$jit"',script)
   self.assertNotIn('set -x',script)
+ def test_artifacts_download_outside_the_checkout(self):
+  # Any job of a run (the self-hosted KVM jobs included) can upload an
+  # artifact of the run again. Downloaded over the checkout, it could replace
+  # the scripts that then verify it and sign the release. Every download goes
+  # to a directory of its own under the runner's temp directory, which no
+  # checkout contains, and only checked files are copied into place.
+  found=0
+  for path in sorted((ROOT/'.github/workflows').glob('*.yml')):
+   text=path.read_text()
+   for step in re.findall(r'(?m)^(    - (?:name: .*\n      )?uses: actions/download-artifact@.*\n(?:      .*\n)*)',text):
+    found+=1
+    with self.subTest(workflow=path.name,step=step):
+     paths=re.findall(r'(?m)^        path: (.*)$',step)
+     self.assertEqual(len(paths),1,'a download names its directory')
+     self.assertRegex(paths[0],r'^\$\{\{ runner\.temp \}\}/artifacts/[a-z0-9-]+$')
+     self.assertNotRegex(step,r'(?m)^        path: \.?/?$')
+   # A job never downloads two artifacts into one directory.
+   for job in re.split(r'\n  (?=[\w-]+:\n)',text.split('\njobs:\n',1)[1]):
+    dirs=re.findall(r'(?m)^        path: (\$\{\{ runner\.temp \}\}/artifacts/\S+)$',job)
+    self.assertEqual(len(dirs),len(set(dirs)),job.split(':',1)[0])
+  self.assertGreaterEqual(found,30)
+  # The scripts never take an artifact from the checkout either.
+  for name in ['release.yml','validate.yml','promote.yml']:
+   text=(ROOT/'.github/workflows'/name).read_text()
+   self.assertNotIn('cp -p artifacts/',text)
+   self.assertNotIn('verify "$KERNEL_LINUX" kernel-linux.tar.gz',text)
 if __name__=='__main__':unittest.main()

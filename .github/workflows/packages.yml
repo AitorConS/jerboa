@@ -125,7 +125,8 @@ jobs:
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         pattern: package-*
-        path: dist/packages/
+        # Outside the checkout: one directory per artifact under it.
+        path: ${{ runner.temp }}/artifacts/packages
         merge-multiple: false
     - name: Publish archives and index
       id: publish
@@ -156,7 +157,7 @@ jobs:
         # a (version, platform) with different content and lists only new
         # archives, which are uploaded without --clobber. The index is the
         # only asset that is ever replaced.
-        python3 scripts/package-index.py dist/packages dist/publish "$GH_REPO" > dist/new-archives.txt
+        python3 scripts/package-index.py "$RUNNER_TEMP/artifacts/packages" dist/publish "$GH_REPO" > dist/new-archives.txt
         while IFS= read -r archive; do
           gh release upload pkg-index "dist/publish/$archive"
         done < dist/new-archives.txt
