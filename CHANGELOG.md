@@ -72,8 +72,9 @@ Which versions exist, and where:
   that `jerboa daemon start` runs, `observability_token` in
   `~/.jerboa/config.toml`), and update your Prometheus scrape configuration.
   Wrong tokens are now limited too: an address that sends 10 wrong tokens to
-  `/metrics`, the dashboard or cluster gossip gets `429` until it slows down
-  to one try a second, and dashboard sign-ins are checked one at a time.
+  `/metrics`, the dashboard (sign-in form included) or cluster gossip gets
+  `429` until it slows down to one try a second; IPv6 addresses count by
+  their /56.
 - The dashboard's sign-in cookie is bound to the address the browser signed
   in from (every loopback address counts as one), so a guest's web app that
   received the cookie on a published port cannot replay it. The dashboard and

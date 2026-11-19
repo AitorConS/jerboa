@@ -16,6 +16,15 @@ const (
 	// maxFailureSources bounds the table. When it is full and no entry has
 	// recovered its whole budget, new sources share one overflow budget, so
 	// an attacker spreading over many addresses gains nothing by filling it.
+	//
+	// The trade-off, accepted: an attacker who keeps maxFailureSources
+	// sources each failing about once a second (an entry recovers its budget
+	// a second after one failure) also uses up the overflow budget of every
+	// other source, which is then refused, the right token included, until
+	// the attack stops. Keying IPv6 sources by /56 (sourceOf) puts that out of
+	// reach of one customer's prefix; it needs thousands of IPv4 addresses or
+	// separate IPv6 allocations. Guessing a token of 32 or more characters is
+	// out of reach either way; the limiter keeps failures from being cheap.
 	maxFailureSources = 4096
 )
 
@@ -42,13 +51,26 @@ func NewFailureLimiter() *FailureLimiter {
 	return &FailureLimiter{sources: make(map[string]*failureBudget), now: time.Now}
 }
 
-// sourceOf is the connection's source address, never a forwarded header.
+// ipv6SourceBits is the prefix an IPv6 source is counted by: one customer
+// usually gets a /48 or a /56, so counting each address, or each /64, would
+// let one customer spread over the whole table.
+const ipv6SourceBits = 56
+
+// sourceOf is the connection's source address, never a forwarded header: an
+// IPv4 address, or the /56 an IPv6 address lies in.
 func sourceOf(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.Mask(net.CIDRMask(ipv6SourceBits, 128)).String() + "/56"
 }
 
 // refill brings b up to date at now and returns it.
@@ -124,6 +146,36 @@ func (l *FailureLimiter) Fail(r *http.Request) {
 		b.tokens--
 	} else {
 		b.tokens = 0
+	}
+}
+
+// Take charges one attempt to r's source before its token is checked, and
+// reports false, charging nothing, when the source has none left: refuse the
+// request without checking the token. Checking and charging under one lock
+// means parallel attempts from one source cannot all be checked before any is
+// charged. Call Refund when the token was right.
+func (l *FailureLimiter) Take(r *http.Request) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	if b := l.budgetLocked(sourceOf(r), now, false); b != nil && b.tokens < 1 {
+		return false
+	}
+	b := l.budgetLocked(sourceOf(r), now, true)
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// Refund gives back the attempt Take charged to r's source, whose token was
+// right.
+func (l *FailureLimiter) Refund(r *http.Request) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if b := l.budgetLocked(sourceOf(r), l.now(), false); b != nil {
+		b.tokens = min(b.tokens+1, failureBurst)
 	}
 }
 

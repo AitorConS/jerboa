@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/durable"
@@ -68,6 +69,24 @@ type networkState struct {
 type Store struct {
 	root string
 	mu   sync.RWMutex
+
+	// gen counts the changes made through Create and Remove; subnets caches
+	// the networks' subnets for HoldsAddress (see subnetCache).
+	gen     atomic.Uint64
+	subnets subnetCache
+}
+
+// subnetCacheTTL bounds how long HoldsAddress trusts its cached subnets, for
+// changes made to the directory other than through this store.
+const subnetCacheTTL = 2 * time.Second
+
+// subnetCache holds the subnets of the store's networks as of gen, read at.
+type subnetCache struct {
+	mu   sync.Mutex
+	ok   bool
+	gen  uint64
+	at   time.Time
+	nets []*net.IPNet
 }
 
 func NewStore(dir string) (*Store, error) {
@@ -84,6 +103,7 @@ func (s *Store) Create(name, subnet, driver string) (*Network, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.gen.Add(1)
 
 	dir, err := s.networkDir(name)
 	if err != nil {
@@ -195,23 +215,52 @@ func (s *Store) List() ([]*Network, error) {
 }
 
 // HoldsAddress reports whether ip lies inside the subnet of any network in
-// the store, which is where a guest on a jerboa network connects from.
+// the store, which is where a guest on a jerboa network connects from. The
+// dashboard asks on every request, so the subnets are cached until a network
+// is created or removed (or subnetCacheTTL passes); a failed read is not
+// cached.
 func (s *Store) HoldsAddress(ip net.IP) (bool, error) {
-	nets, err := s.List()
+	nets, err := s.subnetsCached()
 	if err != nil {
 		return false, err
 	}
 	for _, n := range nets {
-		if _, ipNet, err := net.ParseCIDR(n.Subnet); err == nil && ipNet.Contains(ip) {
+		if n.Contains(ip) {
 			return true, nil
 		}
 	}
 	return false, nil
 }
 
+func (s *Store) subnetsCached() ([]*net.IPNet, error) {
+	c := &s.subnets
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	gen := s.gen.Load()
+	if c.ok && c.gen == gen && time.Since(c.at) < subnetCacheTTL {
+		return c.nets, nil
+	}
+	list, err := s.List()
+	if err != nil {
+		c.ok = false
+		return nil, err
+	}
+	nets := make([]*net.IPNet, 0, len(list))
+	for _, n := range list {
+		if _, ipNet, err := net.ParseCIDR(n.Subnet); err == nil {
+			nets = append(nets, ipNet)
+		}
+	}
+	// A change made while List read is not in nets: cache only when none was.
+	c.ok = s.gen.Load() == gen
+	c.gen, c.at, c.nets = gen, time.Now(), nets
+	return nets, nil
+}
+
 func (s *Store) Remove(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer s.gen.Add(1)
 
 	dir, err := s.networkDir(name)
 	if err != nil {

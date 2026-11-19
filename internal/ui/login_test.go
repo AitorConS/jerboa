@@ -216,62 +216,38 @@ func TestServer_GuestSourcesAreRefused(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-func postLogin(h http.Handler, token string) int {
+func postLoginFrom(h http.Handler, addr, token string) int {
 	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = addr
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec.Code
 }
 
-func setLoginTiming(t *testing.T, delay, queue time.Duration) {
-	t.Helper()
-	oldDelay, oldQueue := loginFailureDelay, loginQueueWait
-	loginFailureDelay, loginQueueWait = delay, queue
-	t.Cleanup(func() { loginFailureDelay, loginQueueWait = oldDelay, oldQueue })
-}
-
-// Each wrong sign-in slept 500 ms, but in its own goroutine: parallel
-// attempts were checked in parallel. Wrong attempts now take turns.
-func TestLogin_WrongAttemptsAreSerialised(t *testing.T) {
-	setLoginTiming(t, 100*time.Millisecond, time.Minute)
+// One address guessing in parallel is refused once its failures are used up,
+// and the right token from it is refused too until they recover; another
+// address, the operator's, still signs in at once.
+func TestLogin_GuessesAreLimitedPerAddress(t *testing.T) {
 	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
-	const attempts = 5
+	const attacker, operator = "203.0.113.7:4000", "198.51.100.9:5000"
+	const attempts = 50
+	var wg sync.WaitGroup
+	codes := make([]int, attempts)
 	start := time.Now()
-	var wg sync.WaitGroup
-	codes := make([]int, attempts)
 	for i := range attempts {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			codes[i] = postLogin(h, fmt.Sprintf("guess-%d", i))
+			codes[i] = postLoginFrom(h, attacker, fmt.Sprintf("guess-%d", i))
 		}()
 	}
 	wg.Wait()
-	for _, code := range codes {
-		require.Equal(t, http.StatusUnauthorized, code)
-	}
-	require.GreaterOrEqual(t, time.Since(start), attempts*loginFailureDelay)
-	// The right token is still accepted afterwards.
-	require.Equal(t, http.StatusSeeOther, postLogin(h, "s3cret"))
-}
-
-func TestLogin_WaitingAttemptsGiveUp(t *testing.T) {
-	setLoginTiming(t, 300*time.Millisecond, 20*time.Millisecond)
-	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
-	const attempts = 5
-	var wg sync.WaitGroup
-	codes := make([]int, attempts)
-	for i := range attempts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			codes[i] = postLogin(h, fmt.Sprintf("guess-%d", i))
-		}()
-	}
-	wg.Wait()
+	require.Less(t, time.Since(start), 5*time.Second, "sign-in attempts were held")
 	require.Contains(t, codes, http.StatusUnauthorized)
-	require.Contains(t, codes, http.StatusTooManyRequests, "attempts queue without bound")
+	require.Contains(t, codes, http.StatusTooManyRequests, "parallel guesses were all checked")
+	require.Equal(t, http.StatusTooManyRequests, postLoginFrom(h, attacker, "s3cret"))
+	require.Equal(t, http.StatusSeeOther, postLoginFrom(h, operator, "s3cret"))
 }
 
 func TestServer_BearerGuessesAreRateLimited(t *testing.T) {

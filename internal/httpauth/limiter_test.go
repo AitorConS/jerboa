@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,4 +80,55 @@ func TestFailureLimiter_TableIsBounded(t *testing.T) {
 	l.Fail(from("172.16.1.2:1", ""))
 	require.True(t, l.Allow(from("172.16.1.3:1", "")))
 	require.LessOrEqual(t, len(l.sources), maxFailureSources)
+}
+
+// One customer's IPv6 prefix is one source: spreading guesses over its
+// addresses, or its /64s, shares one budget; another /56 has its own.
+func TestFailureLimiter_IPv6SourcesShareTheirPrefix(t *testing.T) {
+	l := NewFailureLimiter()
+	now := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return now }
+	for i := range failureBurst {
+		l.Fail(from(fmt.Sprintf("[2001:db8:0:%x::%x]:1", i, i+1), ""))
+	}
+	require.False(t, l.Allow(from("[2001:db8:0:ff::1]:1", "")), "another /64 of the same /56")
+	require.True(t, l.Allow(from("[2001:db8:0:100::1]:1", "")), "the next /56")
+	require.Len(t, l.sources, 1)
+	require.Equal(t, "192.0.2.7", sourceOf(from("[::ffff:192.0.2.7]:1", "")))
+}
+
+// Parallel attempts from one source are charged as they are checked: no more
+// than the burst get through, however many run at once.
+func TestFailureLimiter_TakeIsAtomic(t *testing.T) {
+	l := NewFailureLimiter()
+	var taken atomic.Int32
+	var wg sync.WaitGroup
+	for range 200 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if l.Take(from("192.0.2.7:1000", "")) {
+				taken.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	require.LessOrEqual(t, taken.Load(), int32(failureBurst+1), "one refill may land during the run")
+	require.Positive(t, taken.Load())
+}
+
+// A right token costs nothing: Refund gives back what Take charged.
+func TestFailureLimiter_RefundRestoresTheBudget(t *testing.T) {
+	l := NewFailureLimiter()
+	now := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return now }
+	req := from("192.0.2.7:1000", "")
+	for range 3 * failureBurst {
+		require.True(t, l.Take(req))
+		l.Refund(req)
+	}
+	for range failureBurst {
+		require.True(t, l.Take(req))
+	}
+	require.False(t, l.Take(req))
 }
