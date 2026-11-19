@@ -104,7 +104,6 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox: %w", err)
 	}
-	done := func() { _ = os.RemoveAll(tmp) }
 	env = append(env, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 	sockets := append(controlSockets(s.Sockets), brokerMasks(st, tmp)...)
 	argv, ok := confine(st, tmp, sockets, name, args)
@@ -116,9 +115,16 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 		})
 		argv = append([]string{name}, args...)
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // the sandbox launcher and the build tool
 	cmd.Dir = st.Dir
 	cmd.Env = env
+	endGroup := ownProcessGroup(cmd, cancel)
+	done := func() {
+		endGroup()
+		cancel()
+		_ = os.RemoveAll(tmp)
+	}
 	return cmd, done, nil
 }
 

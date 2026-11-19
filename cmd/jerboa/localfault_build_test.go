@@ -96,7 +96,7 @@ func TestLocalFault_BuildContextContents(t *testing.T) {
 	lib := lfWrite(t, filepath.Join(dir, "lib", "libz.so"), "library-bytes")
 	bare := lfWrite(t, filepath.Join(dir, "config.json"), "{}")
 
-	r := buildContextReader(program, "bin/app", []pkg.File{
+	r := buildContextReader(pkg.File{HostPath: program}, "bin/app", []pkg.File{
 		{HostPath: program, GuestPath: "/bin/app"}, // the program itself: not sent twice
 		{HostPath: lib, GuestPath: "usr/lib/libz.so"},
 		{HostPath: bare},
@@ -151,7 +151,7 @@ func TestLocalFault_BuildContextUnreadableFiles(t *testing.T) {
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			r := buildContextReader(c.program, "", c.files)
+			r := buildContextReader(pkg.File{HostPath: c.program}, "", c.files)
 			defer func() { _ = r.Close() }()
 			_, err := lfTarEntries(r)
 			require.Error(t, err, "an incomplete context was streamed as if it were whole")
@@ -173,7 +173,7 @@ func TestLocalFault_BuildContextUnreadableFiles(t *testing.T) {
 func TestLocalFault_BuildContextReaderClosedEarly(t *testing.T) {
 	dir := t.TempDir()
 	program := lfWrite(t, filepath.Join(dir, "app"), strings.Repeat("x", 4<<20))
-	r := buildContextReader(program, "", nil)
+	r := buildContextReader(pkg.File{HostPath: program}, "", nil)
 	buf := make([]byte, 1024)
 	_, err := io.ReadFull(r, buf)
 	require.NoError(t, err)

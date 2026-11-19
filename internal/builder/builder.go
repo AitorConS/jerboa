@@ -671,8 +671,12 @@ func (r *RustDriver) Build(ctx context.Context, dir string, opts Options) (Build
 	}
 
 	binPath := filepath.Join(dir, "target", target, "release", binaryName)
-	if _, err := os.Stat(binPath); err != nil {
+	info, err := os.Lstat(binPath)
+	if err != nil {
 		return BuildResult{}, fmt.Errorf("rust driver: binary not found at %s: %w", binPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return BuildResult{}, fmt.Errorf("rust driver: %s is not a regular file: did a build step replace it?", binPath)
 	}
 
 	tmpBin, err := os.CreateTemp("", "jerboa-rust-build-*")
@@ -712,8 +716,11 @@ func rustBinaryName(dir string) (string, error) {
 }
 
 // copyFile copies src to dst, preserving permissions.
+//
+// src is a build output in the project, which the build steps could have
+// replaced with a link: it is opened without following one.
 func copyFile(src, dst string) error {
-	in, err := os.Open(src)
+	in, info, err := OpenRegular(src)
 	if err != nil {
 		return fmt.Errorf("copy open src: %w", err)
 	}
@@ -729,10 +736,6 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("copy data: %w", err)
 	}
 
-	info, err := os.Stat(src)
-	if err != nil {
-		return fmt.Errorf("copy stat src: %w", err)
-	}
 	if err := os.Chmod(dst, info.Mode()); err != nil {
 		return fmt.Errorf("copy chmod: %w", err)
 	}
@@ -801,8 +804,14 @@ func (g *GoDriver) Build(ctx context.Context, dir string, opts Options) (BuildRe
 		return BuildResult{}, fmt.Errorf("go build: %w", err)
 	}
 
-	if _, err := os.Stat(output); err != nil {
+	// Lstat: the project's build steps write here, and a link in the
+	// output's place would have a host file packaged as the program.
+	info, err := os.Lstat(output)
+	if err != nil {
 		return BuildResult{}, fmt.Errorf("go build: the compiler produced no binary (is the entrypoint a main package?): %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return BuildResult{}, fmt.Errorf("go build: %s is not a regular file: did a build step replace it?", output)
 	}
 
 	abs, err := filepath.Abs(output)

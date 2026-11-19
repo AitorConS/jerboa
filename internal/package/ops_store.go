@@ -666,6 +666,15 @@ type File struct {
 	// sources — rather than from a package. Context files sit on top: they
 	// shadow package files at the same guest path (see ApplyContextPrecedence).
 	FromContext bool
+	// Walked is, for a file the build may stream from a directory its build
+	// steps could write to, the file that was checked when it was listed
+	// (for a symlink, the file it led to). The file is streamed only if it is
+	// still that one, so a file swapped for a link after the check is
+	// refused. Nil for package files.
+	Walked os.FileInfo `json:"-"`
+	// LinkRoot is set when HostPath was a symlink when it was listed: the
+	// directory the link must still resolve within when it is streamed.
+	LinkRoot string `json:"-"`
 }
 
 // ExtractedFiles returns the files inside an extracted ops package as File

@@ -332,7 +332,16 @@ Build driver behavior to know:
   socket paths (`DBUS_*_BUS_ADDRESS`, `DOCKER_HOST` and `CONTAINER_HOST`
   are removed from their environment). On macOS they cannot send Apple
   events. The SSH agent stays reachable, for dependencies fetched over SSH;
-  other local sockets do too.
+  other local sockets do too. Each confined step runs in a process group of
+  its own (Linux and macOS), and whatever it leaves running in that group is
+  killed when the step ends.
+- Project files go into the image only as they were when the build listed
+  them. A file that a build step replaces afterwards (for example with a
+  link to a file outside the project), a source link that no longer leads to
+  a file inside the project, and a build output (`go build`, `cargo build`)
+  that is a link fail the build with
+  `did a build step replace it?`. Rerun the build; if it fails again, check
+  what the project's build steps do to that file.
 - `unikernel.toml` comes with the project, as do the commands the sandbox
   confines, so it cannot switch the confinement off on its own:
   `[build] sandbox = false` needs `--allow-unsandboxed` and

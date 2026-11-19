@@ -40,6 +40,13 @@ Which versions exist, and where:
   the confined build steps of every other project read from the shared tool
   cache, and so change what a later build of another project compiled. The
   caches are now per project.
+- A build step, or a process it left running, could replace a project file
+  after the build had checked it, for example with a link to
+  `~/.jerboa/credentials.json`, and the build then packed that file into the
+  image. Project files and build outputs are now streamed only if they are
+  still the files that were checked, without following a link put in their
+  place, and confined steps run in their own process group, which is killed
+  when the step ends.
 
 ### Fixed
 
