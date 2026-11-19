@@ -234,7 +234,7 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
-        go build -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
+        go build -trimpath -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
           -o dist/jerboa-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboa
     - name: Build jerboad
@@ -244,7 +244,7 @@ jobs:
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: 0
       run: |
-        go build -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
+        go build -trimpath -ldflags="-s -w -X main.version=${CLI_VERSION} -X github.com/AitorConS/jerboa/internal/release.MinStableGenerated=${MIN_STABLE_GENERATED}" \
           -o dist/jerboad-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
           ./cmd/jerboad
     - name: Record CLI candidate hash

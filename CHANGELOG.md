@@ -44,6 +44,9 @@ Which versions exist, and where:
   a candidate's manifest could be served as that version's release manifest.
   Every published release manifest says stable: nothing changes for a real
   release.
+- Released `jerboa` and `jerboad` for Linux and Windows are built with
+  `-trimpath`, like `make build` and the macOS builds: they no longer carry
+  the build machine's file paths.
 
 ## [0.60.0] - 2026-11-18
 

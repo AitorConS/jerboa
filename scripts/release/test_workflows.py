@@ -252,6 +252,17 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('JERBOA_MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}',job('build-macos','determinism'))
   # The distro bakes the daemon build-release produced.
   self.assertIn('JERBOA_DAEMON_BINARY: dist/jerboad-linux-amd64',job('build-distro','build-macos'))
+ def test_release_binaries_carry_no_build_paths(self):
+  # Released jerboa and jerboad are built like `make build`: without the
+  # runner's checkout and module cache paths.
+  text=(ROOT/'.github/workflows/release.yml').read_text()
+  builds=re.findall(r'(?m)^.*\bgo build\b(?:.*\\\n)*.*\./cmd/jerboad?$',text)
+  self.assertEqual(len(builds),2)
+  for command in builds:
+   with self.subTest(command=command.strip()[:60]):
+    self.assertIn('go build -trimpath ',command)
+    self.assertIn('-X main.version=${CLI_VERSION}',command)
+  self.assertIn('BUILDFLAGS       := -trimpath',(ROOT/'Makefile').read_text())
  def test_candidate_checks_the_installed_runner_guard(self):
   text=(ROOT/'.github/workflows/release.yml').read_text()
   boot=text.split('  kernel-test:',1)[1].split('  build-release:',1)[0]
