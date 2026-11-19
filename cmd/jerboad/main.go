@@ -402,7 +402,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 				"addr", uiAddr)
 		}
 		go func() {
-			if err := ui.Serve(ctx, uiAddr, obsToken, mgr, version); err != nil {
+			if err := ui.Serve(ctx, uiAddr, obsToken, mgr, version, ui.WithGuestSource(guestSource(netStore))); err != nil {
 				slog.Error("dashboard server", "err", err)
 			}
 		}()
@@ -832,4 +832,23 @@ func (a *clusterMemberAdapter) Members() []apiserver.ClusterMember {
 		}
 	}
 	return out
+}
+
+// guestSource reports whether ip is an address a guest on one of the jerboa
+// networks in netStore connects from. Loopback is never a guest's source, and
+// is answered without reading the store. When the store cannot be read the
+// address is treated as a guest's: the dashboard then refuses non-loopback
+// clients rather than risk serving a guest.
+func guestSource(netStore *network.Store) func(net.IP) bool {
+	return func(ip net.IP) bool {
+		if ip.IsLoopback() {
+			return false
+		}
+		held, err := netStore.HoldsAddress(ip)
+		if err != nil {
+			slog.Warn("dashboard: cannot read the guest networks; refusing a non-loopback client", "err", err)
+			return true
+		}
+		return held
+	}
 }

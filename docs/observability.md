@@ -90,8 +90,12 @@ cookie named after the dashboard's port (`jerboa_ui_8080`). The cookie never
 holds the token: browsers send a cookie to every port of a host, so it only
 opens this dashboard, for 12 hours or until the daemon restarts, and is not
 accepted by `/metrics`, which takes the token only as
-`Authorization: Bearer`. The dashboard lists which environment variables a VM
-has, not their values.
+`Authorization: Bearer`. The session is also bound to the address the browser
+signed in from (all loopback addresses count as one), so a cookie replayed
+from anywhere else is refused with 401; a browser whose address changes signs
+in again. Requests from an address inside a jerboa network's subnet, which is
+where guests connect from, are refused with 403 whatever they carry. The
+dashboard lists which environment variables a VM has, not their values.
 
 Routes:
 

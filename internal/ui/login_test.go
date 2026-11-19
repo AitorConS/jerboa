@@ -4,6 +4,7 @@ package ui
 
 import (
 	"crypto/tls"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -142,4 +143,73 @@ func TestServer_LoopbackRejectsForeignHost(t *testing.T) {
 func TestMaskEnv(t *testing.T) {
 	require.Equal(t, []string{"DB_PASSWORD=****", "EMPTY=****"}, maskEnv([]string{"DB_PASSWORD=hunter2", "EMPTY="}))
 	require.Nil(t, maskEnv(nil))
+}
+
+func signIn(t *testing.T, h http.Handler, remote string) *http.Cookie {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(url.Values{"token": {"s3cret"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.RemoteAddr = remote
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	return cookies[0]
+}
+
+func getVMs(h http.Handler, remote string, c *http.Cookie) int {
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/vms", nil)
+	req.RemoteAddr = remote
+	if c != nil {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Code
+}
+
+func TestServer_CookieReplayedFromAnotherAddressIsRefused(t *testing.T) {
+	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
+	cookie := signIn(t, h, "192.168.1.20:50000")
+
+	require.Equal(t, http.StatusOK, getVMs(h, "192.168.1.20:50001", cookie), "same client, another source port")
+	require.Equal(t, http.StatusUnauthorized, getVMs(h, "10.100.0.5:40000", cookie), "a guest replaying a leaked cookie")
+	require.Equal(t, http.StatusUnauthorized, getVMs(h, "192.168.1.21:50000", cookie), "another machine")
+	// A forwarded header is the client's own claim and changes nothing.
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/vms", nil)
+	req.RemoteAddr = "10.100.0.5:40000"
+	req.Header.Set("X-Forwarded-For", "192.168.1.20")
+	req.AddCookie(cookie)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestServer_LoopbackAddressesShareASession(t *testing.T) {
+	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test")
+	cookie := signIn(t, h, "[::1]:50000")
+	require.Equal(t, http.StatusOK, getVMs(h, "127.0.0.1:50001", cookie))
+}
+
+func TestServer_GuestSourcesAreRefused(t *testing.T) {
+	_, guestNet, err := net.ParseCIDR("10.100.0.0/24")
+	require.NoError(t, err)
+	h := NewServer(":8080", "s3cret", vm.NewMockManager(), "test", WithGuestSource(guestNet.Contains))
+
+	// Even with the token itself: the guest has no business with the dashboard.
+	for _, path := range []string{"/ui", "/ui/api/vms", "/ui/login"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "10.100.0.5:40000"
+		req.Header.Set("Authorization", "Bearer s3cret")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusForbidden, rec.Code, path)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/ui/api/vms", nil)
+	req.RemoteAddr = "192.168.1.20:50000"
+	req.Header.Set("Authorization", "Bearer s3cret")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
 }

@@ -594,6 +594,12 @@ restarts. Cookies set by earlier versions are not accepted.
 **Fix**: open `/ui/login` and enter the token once. `/metrics` does not take
 the cookie: send the token as `Authorization: Bearer <token>`.
 
+The session is tied to the address the browser signed in from, so the
+dashboard also asks again after your machine's address changes (another
+network, a VPN). A request from an address inside a jerboa network's subnet
+gets 403: open the dashboard from the host or from another machine, not from
+a guest.
+
 ### Console or log output loses colours or cursor movement
 
 `jerboa logs`, `compose logs`, `pkg load` and attach output remove terminal

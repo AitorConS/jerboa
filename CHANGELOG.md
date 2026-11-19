@@ -24,6 +24,14 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Security
+
+- The dashboard's sign-in cookie is bound to the address the browser signed
+  in from (every loopback address counts as one), so a guest's web app that
+  received the cookie on a published port cannot replay it. The dashboard and
+  its `/ui/api/` routes refuse requests from inside a jerboa network's subnet
+  with 403. A browser whose address changes is asked to sign in again.
+
 ### Fixed
 
 - A package file rewritten twice within a few milliseconds to the same size

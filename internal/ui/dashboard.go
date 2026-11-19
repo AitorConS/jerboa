@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"html/template"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -298,10 +299,29 @@ func vmToDetailRow(v *vm.VM) VMDetailRow {
 	return row
 }
 
+// Option configures the dashboard server.
+type Option func(*serverOptions)
+
+type serverOptions struct {
+	guestSource func(net.IP) bool
+}
+
+// WithGuestSource refuses every request whose source address isGuest reports
+// as belonging to a jerboa guest network. A guest's web app can receive the
+// dashboard's cookie (browsers send it to every port of the host) and could
+// otherwise reach the dashboard through its gateway address.
+func WithGuestSource(isGuest func(net.IP) bool) Option {
+	return func(o *serverOptions) { o.guestSource = isGuest }
+}
+
 // NewServer returns the dashboard's HTTP handler: the pages and JSON API behind
 // the token (when set), a sign-in form that gives browsers a session cookie,
 // and a Host check when bound to loopback.
-func NewServer(addr, token string, mgr vm.Manager, version string) http.Handler {
+func NewServer(addr, token string, mgr vm.Manager, version string, opts ...Option) http.Handler {
+	var o serverOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	h := NewHandler(mgr, addr, version)
 	s := newSessions(addr)
 	authorized := func(r *http.Request) bool {
@@ -323,7 +343,26 @@ func NewServer(addr, token string, mgr vm.Manager, version string) http.Handler 
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}))
-	return httpauth.LoopbackHost(addr, mux)
+	return refuseGuests(o.guestSource, httpauth.LoopbackHost(addr, mux))
+}
+
+// refuseGuests answers 403 to a request from an address isGuest claims. The
+// address is the connection's own (RemoteAddr), never a forwarded header.
+func refuseGuests(isGuest func(net.IP) bool, next http.Handler) http.Handler {
+	if isGuest == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			host = r.RemoteAddr
+		}
+		if ip := net.ParseIP(host); ip != nil && isGuest(ip) {
+			http.Error(w, "forbidden: the dashboard is not served to jerboa guests", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loginHandler serves a form that checks the observability token and, when it
@@ -387,10 +426,10 @@ func maskEnv(env []string) []string {
 // <token>" header, so exposing the dashboard on a non-loopback address does not
 // hand VM names, IPs, and serial logs to anyone who can reach the port. An empty
 // token preserves the previous unauthenticated behavior.
-func Serve(ctx context.Context, addr, token string, mgr vm.Manager, version string) error {
+func Serve(ctx context.Context, addr, token string, mgr vm.Manager, version string, opts ...Option) error {
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           NewServer(addr, token, mgr, version),
+		Handler:           NewServer(addr, token, mgr, version, opts...),
 		ReadHeaderTimeout: 30 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
