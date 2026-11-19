@@ -160,6 +160,11 @@ func (b *Builder) Build(ctx context.Context, cfg BuildConfig) (Manifest, error) 
 	if cfg.CPUs == 0 {
 		cfg.CPUs = 1
 	}
+	// What a run would refuse is not stored: jerboa run checks the image's
+	// defaults the same way.
+	if err := ValidateRunConfig(Config{Memory: cfg.Memory, CPUs: cfg.CPUs}); err != nil {
+		return Manifest{}, fmt.Errorf("build: %w", err)
+	}
 	if err := checkELF(cfg.BinaryPath); err != nil {
 		return Manifest{}, fmt.Errorf("build: %w", err)
 	}

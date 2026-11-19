@@ -161,6 +161,22 @@ project markers (go.mod, package.json, etc.).`,
 				return fmt.Errorf("build: --pkg-source: %w", err)
 			}
 
+			// The image's run defaults, as the [run] table below sets them,
+			// checked before anything is resolved or built: the daemon
+			// refuses to run an image whose defaults it would not accept.
+			runMemory, runCPUs := memory, cpus
+			if info.IsDir() && cfg != nil {
+				if !cmd.Flags().Changed("memory") && cfg.Run.Memory != "" {
+					runMemory = cfg.Run.Memory
+				}
+				if !cmd.Flags().Changed("cpus") && cfg.Run.CPUs != 0 {
+					runCPUs = cfg.Run.CPUs
+				}
+			}
+			if err := image.ValidateRunConfig(image.Config{Memory: runMemory, CPUs: runCPUs}); err != nil {
+				return fmt.Errorf("build: %w (set by --memory, --cpus or [run] in %s)", err, builder.ConfigFileName)
+			}
+
 			var pkgFiles []pkg.File
 			if len(pkgs) > 0 {
 				sp.Start("Resolving packages")

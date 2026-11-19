@@ -189,7 +189,11 @@ Which versions exist, and where:
   the hypervisor as the registry wrote them; QEMU took the memory string as
   is. They are now checked when the recipe is read and again when the image
   runs: a memory size from 1 MiB to 1 TiB, at most 256 CPUs, a VM disk of at
-  most 16 TiB.
+  most 16 TiB. The check covers local images too: `jerboa build` now refuses
+  a `--memory`, `--cpus` or `[run]` value outside these before building (a
+  memory in MiB, or with a k, m, g or t suffix such as `512M` or `2G`; not
+  `2048MB` or `1.5G`), and an image built earlier with such a value must be
+  rebuilt with a valid one to run.
 - The CDN a registry names in its discovery document must be HTTPS, unless
   it is on loopback, as the registry's own host must; tags read from it are
   not covered by any digest. Registry reads whose body stops arriving for
