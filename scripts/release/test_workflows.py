@@ -252,6 +252,15 @@ class WorkflowContracts(unittest.TestCase):
   self.assertIn('JERBOA_MIN_STABLE_GENERATED: ${{ needs.inputs.outputs.min_stable_generated }}',job('build-macos','determinism'))
   # The distro bakes the daemon build-release produced.
   self.assertIn('JERBOA_DAEMON_BINARY: dist/jerboad-linux-amd64',job('build-distro','build-macos'))
+ def test_security_policy_names_the_embedded_release_key(self):
+  # SECURITY.md tells people how to check a download: the key it gives must
+  # be the one the installer and the CLI trust.
+  policy=(ROOT/'SECURITY.md').read_text()
+  installer=re.search(r'(?m)^PUBLIC_KEY="(RW[A-Za-z0-9+/=]+)"$',(ROOT/'scripts/install.sh').read_text()).group(1)
+  cli=re.search(r'const PublicKeyB64 = "(RW[A-Za-z0-9+/=]+)"',(ROOT/'internal/release/config.go').read_text()).group(1)
+  self.assertEqual(installer,cli)
+  self.assertEqual(set(re.findall(r'RW[A-Za-z0-9+/=]{50,}',policy)),{cli})
+  self.assertIn('https://github.com/AitorConS/jerboa/security/advisories/new',policy)
  def test_release_binaries_carry_no_build_paths(self):
   # Released jerboa and jerboad are built like `make build`: without the
   # runner's checkout and module cache paths.
