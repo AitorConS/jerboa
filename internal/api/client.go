@@ -369,28 +369,6 @@ func (c *Client) NetworkRemove(ctx context.Context, name string) error {
 	return nil
 }
 
-// NetworkAllocateIP allocates an IP address from the network's subnet.
-func (c *Client) NetworkAllocateIP(ctx context.Context, networkName string) (string, error) {
-	var resp map[string]string
-	if err := c.call(ctx, "Network.AllocateIP", struct {
-		Network string `json:"network"`
-	}{Network: networkName}, &resp); err != nil {
-		return "", fmt.Errorf("client network allocate ip: %w", err)
-	}
-	return resp["ip"], nil
-}
-
-// NetworkReleaseIP releases an allocated IP address back to the network.
-func (c *Client) NetworkReleaseIP(ctx context.Context, networkName, ip string) error {
-	if err := c.call(ctx, "Network.ReleaseIP", struct {
-		Network string `json:"network"`
-		IP      string `json:"ip"`
-	}{Network: networkName, IP: ip}, nil); err != nil {
-		return fmt.Errorf("client network release ip: %w", err)
-	}
-	return nil
-}
-
 // DNSResolve resolves a VM name to an IP address inside an optional network.
 func (c *Client) DNSResolve(ctx context.Context, name, network string) (DNSRecord, error) {
 	var rec DNSRecord

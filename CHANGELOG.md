@@ -36,6 +36,11 @@ Which versions exist, and where:
   declared dead after a network split never came back. Each node now declares
   death from its own timers, and a dead member comes back when it gossips
   again or a peer relays newer news of it.
+- The daemon no longer answers the `Network.AllocateIP` and
+  `Network.ReleaseIP` API methods. No jerboa client used them, and they let
+  any API client give back an address a VM still held, so the next VM could
+  be handed the same address. Addresses are leased and released only by
+  running and removing VMs.
 
 ### Fixed
 

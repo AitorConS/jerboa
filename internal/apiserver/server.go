@@ -507,10 +507,6 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleVolumeRemove(req.Params)
 	case "Volume.Create", "Volume.Get", "Volume.List":
 		return s.handleVolume(req.Method, req.Params)
-	case "Network.AllocateIP":
-		return s.handleNetworkAllocateIP(req.Params)
-	case "Network.ReleaseIP":
-		return s.handleNetworkReleaseIP(req.Params)
 	case "VM.Stats":
 		return s.handleStats(req.Params)
 	case "DNS.Resolve":
@@ -1474,34 +1470,6 @@ func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *api.RPCError
 		return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("network %q is in use by %d running VM(s); stop them first", p.Name, inUse)}
 	}
 	if err := s.netStore.Remove(p.Name); err != nil {
-		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
-	}
-	return map[string]string{"status": "ok"}, nil
-}
-
-func (s *Server) handleNetworkAllocateIP(params json.RawMessage) (any, *api.RPCError) {
-	var p struct {
-		Network string `json:"network"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
-	}
-	ip, err := s.netStore.AllocateIP(p.Network)
-	if err != nil {
-		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
-	}
-	return map[string]string{"ip": ip.String()}, nil
-}
-
-func (s *Server) handleNetworkReleaseIP(params json.RawMessage) (any, *api.RPCError) {
-	var p struct {
-		Network string `json:"network"`
-		IP      string `json:"ip"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
-	}
-	if err := s.netStore.ReleaseIP(p.Network, p.IP); err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil

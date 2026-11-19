@@ -141,9 +141,6 @@ func TestClient_AllMethods(t *testing.T) {
 	_, err = c.NetworkGet(ctx, "net")
 	require.NoError(t, err)
 	require.NoError(t, c.NetworkRemove(ctx, "net"))
-	_, err = c.NetworkAllocateIP(ctx, "net")
-	require.NoError(t, err)
-	require.NoError(t, c.NetworkReleaseIP(ctx, "net", "10.0.0.2"))
 
 	_, err = c.DNSResolve(ctx, "web", "net")
 	require.NoError(t, err)
