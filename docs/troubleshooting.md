@@ -627,6 +627,54 @@ the window or write to the clipboard of your terminal.
 
 **Fix**: pass `--raw` to print the output unfiltered when you trust the guest.
 
+### `guest network isolation is not available, so VMs on networks do not start` (Linux)
+
+A VM on a network starts only while the daemon's nftables rules that isolate
+guests are loaded (see
+[Network isolation]({% link getting-started.md %}#network-isolation-linux)).
+The message carries why they are not: usually `nft not found`, on a host set
+up before the installer added the `nftables` package, or an `nft` error when
+the kernel or another firewall refuses the `jerboa_guard` tables.
+
+**Fix**: install nftables and run the VM again; the daemon loads the rules on
+its own:
+
+```sh
+sudo apt-get install nftables
+jerboa doctor            # network isolation: guest network guard loaded
+```
+
+Running the installer again also installs it. If `nft` is present, the error
+names what it refused. To run guests without isolation instead (not
+recommended: a guest can then spoof other guests and reach the host's
+services), set `JERBOA_ALLOW_UNGUARDED_NETWORK=1` for the daemon:
+
+```sh
+sudo systemctl edit jerboad     # add: [Service]
+                                #      Environment=JERBOA_ALLOW_UNGUARDED_NETWORK=1
+sudo systemctl restart jerboad
+```
+
+### A guest cannot reach a service on the host or the LAN (Linux)
+
+Connections time out from inside the guest to an address of the host (its
+gateway included), to the LAN, a VPN, a Docker network or `169.254.169.254`,
+while public addresses and other guests of its network answer. That is the
+default since the guest network guard keeps guests off the host and off
+private networks (see
+[Network isolation]({% link getting-started.md %}#network-isolation-linux)).
+
+**Fix**: reach other guests by their address or name on a shared network
+instead of through a port published on the host. If the guest must reach the
+host or private networks, start the daemon with
+`JERBOA_GUEST_HOST_ACCESS=1`:
+
+```sh
+sudo systemctl edit jerboad     # add: [Service]
+                                #      Environment=JERBOA_GUEST_HOST_ACCESS=1
+sudo systemctl restart jerboad
+```
+
 ### Published ports stop answering on `127.0.0.1` (Linux)
 
 The daemon log shows `guard: not loaded; route_localnet turned off on jerboa

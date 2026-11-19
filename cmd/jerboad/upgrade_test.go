@@ -302,6 +302,12 @@ func TestUpgrade_DaemonServesAReleasedHome(t *testing.T) {
 		check, err := client.SystemCheck(context.Background(), api.SystemCheckParams{Deep: true})
 		require.NoError(t, err)
 		for _, finding := range check.Findings {
+			// Network isolation reports this host (whether nft may load the
+			// guard), not the inherited state: an unprivileged test host
+			// cannot load it.
+			if finding.Check == "network isolation" {
+				continue
+			}
 			assert.NotEqual(t, api.SeverityError, finding.Severity, "%s: %s", finding.Check, finding.Message)
 			if finding.Severity != api.SeverityOK {
 				t.Logf("doctor: [%s] %s: %s", finding.Severity, finding.Check, finding.Message)

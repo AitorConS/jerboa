@@ -26,6 +26,30 @@ Which versions exist, and where:
 
 ### Changed
 
+- **On Linux, a VM on a network no longer starts without the guest network
+  guard.** Hosts without `nft` (the `nftables` package) used to log a warning
+  at daemon start and run guests with no isolation at all; `jerboa run` now
+  fails with `guest network isolation is not available` instead. Install it
+  with `sudo apt-get install nftables` (running the installer again does it
+  too) and run the VM again: no daemon restart is needed. `jerboa doctor`
+  shows the state under `network isolation`. To keep running guests without
+  isolation, set `JERBOA_ALLOW_UNGUARDED_NETWORK=1` for the daemon
+  (`sudo systemctl edit jerboad`, then `Environment=...` under `[Service]`).
+  VMs that are already running keep running. The installer and the WSL2
+  distro now install `nftables`. Inside WSL2, whose kernel has no nftables
+  bridge family, the guard is loaded without its per-guest address binding
+  and is not enforced.
+- **On Linux, guests no longer reach the host or private networks.** By
+  default a guest reaches the host only for guest DNS and with replies to
+  connections the host opened (published ports, health checks), and opens no
+  connection to private, shared or link-local addresses outside its own
+  network (the LAN, VPNs, Docker networks, `169.254.169.254`), as on macOS.
+  Guests on the same network, the internet and published ports work as
+  before. A guest that used a service on the host or the LAN needs
+  `JERBOA_GUEST_HOST_ACCESS=1` for the daemon
+  (`sudo systemctl edit jerboad`, then `Environment=...` under `[Service]`,
+  then `sudo systemctl restart jerboad`). The rules apply when the daemon
+  starts with the new version.
 - **Each project's confined build steps get tool caches of their own.** The
   npm, pip, Go and cargo caches under `<user cache dir>/jerboa/build-sandbox/`
   are now kept per project, so the first build of each project after
@@ -101,6 +125,18 @@ Which versions exist, and where:
   peer whose slots are full now closes that peer's oldest pending connection
   instead, and `jerboa` retries a `daemon busy` answer a few times before
   reporting it.
+- On Linux, guests were attached to their network with no isolation when
+  `nft` was missing, as it was on hosts set up by the installer and in the
+  WSL2 distro: a guest could send with another guest's MAC or IP address and
+  reach guests of other Jerboa networks, and other hosts could route to
+  guests directly. The guard is now required (see Changed above), and
+  `nftables` is installed with Jerboa.
+- On Linux, a guest could connect to every host service not bound to
+  loopback (the daemon API inside WSL2, the dashboard, databases), to the
+  LAN and to cloud metadata endpoints, and could fill the daemon's
+  pre-authentication connection slots. The guard now drops new connections
+  from guests to the host, other than guest DNS, and to non-public
+  addresses outside their network.
 - One project's build scripts could alter the Go modules or cargo crates that
   the confined build steps of every other project read from the shared tool
   cache, and so change what a later build of another project compiled. The

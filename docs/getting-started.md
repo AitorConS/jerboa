@@ -365,8 +365,18 @@ daemon installs nftables rules (tables `inet jerboa_guard` and
 `bridge jerboa_guard`) that keep guests away from the host's `127.0.0.1`, stop
 traffic routed between two Jerboa networks, let hosts outside reach guests only
 through published ports, and drop frames a guest sends with another guest's MAC
-or IP address. Without `nft` the daemon logs a warning and runs without them,
-and published ports then use the userspace proxy only. The daemon checks the
+or IP address. A VM on a network starts only while these rules are loaded:
+without `nft` (package `nftables`, which the installer installs) or with a
+ruleset the kernel refuses, `jerboa run` fails with `guest network isolation
+is not available` and says what to install. The daemon tries to load the
+rules again before each such VM, so installing `nftables` is enough; no
+restart is needed. To run guests without isolation instead, start the daemon
+with `JERBOA_ALLOW_UNGUARDED_NETWORK=1` (with the systemd service:
+`sudo systemctl edit jerboad`, add `[Service]` and
+`Environment=JERBOA_ALLOW_UNGUARDED_NETWORK=1`, then
+`sudo systemctl restart jerboad`; a drop-in survives reinstalls, while
+`/etc/jerboa/daemon.env` is rewritten by the installer). `jerboa doctor`
+reports the state of the rules under `network isolation`. The daemon checks the
 tables every few seconds and reinstalls them when a firewall reload removed
 them (`flush ruleset`, as the stock `/etc/nftables.conf` does). Kernel NAT for
 published ports sets `route_localnet` on a bridge only while the loopback rule
@@ -374,8 +384,45 @@ is loaded; while the tables cannot be reinstalled the daemon turns it off
 again: guests never reach the host's loopback, and if the `ip jerboa` NAT table
 is still loaded, host clients connecting through `127.0.0.1` cannot reach the
 ports it translates until the guard is back.
-IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
-are in use.
+IPv4 forwarding (`net.ipv4.ip_forward`) is turned on host-wide when a network's
+bridge is created, and stays on: Jerboa does not turn it off again, nor add a
+forward policy of its own. A host that did not route before then routes
+between all its interfaces, not only for guests, unless its firewall drops
+forwarded traffic. Jerboa leaves that to you because it cannot tell whether
+other software (Docker, libvirt, a VPN or subnet router) relies on the host
+routing. If nothing else on the host should route, drop new forwarded
+connections that do not involve a Jerboa bridge:
+
+```sh
+sudo nft add table inet hostfwd
+sudo nft add chain inet hostfwd forward '{ type filter hook forward priority filter; policy accept; }'
+sudo nft add rule inet hostfwd forward 'iifname != "jerboa-br*" oifname != "jerboa-br*" ct state new drop'
+```
+
+Rules added this way do not survive a reboot or a `flush ruleset`; add them to
+your firewall's configuration to keep them.
+
+The same rules keep guests off the host and off private networks, as on macOS.
+A guest reaches the host only for guest DNS (`10.53.0.53`, port 53) and with
+replies to connections the host opened (published ports, health checks): a
+connection it opens to any address of the host, its gateway included, is
+dropped, whatever service listens there. It also opens no connection to
+private, shared or link-local addresses (`10.0.0.0/8`, `172.16.0.0/12`,
+`192.168.0.0/16`, `100.64.0.0/10`, `169.254.0.0/16`, and `0.0.0.0/8`,
+`127.0.0.0/8`, `224.0.0.0/3`) outside its own network, so the LAN, VPNs,
+Docker networks and cloud metadata endpoints are out of reach. Guests on the
+same network, public addresses, and published ports (`--port-publish nat-lan`
+included) are not affected. A guest reaches another guest by its address or
+name on a shared network, not through a port published on the host. To lift
+this, start the daemon with `JERBOA_GUEST_HOST_ACCESS=1`
+(`sudo systemctl edit jerboad`, add `[Service]` and
+`Environment=JERBOA_GUEST_HOST_ACCESS=1`, then `sudo systemctl restart jerboad`);
+the loopback rule and the isolation between networks stay.
+
+Inside the WSL2 distro the kernel has no nftables bridge family: only the
+`inet jerboa_guard` table is installed, so guests are not bound to their own
+MAC and IP address there, and VMs start even when the rules cannot be loaded
+(the daemon logs a warning and `jerboa doctor` reports it).
 
 **Windows / WSL2:** the daemon and the published port live inside the dedicated
 `jerboa` WSL2 distro. With WSL2's default NAT networking the port is **not**
@@ -538,7 +585,7 @@ snapshots, registry credentials and settings. Back up what you need first.
   It stops and removes the `jerboad` service, the binaries, the `jerboa` system
   user, `/var/lib/jerboa`, `/etc/jerboa` and your `~/.jerboa`. Add `--keep-data`
   to remove only the programs and the service. Packages the installer added
-  with `apt` (QEMU, iptables…) are left in place.
+  with `apt` (QEMU, iptables, nftables…) are left in place.
 
 ---
 
