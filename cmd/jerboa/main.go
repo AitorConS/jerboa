@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/AitorConS/jerboa/internal/wsldistro"
@@ -18,6 +19,9 @@ import (
 var version = "dev"
 
 func main() {
+	// Re-executed to start mkfs (a registry push or pull) without ambient
+	// capabilities, when the CLI was given any.
+	childproc.HandleReexec()
 	if err := newRootCmd().Execute(); err != nil {
 		// Errors carry text from the daemon, registries and project files.
 		fmt.Fprintln(os.Stderr, "Error:", sanitizeTerminal(err.Error()))

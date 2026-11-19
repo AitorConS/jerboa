@@ -4,6 +4,7 @@ package vm
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -271,14 +272,67 @@ func TestBuildCmd_env_vars(t *testing.T) {
 	args := captureArgs(mgr, Config{
 		ImagePath: "disk.img",
 		Memory:    "256M",
-		Env:       []string{"FOO=bar", "PORT=8080"},
+		Env:       []string{"FOO=bar", "SECRET_TOKEN=s3cr3t-value"},
+		envFile:   "/run/jerboa-run-0/env-vm1",
 	})
 	idx := indexOf(args, "-fw_cfg")
 	require.GreaterOrEqual(t, idx, 0, "-fw_cfg flag must be present")
-	fwcfg := args[idx+1]
-	require.True(t, strings.HasPrefix(fwcfg, "name=opt/uni/env,string="))
-	require.Contains(t, fwcfg, "FOO=bar")
-	require.Contains(t, fwcfg, "PORT=8080")
+	require.Equal(t, "name=opt/uni/env,file=/run/jerboa-run-0/env-vm1", args[idx+1])
+	// Any local user can read a process's arguments: no value may be there.
+	for _, a := range args {
+		require.NotContains(t, a, "bar")
+		require.NotContains(t, a, "s3cr3t-value")
+	}
+}
+
+// TestQEMUManager_Start_env_in_private_file starts a VM with secrets in its
+// environment and checks what QEMU gets: a 0600 file with the exact bytes the
+// guest parses, its path on the command line and no value, and the file gone
+// once the VM has exited.
+func TestQEMUManager_Start_env_in_private_file(t *testing.T) {
+	var args []string
+	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(func(_ context.Context, _ string, a ...string) *exec.Cmd {
+		args = a
+		return exec.Command("sleep", "3600")
+	}))
+	env := []string{"API_TOKEN=s3cr3t-value", "LIST=a,b,c", "EMPTY="}
+	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M", Env: env})
+	require.NoError(t, err)
+	require.NoError(t, mgr.Start(context.Background(), v.ID))
+
+	path := guestEnvFilePath(v.ID)
+	require.Contains(t, args, "name=opt/uni/env,file="+path)
+	for _, a := range args {
+		require.NotContains(t, a, "s3cr3t-value")
+	}
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, "API_TOKEN=s3cr3t-value\nLIST=a,b,c\nEMPTY=", string(data))
+
+	require.NoError(t, mgr.Stop(context.Background(), v.ID))
+	select {
+	case <-v.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("VM did not stop")
+	}
+	_, err = os.Stat(path)
+	require.True(t, os.IsNotExist(err), "env file must be removed when the VM exits: %v", err)
+}
+
+// TestQEMUManager_Start_launch_failure_removes_env_file: a QEMU that cannot be
+// started must not leave the guest's secrets behind.
+func TestQEMUManager_Start_launch_failure_removes_env_file(t *testing.T) {
+	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(func(_ context.Context, _ string, _ ...string) *exec.Cmd {
+		return exec.Command("/nonexistent/jerboa-test-qemu")
+	}))
+	v, err := mgr.Create(context.Background(), Config{ImagePath: "test.img", Memory: "256M", Env: []string{"K=v"}})
+	require.NoError(t, err)
+	require.Error(t, mgr.Start(context.Background(), v.ID))
+	_, err = os.Stat(guestEnvFilePath(v.ID))
+	require.True(t, os.IsNotExist(err), "env file must be removed after a failed launch: %v", err)
 }
 
 func TestBuildCmd_no_env_no_fwcfg(t *testing.T) {

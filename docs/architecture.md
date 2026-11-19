@@ -172,6 +172,12 @@ Environment variables and static network configuration are injected through fw_c
 - `opt/uni/env`
 - `opt/uni/network`
 
+With QEMU, `opt/uni/env` is read from a file readable only by the daemon's
+user (mode 0600) in its private runtime directory, so the values given with
+`-e` (often secrets) never appear on QEMU's command line, where any local user
+could read them with `ps`. The file is deleted when the VM exits. The
+Firecracker backend already kept them in its 0600 VM configuration files.
+
 Recent code and docs use the `opt/uni/*` keys; older `opt/jerboa/*` names are stale.
 
 ## Persistence

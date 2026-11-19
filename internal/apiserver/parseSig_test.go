@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || (darwin && arm64)
 
 package apiserver
 
@@ -21,8 +21,9 @@ func TestParseSig(t *testing.T) {
 		{"SIGKILL", "SIGKILL", syscall.SIGKILL, false},
 		{"SIGHUP", "SIGHUP", syscall.SIGHUP, false},
 		{"SIGQUIT", "SIGQUIT", syscall.SIGQUIT, false},
-		{"SIGUSR1", "SIGUSR1", syscall.Signal(10), false},
-		{"SIGUSR2", "SIGUSR2", syscall.Signal(12), false},
+		// The host's numbers: on macOS 10 and 12 are SIGBUS and SIGSYS.
+		{"SIGUSR1", "SIGUSR1", syscall.SIGUSR1, false},
+		{"SIGUSR2", "SIGUSR2", syscall.SIGUSR2, false},
 		{"numeric 15", "15", syscall.Signal(15), false},
 		{"numeric 9", "9", syscall.Signal(9), false},
 		{"numeric 0", "0", syscall.Signal(0), false},

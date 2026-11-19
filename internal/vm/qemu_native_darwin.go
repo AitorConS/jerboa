@@ -93,7 +93,7 @@ func (m *QEMUManager) buildNativeCmd(ctx context.Context, cfg Config, qmp string
 		netcfg.SubnetMask = "24"
 	}
 	args = append(args, buildNetworkCfgArgs(netcfg)...)
-	args = append(args, buildEnvArgs(cfg.Env)...)
+	args = append(args, buildEnvArgs(cfg.envFile)...)
 	args = append(args, buildVolumeArgs(cfg)...)
 	args = append(args, buildMountArgs(cfg.Volumes)...)
 	if qmp != "" {

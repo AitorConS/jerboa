@@ -248,3 +248,44 @@ func TestFaults_ReconcileNetworkWithoutANetworkTouchesNothing(t *testing.T) {
 	// or fail for lack of privileges.
 	reconcileNetwork("0123456789ab", Config{})
 }
+
+// seedGuestEnvFile leaves a guest environment file for id, as a VM started
+// with -e by a daemon that then died would have.
+func seedGuestEnvFile(t *testing.T, id string) string {
+	t.Helper()
+	path := guestEnvFilePath(id)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, []byte("API_TOKEN=s3cr3t"), 0o600))
+	t.Cleanup(func() { _ = os.Remove(path) })
+	return path
+}
+
+// A restarted daemon that finds the VM dead removes the secrets it was
+// started with.
+func TestFaults_RecoverRemovesTheEnvFileOfADeadVM(t *testing.T) {
+	store := NewMemoryStore()
+	v, err := store.Create(Config{Name: "app", ImagePath: "a.img"})
+	require.NoError(t, err)
+	path := seedGuestEnvFile(t, v.ID)
+
+	require.True(t, recoverVM(store, v, 0x7ffffff0))
+	assert.Equal(t, StateStopped, v.GetState())
+	assert.NoFileExists(t, path)
+}
+
+// An adopted VM that exits later leaves no secrets behind either.
+func TestFaults_AdoptMonitorRemovesTheEnvFile(t *testing.T) {
+	store := NewMemoryStore()
+	v, err := store.Create(Config{Name: "app", ImagePath: "a.img"})
+	require.NoError(t, err)
+	path := seedGuestEnvFile(t, v.ID)
+	v.mu.Lock()
+	v.State = StateRunning
+	v.pid = 0x7ffffff0 // exited after it was adopted
+	v.qmpAddr = "unix:" + filepath.Join(t.TempDir(), "qmp.sock")
+	v.mu.Unlock()
+
+	go adoptMonitor(store, v)
+	waitDone(t, v)
+	assert.NoFileExists(t, path)
+}
