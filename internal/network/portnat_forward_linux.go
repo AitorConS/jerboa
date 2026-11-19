@@ -175,7 +175,7 @@ type nftObject struct {
 }
 
 func nftRuleset() ([]nftObject, error) {
-	cmd := exec.Command("nft", "-j", "list", "ruleset") //nolint:noctx // short-lived local tool
+	cmd := hostCommand("nft", "-j", "list", "ruleset") //nolint:noctx // short-lived local tool
 	var out, stderr bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &stderr

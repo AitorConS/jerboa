@@ -206,6 +206,9 @@ Flag:
 
 - `--signal`, default `SIGTERM`
 
+The signal is a name (`SIGTERM`, `SIGINT`, `SIGKILL`, `SIGHUP`, `SIGQUIT`,
+`SIGUSR1`, `SIGUSR2`) or a number as the daemon's host numbers it.
+
 ---
 
 ## Image Commands
@@ -971,6 +974,15 @@ Environment the daemon reads:
 | `JERBOA_PULL_MAX_BLOBS` | Most files one pulled image may list (default `100000`) |
 | `JERBOA_PULL_MAX_BYTES` | Most bytes those files may add up to (default `64G`; a number of bytes, or with a `k`, `m` or `g` suffix) |
 | `JERBOA_PULL_MAX_DISK_SIZE` | Largest disk a pulled image may have, and largest VM disk it may ask for (default `64G`) |
+
+None of these reach the programs the daemon starts. QEMU, Firecracker and
+`mkfs` get only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`,
+`LANG`, `LANGUAGE`, `LC_*` and `TZ` from the daemon's environment; a variable
+set for the daemon to pass on to QEMU (a library path, a debug setting) no
+longer gets there. The host networking tools (`ip`, `nft`, `iptables`,
+`sysctl`) get the rest of the environment without any `JERBOA_` variable
+whose name contains `TOKEN` or `SECRET`. On Linux, `mkfs` is started without
+the daemon's network capabilities, like QEMU and Firecracker.
 
 Connections are limited before they authenticate: at most 64 handshakes
 pending in total and 8 per peer, 5 seconds to complete one, and a 500 ms delay

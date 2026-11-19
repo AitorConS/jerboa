@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -146,7 +145,7 @@ func setMTU(name string) error {
 }
 
 func bridgeExists(name string) bool {
-	return exec.Command("ip", "link", "show", name).Run() == nil
+	return hostCommand("ip", "link", "show", name).Run() == nil
 }
 
 // EnsureDNSAddress assigns the reserved guest-DNS address to the loopback
@@ -163,7 +162,7 @@ func EnsureDNSAddress(ip string) error {
 		return fmt.Errorf("assign dns address: %q is not a valid IPv4 address", ip)
 	}
 	cidr := parsed.String() + "/32"
-	out, err := exec.Command("ip", "addr", "add", cidr, "dev", "lo").CombinedOutput() //nolint:gosec // cidr is built from a validated net.IP
+	out, err := hostCommand("ip", "addr", "add", cidr, "dev", "lo").CombinedOutput() //nolint:gosec // cidr is built from a validated net.IP
 	if err != nil && !addrAlreadyAssigned(string(out)) {
 		return fmt.Errorf("assign dns address %s to lo: %w (output: %s)", ip, err, strings.TrimSpace(string(out)))
 	}
@@ -197,7 +196,7 @@ func tapAlreadyExists(out string) bool {
 // The tap is owned by the daemon's user, so the VMM, which runs as that user
 // without the daemon's capabilities, can still open it.
 func CreateTAPDevice(name string) error {
-	out, err := exec.Command("ip", "tuntap", "add", "dev", name, "mode", "tap").CombinedOutput()
+	out, err := hostCommand("ip", "tuntap", "add", "dev", name, "mode", "tap").CombinedOutput()
 	if err != nil && !tapAlreadyExists(string(out)) {
 		return fmt.Errorf("create tap %s: %w (output: %s)", name, err, strings.TrimSpace(string(out)))
 	}
@@ -231,7 +230,7 @@ func setTAPOwner(name string, uid int) error {
 
 // DeleteTAPDevice removes a persistent TAP device created by CreateTAPDevice.
 func DeleteTAPDevice(name string) error {
-	out, err := exec.Command("ip", "tuntap", "del", "dev", name, "mode", "tap").CombinedOutput()
+	out, err := hostCommand("ip", "tuntap", "del", "dev", name, "mode", "tap").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("delete tap %s: %w (output: %s)", name, err, strings.TrimSpace(string(out)))
 	}
@@ -276,13 +275,13 @@ func DetachTAP(tapName string) error {
 // is no telling who needs it, across daemon restarts included. The operator
 // decides (docs: getting-started, Network isolation).
 func enableForwarding() error { //nolint:unparam // error kept for interface consistency
-	_ = exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1").Run() //nolint:noctx
+	_ = hostCommand("sysctl", "-w", "net.ipv4.ip_forward=1").Run() //nolint:noctx
 	return nil
 }
 
 func ipLink(action string, args ...string) error {
 	cmdArgs := append([]string{"link", action}, args...)
-	out, err := exec.Command("ip", cmdArgs...).CombinedOutput()
+	out, err := hostCommand("ip", cmdArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip link %s: %w (output: %s)", action, err, strings.TrimSpace(string(out)))
 	}
@@ -291,7 +290,7 @@ func ipLink(action string, args ...string) error {
 
 func ipAddr(action string, args ...string) error {
 	cmdArgs := append([]string{"addr", action}, args...)
-	out, err := exec.Command("ip", cmdArgs...).CombinedOutput()
+	out, err := hostCommand("ip", cmdArgs...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("ip addr %s: %w (output: %s)", action, err, strings.TrimSpace(string(out)))
 	}

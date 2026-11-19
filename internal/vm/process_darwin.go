@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"strconv"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/childproc"
 )
 
 func processOwnsVM(pid int, vmID string) bool {
@@ -31,5 +33,7 @@ func nativeFCSupervisorCommand(data []byte, vmID string) bool {
 func darwinProcessCommand(pid int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, "/bin/ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	cmd := exec.CommandContext(ctx, "/bin/ps", "-ww", "-p", strconv.Itoa(pid), "-o", "command=")
+	cmd.Env = childproc.Minimal()
+	return cmd.Output()
 }

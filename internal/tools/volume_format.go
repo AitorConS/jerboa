@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/volume"
 )
 
@@ -38,7 +38,7 @@ func ResolveVolumeFormatter(ctx context.Context, toolsDir, override string) (vol
 			args = append(args, "-s", strconv.FormatInt(sizeBytes, 10))
 		}
 		args = append(args, diskPath)
-		cmd := exec.CommandContext(ctx, mkfsPath, args...)
+		cmd := childproc.Command(ctx, mkfsPath, args...)
 		cmd.Stderr = os.Stderr
 		if out, err := cmd.Output(); err != nil {
 			return fmt.Errorf("mkfs format %s: %w (output: %s)", diskPath, err, string(out))
@@ -74,7 +74,7 @@ func ResolveVolumeSeeder(ctx context.Context, toolsDir, override string) (volume
 			args = append(args, "-s", strconv.FormatInt(sizeBytes, 10))
 		}
 		args = append(args, diskPath)
-		cmd := exec.CommandContext(ctx, mkfsPath, args...)
+		cmd := childproc.Command(ctx, mkfsPath, args...)
 		cmd.Stdin = strings.NewReader(manifest)
 		cmd.Stderr = os.Stderr
 		if out, err := cmd.Output(); err != nil {

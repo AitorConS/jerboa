@@ -1,24 +1,20 @@
 package builder
 
 import (
-	"os"
 	"strings"
+
+	"github.com/AitorConS/jerboa/internal/childproc"
 )
 
-// credentialEnv lists credentials build steps have no use for: Jerboa's
-// own, what lets a GitHub Actions job request OIDC tokens (which push as the
-// job's trusted publisher), and well-known tokens and keys of code hosts,
-// cloud providers and APIs. Build steps run the project's tools and
-// scripts, which can read their environment and, for the language tools,
-// reach the network. Variables package managers read to fetch private
-// dependencies (NODE_AUTH_TOKEN, NPM_TOKEN, CARGO_REGISTRIES_*_TOKEN,
-// GOPRIVATE, PIP_INDEX_URL) are kept; a build that needs one of these
-// passes it under such a name.
-var credentialEnv = map[string]bool{
-	"ACTIONS_ID_TOKEN_REQUEST_TOKEN": true,
-	"ACTIONS_ID_TOKEN_REQUEST_URL":   true,
-	"JERBOA_MINISIGN_SEED":           true,
-
+// thirdPartyCredentialEnv lists credentials build steps have no use for on
+// top of Jerboa's own (childproc.IsCredential): well-known tokens and keys
+// of code hosts, cloud providers and APIs. Build steps run the project's
+// tools and scripts, which can read their environment and, for the language
+// tools, reach the network. Variables package managers read to fetch
+// private dependencies (NODE_AUTH_TOKEN, NPM_TOKEN,
+// CARGO_REGISTRIES_*_TOKEN, GOPRIVATE, PIP_INDEX_URL) are kept; a build
+// that needs one of these passes it under such a name.
+var thirdPartyCredentialEnv = map[string]bool{
 	"GITHUB_TOKEN":                      true,
 	"GH_TOKEN":                          true,
 	"GH_ENTERPRISE_TOKEN":               true,
@@ -46,25 +42,15 @@ var credentialEnv = map[string]bool{
 	"OPENAI_API_KEY":                    true,
 }
 
-// isCredentialEnv reports whether the variable name is one of
-// credentialEnv or one of Jerboa's own tokens and secrets (JERBOA_*TOKEN*,
-// JERBOA_*SECRET*).
-func isCredentialEnv(name string) bool {
-	name = strings.ToUpper(name)
-	if credentialEnv[name] {
-		return true
-	}
-	rest, ok := strings.CutPrefix(name, "JERBOA_")
-	return ok && (strings.Contains(rest, "TOKEN") || strings.Contains(rest, "SECRET"))
-}
-
 // Env returns the environment for a build subprocess: this process's
-// environment without the credentials above, followed by extra.
+// environment without Jerboa's credentials (childproc.Inherited) and those
+// above, followed by extra.
 func Env(extra ...string) []string {
-	env := make([]string, 0, len(os.Environ())+len(extra))
-	for _, kv := range os.Environ() {
+	inherited := childproc.Inherited()
+	env := make([]string, 0, len(inherited)+len(extra))
+	for _, kv := range inherited {
 		name, _, _ := strings.Cut(kv, "=")
-		if !isCredentialEnv(name) {
+		if !thirdPartyCredentialEnv[strings.ToUpper(name)] {
 			env = append(env, kv)
 		}
 	}

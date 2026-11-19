@@ -16,11 +16,11 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/diskclone"
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
@@ -362,11 +362,13 @@ func Assemble(ctx context.Context, r *Recipe, store *cas.Store, mkfs, out string
 	boot, _ := store.Path(r.Toolset.Boot)
 	kernel, _ := store.Path(r.Toolset.Kernel)
 	_ = os.Remove(out)
-	cmd := exec.CommandContext(ctx, mkfs, "-b", boot, "-k", kernel, out) //nolint:gosec // mkfs resolved for the recipe's toolset
+	// mkfs reads a recipe someone else published: no credentials and, on
+	// Linux, none of the daemon's capabilities.
+	cmd := childproc.Command(ctx, mkfs, "-b", boot, "-k", kernel, out)
 	cmd.Stdin = strings.NewReader(manifest)
 	// An mkfs that knows this variable refuses host files outside the store;
 	// older ones ignore it, and the check above already holds.
-	cmd.Env = append(os.Environ(), HostRootEnv+"="+store.Root())
+	cmd.Env = append(cmd.Env, HostRootEnv+"="+store.Root())
 	if output, err := cmd.CombinedOutput(); err != nil {
 		// Whatever mkfs wrote before it failed or was killed is not a disk.
 		_ = os.Remove(out)
