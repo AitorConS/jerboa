@@ -216,14 +216,6 @@ func TestServer_GuestSourcesAreRefused(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-func postLogin(h http.Handler, token string) int {
-	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	return rec.Code
-}
-
 func postLoginFrom(h http.Handler, addr, token string) int {
 	req := httptest.NewRequest(http.MethodPost, "/ui/login", strings.NewReader(url.Values{"token": {token}}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
