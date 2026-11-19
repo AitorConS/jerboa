@@ -77,8 +77,10 @@ type Store struct {
 }
 
 // subnetCacheTTL bounds how long HoldsAddress trusts its cached subnets, for
-// changes made to the directory other than through this store.
-const subnetCacheTTL = 2 * time.Second
+// changes made to the directory other than through this store. jerboad is
+// the only writer of its network directory, so in practice every change
+// goes through Create and Remove, which invalidate the cache at once.
+var subnetCacheTTL = 2 * time.Second // a var so tests can shorten it
 
 // subnetCache holds the subnets of the store's networks as of gen, read at.
 type subnetCache struct {
@@ -234,15 +236,18 @@ func (s *Store) HoldsAddress(ip net.IP) (bool, error) {
 
 func (s *Store) subnetsCached() ([]*net.IPNet, error) {
 	c := &s.subnets
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	gen := s.gen.Load()
+	c.mu.Lock()
 	if c.ok && c.gen == gen && time.Since(c.at) < subnetCacheTTL {
-		return c.nets, nil
+		nets := c.nets
+		c.mu.Unlock()
+		return nets, nil
 	}
+	c.mu.Unlock()
+	// Read without holding the cache, so a slow disk delays only the
+	// requests that miss it; concurrent misses each read.
 	list, err := s.List()
 	if err != nil {
-		c.ok = false
 		return nil, err
 	}
 	nets := make([]*net.IPNet, 0, len(list))
@@ -251,9 +256,13 @@ func (s *Store) subnetsCached() ([]*net.IPNet, error) {
 			nets = append(nets, ipNet)
 		}
 	}
-	// A change made while List read is not in nets: cache only when none was.
-	c.ok = s.gen.Load() == gen
-	c.gen, c.at, c.nets = gen, time.Now(), nets
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// A change made while List read is not in nets: cache only when none was,
+	// and never over a newer generation.
+	if s.gen.Load() == gen && (!c.ok || c.gen <= gen) {
+		c.ok, c.gen, c.at, c.nets = true, gen, time.Now(), nets
+	}
 	return nets, nil
 }
 
