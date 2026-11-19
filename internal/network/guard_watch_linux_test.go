@@ -64,7 +64,8 @@ type fakeGuardKernel struct {
 
 func withFakeGuard(t *testing.T, k *fakeGuardKernel, dnsIP string, installed bool) {
 	t.Helper()
-	prevNft, prevProbe := guardNft, guardProbe
+	prevNft, prevProbe, prevHasNft := guardNft, guardProbe, guardHasNft
+	guardHasNft = func() bool { return true }
 	guardNft = func(script string) error {
 		k.mu.Lock()
 		defer k.mu.Unlock()
@@ -87,12 +88,15 @@ func withFakeGuard(t *testing.T, k *fakeGuardKernel, dnsIP string, installed boo
 	}
 	guard.mu.Lock()
 	prevInstalled, prevDNS, prevBridges, prevTaps := guard.installed, guard.dnsIP, guard.bridges, guard.taps
+	prevAllow, prevNoBridge, prevHostAccess := guard.allowUnguarded, guard.noBridge, guard.hostAccess
 	guard.installed, guard.dnsIP, guard.bridges, guard.taps = installed, dnsIP, map[string]bool{}, map[string]string{}
+	guard.allowUnguarded, guard.noBridge, guard.hostAccess = false, false, false
 	guard.mu.Unlock()
 	t.Cleanup(func() {
-		guardNft, guardProbe = prevNft, prevProbe
+		guardNft, guardProbe, guardHasNft = prevNft, prevProbe, prevHasNft
 		guard.mu.Lock()
 		guard.installed, guard.dnsIP, guard.bridges, guard.taps = prevInstalled, prevDNS, prevBridges, prevTaps
+		guard.allowUnguarded, guard.noBridge, guard.hostAccess = prevAllow, prevNoBridge, prevHostAccess
 		guard.mu.Unlock()
 	})
 }
@@ -207,4 +211,159 @@ func TestCheckGuardTogglesRouteLocalnet(t *testing.T) {
 	localnet.mu.Lock()
 	defer localnet.mu.Unlock()
 	require.Equal(t, map[string]bool{"jerboa-br-a": true}, localnet.bridges)
+}
+
+// Without nft the guard cannot load, and a guest is not attached to a bridge:
+// the error says what to install and how to opt out.
+func TestRequireGuardFailsClosedWithoutNft(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "10.53.0.53", false)
+	guardHasNft = func() bool { return false }
+	err := RequireGuard()
+	require.ErrorContains(t, err, "nft not found")
+	require.ErrorContains(t, err, "sudo apt-get install nftables")
+	require.ErrorContains(t, err, AllowUnguardedEnv+"=1")
+	require.Empty(t, k.scripts, "nft was run although it is not installed")
+	st := CheckGuard()
+	require.True(t, st.Configured)
+	require.True(t, st.Enforced)
+	require.ErrorIs(t, st.Err, errNoNft)
+}
+
+// A ruleset the kernel refuses is as good as no guard.
+func TestRequireGuardFailsClosedWhenTheRulesetIsRefused(t *testing.T) {
+	k := &fakeGuardKernel{failNft: true}
+	withFakeGuard(t, k, "10.53.0.53", false)
+	require.ErrorContains(t, RequireGuard(), "injected failure")
+}
+
+// A daemon that never configured the guard does not attach guests either.
+func TestRequireGuardNeedsInstallGuard(t *testing.T) {
+	withFakeGuard(t, &fakeGuardKernel{loaded: true}, "", false)
+	require.ErrorContains(t, RequireGuard(), "not configured")
+	require.False(t, CheckGuard().Configured)
+}
+
+// nftables installed after the daemon started: the next VM loads the guard
+// instead of failing.
+func TestRequireGuardLoadsTheGuardLate(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "10.53.0.53", false)
+	guardHasNft = func() bool { return false }
+	require.Error(t, RequireGuard())
+	guardHasNft = func() bool { return true }
+	require.NoError(t, RequireGuard())
+	// CheckGuard probes the fake kernel, which takes k.mu: read loaded first
+	// and release the lock before calling it.
+	k.mu.Lock()
+	loaded := k.loaded
+	k.mu.Unlock()
+	require.True(t, loaded)
+	require.NoError(t, CheckGuard().Err)
+}
+
+// The operator's opt-out lets the guest start without the guard.
+func TestRequireGuardOptOut(t *testing.T) {
+	withFakeGuard(t, &fakeGuardKernel{}, "10.53.0.53", false)
+	guardHasNft = func() bool { return false }
+	guard.mu.Lock()
+	guard.allowUnguarded = true
+	guard.mu.Unlock()
+	require.NoError(t, RequireGuard())
+	st := CheckGuard()
+	require.False(t, st.Enforced)
+	require.True(t, st.AllowUnguarded)
+	require.Error(t, st.Err)
+}
+
+// InstallGuard records the opt-out and the missing nft, so the guard can be
+// loaded later.
+func TestInstallGuardWithoutNftKeepsTheConfiguration(t *testing.T) {
+	withFakeGuard(t, &fakeGuardKernel{}, "", false)
+	guardHasNft = func() bool { return false }
+	prevWSL := guardIsWSL
+	guardIsWSL = func() bool { return false }
+	t.Cleanup(func() { guardIsWSL = prevWSL })
+	require.ErrorIs(t, InstallGuard("10.53.0.53", GuardOptions{AllowUnguarded: true}), errNoNft)
+	st := CheckGuard()
+	require.True(t, st.Configured)
+	require.True(t, st.AllowUnguarded)
+	require.False(t, st.Enforced)
+}
+
+// On WSL (no nftables bridge family) only the inet table is installed, tap
+// bindings never reach nft, the probe does not look for the bridge table,
+// and a guard that cannot load does not block guests.
+func TestGuardOnWSLLeavesTheBridgeFamilyOut(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "", false)
+	prevWSL, prevList := guardIsWSL, guardList
+	guardIsWSL = func() bool { return true }
+	var listed []string
+	guardList = func(script string) (string, error) {
+		listed = append(listed, script)
+		return `iifname != "lo" ip daddr 127.0.0.0/8 drop`, nil
+	}
+	t.Cleanup(func() { guardIsWSL, guardList = prevWSL, prevList })
+
+	require.NoError(t, InstallGuard("10.53.0.53", GuardOptions{}))
+	require.NoError(t, GuardTap("tap-a", "52:54:00:00:00:02", "10.100.0.2"))
+	UnguardTap("tap-a", "52:54:00:00:00:02", "10.100.0.2")
+	k.mu.Lock()
+	require.Len(t, k.scripts, 1)
+	require.NotContains(t, k.scripts[0], "bridge")
+	k.mu.Unlock()
+
+	guard.mu.Lock()
+	require.NoError(t, probeGuard())
+	guard.mu.Unlock()
+	require.Equal(t, []string{"list chain inet " + guardTable + " prerouting\n"}, listed)
+
+	st := CheckGuard()
+	require.True(t, st.NoBridgeFamily)
+	require.False(t, st.Enforced)
+
+	k.mu.Lock()
+	k.loaded, k.failNft = false, true
+	k.mu.Unlock()
+	require.NoError(t, RequireGuard(), "a guard that cannot load on WSL must not block guests")
+}
+
+// The host-access opt-out is kept by InstallGuard and applied by every
+// reinstall, and reported by CheckGuard.
+func TestInstallGuardAppliesHostAccess(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "", false)
+	prevWSL := guardIsWSL
+	guardIsWSL = func() bool { return false }
+	t.Cleanup(func() { guardIsWSL = prevWSL })
+
+	require.NoError(t, InstallGuard("10.53.0.53", GuardOptions{}))
+	k.mu.Lock()
+	require.Contains(t, k.scripts[len(k.scripts)-1], `iifname "jerboa-br*" drop`)
+	k.mu.Unlock()
+
+	require.NoError(t, InstallGuard("10.53.0.53", GuardOptions{HostAccess: true}))
+	k.mu.Lock()
+	k.loaded = false // a firewall reload
+	k.mu.Unlock()
+	require.NoError(t, EnsureGuard())
+	k.mu.Lock()
+	last := k.scripts[len(k.scripts)-1]
+	k.mu.Unlock()
+	require.NotContains(t, last, `iifname "jerboa-br*" drop`)
+	require.Contains(t, last, `iifname != "lo" ip daddr 127.0.0.0/8 drop`)
+	require.True(t, CheckGuard().HostAccess)
+}
+
+// jerboa doctor only asks the kernel: tables removed behind the daemon are
+// reported, not reinstalled (that is the watchdog's and RequireGuard's job).
+func TestCheckGuardDoesNotReinstall(t *testing.T) {
+	k := &fakeGuardKernel{}
+	withFakeGuard(t, k, "10.53.0.53", true)
+	require.ErrorContains(t, CheckGuard().Err, "not loaded")
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	require.False(t, k.loaded)
+	require.Empty(t, k.scripts, "the check ran nft")
 }

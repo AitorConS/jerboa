@@ -12,14 +12,15 @@ ARG FIRECRACKER_VERSION=v1.17.0
 ARG FC_ARCH=x86_64
 ARG FIRECRACKER_SHA256=06094a1108ae9e82aa4c23a775aa92758f53f1175d422270d9d6162cb9ade558
 
-# Runtime deps: qemu, networking for the firecracker tap device, e2fsprogs for
-# the image build toolchain, and certs/curl for runtime downloads.
+# Runtime deps: qemu, networking for the firecracker tap device, nftables for
+# the guest network guard, e2fsprogs for the image build toolchain, and
+# certs/curl for runtime downloads.
 # Docs, man pages and locales are stripped: this rootfs is a headless daemon
 # distro, and `wsl --import` ships the flattened filesystem, so every file
 # removed here shrinks the tarball users download.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         qemu-system-x86 qemu-utils \
-        iproute2 iptables \
+        iproute2 iptables nftables \
         e2fsprogs \
         kmod \
         ca-certificates curl \
