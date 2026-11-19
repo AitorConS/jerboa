@@ -67,7 +67,9 @@ func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	srv.EnableImageBuild(fakeMkfs(t))
 
 	ctx, cancel := context.WithCancel(context.Background())
+	served := make(chan struct{})
 	go func() {
+		defer close(served)
 		if err := srv.Serve(ctx); err != nil {
 			t.Logf("server stopped: %v", err)
 		}
@@ -83,6 +85,13 @@ func startBuildServer(t *testing.T, store *image.Store) *api.Client {
 	t.Cleanup(func() {
 		_ = client.Close()
 		cancel()
+		// A build the server is still finishing writes to the image store:
+		// wait for it before the temporary directories are removed.
+		select {
+		case <-served:
+		case <-time.After(10 * time.Second):
+			t.Error("the server did not stop")
+		}
 	})
 	return client
 }
