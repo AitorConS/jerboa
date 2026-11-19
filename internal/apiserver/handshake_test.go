@@ -5,7 +5,6 @@ package apiserver
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net"
 	"os"
 	"strconv"
@@ -169,7 +168,7 @@ func requireClosed(t *testing.T, client net.Conn) {
 	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, err := client.Read(make([]byte, 1))
 	require.Error(t, err)
-	require.False(t, errors.Is(err, os.ErrDeadlineExceeded), "the connection was left open")
+	require.NotErrorIs(t, err, os.ErrDeadlineExceeded, "the connection was left open")
 }
 
 func TestHandshake_SlotsAreSharedOutPerPeer(t *testing.T) {
