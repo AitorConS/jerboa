@@ -78,6 +78,11 @@ Which versions exist, and where:
   was checked as written. Such links are now refused, and after extraction
   every link is resolved again and removed if it leads outside the package
   or nowhere.
+- A pulled image's run defaults (memory, CPUs, VM disk size) were handed to
+  the hypervisor as the registry wrote them; QEMU took the memory string as
+  is. They are now checked when the recipe is read and again when the image
+  runs: a memory size from 1 MiB to 1 TiB, at most 256 CPUs, a VM disk of at
+  most 16 TiB.
 
 ### Fixed
 

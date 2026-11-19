@@ -127,6 +127,8 @@ The Sigstore trusted root is fetched through its TUF repository and cached in `~
 
 Every file, pack and recipe a pull downloads is checked against its SHA-256 digest, and the assembled disk is checked against the recipe's digest. Before assembling, the daemon also checks that the recipe's manifest reads only the recipe's own files, so a recipe cannot make `mkfs` read anything else on your machine.
 
+The image's run defaults are checked too, because they reach the hypervisor's command line: a memory size such as `256M`, `1G` or `512Mi` (or a bare number of MiB) from 1 MiB to 1 TiB, at most 256 CPUs, and a VM disk of at most 16 TiB. A recipe with anything else is refused, and so is running a stored image whose defaults break these rules.
+
 Before it downloads any file, the daemon checks what the recipe asks for against its limits: at most 100000 files, adding up to at most 64 GiB, and a disk (and a VM disk the image asks for) of at most 64 GiB. A recipe beyond one is refused with the name of the variable that raises it: set `JERBOA_PULL_MAX_BLOBS`, `JERBOA_PULL_MAX_BYTES` or `JERBOA_PULL_MAX_DISK_SIZE` (for example `128G`) in the daemon's environment and restart it. A pull also stops before downloading when the files it lacks and the disk it assembles do not fit in the free space of the daemon's filesystems; free some (`jerboa system prune`) and pull again.
 
 A tag is only as trustworthy as the registry that serves it: the registry decides which recipe a tag points to, unless the pull checks its signature (see [Signed images](#signed-images)). To run exactly the image you reviewed, pull it by digest (`jerboa images inspect` shows it) and pin that digest in scripts and compose files.

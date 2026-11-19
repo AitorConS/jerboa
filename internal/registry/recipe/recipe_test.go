@@ -214,3 +214,38 @@ func TestValidateRefusesBlobSizesThatOverflow(t *testing.T) {
 	r.Blobs[1].Size = 1
 	require.ErrorContains(t, r.Validate(), "add up")
 }
+
+// A recipe's run defaults reach the hypervisor's command line when the
+// pulled image runs: they are checked like the rest of the recipe, and the
+// ones official images carry stay valid.
+func TestValidateChecksRunDefaults(t *testing.T) {
+	f := build(t)
+	for _, cfg := range []image.Config{
+		{Memory: "256M", CPUs: 1},
+		{Memory: "1G", CPUs: 2},
+		{Memory: "512Mi", CPUs: 1, MinDiskSize: 1 << 30},
+		{},
+	} {
+		r := *f.r
+		r.Config = cfg
+		require.NoError(t, r.Validate(), "%+v", cfg)
+	}
+	for name, cfg := range map[string]image.Config{
+		"memory with options": {Memory: "1G,maxmem=64G", CPUs: 1},
+		"memory too large":    {Memory: "4096T", CPUs: 1},
+		"memory not a size":   {Memory: "lots", CPUs: 1},
+		"negative CPUs":       {Memory: "256M", CPUs: -1},
+		"too many CPUs":       {Memory: "256M", CPUs: 100000},
+		"negative disk":       {Memory: "256M", CPUs: 1, MinDiskSize: -1},
+		"disk too large":      {Memory: "256M", CPUs: 1, MinDiskSize: image.MaxMinDiskSize + 1},
+	} {
+		r := *f.r
+		r.Config = cfg
+		require.Error(t, r.Validate(), name)
+		// And a pulled recipe carrying it does not parse.
+		data, err := r.Encode()
+		require.NoError(t, err)
+		_, err = Parse(data)
+		require.Error(t, err, name)
+	}
+}

@@ -135,6 +135,11 @@ func (r *Recipe) Validate() error {
 	if _, ok := cas.ParseDigest(r.DiskDigest); !ok || r.DiskSize <= 0 {
 		return fmt.Errorf("recipe: invalid disk digest or size")
 	}
+	// The run defaults reach the hypervisor's command line when the image
+	// runs.
+	if err := image.ValidateRunConfig(r.Config); err != nil {
+		return fmt.Errorf("recipe: %w", err)
+	}
 	if err := pkg.ValidateReferences(r.Packages, r.Platform); err != nil {
 		return fmt.Errorf("recipe: %w", err)
 	}
