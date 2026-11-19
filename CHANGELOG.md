@@ -36,6 +36,20 @@ Which versions exist, and where:
   `other.example` while the image was listed under a name starting with
   `registry.jerboa.dev`; such a reference is refused with `invalid registry
   (want host[:port])`.
+- QEMU, Firecracker and `mkfs` now start with a minimal environment
+  (`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`, `LANG`,
+  `LANGUAGE`, `LC_*`, `TZ`) instead of the daemon's whole environment, which
+  held `JERBOA_AUTH_TOKEN` and, when set, the observability and cluster
+  tokens: a guest that took over its VMM, or a package that took over `mkfs`,
+  could read them. If you set a variable in the daemon's environment for QEMU
+  or Firecracker to use, it no longer reaches them. The daemon's other
+  programs (`ip`, `nft`, `iptables`, `sysctl`) no longer get Jerboa's tokens,
+  and on Linux `mkfs` no longer keeps the daemon's network capabilities.
+- With the QEMU hypervisor (Linux, and macOS with `hypervisor qemu`), the
+  environment variables given with `-e`, often secrets, were on QEMU's
+  command line, where any local user could read them with `ps`. QEMU now
+  reads them from a file only the daemon's user can read, deleted when the
+  VM exits. The guest sees the same variables as before.
 
 ### Fixed
 
@@ -56,23 +70,6 @@ Which versions exist, and where:
 - On macOS, `jerboa exec --signal SIGUSR1` (or `SIGUSR2`) sent the VMM
   SIGBUS (or SIGSYS) whenever it fell back to a host signal, because the
   daemon used the Linux numbers 10 and 12. It now uses the host's.
-
-### Security
-
-- QEMU, Firecracker and `mkfs` now start with a minimal environment
-  (`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`, `LANG`,
-  `LANGUAGE`, `LC_*`, `TZ`) instead of the daemon's whole environment, which
-  held `JERBOA_AUTH_TOKEN` and, when set, the observability and cluster
-  tokens: a guest that took over its VMM, or a package that took over `mkfs`,
-  could read them. If you set a variable in the daemon's environment for QEMU
-  or Firecracker to use, it no longer reaches them. The daemon's other
-  programs (`ip`, `nft`, `iptables`, `sysctl`) no longer get Jerboa's tokens,
-  and on Linux `mkfs` no longer keeps the daemon's network capabilities.
-- With the QEMU hypervisor (Linux, and macOS with `hypervisor qemu`), the
-  environment variables given with `-e`, often secrets, were on QEMU's
-  command line, where any local user could read them with `ps`. QEMU now
-  reads them from a file only the daemon's user can read, deleted when the
-  VM exits. The guest sees the same variables as before.
 
 ## [0.60.0] - 2026-11-18
 
