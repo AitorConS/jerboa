@@ -340,6 +340,10 @@ Build driver behavior to know:
   `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `.aws/`, `.ssh/`, `id_rsa`,
   `id_dsa`, `id_ecdsa`, `id_ed25519`, `*.pem` and `*.key`. Re-include one the
   image needs with a negated pattern in `.unignore`, e.g. `!certs/server.pem`.
+- The daemon accepts a build context of at most 4 GiB and 1,000,000 entries
+  (files, directories and links). Every entry counts 512 bytes toward the
+  size, whatever it holds. The same limits apply to the package files
+  `jerboa volume seed` sends.
 - Python builds cache dependency installs. `pip install` runs only when
   `requirements.txt` or the Python version changes, tracked by
   `packages/.jerboa-deps-stamp`. Delete `packages/` or that stamp file to force

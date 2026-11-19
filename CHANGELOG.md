@@ -52,6 +52,9 @@ Which versions exist, and where:
   any API client give back an address a VM still held, so the next VM could
   be handed the same address. Addresses are leased and released only by
   running and removing VMs.
+- Build and volume-seed contexts are limited to 1,000,000 entries, and every
+  entry counts 512 bytes toward the 4 GiB size limit. Directories, empty files
+  and links used to cost nothing, so a client could send them without end.
 
 ### Fixed
 
