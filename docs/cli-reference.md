@@ -720,7 +720,7 @@ Checks that this machine, the daemon and everything the daemon stores are in ord
                        -> jerboa rmi web:latest, then build or pull it again
 ```
 
-What it looks at: the CLI's config and credentials files, hardware virtualization, whether the daemon answers and runs the same version as the CLI, the hypervisor in use, free disk space, and the consistency of images, VMs, volumes, networks and snapshots (names that point at nothing, VMs whose image or volume is gone, records that cannot be read, leftovers of interrupted operations).
+What it looks at: the CLI's config and credentials files, hardware virtualization, whether the daemon answers and runs the same version as the CLI, the hypervisor in use, free disk space, the consistency of images, VMs, volumes, networks and snapshots (names that point at nothing, VMs whose image or volume is gone, records that cannot be read, leftovers of interrupted operations), and on Linux and WSL whether the guest network guard is loaded (`network isolation`; an error while VMs on networks cannot start because of it).
 
 | Flag | Meaning |
 |---|---|
@@ -930,7 +930,8 @@ Environment the daemon reads:
 | `JERBOA_OBSERVABILITY_TOKEN`, `JERBOA_CLUSTER_TOKEN` | The tokens of the flags of the same names |
 | `JERBOA_DNS_UPSTREAM` | Resolver that guest questions for names the daemon does not own are forwarded to (default `1.1.1.1:53`). Set it empty to forward nothing |
 | `JERBOA_QEMU_SANDBOX=off` | Linux: run QEMU without its seccomp sandbox. By default QEMU runs with `-sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny` when the binary supports it |
-| `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Off by default |
+| `JERBOA_ALLOW_UNGUARDED_NETWORK=1` | Linux: let VMs on networks start while the guest network guard (nftables) is not loaded. Without it such VMs fail to start until `nft` works. Guests then run without isolation: see [Network isolation]({% link getting-started.md %}#network-isolation-linux) |
+| `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Linux: let guests open connections to the host's addresses (not its loopback) and to private, shared and link-local addresses outside their network. Off by default |
 | `JERBOA_FIRECRACKER_SECURITY` | macOS: the policy file of `--fc-security`, for a daemon started with `jerboa daemon start` |
 
 None of these reach the programs the daemon starts. QEMU, Firecracker and

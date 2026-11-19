@@ -268,7 +268,12 @@ func DetachTAP(tapName string) error {
 	return nil
 }
 
-// enableForwarding enables IPv4 forwarding on the host (best-effort).
+// enableForwarding enables IPv4 forwarding on the host (best-effort). It is
+// host-wide and never turned off, and no forward policy is added for the
+// interfaces that are not jerboa bridges: other software (Docker, libvirt, a
+// VPN router) may rely on the host routing, and once forwarding is on there
+// is no telling who needs it, across daemon restarts included. The operator
+// decides (docs: getting-started, Network isolation).
 func enableForwarding() error { //nolint:unparam // error kept for interface consistency
 	_ = hostCommand("sysctl", "-w", "net.ipv4.ip_forward=1").Run() //nolint:noctx
 	return nil
