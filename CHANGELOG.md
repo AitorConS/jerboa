@@ -51,20 +51,18 @@ Which versions exist, and where:
   then `sudo systemctl restart jerboad`). The rules apply when the daemon
   starts with the new version.
 
-### Fixed
-
-- A package file rewritten twice within a few milliseconds to the same size
-  could keep the digest of its first contents, so a build could miss the
-  change. Digests are now remembered only for files left alone for at least
-  100 ms.
-- On Linux, `jerboa daemon logs` said there was no log yet and to run
-  `jerboa daemon start`, which does not exist there. It now says the daemon
-  is a systemd service and names `journalctl -u jerboad` (#306).
-- On Windows, a `.wslconfig` that began with two byte-order marks gained
-  another `[wsl2]` section on every install (#303).
-
 ### Security
 
+- The registry part of an image reference is now checked and read in one
+  spelling. `registry.jerboa.dev:443/jerboa/web`, `REGISTRY.JERBOA.DEV/...`
+  and `registry.jerboa.dev./...` reached the official registry without the
+  rule that `jerboa/` images must be signed by the official workflow, and with
+  a signer remembered apart from the one of `jerboa/web`. They are now the
+  same reference as `jerboa/web`. A registry containing `@`, as in
+  `registry.jerboa.dev@other.example/jerboa/web@sha256:…`, connected to
+  `other.example` while the image was listed under a name starting with
+  `registry.jerboa.dev`; such a reference is refused with `invalid registry
+  (want host[:port])`.
 - On Linux, guests were attached to their network with no isolation when
   `nft` was missing, as it was on hosts set up by the installer and in the
   WSL2 distro: a guest could send with another guest's MAC or IP address and
@@ -77,6 +75,18 @@ Which versions exist, and where:
   pre-authentication connection slots. The guard now drops new connections
   from guests to the host, other than guest DNS, and to non-public
   addresses outside their network.
+
+### Fixed
+
+- A package file rewritten twice within a few milliseconds to the same size
+  could keep the digest of its first contents, so a build could miss the
+  change. Digests are now remembered only for files left alone for at least
+  100 ms.
+- On Linux, `jerboa daemon logs` said there was no log yet and to run
+  `jerboa daemon start`, which does not exist there. It now says the daemon
+  is a systemd service and names `journalctl -u jerboad` (#306).
+- On Windows, a `.wslconfig` that began with two byte-order marks gained
+  another `[wsl2]` section on every install (#303).
 
 ## [0.60.0] - 2026-11-18
 
