@@ -42,7 +42,13 @@ enforces it is outside the pull request's reach:
   script's header). Before any step
   of a job it refuses pull requests whose head is another repository, events other
   than push, pull_request, workflow_dispatch and schedule, and workflows other than
-  `main.yml`, `release.yml` and `nightly.yml`. Reinstall it from main when it
+  `main.yml`, `release.yml` and `nightly.yml`. Push, `workflow_dispatch` and
+  schedule jobs run only when both the ref and the workflow file are
+  `refs/heads/main`: they wait for no review (the nightly KVM jobs carry no
+  `environment: kvm`, so the scheduled run never waits for a person), and a
+  dispatch can name any branch. Test a branch on the runner through its pull
+  request, whose jobs wait for the `kvm` review. The check only takes effect
+  once the guard is reinstalled on the runner. Reinstall it from main when it
   changes: the candidate's `kernel-test` job compares the installed copy with the
   revision being released (`kvm-runner-guard.py check-installed`) and fails with
   the install command when they differ. A unit test fails when a workflow with

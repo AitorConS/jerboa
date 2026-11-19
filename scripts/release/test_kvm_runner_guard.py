@@ -10,11 +10,12 @@ class GuardTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
 
-    def env(self,event_name='pull_request',event=None,workflow='main.yml',**extra):
+    def env(self,event_name='pull_request',event=None,workflow='main.yml',ref=None,**extra):
         path=Path(self.tmp.name)/'event.json'
         path.write_text(json.dumps(event if event is not None else {}))
-        return {'JERBOA_KVM_REPOSITORY':REPO,'GITHUB_REPOSITORY':REPO,'GITHUB_EVENT_NAME':event_name,
-                'GITHUB_WORKFLOW_REF':f'{REPO}/.github/workflows/{workflow}@refs/heads/x','GITHUB_EVENT_PATH':str(path),**extra}
+        if ref is None:ref='refs/pull/1/merge' if event_name.startswith('pull_request') else 'refs/heads/main'
+        return {'JERBOA_KVM_REPOSITORY':REPO,'GITHUB_REPOSITORY':REPO,'GITHUB_EVENT_NAME':event_name,'GITHUB_REF':ref,
+                'GITHUB_WORKFLOW_REF':f'{REPO}/.github/workflows/{workflow}@{ref}','GITHUB_EVENT_PATH':str(path),**extra}
 
     def pr(self,head):
         return {'pull_request':{'head':{'repo':{'full_name':head} if head else None},'base':{'repo':{'full_name':REPO}}}}
@@ -24,6 +25,23 @@ class GuardTests(unittest.TestCase):
         for event_name,workflow in [('push','main.yml'),('workflow_dispatch','release.yml'),('schedule','nightly.yml')]:
             with self.subTest(event=event_name):
                 self.assertIsNone(g.refusal(self.env(event_name,{},workflow)))
+
+    def test_unreviewed_events_run_only_on_main(self):
+        # A push, dispatch or schedule waits for no review (nightly.yml has
+        # no kvm environment) and a dispatch picks any ref.
+        for event_name,workflow in [('push','main.yml'),('workflow_dispatch','nightly.yml'),('workflow_dispatch','release.yml'),('schedule','nightly.yml')]:
+            for ref in ['refs/heads/feature','refs/heads/main-x','refs/tags/v1.0.0','refs/pull/1/merge','']:
+                with self.subTest(event=event_name,ref=ref):
+                    self.assertRegex(g.refusal(self.env(event_name,{},workflow,ref=ref)),'only on refs/heads/main')
+        # The workflow file must be main's too, not only the ref.
+        env=self.env('workflow_dispatch',{},'nightly.yml')
+        env['GITHUB_WORKFLOW_REF']=f'{REPO}/.github/workflows/nightly.yml@refs/heads/feature'
+        self.assertRegex(g.refusal(env),'only on refs/heads/main')
+        env['GITHUB_WORKFLOW_REF']=f'{REPO}/.github/workflows/nightly.yml'
+        self.assertRegex(g.refusal(env),'only on refs/heads/main')
+        # Pull requests of this repository keep running from their own ref:
+        # their jobs wait for the kvm environment's review.
+        self.assertIsNone(g.refusal(self.env(event=self.pr(REPO),ref='refs/pull/7/merge')))
 
     def test_fork_pull_requests_are_refused(self):
         for head in ['someone/jerboa',None]:
