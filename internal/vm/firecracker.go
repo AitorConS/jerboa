@@ -518,6 +518,13 @@ func (m *FirecrackerManager) List() []*VM {
 // told script=no,downscript=no so it consumes this pre-made tap instead of
 // running /etc/qemu-ifup.)
 func setupTAPNetwork(cfg Config) error {
+	if cfg.GatewayIP != "" {
+		// Fail closed: a guest is never put on a bridge the guard does not
+		// protect. Checked before anything is created on the host.
+		if err := network.RequireGuard(); err != nil {
+			return err
+		}
+	}
 	if err := network.CreateTAPDevice(cfg.tapDevice()); err != nil {
 		return err
 	}
