@@ -127,6 +127,12 @@ func newRootCmd() *cobra.Command {
 			if err := checkExposure(metricsAddr, uiAddr, obsToken, clusterAddr, clusterToken, allowInsecure, insecureClust); err != nil {
 				return err
 			}
+			if err := checkClusterTokenStrength(clusterToken); err != nil {
+				return err
+			}
+			if err := checkObservabilityTokenStrength(metricsAddr, uiAddr, obsToken, allowInsecure); err != nil {
+				return err
+			}
 			vm.SetVMLogMaxBytes(vmLogMaxBytes)
 			var fcOpts []vm.FCOption
 			if fcSecurityPath != "" {
@@ -402,7 +408,7 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 				"addr", uiAddr)
 		}
 		go func() {
-			if err := ui.Serve(ctx, uiAddr, obsToken, mgr, version); err != nil {
+			if err := ui.Serve(ctx, uiAddr, obsToken, mgr, version, ui.WithGuestSource(guestSource(netStore))); err != nil {
 				slog.Error("dashboard server", "err", err)
 			}
 		}()
@@ -764,6 +770,38 @@ func checkTokenStrength(endpoint, token string, allowInsecure bool) error {
 		"generate one with: openssl rand -hex 32", endpoint, len(token), minTCPTokenLength)
 }
 
+// checkClusterTokenStrength refuses a guessable cluster token. Gossip is
+// served on a network port by design, so every host that reaches it can try
+// tokens; there is no loopback-only case to exempt.
+func checkClusterTokenStrength(token string) error {
+	if token == "" || len(token) >= minTCPTokenLength {
+		return nil
+	}
+	return fmt.Errorf("jerboad: the cluster token is too short (%d characters, want at least %d); "+
+		"generate one with: openssl rand -hex 32, put it in the --cluster-token-file (or JERBOA_CLUSTER_TOKEN) of every node, "+
+		"and restart them", len(token), minTCPTokenLength)
+}
+
+// checkObservabilityTokenStrength refuses a guessable observability token
+// when metrics or the dashboard listen off loopback, where other hosts can try
+// tokens. --insecure, which allows those listeners with no token at all, also
+// allows a short one.
+func checkObservabilityTokenStrength(metricsAddr, uiAddr, token string, allowInsecure bool) error {
+	if token == "" || allowInsecure || len(token) >= minTCPTokenLength {
+		return nil
+	}
+	for _, addr := range []string{metricsAddr, uiAddr} {
+		if addr != "" && !httpauth.IsLoopbackAddr(addr) {
+			return fmt.Errorf("jerboad: the observability token is too short for %q, which is reachable from other hosts "+
+				"(%d characters, want at least %d); generate one with: openssl rand -hex 32 and put it in "+
+				"--observability-token-file or JERBOA_OBSERVABILITY_TOKEN (observability_token in ~/.jerboa/config.toml for a daemon "+
+				"that jerboa starts), or bind metrics and the dashboard to 127.0.0.1",
+				addr, len(token), minTCPTokenLength)
+		}
+	}
+	return nil
+}
+
 // resolveSecret returns a secret from, in order, its (deprecated) flag, a
 // file, or an environment variable. The file must not be readable by group
 // or others, since it would hand the secret to other local users.
@@ -843,4 +881,23 @@ func (a *clusterMemberAdapter) Members() []apiserver.ClusterMember {
 		}
 	}
 	return out
+}
+
+// guestSource reports whether ip is an address a guest on one of the jerboa
+// networks in netStore connects from. Loopback is never a guest's source, and
+// is answered without reading the store. When the store cannot be read the
+// address is treated as a guest's: the dashboard then refuses non-loopback
+// clients rather than risk serving a guest.
+func guestSource(netStore *network.Store) func(net.IP) bool {
+	return func(ip net.IP) bool {
+		if ip.IsLoopback() {
+			return false
+		}
+		held, err := netStore.HoldsAddress(ip)
+		if err != nil {
+			slog.Warn("dashboard: cannot read the guest networks; refusing a non-loopback client", "err", err)
+			return true
+		}
+		return held
+	}
 }

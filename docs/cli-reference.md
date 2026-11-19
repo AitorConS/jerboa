@@ -340,6 +340,10 @@ Build driver behavior to know:
   `.env.*`, `.npmrc`, `.pypirc`, `.netrc`, `.aws/`, `.ssh/`, `id_rsa`,
   `id_dsa`, `id_ecdsa`, `id_ed25519`, `*.pem` and `*.key`. Re-include one the
   image needs with a negated pattern in `.unignore`, e.g. `!certs/server.pem`.
+- The daemon accepts a build context of at most 4 GiB and 1,000,000 entries
+  (files, directories and links). Every entry counts 512 bytes toward the
+  size, whatever it holds. The same limits apply to the package files
+  `jerboa volume seed` sends.
 - Python builds cache dependency installs. `pip install` runs only when
   `requirements.txt` or the Python version changes, tracked by
   `packages/.jerboa-deps-stamp`. Delete `packages/` or that stamp file to force
@@ -908,10 +912,10 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--log-format` | Log format: `text` (default) or `json` |
 | `--metrics-addr` | HTTP address for Prometheus metrics (e.g. `127.0.0.1:9090`); empty disables metrics. Off loopback it needs an observability token |
 | `--ui-addr` | HTTP address for the web dashboard (e.g. `127.0.0.1:8080`); empty disables it. It needs an observability token, on loopback too |
-| `--observability-token-file` | File (mode `0600`) with the read-only token for metrics and the dashboard (env: `JERBOA_OBSERVABILITY_TOKEN`) |
+| `--observability-token-file` | File (mode `0600`) with the read-only token for metrics and the dashboard (env: `JERBOA_OBSERVABILITY_TOKEN`). When metrics or the dashboard listen off loopback it must be at least 32 characters (`openssl rand -hex 32`), unless `--insecure` is passed |
 | `--trace-addr` | OTLP gRPC address for trace export (e.g. `localhost:4317`); empty disables tracing |
 | `--cluster-addr` | HTTP address for the cluster gossip endpoint (e.g. `:7946`); empty disables cluster. Requires a cluster token |
-| `--cluster-token-file` | File (mode `0600`) with the token shared by all cluster nodes (env: `JERBOA_CLUSTER_TOKEN`) |
+| `--cluster-token-file` | File (mode `0600`) with the token shared by all cluster nodes (env: `JERBOA_CLUSTER_TOKEN`). It must be at least 32 characters (`openssl rand -hex 32`) |
 | `--insecure-cluster` | Serve gossip without a cluster token (unsafe) |
 | `--join` | Comma-separated seed node addresses to join (e.g. `10.0.0.2:7946,10.0.0.3:7946`) |
 
@@ -929,8 +933,12 @@ Environment the daemon reads:
 
 Connections are limited before they authenticate: at most 64 handshakes
 pending in total and 8 per peer, 5 seconds to complete one, and a 500 ms delay
-after a failed one. A client beyond the limit is answered `daemon busy: too
-many connections waiting to authenticate; retry shortly`.
+after a failed one. A ninth connection from one peer closes that peer's oldest
+pending one and takes its place, so idle connections cannot lock out a client
+that authenticates promptly. When all 64 are taken, a client is answered
+`daemon busy: too many connections waiting to authenticate; retry shortly`;
+`jerboa` and `jerboa-agent` retry that four times within about two
+seconds before reporting it.
 
 Observability and store flags (`--metrics-addr`, `--ui-addr`, `--trace-addr`,
 `--log-format`, `--vm-log-max-bytes`, `--vm-store`) are covered in more detail in

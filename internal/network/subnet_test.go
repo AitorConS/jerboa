@@ -86,3 +86,19 @@ func TestAllocateSubnetSkipsHostNetworks(t *testing.T) {
 	require.Equal(t, "10.100.2.0/24", ipNet.String())
 	require.Equal(t, "10.100.2.1", gw.String())
 }
+
+func TestHoldsAddress(t *testing.T) {
+	s, err := NewStore(t.TempDir())
+	require.NoError(t, err)
+	held, err := s.HoldsAddress(net.ParseIP("10.100.0.5"))
+	require.NoError(t, err)
+	require.False(t, held, "no networks yet")
+
+	_, err = s.Create("app", "10.100.0.0/24", "bridge")
+	require.NoError(t, err)
+	for ip, want := range map[string]bool{"10.100.0.5": true, "10.100.0.1": true, "10.100.1.5": false, "192.168.1.20": false} {
+		held, err := s.HoldsAddress(net.ParseIP(ip))
+		require.NoError(t, err)
+		require.Equal(t, want, held, ip)
+	}
+}

@@ -256,12 +256,16 @@ func TestRunFault_StartFailsAndReleaseWriteFails(t *testing.T) {
 	require.Contains(t, rpcErr.Message, "release IP")
 	require.Empty(t, e.mgr.List())
 
-	// The address is still recorded; the documented way out works.
+	// The address is still recorded, so it is never handed out twice; the
+	// next VM gets another one.
 	held := e.leases()
 	require.Len(t, held, 1)
-	_, rpcErr = e.call("Network.ReleaseIP", map[string]string{"network": faultNet, "ip": held[0]})
+	e.mgr.StartFn = nil
+	info, rpcErr := e.run(api.RunParams{Name: "web", NetworkName: faultNet})
 	require.Nil(t, rpcErr)
-	e.requireNoLeak()
+	v, err := e.mgr.Get(info.ID)
+	require.NoError(t, err)
+	require.NotEqual(t, held[0], v.Cfg.IPAddress)
 }
 
 // VM.Start of a stopped VM boots a replacement. Whatever step fails, the
