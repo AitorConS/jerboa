@@ -73,6 +73,11 @@ Which versions exist, and where:
   the caller's whole environment apart from Jerboa's own tokens, and could
   read the GitHub CLI's, Vault's and Terraform's tokens. Well-known secret
   variables are now removed and those files hidden.
+- An ops package could keep a symlink that leads out of its directory: a
+  link whose `..` followed a path the archive created as a link only later
+  was checked as written. Such links are now refused, and after extraction
+  every link is resolved again and removed if it leads outside the package
+  or nowhere.
 
 ### Fixed
 

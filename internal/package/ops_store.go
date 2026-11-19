@@ -352,7 +352,41 @@ func (s *OpsStore) Extract(namespace, name, version string) (err error) {
 	if err := materializeLinks(pendingLinks, budget); err != nil {
 		return fmt.Errorf("ops extract %s: %w", name, err)
 	}
+	// Each link was checked against what was on disk when it was created;
+	// links created after it can change where it leads. Check them all again
+	// now that the tree is complete.
+	if err := removeEscapingLinks(dir); err != nil {
+		return fmt.Errorf("ops extract %s: %w", name, err)
+	}
 	return nil
+}
+
+// removeEscapingLinks removes every symlink under dir that, resolved on disk,
+// leads outside dir, and every one that does not resolve (dangling, or a
+// loop): a link the image build can use leads to a file in the package, and
+// one that leads nowhere today could lead outside once something is
+// created where it points.
+func removeEscapingLinks(dir string) error {
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("resolve package dir: %w", err)
+	}
+	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		if resolved, rerr := filepath.EvalSymlinks(path); rerr == nil && withinDir(realDir, resolved) {
+			return nil
+		}
+		slog.Warn("ops extract: removing symlink that leads outside the package or nowhere", "path", path)
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("remove escaping symlink %s: %w", path, err)
+		}
+		return nil
+	})
 }
 
 // symlinksSupported reports whether Extract creates tar symlinks as links;
@@ -485,7 +519,10 @@ func resolveLinkname(dir, target, linkname string) (string, bool) {
 // actually led: after a link such as "s -> .", "s/.." climbs out of base
 // while its lexical form stays put. A ".." that follows a component that is a
 // symlink on disk is therefore refused, so the lexical result the callers
-// check is the one the kernel will follow.
+// check is the one the kernel will follow. So is a ".." that follows a
+// component not on disk yet: a later entry of the archive could make it such
+// a link ("q/../../x" planted before "q -> ."), and the link checked now
+// would then lead elsewhere.
 func physicallyWithin(dir, base, linkname string) bool {
 	cur := base
 	for _, c := range strings.Split(filepath.ToSlash(linkname), "/") {
@@ -493,7 +530,8 @@ func physicallyWithin(dir, base, linkname string) bool {
 		case "", ".":
 			continue
 		case "..":
-			if info, err := os.Lstat(cur); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			info, err := os.Lstat(cur)
+			if err != nil || info.Mode()&os.ModeSymlink != 0 {
 				return false
 			}
 			cur = filepath.Dir(cur)
