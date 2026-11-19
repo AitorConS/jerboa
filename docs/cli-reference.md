@@ -305,12 +305,17 @@ Build driver behavior to know:
   on macOS. A confined step reads the host but writes only to the project
   directory, a private temporary directory (`TMPDIR`) and caches that belong
   to Jerboa, not the tools' own: `npm`, `node-gyp`, `pip`, `go-build`,
-  `go-mod`, `cargo` and `xdg` under `<user cache dir>/jerboa/build-sandbox/`,
-  where the tools are pointed with `npm_config_cache`, `npm_config_devdir`,
+  `go-mod`, `cargo` and `xdg` under
+  `<user cache dir>/jerboa/build-sandbox/<project>/`, where `<project>` is
+  derived from the project's real path (symlinks resolved), and where the
+  tools are pointed with `npm_config_cache`, `npm_config_devdir`,
   `PIP_CACHE_DIR`, `GOCACHE`, `GOMODCACHE`, `CARGO_HOME` and
-  `XDG_CACHE_HOME`. Your `~/.npm`, `~/.cargo` and Go caches are therefore
-  neither written nor reused (the first confined build downloads again), and
-  your cargo configuration and registry credentials are copied in. It cannot
+  `XDG_CACHE_HOME`. Each project has caches of its own, so one project's
+  build scripts cannot alter the modules or crates another project's build
+  compiles. Your `~/.npm`, `~/.cargo` and Go caches are therefore neither
+  written nor reused (the first confined build of each project downloads
+  again), and your cargo configuration and registry credentials are copied
+  in. A project's caches stay until you delete them. It cannot
   connect to the daemon's or the VMs' control sockets, and it cannot read `~/.jerboa`, `~/.aws`,
   `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker` or `~/.gnupg`.
   `[build] run` commands have no network unless `[build] network = true`;

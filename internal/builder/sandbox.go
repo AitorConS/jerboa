@@ -2,6 +2,8 @@ package builder
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"os"
@@ -79,7 +81,7 @@ func (s Sandbox) Command(ctx context.Context, st Step, name string, args ...stri
 		return cmd, func() {}, nil
 	}
 
-	caches, cacheEnv, err := toolCaches()
+	caches, cacheEnv, err := toolCaches(st.Dir)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sandbox: %w", err)
 	}
@@ -184,12 +186,16 @@ func within(path, dir string) bool {
 // could leave code behind for the user's next build. The user's cargo
 // configuration and registry credentials are copied in, so cargo still sees
 // them.
-func toolCaches() ([]string, []string, error) {
-	base, err := os.UserCacheDir()
+//
+// Each project gets caches of its own, keyed by its real path: a step writes
+// to the extracted modules and crates it reads back, so a cache shared by
+// every project would let one project's build scripts alter the sources a
+// later build of another project compiles.
+func toolCaches(project string) ([]string, []string, error) {
+	base, err := projectCacheDir(project)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cache directory: %w", err)
+		return nil, nil, err
 	}
-	base = filepath.Join(base, "jerboa", "build-sandbox")
 	vars := []struct{ name, dir string }{
 		{"npm_config_cache", "npm"},
 		{"npm_config_devdir", "node-gyp"},
@@ -210,6 +216,26 @@ func toolCaches() ([]string, []string, error) {
 	}
 	copyCargoConfig(filepath.Join(base, "cargo"))
 	return dirs, env, nil
+}
+
+// projectCacheDir returns the directory that holds the tool caches of the
+// project at dir: a name derived from the project's path with symlinks
+// resolved, so two paths to one project share it and two projects never do.
+func projectCacheDir(dir string) (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("cache directory: %w", err)
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("cache directory: %w", err)
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("cache directory: resolve project %s: %w", abs, err)
+	}
+	sum := sha256.Sum256([]byte(real))
+	return filepath.Join(base, "jerboa", "build-sandbox", hex.EncodeToString(sum[:16])), nil
 }
 
 // copyCargoConfig copies the user's cargo configuration and registry

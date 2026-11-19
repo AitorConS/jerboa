@@ -24,6 +24,23 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Changed
+
+- **Each project's confined build steps get tool caches of their own.** The
+  npm, pip, Go and cargo caches under `<user cache dir>/jerboa/build-sandbox/`
+  are now kept per project, so the first build of each project after
+  upgrading downloads its dependencies again. The old shared caches
+  (`npm`, `node-gyp`, `pip`, `go-build`, `go-mod`, `cargo`, `xdg` directly
+  under `build-sandbox/`) are no longer used and can be deleted; `go-mod` is
+  read-only, so `chmod -R u+w` it first.
+
+### Security
+
+- One project's build scripts could alter the Go modules or cargo crates that
+  the confined build steps of every other project read from the shared tool
+  cache, and so change what a later build of another project compiled. The
+  caches are now per project.
+
 ### Fixed
 
 - A package file rewritten twice within a few milliseconds to the same size
