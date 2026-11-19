@@ -83,6 +83,10 @@ Which versions exist, and where:
   is. They are now checked when the recipe is read and again when the image
   runs: a memory size from 1 MiB to 1 TiB, at most 256 CPUs, a VM disk of at
   most 16 TiB.
+- The CDN a registry names in its discovery document must be HTTPS, unless
+  it is on loopback, as the registry's own host must; tags read from it are
+  not covered by any digest. Registry reads whose body stops arriving for
+  60 seconds fail and are retried instead of hanging the pull.
 
 ### Fixed
 

@@ -424,7 +424,7 @@ func TestPushIndexRefusesWhatCannotBeIndexed(t *testing.T) {
 
 	// A registry that does not advertise indexes.
 	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": "http://cdn.invalid"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"api": 1, "cdn": "https://cdn.invalid"})
 	}))
 	defer old.Close()
 	ref, err := naming.ParseImageReference(strings.TrimPrefix(old.URL, "http://") + "/alice/web:multi")

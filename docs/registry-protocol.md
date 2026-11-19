@@ -31,6 +31,12 @@ returns the discovery document (cacheable for 5 minutes):
 {"api": 1, "cdn": "https://cdn.registry.jerboa.dev", "login": "device", "features": ["oidc", "index"]}
 ```
 
+`cdn` must be an `https` origin, without credentials, a query or a
+fragment. Clients accept plain `http` only for a loopback host
+(`localhost`, `127.0.0.1`, `::1`), the rule they apply to the registry's own
+host; tags are not covered by any digest, so a CDN over plain HTTP would let
+anyone on the path choose the recipe a tag pulls.
+
 `features` lists optional parts of the protocol the registry supports:
 - `"oidc"` is [GitHub Actions OIDC](#github-actions-oidc-trusted-publishers);
 - `"index"` is [image indexes](#image-indexes);
@@ -92,7 +98,7 @@ Every digest is `sha256:<64 lowercase hex>`.
 ## Pull
 
 1. `GET {cdn}/tags/<ns>/<repo>/<tag>`. A reference by digest skips this step. If the tag document names an `index`: `GET {cdn}/indexes/<hex>.json`, verify its SHA-256, parse it (`imageindex.Parse`), and pull the recipe of the platform asked for (`--platform`), or of the host's (`linux/<arch>`); a client that does not know indexes pulls `recipe`.
-2. `GET {cdn}/recipes/<hex>.json`. Verify the SHA-256 of the bytes against the digest, then parse it (`recipe.Parse`, which rejects non-canonical encodings).
+2. `GET {cdn}/recipes/<hex>.json`. Verify the SHA-256 of the bytes against the digest, then parse it (`recipe.Parse`, which rejects non-canonical encodings). Check it against the pull limits and the free space before fetching anything else.
 3. Drop the blobs already in the local store. If none are missing, go to step 6.
 4. `GET {cdn}/locations/<hex>.json`. Group the missing blobs by pack and merge frames less than 64 KiB apart (`pack.PlanRanges`).
 5. For each range: `GET {cdn}/packs/<hex>` with `Range: bytes=<start>-<end>`. Decompress each frame, bounded to the blob's size from the recipe; verify the SHA-256 (`pack.ReadBlob`); store it.
@@ -101,6 +107,8 @@ Every digest is `sha256:<64 lowercase hex>`.
 7. `POST https://registry.jerboa.dev/v2/<ns>/<repo>/pulls`, anonymous and without a body, reports the pull for the hub's counter. The server answers 204, also for unknown repositories. The client sends it once, waits at most 2 seconds and ignores the result.
 
 Retries:
+- A response whose body stops arriving for 60 seconds fails, and is retried
+  like a cut connection.
 - A failed range is retried with backoff.
 - A blob that fails verification aborts the pull. It is never stored.
 

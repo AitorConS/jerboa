@@ -339,7 +339,7 @@ func TestFaults_Discovery(t *testing.T) {
 			healthy := atomic.Bool{}
 			c, _, _ := faulty(t, func(_ int32, w http.ResponseWriter, _ *http.Request) {
 				if healthy.Load() {
-					_, _ = w.Write([]byte(`{"api":1,"cdn":"http://cdn.example/","features":["index"]}`))
+					_, _ = w.Write([]byte(`{"api":1,"cdn":"https://cdn.example/","features":["index"]}`))
 					return
 				}
 				_, _ = w.Write([]byte(body))
@@ -352,7 +352,7 @@ func TestFaults_Discovery(t *testing.T) {
 			healthy.Store(true)
 			d, err := c.Discover(context.Background())
 			require.NoError(t, err, "a failed discovery was remembered")
-			assert.Equal(t, "http://cdn.example", d.CDN)
+			assert.Equal(t, "https://cdn.example", d.CDN)
 			assert.True(t, d.Supports(FeatureIndex))
 			assert.False(t, d.Supports(FeatureAttestations))
 		})
@@ -366,7 +366,7 @@ func TestFaults_DiscoveryCacheIsNotSharedMemory(t *testing.T) {
 	ForgetDiscoveries()
 	t.Cleanup(ForgetDiscoveries)
 	c, _, _ := faulty(t, func(_ int32, w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"api":1,"cdn":"http://cdn.example","features":["index","attestations"]}`))
+		_, _ = w.Write([]byte(`{"api":1,"cdn":"https://cdn.example","features":["index","attestations"]}`))
 	})
 	d, err := c.Discover(context.Background())
 	require.NoError(t, err)
