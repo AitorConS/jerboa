@@ -18,3 +18,11 @@ func SetWatchdog(delay, interval time.Duration) func() {
 	watchdogDelay, watchdogInterval = delay, interval
 	return func() { watchdogDelay, watchdogInterval = oldDelay, oldInterval }
 }
+
+// SetBusyRetryDelays replaces the waits between attempts when the daemon is
+// busy and returns a function that restores them.
+func SetBusyRetryDelays(d ...time.Duration) func() {
+	old := busyRetryDelays
+	busyRetryDelays = d
+	return func() { busyRetryDelays = old }
+}

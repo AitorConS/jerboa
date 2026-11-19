@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/AitorConS/jerboa/internal/httpauth"
 )
 
 type MemberStatus string
@@ -583,8 +585,20 @@ const maxClockSkew = time.Minute
 //     request this node sent to the member's recorded address (dialed is that
 //     address; it is empty for inbound gossip). The claim is then bound to
 //     whoever answers at that address, not to a body field any peer can set.
-//   - Any peer may still relay liveness and newer capacity figures, introduce
-//     members this node has not seen, and declare a member dead, as before.
+//   - "dead" is never taken on another node's word about a member this node
+//     knows: each node declares a member dead from its own timers
+//     (checkSuspicions), which every node runs on the same freshest-known
+//     last-seen time, so a member that is really gone still ends up dead
+//     everywhere. A relayed "dead" counts only as the liveness evidence its
+//     last-seen time carries. Otherwise one false claim, which nothing ever
+//     reverted, would keep a live member dead for good.
+//   - A member this node holds as dead comes back when the member itself
+//     reports it is alive (its own entry in a message it sends) or when a peer
+//     relays an alive entry seen later than this node's record: the evidence
+//     its dead verdict rested on is then out of date. Suspect members recover
+//     on any alive entry, as before.
+//   - Any peer may still relay liveness and newer capacity figures and
+//     introduce members this node has not seen.
 func (c *SwimCluster) mergeEntriesLocked(sender, dialed string, entries []memberEntry) {
 	now := time.Now()
 	for _, e := range entries {
@@ -618,17 +632,33 @@ func (c *SwimCluster) mergeEntriesLocked(sender, dialed string, entries []member
 		// The member answered at its recorded address and speaks for itself.
 		firstHand := e.ID == sender && dialed != "" && existing.Addr == dialed
 
-		if e.Status == StatusDead || (e.Status == StatusLeft && firstHand) {
-			existing.Status = e.Status
-		} else if entryTime.After(existing.LastSeen) {
+		fresher := entryTime.After(existing.LastSeen)
+
+		if e.Status == StatusLeft && firstHand {
+			existing.Status = StatusLeft
+		} else if fresher {
 			existing.VMCount = e.VMCount
 			existing.CPUCap = e.CPUCap
 			existing.MemCap = e.MemCap
 			existing.LastSeen = entryTime
 		}
 
-		if e.Status == StatusAlive && existing.Status == StatusSuspect {
-			existing.Status = StatusAlive
+		if e.Status == StatusAlive {
+			switch existing.Status {
+			case StatusSuspect:
+				existing.Status = StatusAlive
+			case StatusDead:
+				if fresher || e.ID == sender {
+					existing.Status = StatusAlive
+					if e.ID == sender && !fresher {
+						// Its own word is the evidence: restart the timers
+						// from now, or the next check would kill it again.
+						existing.LastSeen = now
+					}
+					safeID, safeAddr := sanitizeForLog(e)
+					slog.Info("cluster member is alive again", "member", safeID, "addr", safeAddr)
+				}
+			}
 		}
 	}
 }
@@ -664,13 +694,22 @@ func (c *SwimCluster) authorized(r *http.Request) bool {
 	return subtle.ConstantTimeCompare([]byte(got), []byte(c.token)) == 1
 }
 
+// RegisterGossipHandler serves cluster's gossip endpoint on mux. A source
+// address that keeps presenting a wrong token is answered 429 without its
+// token being checked, so the token cannot be guessed at network speed.
 func RegisterGossipHandler(mux *http.ServeMux, cluster *SwimCluster) {
+	limiter := httpauth.NewFailureLimiter()
 	mux.HandleFunc("/cluster/gossip", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if cluster.token != "" && !limiter.Allow(r) {
+			httpauth.Refuse(w)
+			return
+		}
 		if !cluster.authorized(r) {
+			limiter.Fail(r)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}

@@ -190,10 +190,21 @@ func TestFaults_AuxiliaryEndpointsNeedTokens(t *testing.T) {
 	requirePassed(t, validate(t, with("--ui-addr", "127.0.0.1:8080", "--insecure")...))
 	requirePassed(t, validate(t, with("--cluster-addr", ":7946", "--insecure-cluster")...))
 
-	obs := secretFile(t, "scrape-token\n", 0o600)
+	obs := secretFile(t, strongToken+"\n", 0o600)
 	requirePassed(t, validate(t, with("--ui-addr", ":8080", "--metrics-addr", ":9090", "--observability-token-file", obs)...))
-	cluster := secretFile(t, "gossip-token\n", 0o600)
+	cluster := secretFile(t, strongToken+"\n", 0o600)
 	requirePassed(t, validate(t, with("--cluster-addr", ":7946", "--cluster-token-file", cluster)...))
+}
+
+func TestFaults_ShortClusterAndObservabilityTokensAreRefused(t *testing.T) {
+	sock := []string{"--host", "unix:///tmp/never-bound.sock"}
+	with := func(args ...string) []string { return append(append([]string{}, sock...), args...) }
+	short := secretFile(t, "gossip-token\n", 0o600)
+	requireRefused(t, validate(t, with("--cluster-addr", ":7946", "--cluster-token-file", short)...), "cluster token is too short")
+	// A loopback-only cluster is still served on a port; no exemption.
+	requireRefused(t, validate(t, with("--cluster-addr", "127.0.0.1:7946", "--cluster-token-file", short)...), "cluster token is too short")
+	requireRefused(t, validate(t, with("--metrics-addr", ":9090", "--observability-token-file", short)...), "observability token is too short")
+	requirePassed(t, validate(t, with("--metrics-addr", "127.0.0.1:9090", "--observability-token-file", short)...))
 }
 
 func TestFaults_ObservabilityTokenDoesNotOpenTheAPI(t *testing.T) {
