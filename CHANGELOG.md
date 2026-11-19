@@ -26,6 +26,11 @@ Which versions exist, and where:
 
 ### Fixed
 
+- A health check with a negative interval, sent to the daemon's API, stopped
+  `jerboad`, and it stopped again at every start because it adopted the same
+  VM. The CLI never sends one. The daemon now refuses an interval, timeout or
+  retry count below zero (or above 24 hours, 1 hour and 1000), and uses the
+  defaults for a VM already recorded with such a value.
 - A package file rewritten twice within a few milliseconds to the same size
   could keep the digest of its first contents, so a build could miss the
   change. Digests are now remembered only for files left alone for at least
