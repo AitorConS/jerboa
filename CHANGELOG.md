@@ -26,6 +26,16 @@ Which versions exist, and where:
 
 ### Security
 
+- The registry part of an image reference is now checked and read in one
+  spelling. `registry.jerboa.dev:443/jerboa/web`, `REGISTRY.JERBOA.DEV/...`
+  and `registry.jerboa.dev./...` reached the official registry without the
+  rule that `jerboa/` images must be signed by the official workflow, and with
+  a signer remembered apart from the one of `jerboa/web`. They are now the
+  same reference as `jerboa/web`. A registry containing `@`, as in
+  `registry.jerboa.dev@other.example/jerboa/web@sha256:…`, connected to
+  `other.example` while the image was listed under a name starting with
+  `registry.jerboa.dev`; such a reference is refused with `invalid registry
+  (want host[:port])`.
 - **`jerboad` refuses a cluster token shorter than 32 characters, and an
   observability token shorter than 32 characters when `--metrics-addr` or
   `--ui-addr` is off loopback.** A daemon configured with one stops at start
