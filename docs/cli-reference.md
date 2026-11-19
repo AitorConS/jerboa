@@ -926,6 +926,15 @@ Environment the daemon reads:
 | `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Off by default |
 | `JERBOA_FIRECRACKER_SECURITY` | macOS: the policy file of `--fc-security`, for a daemon started with `jerboa daemon start` |
 
+None of these reach the programs the daemon starts. QEMU, Firecracker and
+`mkfs` get only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`,
+`LANG`, `LANGUAGE`, `LC_*` and `TZ` from the daemon's environment; a variable
+set for the daemon to pass on to QEMU (a library path, a debug setting) no
+longer gets there. The host networking tools (`ip`, `nft`, `iptables`,
+`sysctl`) get the rest of the environment without any `JERBOA_` variable
+whose name contains `TOKEN` or `SECRET`. On Linux, `mkfs` is started without
+the daemon's network capabilities, like QEMU and Firecracker.
+
 Connections are limited before they authenticate: at most 64 handshakes
 pending in total and 8 per peer, 5 seconds to complete one, and a 500 ms delay
 after a failed one. A client beyond the limit is answered `daemon busy: too

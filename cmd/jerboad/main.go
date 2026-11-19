@@ -20,6 +20,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/apiserver"
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/cluster"
 	"github.com/AitorConS/jerboa/internal/config"
 	"github.com/AitorConS/jerboa/internal/dnsserver"
@@ -44,12 +45,8 @@ import (
 var version = "dev"
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == vm.VMMExecArg {
-		// Re-executed to launch a VMM without the daemon's capabilities.
-		err := vm.ExecVMM(os.Args[2:])
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(127)
-	}
+	// Re-executed to start a VMM or mkfs without the daemon's capabilities.
+	childproc.HandleReexec()
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

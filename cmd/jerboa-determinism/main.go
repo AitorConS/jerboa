@@ -25,6 +25,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/image"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/registry/cas"
@@ -33,6 +34,8 @@ import (
 )
 
 func main() {
+	// recipe.Assemble starts mkfs through childproc.Command.
+	childproc.HandleReexec()
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "jerboa-determinism:", err)
 		os.Exit(1)

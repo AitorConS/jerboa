@@ -17,12 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AitorConS/jerboa/internal/childproc"
 	"github.com/AitorConS/jerboa/internal/network"
 )
 
-// defaultCommandFunc starts VMMs; on Linux it drops the daemon's ambient
-// capabilities first (see VMMExecArg).
-var defaultCommandFunc CommandFunc = vmmCommand
+// defaultCommandFunc starts VMMs with a minimal environment; on Linux it drops
+// the daemon's ambient capabilities first (see childproc.ReexecArg).
+var defaultCommandFunc CommandFunc = childproc.Command
 
 const gracePeriod = 30 * time.Second
 
@@ -566,7 +567,9 @@ func qemuSandboxArgs(qemuBin string) []string {
 		return nil
 	}
 	sandboxProbe.Do(func() {
-		out, err := exec.Command(qemuBin, "-help").Output() //nolint:gosec,noctx // configured QEMU binary, short probe
+		probe := exec.Command(qemuBin, "-help") //nolint:gosec,noctx // configured QEMU binary, short probe
+		probe.Env = childproc.Minimal()
+		out, err := probe.Output()
 		if err != nil || !strings.Contains(string(out), "-sandbox") {
 			slog.Warn("QEMU has no seccomp sandbox support; VMs run without it", "qemu", qemuBin)
 			return

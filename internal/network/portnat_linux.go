@@ -99,7 +99,7 @@ func newKernelNAT(lan bool) (portNAT, error) {
 }
 
 func runIptables(args ...string) error {
-	cmd := exec.Command("iptables", append([]string{"-w"}, args...)...) //nolint:noctx,gosec // short-lived local tool; args are fixed rule specs
+	cmd := hostCommand("iptables", append([]string{"-w"}, args...)...) //nolint:noctx,gosec // short-lived local tool; args are fixed rule specs
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -119,7 +119,7 @@ func isWSL() bool {
 }
 
 func runNft(script string) error {
-	cmd := exec.Command("nft", "-f", "-") //nolint:noctx // short-lived local tool
+	cmd := hostCommand("nft", "-f", "-") //nolint:noctx // short-lived local tool
 	cmd.Stdin = strings.NewReader(script)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -132,7 +132,7 @@ func runNft(script string) error {
 
 // nftOutput runs an nft script and returns what it printed.
 func nftOutput(script string) (string, error) {
-	cmd := exec.Command("nft", "-f", "-") //nolint:noctx // short-lived local tool
+	cmd := hostCommand("nft", "-f", "-") //nolint:noctx // short-lived local tool
 	cmd.Stdin = strings.NewReader(script)
 	var out bytes.Buffer
 	cmd.Stdout = &out

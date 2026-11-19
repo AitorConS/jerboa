@@ -38,6 +38,15 @@ Which versions exist, and where:
 
 ### Security
 
+- QEMU, Firecracker and `mkfs` now start with a minimal environment
+  (`PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`, `LANG`,
+  `LANGUAGE`, `LC_*`, `TZ`) instead of the daemon's whole environment, which
+  held `JERBOA_AUTH_TOKEN` and, when set, the observability and cluster
+  tokens: a guest that took over its VMM, or a package that took over `mkfs`,
+  could read them. If you set a variable in the daemon's environment for QEMU
+  or Firecracker to use, it no longer reaches them. The daemon's other
+  programs (`ip`, `nft`, `iptables`, `sysctl`) no longer get Jerboa's tokens,
+  and on Linux `mkfs` no longer keeps the daemon's network capabilities.
 - With the QEMU hypervisor (Linux, and macOS with `hypervisor qemu`), the
   environment variables given with `-e`, often secrets, were on QEMU's
   command line, where any local user could read them with `ps`. QEMU now
