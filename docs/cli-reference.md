@@ -206,6 +206,9 @@ Flag:
 
 - `--signal`, default `SIGTERM`
 
+The signal is a name (`SIGTERM`, `SIGINT`, `SIGKILL`, `SIGHUP`, `SIGQUIT`,
+`SIGUSR1`, `SIGUSR2`) or a number as the daemon's host numbers it.
+
 ---
 
 ## Image Commands

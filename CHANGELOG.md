@@ -35,6 +35,9 @@ Which versions exist, and where:
   is a systemd service and names `journalctl -u jerboad` (#306).
 - On Windows, a `.wslconfig` that began with two byte-order marks gained
   another `[wsl2]` section on every install (#303).
+- On macOS, `jerboa exec --signal SIGUSR1` (or `SIGUSR2`) sent the VMM
+  SIGBUS (or SIGSYS) whenever it fell back to a host signal, because the
+  daemon used the Linux numbers 10 and 12. It now uses the host's.
 
 ### Security
 
