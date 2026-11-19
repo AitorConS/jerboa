@@ -33,6 +33,11 @@ Which versions exist, and where:
   (`npm`, `node-gyp`, `pip`, `go-build`, `go-mod`, `cargo`, `xdg` directly
   under `build-sandbox/`) are no longer used and can be deleted; `go-mod` is
   read-only, so `chmod -R u+w` it first.
+- **Pulls have limits.** A pulled image may list at most 100000 files, adding
+  up to at most 64 GiB, with a disk, and a VM disk it asks for, of at most
+  64 GiB. Raise them with `JERBOA_PULL_MAX_BLOBS`, `JERBOA_PULL_MAX_BYTES`
+  and `JERBOA_PULL_MAX_DISK_SIZE` in the daemon's environment. A pull whose
+  files and disk do not fit in the free space now fails before downloading.
 
 ### Security
 
@@ -47,6 +52,10 @@ Which versions exist, and where:
   still the files that were checked, without following a link put in their
   place, and confined steps run in their own process group, which is killed
   when the step ends.
+- A registry could make a pull download and assemble without bound: nothing
+  limited the number or size of a recipe's files or the size of its disk.
+  These are now checked against the daemon's limits, and against the free
+  space, before anything is downloaded.
 
 ### Fixed
 

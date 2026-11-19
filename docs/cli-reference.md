@@ -939,6 +939,9 @@ Environment the daemon reads:
 | `JERBOA_QEMU_SANDBOX=off` | Linux: run QEMU without its seccomp sandbox. By default QEMU runs with `-sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny` when the binary supports it |
 | `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Off by default |
 | `JERBOA_FIRECRACKER_SECURITY` | macOS: the policy file of `--fc-security`, for a daemon started with `jerboa daemon start` |
+| `JERBOA_PULL_MAX_BLOBS` | Most files one pulled image may list (default `100000`) |
+| `JERBOA_PULL_MAX_BYTES` | Most bytes those files may add up to (default `64G`; a number of bytes, or with a `k`, `m` or `g` suffix) |
+| `JERBOA_PULL_MAX_DISK_SIZE` | Largest disk a pulled image may have, and largest VM disk it may ask for (default `64G`) |
 
 Connections are limited before they authenticate: at most 64 handshakes
 pending in total and 8 per peer, 5 seconds to complete one, and a 500 ms delay

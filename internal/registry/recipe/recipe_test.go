@@ -4,6 +4,7 @@ import (
 	"context"
 	"debug/elf"
 	"encoding/binary"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -170,4 +171,46 @@ func TestAssembledManifestReadsOnlyRecipeBlobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, checkAssembledHosts(f.r, f.store, `(a:(contents:(host:"`+p+`")))`))
 	require.ErrorContains(t, checkAssembledHosts(f.r, f.store, `(a:(contents:(host:"/etc/passwd")))`), "host path")
+}
+
+func TestCheckLimitsBoundsWhatAPullFetches(t *testing.T) {
+	f := build(t)
+	r := *f.r
+	require.NoError(t, r.CheckLimits(DefaultLimits))
+	require.NoError(t, r.CheckLimits(Limits{}), "a zero limit is no limit")
+
+	cases := map[string]struct {
+		limits Limits
+		edit   func(r *Recipe)
+		want   string
+	}{
+		"too many files":    {Limits{MaxBlobs: len(r.Blobs) - 1}, nil, "JERBOA_PULL_MAX_BLOBS"},
+		"files too large":   {Limits{MaxBytes: r.BlobBytes() - 1}, nil, "JERBOA_PULL_MAX_BYTES"},
+		"disk too large":    {DefaultLimits, func(r *Recipe) { r.DiskSize = DefaultLimits.MaxDiskSize + 1 }, "JERBOA_PULL_MAX_DISK_SIZE"},
+		"VM disk too large": {DefaultLimits, func(r *Recipe) { r.Config.MinDiskSize = DefaultLimits.MaxDiskSize + 1 }, "JERBOA_PULL_MAX_DISK_SIZE"},
+		"files beyond the default": {DefaultLimits, func(r *Recipe) {
+			r.Blobs = append([]Blob{}, r.Blobs...)
+			r.Blobs[0].Size = DefaultLimits.MaxBytes
+		}, "JERBOA_PULL_MAX_BYTES"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			r := *f.r
+			if c.edit != nil {
+				c.edit(&r)
+			}
+			err := r.CheckLimits(c.limits)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), c.want)
+		})
+	}
+}
+
+func TestValidateRefusesBlobSizesThatOverflow(t *testing.T) {
+	f := build(t)
+	r := *f.r
+	r.Blobs = append([]Blob{}, r.Blobs...)
+	r.Blobs[0].Size = math.MaxInt64
+	r.Blobs[1].Size = 1
+	require.ErrorContains(t, r.Validate(), "add up")
 }
