@@ -5,6 +5,7 @@ package vm
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateVMConfig(t *testing.T) {
@@ -36,6 +37,30 @@ func TestValidateVMConfig(t *testing.T) {
 		}, true},
 		{"zero host port", func(c *Config) {
 			c.PortMaps = []PortMap{{HostPort: 0, GuestPort: 80, Protocol: ProtocolTCP}}
+		}, true},
+		{"health check defaults", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80}
+		}, false},
+		{"health check at its bounds", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Interval: maxHealthInterval, Timeout: maxHealthTimeout, Retries: maxHealthRetries}
+		}, false},
+		{"health check negative interval", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Interval: -time.Second}
+		}, true},
+		{"health check interval too long", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Interval: maxHealthInterval + 1}
+		}, true},
+		{"health check negative timeout", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Timeout: -1}
+		}, true},
+		{"health check timeout too long", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Timeout: maxHealthTimeout + 1}
+		}, true},
+		{"health check negative retries", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Retries: -1}
+		}, true},
+		{"health check too many retries", func(c *Config) {
+			c.HealthCheck = &HealthCheckConfig{Type: "tcp", Port: 80, Retries: maxHealthRetries + 1}
 		}, true},
 		{"bad ip", func(c *Config) { c.IPAddress = "999.1.1.1" }, true},
 		{"bad gateway", func(c *Config) { c.GatewayIP = "nope" }, true},
