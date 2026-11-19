@@ -262,6 +262,22 @@ class WorkflowContracts(unittest.TestCase):
   text=(ROOT/'.github/workflows/promote.yml').read_text()
   self.assertLess(text.index('actions/checkout@'),text.index('candidate.py promote'))
   self.assertNotIn('ref:',text)
+ def test_release_jobs_restore_no_build_cache(self):
+  # A cache entry can be written by any earlier job on main. The jobs that
+  # build what ships, and the ones that build and run the signer, compile
+  # from source only.
+  for name in ('release.yml','promote.yml'):
+   text=(ROOT/'.github/workflows'/name).read_text()
+   self.assertNotIn('cache: true',text,name)
+   self.assertNotIn('actions/cache@',text,name)
+   self.assertEqual(text.count('actions/setup-go@'),text.count('cache: false'),name)
+ def test_promotion_gives_the_bucket_keys_to_one_step(self):
+  text=(ROOT/'.github/workflows/promote.yml').read_text()
+  self.assertEqual(text.count('secrets.AWS_SECRET_ACCESS_KEY'),1)
+  self.assertEqual(text.count('secrets.AWS_ACCESS_KEY_ID'),1)
+  step=text.split('- name: Verify and promote existing bytes',1)[1].split('- name:',1)[0]
+  self.assertIn('secrets.AWS_SECRET_ACCESS_KEY',step)
+  self.assertIn('secrets.JERBOA_MINISIGN_SEED',step)
  def test_distro_inputs_are_pinned(self):
   # The WSL rootfs is signed into releases: its base image and Firecracker
   # are pinned and checked, Firecracker to the same digest install.sh uses.
