@@ -194,6 +194,21 @@ func (s *Store) List() ([]*Network, error) {
 	return out, nil
 }
 
+// HoldsAddress reports whether ip lies inside the subnet of any network in
+// the store, which is where a guest on a jerboa network connects from.
+func (s *Store) HoldsAddress(ip net.IP) (bool, error) {
+	nets, err := s.List()
+	if err != nil {
+		return false, err
+	}
+	for _, n := range nets {
+		if _, ipNet, err := net.ParseCIDR(n.Subnet); err == nil && ipNet.Contains(ip) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Store) Remove(name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
