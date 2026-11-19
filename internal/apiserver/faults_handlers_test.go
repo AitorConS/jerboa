@@ -27,7 +27,7 @@ var paramMethods = []string{
 	"VM.Run", "VM.Start", "VM.Stop", "VM.Kill", "VM.Signal", "VM.Remove", "VM.Get", "VM.Logs", "VM.Inspect", "VM.Stats",
 	"VM.SnapshotCreate", "VM.SnapshotRestore", "Snapshot.Inspect", "Snapshot.Remove",
 	"Image.Get", "Image.Remove", "Image.Recipe", "Image.SBOM", "Image.Tag", "Image.Push", "Image.Pull",
-	"Network.Create", "Network.Get", "Network.Remove", "Network.AllocateIP", "Network.ReleaseIP",
+	"Network.Create", "Network.Get", "Network.Remove",
 	"Volume.Create", "Volume.Get", "Volume.Remove",
 	"DNS.Resolve", "DNS.ResolveAll", "DNS.List",
 	"System.Prune", "System.Check",
@@ -146,8 +146,6 @@ func TestHandlers_UnknownTargets(t *testing.T) {
 		{"Network.Remove", map[string]string{"name": "ghost"}, -32000, "not found"},
 		{"Network.Remove", map[string]string{"name": ".."}, -32000, ""},
 		{"Network.Remove", map[string]string{"name": ""}, -32000, ""},
-		{"Network.AllocateIP", map[string]string{"network": "ghost"}, -32000, "not found"},
-		{"Network.ReleaseIP", map[string]string{"network": "ghost", "ip": "10.0.0.2"}, -32000, "not found"},
 		{"Network.Create", api.NetworkCreateParams{Name: faultNet}, -32000, "already exists"},
 		{"Network.Create", api.NetworkCreateParams{Name: "../escape"}, -32000, ""},
 		{"Network.Create", api.NetworkCreateParams{Name: ""}, -32000, ""},
@@ -185,36 +183,38 @@ func TestHandlers_UnknownTargets(t *testing.T) {
 	require.NoFileExists(t, filepath.Join(root, "escape"))
 }
 
-// Releasing an address that is not leased, or is not an address at all, is
-// harmless and does not disturb the leases that exist.
-func TestHandlers_ReleaseIPThatIsNotLeased(t *testing.T) {
+// Addresses are leased and released only by the VM lifecycle. The daemon used
+// to answer Network.AllocateIP and Network.ReleaseIP, which no client called,
+// which did not check whether a registered VM held the address and which ran
+// outside resourceMu: any client could give back a running VM's address and
+// have it handed to the next VM. They are gone, and the leases stay exactly
+// those of the registered VMs.
+func TestHandlers_LeasesAreNotAClientOperation(t *testing.T) {
 	e := newFaultEnv(t)
 	_, rpcErr := e.run(api.RunParams{Name: "web", NetworkName: faultNet})
 	require.Nil(t, rpcErr)
 	held := e.leases()
-	for _, ip := range []string{"10.100.0.250", "192.168.9.9", "", "not-an-ip", "../../x"} {
+	require.Len(t, held, 1)
+	for _, ip := range append(held, faultGateway) {
 		_, rpcErr := e.call("Network.ReleaseIP", map[string]string{"network": faultNet, "ip": ip})
-		require.Nil(t, rpcErr, "releasing %q", ip)
+		requireRPCError(t, rpcErr, -32601, "method not found")
 	}
+	_, rpcErr = e.call("Network.AllocateIP", map[string]string{"network": faultNet})
+	requireRPCError(t, rpcErr, -32601, "method not found")
 	require.Equal(t, held, e.leases())
-	// The gateway is not a lease a client can give back: a VM must never be
-	// handed the gateway's address.
-	_, rpcErr = e.call("Network.ReleaseIP", map[string]string{"network": faultNet, "ip": faultGateway})
+	e.requireNoLeak()
+
+	// The next VM gets an address of its own, not the one web holds.
+	info, rpcErr := e.run(api.RunParams{Name: "api", NetworkName: faultNet})
 	require.Nil(t, rpcErr)
-	for range 3 {
-		res, rpcErr := e.call("Network.AllocateIP", map[string]string{"network": faultNet})
-		require.Nil(t, rpcErr)
-		got, ok := res.(map[string]string)
-		require.True(t, ok)
-		require.NotEqual(t, faultGateway, got["ip"], "the gateway's address was handed out")
-	}
-	// Nor can a VM ask for it by name.
+	v, err := e.mgr.Get(info.ID)
+	require.NoError(t, err)
+	require.NotContains(t, append(held, faultGateway), v.Cfg.IPAddress)
+	// Nor can a VM ask for the gateway's address by name.
 	_, rpcErr = e.run(api.RunParams{Name: "squatter", NetworkName: faultNet, IPAddress: faultGateway})
 	require.NotNil(t, rpcErr, "a VM was started on the gateway's address")
 }
 
-// A daemon started without a store answers "disabled" for what needs it and
-// keeps serving the rest.
 func TestHandlers_StoresDisabled(t *testing.T) {
 	mgr := vm.NewMockManager()
 	s := &Server{mgr: mgr, resolver: scheduler.NewResolver(mgr)}
@@ -312,7 +312,6 @@ func TestHandlers_StoreDirectoryGone(t *testing.T) {
 	}{
 		{"Network.List", struct{}{}},
 		{"Network.Get", map[string]string{"name": faultNet}},
-		{"Network.AllocateIP", map[string]string{"network": faultNet}},
 		{"Network.Remove", map[string]string{"name": faultNet}},
 		{"Volume.List", struct{}{}},
 		{"Volume.Get", api.VolumeCreateParams{Name: "data"}},

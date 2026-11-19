@@ -67,9 +67,12 @@ func TestHandshakePeer_UnattributedLoopbackIsCapped(t *testing.T) {
 	require.NotEmpty(t, unattributedPeer)
 
 	srv := &Server{handshakes: make(chan struct{}, maxPendingHandshake)}
-	for range maxPendingPerPeer {
-		require.True(t, srv.claimHandshake(unattributedPeer))
+	for range maxPendingPerPeer + 1 {
+		h, _ := claim(t, srv, unattributedPeer)
+		require.NotNil(t, h)
 	}
-	require.False(t, srv.claimHandshake(unattributedPeer), "unattributed peers share one capped bucket")
-	require.True(t, srv.claimHandshake("uid:1000"), "attributed peers still get a slot")
+	require.Len(t, srv.pending[unattributedPeer], maxPendingPerPeer, "unattributed peers share one capped bucket")
+	require.Len(t, srv.handshakes, maxPendingPerPeer)
+	h, _ := claim(t, srv, "uid:1000")
+	require.NotNil(t, h, "attributed peers still get a slot")
 }

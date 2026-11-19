@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -945,4 +946,51 @@ func flipLastHexDigit(s string) string {
 		return s[:len(s)-1] + "1"
 	}
 	return s[:len(s)-1] + "0"
+}
+
+// A daemon whose handshake slots for this peer are taken answers "daemon
+// busy" and closes. On Windows every local client is one peer, so the CLI
+// used to fail at once while another process held the slots. It now tries a
+// few more times before giving up.
+func TestAuthFaults_BusyDaemonIsRetried(t *testing.T) {
+	defer api.SetBusyRetryDelays(time.Millisecond, time.Millisecond, time.Millisecond)()
+	busy := func(conn net.Conn) {
+		answer(conn, func(api.Request) api.Response {
+			return api.Response{Error: &api.RPCError{Code: api.ErrCodeBusy, Message: "daemon busy: too many connections waiting to authenticate; retry shortly"}}
+		})
+	}
+
+	// Busy twice, then free: the dial succeeds.
+	var conns atomic.Int32
+	endpoint, _ := fakeDaemon(t, func(conn net.Conn) {
+		if conns.Add(1) <= 2 {
+			busy(conn)
+			return
+		}
+		realAuth(conn, "s3cret")
+	})
+	c, err := api.DialWithToken(endpoint, "s3cret")
+	require.NoError(t, err)
+	_ = c.Close()
+	require.EqualValues(t, 3, conns.Load())
+
+	// Busy for good: it gives up after the retries, saying why.
+	conns.Store(0)
+	endpoint, _ = fakeDaemon(t, func(conn net.Conn) {
+		conns.Add(1)
+		busy(conn)
+	})
+	_, err = api.DialWithToken(endpoint, "s3cret")
+	require.ErrorContains(t, err, "daemon busy")
+	require.EqualValues(t, 4, conns.Load(), "one attempt and three retries")
+
+	// A wrong token is not retried.
+	conns.Store(0)
+	endpoint, _ = fakeDaemon(t, func(conn net.Conn) {
+		conns.Add(1)
+		realAuth(conn, "other")
+	})
+	_, err = api.DialWithToken(endpoint, "s3cret")
+	require.ErrorContains(t, err, "authentication failed")
+	require.EqualValues(t, 1, conns.Load())
 }

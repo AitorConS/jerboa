@@ -615,10 +615,23 @@ func (s *Server) handleImageSBOM(params json.RawMessage) (any, *api.RPCError) {
 // tests can lower it and a future flag can raise it.
 var maxBuildContextBytes int64 = 4 << 30 // 4 GiB
 
+// maxBuildContextEntries caps how many tar entries a build or seed context may
+// hold. Directories, empty files and skipped entry types write no content, so
+// the byte budget alone let a client send entries without end, each costing a
+// directory, an inode or an element of the returned slice. A large Node
+// project's node_modules holds a few hundred thousand entries. A var so tests
+// can lower it.
+var maxBuildContextEntries = 1_000_000
+
+// tarHeaderCost is what every entry is charged against maxBuildContextBytes,
+// whatever its content: the size of a tar header block.
+const tarHeaderCost = 512
+
 func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 	tr := tar.NewReader(stream)
 	var files []pkg.File
 	remaining := maxBuildContextBytes
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -626,6 +639,12 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read tar: %w", err)
+		}
+		if entries++; entries > maxBuildContextEntries {
+			return nil, fmt.Errorf("build context has more than %d entries; send fewer files (for a build, leave generated or dependency directories out with .unignore)", maxBuildContextEntries)
+		}
+		if remaining -= tarHeaderCost; remaining < 0 {
+			return nil, fmt.Errorf("build context exceeds the %d byte limit", maxBuildContextBytes)
 		}
 		if err := pkg.CheckGuestPath(hdr.Name); err != nil {
 			return nil, err
@@ -689,7 +708,9 @@ func extractBuildContext(stream io.Reader, dir string) ([]pkg.File, error) {
 // bytes. It returns the number of bytes written and an error if the cumulative
 // build context would exceed maxBuildContextBytes.
 func writeFileFromTar(dest string, tr io.Reader, mode os.FileMode, budget int64) (int64, error) {
-	if budget <= 0 {
+	// An exhausted budget still takes an empty file: the copy below catches
+	// a single byte over it.
+	if budget < 0 {
 		return 0, fmt.Errorf("build context exceeds the %d byte limit", maxBuildContextBytes)
 	}
 	f, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)

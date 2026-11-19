@@ -77,11 +77,13 @@ type Server struct {
 	volSeedCache volume.Seeder
 	authToken    string
 	// handshakes bounds the connections that have not authenticated yet, and
-	// pending counts them per peer (handshakePeer) so no single peer can hold
-	// every slot.
+	// pending lists them per peer (handshakePeer), oldest first, so no single
+	// peer can hold every slot and a full peer gives up its oldest one.
 	handshakes chan struct{}
 	pendingMu  sync.Mutex
-	pending    map[string]int
+	pending    map[string][]*pendingHandshake
+	// peerOf names the peer of a connection; nil means handshakePeer.
+	peerOf func(net.Conn) string
 	// handshakeTimeout and authFailureDelay default to the constants above.
 	handshakeTimeout time.Duration
 	authFailureDelay time.Duration
@@ -249,32 +251,33 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			slog.Error("api server: recovered panic in handler", "panic", r, "stack", string(debug.Stack()))
 			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: currentReqID, Error: &api.RPCError{Code: -32603, Message: fmt.Sprintf("internal error: %v", r)}})
 		}
-		if err := conn.Close(); err != nil {
+		// A connection that lost its handshake slot to a newer one of its
+		// peer is closed already.
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			slog.Warn("api server close conn", "err", err)
 		}
 	}()
 	if s.authToken != "" {
-		peer := handshakePeer(conn)
-		if !s.claimHandshake(peer) {
+		peerOf := s.peerOf
+		if peerOf == nil {
+			peerOf = handshakePeer
+		}
+		peer := peerOf(conn)
+		h, ok := s.claimHandshake(peer, conn)
+		if !ok {
 			slog.Warn("api server: too many pending handshakes; dropping connection", "remote", conn.RemoteAddr().String(), "peer", peer)
 			_ = enc.Encode(api.Response{JSONRPC: "2.0", Error: &api.RPCError{Code: api.ErrCodeBusy, Message: "daemon busy: too many connections waiting to authenticate; retry shortly"}})
 			return
 		}
-		released := false
-		release := func() {
-			if !released {
-				released = true
-				s.releaseHandshake(peer)
-			}
-		}
-		defer release()
+		defer s.releaseHandshake(h)
 		if s.handshakeTimeout > 0 {
 			_ = conn.SetReadDeadline(time.Now().Add(s.handshakeTimeout))
 		}
-		if !s.handshake(conn, budget, dec, enc, &currentReqID) {
+		// The slot is given up before the client hears it is in, and an
+		// evicted connection is not let in.
+		if !s.handshake(conn, budget, dec, enc, &currentReqID, func() bool { return s.releaseHandshake(h) }) {
 			return
 		}
-		release()
 		_ = conn.SetReadDeadline(time.Time{})
 	}
 	for {
@@ -309,37 +312,75 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 }
 
-// claimHandshake takes a pending-handshake slot for peer, unless the daemon
-// or that peer already holds as many as allowed.
-func (s *Server) claimHandshake(peer string) bool {
+// pendingHandshake is a connection holding a handshake slot.
+type pendingHandshake struct {
+	peer string
+	conn net.Conn
+	// gone is set, under pendingMu, once the slot is released or handed to
+	// a newer connection of the same peer (the connection is then closed).
+	gone bool
+}
+
+// claimHandshake takes a pending-handshake slot for conn of peer. When peer
+// already holds its share, its oldest waiting connection is closed and its
+// slot goes to conn: a client that authenticates promptly then gets in even
+// while another process of the same peer (on Windows, every local process)
+// holds idle connections open. Only when the daemon as a whole is full is
+// conn refused. An unnamed peer ("") has no share of its own.
+func (s *Server) claimHandshake(peer string, conn net.Conn) (*pendingHandshake, bool) {
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
 	if s.pending == nil {
-		s.pending = map[string]int{}
+		s.pending = map[string][]*pendingHandshake{}
 	}
-	if peer != "" && s.pending[peer] >= maxPendingPerPeer {
-		return false
+	h := &pendingHandshake{peer: peer, conn: conn}
+	if queue := s.pending[peer]; peer != "" && len(queue) >= maxPendingPerPeer {
+		oldest := queue[0]
+		oldest.gone = true
+		if oldest.conn != nil {
+			_ = oldest.conn.Close()
+		}
+		s.pending[peer] = append(queue[1:len(queue):len(queue)], h)
+		slog.Warn("api server: peer has too many pending handshakes; closing its oldest", "peer", peer)
+		return h, true
 	}
 	if s.handshakes != nil {
 		select {
 		case s.handshakes <- struct{}{}:
 		default:
-			return false
+			return nil, false
 		}
 	}
-	s.pending[peer]++
-	return true
+	s.pending[peer] = append(s.pending[peer], h)
+	return h, true
 }
 
-func (s *Server) releaseHandshake(peer string) {
+// releaseHandshake gives up h's slot. It reports false when the slot was
+// already gone: released before, or handed to a newer connection, in which
+// case h's connection has been closed. Safe to call more than once.
+func (s *Server) releaseHandshake(h *pendingHandshake) bool {
 	s.pendingMu.Lock()
 	defer s.pendingMu.Unlock()
-	if s.pending[peer]--; s.pending[peer] <= 0 {
-		delete(s.pending, peer)
+	if h.gone {
+		return false
+	}
+	h.gone = true
+	queue := s.pending[h.peer]
+	for i, p := range queue {
+		if p == h {
+			queue = append(queue[:i:i], queue[i+1:]...)
+			break
+		}
+	}
+	if len(queue) == 0 {
+		delete(s.pending, h.peer)
+	} else {
+		s.pending[h.peer] = queue
 	}
 	if s.handshakes != nil {
 		<-s.handshakes
 	}
+	return true
 }
 
 // handshake authenticates a connection. Until it succeeds only Auth.Challenge
@@ -347,7 +388,10 @@ func (s *Server) releaseHandshake(peer string) {
 // proves it holds the token either with an HMAC of a fresh server nonce
 // (Auth.Challenge then Auth.Hello{proof}), which never puts the token on the
 // wire, or, for older clients, by sending the token itself.
-func (s *Server) handshake(conn net.Conn, budget *budgetReader, dec *json.Decoder, enc *json.Encoder, reqID *int64) bool {
+//
+// admit runs once the client has proved it holds the token, before it is told
+// so; when it returns false the connection is dropped instead.
+func (s *Server) handshake(conn net.Conn, budget *budgetReader, dec *json.Decoder, enc *json.Encoder, reqID *int64, admit func() bool) bool {
 	var nonce []byte
 	for {
 		budget.n = preAuthReadLimit
@@ -375,6 +419,9 @@ func (s *Server) handshake(conn net.Conn, budget *budgetReader, dec *json.Decode
 			_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Error: &api.RPCError{Code: -32002, Message: fmt.Sprintf(
 				"protocol version mismatch: daemon speaks v%d, client speaks v%d — update jerboa to match the daemon",
 				api.ProtoVersion, proto)}})
+			return false
+		}
+		if !admit() {
 			return false
 		}
 		_ = enc.Encode(api.Response{JSONRPC: "2.0", ID: req.ID, Result: helloResult(s.serverProof(req.Params, nonce))})
@@ -507,10 +554,6 @@ func (s *Server) dispatch(ctx context.Context, req *api.Request, conn net.Conn, 
 		return s.handleVolumeRemove(req.Params)
 	case "Volume.Create", "Volume.Get", "Volume.List":
 		return s.handleVolume(req.Method, req.Params)
-	case "Network.AllocateIP":
-		return s.handleNetworkAllocateIP(req.Params)
-	case "Network.ReleaseIP":
-		return s.handleNetworkReleaseIP(req.Params)
 	case "VM.Stats":
 		return s.handleStats(req.Params)
 	case "DNS.Resolve":
@@ -1474,34 +1517,6 @@ func (s *Server) handleNetworkRemove(params json.RawMessage) (any, *api.RPCError
 		return nil, &api.RPCError{Code: -32000, Message: fmt.Sprintf("network %q is in use by %d running VM(s); stop them first", p.Name, inUse)}
 	}
 	if err := s.netStore.Remove(p.Name); err != nil {
-		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
-	}
-	return map[string]string{"status": "ok"}, nil
-}
-
-func (s *Server) handleNetworkAllocateIP(params json.RawMessage) (any, *api.RPCError) {
-	var p struct {
-		Network string `json:"network"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
-	}
-	ip, err := s.netStore.AllocateIP(p.Network)
-	if err != nil {
-		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
-	}
-	return map[string]string{"ip": ip.String()}, nil
-}
-
-func (s *Server) handleNetworkReleaseIP(params json.RawMessage) (any, *api.RPCError) {
-	var p struct {
-		Network string `json:"network"`
-		IP      string `json:"ip"`
-	}
-	if err := json.Unmarshal(params, &p); err != nil {
-		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
-	}
-	if err := s.netStore.ReleaseIP(p.Network, p.IP); err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}
 	return map[string]string{"status": "ok"}, nil
