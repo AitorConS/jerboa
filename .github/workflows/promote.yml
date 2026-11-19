@@ -46,9 +46,13 @@ jobs:
     - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
       with:
         name: release-candidate
-        path: candidate
+        path: ${{ runner.temp }}/artifacts/release-candidate
         run-id: ${{ inputs.candidate_run }}
         github-token: ${{ github.token }}
+    # Outside the checkout, so the download cannot replace what this job runs;
+    # promote verifies the signed inventory of what is copied into candidate/.
+    - name: Put the candidate in place
+      run: python3 scripts/release/artifact-digest.py copy "$RUNNER_TEMP/artifacts/release-candidate" candidate
     - name: Verify and promote existing bytes
       id: promote
       run: |-

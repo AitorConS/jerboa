@@ -288,7 +288,21 @@ can set, and the consumer checks the download against it before using, executing
 or signing anything (`verify`; `validate.yml` exports `kernel_linux_sha256` for
 `kernel-linux`). Assembly downloads every artifact by its own name, never by
 pattern. The KVM runner's `validated-kernel` is not trusted on its own: it must
-equal the verified `selected-kernel` apart from its boot report. A missing or
+equal the verified `selected-kernel` apart from its boot report.
+
+Every workflow downloads each artifact into a directory of its own outside the
+checkout, `${{ runner.temp }}/artifacts/<name>`, never over the checkout: an
+artifact unpacked there could replace `scripts/release/` before the scripts
+that check it and sign the release run. The download is verified where it
+lands, and only then `artifact-digest.py copy` puts its files where the
+scripts read them (`release-lock.json`, `kernel-selected/`, `dist/`, ...).
+`copy` refuses symlinks and special files, never overwrites a file, never
+writes outside the working directory or into what the job runs or builds from
+(`scripts/`, `.github/`, `cmd/`, `internal/`, `kernel/`, `go.mod`, `go.sum`,
+`Makefile`, `bin/`, ...), and, given file names, refuses an artifact that holds
+anything else. The kernel archive is unpacked from its download directory and
+only its `kernel/output` is extracted. `test_workflows.py` fails on a
+download step whose `path` is anything else. A missing or
 different digest fails the job; rebuild the candidate rather than re-running only
 the consumer. The release binaries assembly runs for their version check get an
 environment without the signing seed or other credentials.

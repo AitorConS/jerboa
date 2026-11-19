@@ -301,4 +301,30 @@ class WorkflowContracts(unittest.TestCase):
   script=(ROOT/'scripts/release/windows-runner.sh').read_text()
   self.assertIn('echo "::add-mask::$jit"',script)
   self.assertNotIn('set -x',script)
+ def test_artifacts_download_outside_the_checkout(self):
+  # Any job of a run (the self-hosted KVM jobs included) can upload an
+  # artifact of the run again. Downloaded over the checkout, it could replace
+  # the scripts that then verify it and sign the release. Every download goes
+  # to a directory of its own under the runner's temp directory, which no
+  # checkout contains, and only checked files are copied into place.
+  found=0
+  for path in sorted((ROOT/'.github/workflows').glob('*.yml')):
+   text=path.read_text()
+   for step in re.findall(r'(?m)^(    - (?:name: .*\n      )?uses: actions/download-artifact@.*\n(?:      .*\n)*)',text):
+    found+=1
+    with self.subTest(workflow=path.name,step=step):
+     paths=re.findall(r'(?m)^        path: (.*)$',step)
+     self.assertEqual(len(paths),1,'a download names its directory')
+     self.assertRegex(paths[0],r'^\$\{\{ runner\.temp \}\}/artifacts/[a-z0-9-]+$')
+     self.assertNotRegex(step,r'(?m)^        path: \.?/?$')
+   # A job never downloads two artifacts into one directory.
+   for job in re.split(r'\n  (?=[\w-]+:\n)',text.split('\njobs:\n',1)[1]):
+    dirs=re.findall(r'(?m)^        path: (\$\{\{ runner\.temp \}\}/artifacts/\S+)$',job)
+    self.assertEqual(len(dirs),len(set(dirs)),job.split(':',1)[0])
+  self.assertGreaterEqual(found,30)
+  # The scripts never take an artifact from the checkout either.
+  for name in ['release.yml','validate.yml','promote.yml']:
+   text=(ROOT/'.github/workflows'/name).read_text()
+   self.assertNotIn('cp -p artifacts/',text)
+   self.assertNotIn('verify "$KERNEL_LINUX" kernel-linux.tar.gz',text)
 if __name__=='__main__':unittest.main()
