@@ -31,7 +31,10 @@ loopback address in `Host`, so a web page cannot read the endpoint through DNS
 rebinding. To serve metrics on another address, or the dashboard at all, give
 the daemon a read-only token with `--observability-token-file` (a `0600` file)
 or `JERBOA_OBSERVABILITY_TOKEN`; without one the daemon refuses to start, unless
-you pass `--insecure`. Scrapers send it as `Authorization: Bearer <token>`.
+you pass `--insecure`. Off loopback the token must be at least 32 characters
+(`openssl rand -hex 32`). Scrapers send it as `Authorization: Bearer <token>`.
+An address that sends 10 wrong tokens gets `429 Too Many Requests`, without
+its token being checked, until it slows down to one try a second.
 `jerboa daemon start --metrics-addr ... --ui-addr ...` generates the token and
 stores it as `observability_token` in `~/.jerboa/config.toml`.
 
@@ -90,8 +93,18 @@ cookie named after the dashboard's port (`jerboa_ui_8080`). The cookie never
 holds the token: browsers send a cookie to every port of a host, so it only
 opens this dashboard, for 12 hours or until the daemon restarts, and is not
 accepted by `/metrics`, which takes the token only as
-`Authorization: Bearer`. The dashboard lists which environment variables a VM
-has, not their values.
+`Authorization: Bearer`. The session is also bound to the address the browser
+signed in from (all loopback addresses count as one), so a cookie replayed
+from anywhere else is refused with 401; a browser whose address changes signs
+in again. Requests from an address inside a jerboa network's subnet, which is
+where guests connect from, are refused with 403 whatever they carry. The
+dashboard lists which environment variables a VM has, not their values.
+
+Sign-in attempts are checked one at a time and a wrong one takes half a
+second, so the token cannot be guessed faster than two tries a second however
+many run in parallel. An attempt that waits more than 10 seconds for its turn
+gets `429`; try again. A bearer token sent to the dashboard is limited per
+address as on `/metrics`.
 
 Routes:
 
@@ -106,13 +119,18 @@ Routes:
 `--cluster-addr` serves the gossip endpoint that other nodes join. Every node
 needs the same token, from `--cluster-token-file` or `JERBOA_CLUSTER_TOKEN`; the
 daemon refuses to serve gossip without one unless you pass `--insecure-cluster`.
-Gossip is plain HTTP, so keep it on a private network.
+The token must be at least 32 characters (`openssl rand -hex 32`), and an
+address that sends 10 wrong tokens gets `429` until it slows down to one try a
+second. Gossip is plain HTTP, so keep it on a private network.
 
 The token proves that a caller belongs to the cluster, not which node it is,
 so a node never lets a peer's claim rewrite another member's record. A known
 member's address does not change over gossip (a restarted node joins under a
 new ID), and a member is marked `left` only when it says so itself in a reply
-from its recorded address. Any member can still mark another one dead.
+from its recorded address. No node takes another's word that a member is
+dead: each one declares a member dead when it has had no news of it, first-hand
+or relayed, for 30 seconds. A member marked dead comes back when it gossips
+again or a peer relays newer news of it; one that left does not.
 
 A node only sends gossip, including `--join` requests, to addresses that pass a
 fixed policy, checked again on every connection after DNS resolution:

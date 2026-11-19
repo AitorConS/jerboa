@@ -775,49 +775,6 @@ func TestServer_NetworkRemoveNotFound(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestServer_NetworkAllocateIP(t *testing.T) {
-	client, _ := startTestServer(t)
-
-	_, err := client.NetworkCreate(context.Background(), "ipnet", "", "")
-	require.NoError(t, err)
-
-	ip, err := client.NetworkAllocateIP(context.Background(), "ipnet")
-	require.NoError(t, err)
-	require.NotEmpty(t, ip)
-}
-
-func TestServer_NetworkAllocateIPMultiple(t *testing.T) {
-	client, _ := startTestServer(t)
-
-	_, err := client.NetworkCreate(context.Background(), "multinet", "", "")
-	require.NoError(t, err)
-
-	ip1, err := client.NetworkAllocateIP(context.Background(), "multinet")
-	require.NoError(t, err)
-	ip2, err := client.NetworkAllocateIP(context.Background(), "multinet")
-	require.NoError(t, err)
-	require.NotEqual(t, ip1, ip2, "allocated IPs should be unique")
-}
-
-func TestServer_NetworkAllocateIPNotFound(t *testing.T) {
-	client, _ := startTestServer(t)
-
-	_, err := client.NetworkAllocateIP(context.Background(), "nonexistent")
-	require.Error(t, err)
-}
-
-func TestServer_NetworkReleaseIP(t *testing.T) {
-	client, _ := startTestServer(t)
-
-	_, err := client.NetworkCreate(context.Background(), "relnet", "", "")
-	require.NoError(t, err)
-
-	ip, err := client.NetworkAllocateIP(context.Background(), "relnet")
-	require.NoError(t, err)
-
-	require.NoError(t, client.NetworkReleaseIP(context.Background(), "relnet", ip))
-}
-
 func TestServer_Stats(t *testing.T) {
 	client, _ := startTestServer(t)
 

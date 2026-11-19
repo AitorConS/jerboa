@@ -64,6 +64,42 @@ Which versions exist, and where:
   `other.example` while the image was listed under a name starting with
   `registry.jerboa.dev`; such a reference is refused with `invalid registry
   (want host[:port])`.
+- **`jerboad` refuses a cluster token shorter than 32 characters, and an
+  observability token shorter than 32 characters when `--metrics-addr` or
+  `--ui-addr` is off loopback.** A daemon configured with one stops at start
+  and says so. Generate a token with `openssl rand -hex 32`, put it in the
+  `--cluster-token-file` of every node (or `JERBOA_CLUSTER_TOKEN`) or in
+  `--observability-token-file` / `JERBOA_OBSERVABILITY_TOKEN` (for a daemon
+  that `jerboa daemon start` runs, `observability_token` in
+  `~/.jerboa/config.toml`), and update your Prometheus scrape configuration.
+  Wrong tokens are now limited too: an address that sends 10 wrong tokens to
+  `/metrics`, the dashboard or cluster gossip gets `429` until it slows down
+  to one try a second, and dashboard sign-ins are checked one at a time.
+- The dashboard's sign-in cookie is bound to the address the browser signed
+  in from (every loopback address counts as one), so a guest's web app that
+  received the cookie on a published port cannot replay it. The dashboard and
+  its `/ui/api/` routes refuse requests from inside a jerboa network's subnet
+  with 403. A browser whose address changes is asked to sign in again.
+- A cluster node no longer takes another node's claim that a member is dead.
+  One false claim used to keep a live member dead for good, and a member
+  declared dead after a network split never came back. Each node now declares
+  death from its own timers, and a dead member comes back when it gossips
+  again or a peer relays newer news of it.
+- The daemon no longer answers the `Network.AllocateIP` and
+  `Network.ReleaseIP` API methods. No jerboa client used them, and they let
+  any API client give back an address a VM still held, so the next VM could
+  be handed the same address. Addresses are leased and released only by
+  running and removing VMs.
+- Build and volume-seed contexts are limited to 1,000,000 entries, and every
+  entry counts 512 bytes toward the 4 GiB size limit. Directories, empty files
+  and links used to cost nothing, so a client could send them without end.
+- Idle connections can no longer lock other clients out of the daemon. Every
+  Windows program reaches the WSL daemon from one address, which had 8
+  handshake slots, so any local process holding 8 idle connections made
+  `jerboa` and Jerboa Desktop fail with `daemon busy`. A new connection from a
+  peer whose slots are full now closes that peer's oldest pending connection
+  instead, and `jerboa` retries a `daemon busy` answer a few times before
+  reporting it.
 - One project's build scripts could alter the Go modules or cargo crates that
   the confined build steps of every other project read from the shared tool
   cache, and so change what a later build of another project compiled. The
