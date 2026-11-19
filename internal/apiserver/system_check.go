@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
 
@@ -111,6 +112,7 @@ func (s *Server) systemCheck(p api.SystemCheckParams) []api.SystemFinding {
 	s.checkVMs(c, vms)
 	s.checkVolumes(c, vms)
 	s.checkNetworks(c, vms)
+	checkGuard(c, network.CheckGuard)
 	s.checkSnapshots(c)
 	s.checkTools(c)
 	return c.findings
@@ -277,6 +279,35 @@ func (s *Server) checkNetworks(c *checker, vms []*vm.VM) {
 				"network %s is gone but %s still attached to it: %s", n, plural(len(missing[n]), "VM is", "VMs are"), strings.Join(missing[n], ", "))
 		}
 		return plural(len(nets), "network", "networks") + " readable"
+	})
+}
+
+// guardHint is what to do about a guest network guard that is not loaded.
+const guardHint = "install nftables (sudo apt-get install nftables); the daemon loads the guard within seconds"
+
+// checkGuard reports the guest network guard of a Linux daemon (WSL
+// included); state is network.CheckGuard, a parameter for the tests.
+func checkGuard(c *checker, state func() network.GuardState) {
+	st := state()
+	if !st.Configured {
+		return
+	}
+	c.group("network isolation", func() string {
+		switch {
+		case st.Err != nil && st.Enforced:
+			c.add("network isolation", api.SeverityError, guardHint,
+				"the guest network guard is not loaded, so VMs on networks cannot start: %v", st.Err)
+		case st.Err != nil && st.AllowUnguarded:
+			c.add("network isolation", api.SeverityWarning, guardHint+", or unset "+network.AllowUnguardedEnv,
+				"the guest network guard is not loaded and %s=1: guests on networks run without isolation: %v", network.AllowUnguardedEnv, st.Err)
+		case st.Err != nil:
+			c.add("network isolation", api.SeverityWarning, guardHint,
+				"the guest network guard is not loaded: guests on networks run without isolation: %v", st.Err)
+		case st.NoBridgeFamily:
+			c.add("network isolation", api.SeverityInfo, "",
+				"guest network guard loaded; this kernel has no nftables bridge family (WSL), so guests are not bound to their own MAC and IP address")
+		}
+		return "guest network guard loaded"
 	})
 }
 

@@ -365,8 +365,18 @@ daemon installs nftables rules (tables `inet jerboa_guard` and
 `bridge jerboa_guard`) that keep guests away from the host's `127.0.0.1`, stop
 traffic routed between two Jerboa networks, let hosts outside reach guests only
 through published ports, and drop frames a guest sends with another guest's MAC
-or IP address. Without `nft` the daemon logs a warning and runs without them,
-and published ports then use the userspace proxy only. The daemon checks the
+or IP address. A VM on a network starts only while these rules are loaded:
+without `nft` (package `nftables`, which the installer installs) or with a
+ruleset the kernel refuses, `jerboa run` fails with `guest network isolation
+is not available` and says what to install. The daemon tries to load the
+rules again before each such VM, so installing `nftables` is enough; no
+restart is needed. To run guests without isolation instead, start the daemon
+with `JERBOA_ALLOW_UNGUARDED_NETWORK=1` (with the systemd service:
+`sudo systemctl edit jerboad`, add `[Service]` and
+`Environment=JERBOA_ALLOW_UNGUARDED_NETWORK=1`, then
+`sudo systemctl restart jerboad`; a drop-in survives reinstalls, while
+`/etc/jerboa/daemon.env` is rewritten by the installer). `jerboa doctor`
+reports the state of the rules under `network isolation`. The daemon checks the
 tables every few seconds and reinstalls them when a firewall reload removed
 them (`flush ruleset`, as the stock `/etc/nftables.conf` does). Kernel NAT for
 published ports sets `route_localnet` on a bridge only while the loopback rule
@@ -376,6 +386,11 @@ is still loaded, host clients connecting through `127.0.0.1` cannot reach the
 ports it translates until the guard is back.
 IPv4 forwarding (`net.ipv4.ip_forward`) stays enabled host-wide while networks
 are in use.
+
+Inside the WSL2 distro the kernel has no nftables bridge family: only the
+`inet jerboa_guard` table is installed, so guests are not bound to their own
+MAC and IP address there, and VMs start even when the rules cannot be loaded
+(the daemon logs a warning and `jerboa doctor` reports it).
 
 **Windows / WSL2:** the daemon and the published port live inside the dedicated
 `jerboa` WSL2 distro. With WSL2's default NAT networking the port is **not**
@@ -538,7 +553,7 @@ snapshots, registry credentials and settings. Back up what you need first.
   It stops and removes the `jerboad` service, the binaries, the `jerboa` system
   user, `/var/lib/jerboa`, `/etc/jerboa` and your `~/.jerboa`. Add `--keep-data`
   to remove only the programs and the service. Packages the installer added
-  with `apt` (QEMU, iptables…) are left in place.
+  with `apt` (QEMU, iptables, nftables…) are left in place.
 
 ---
 

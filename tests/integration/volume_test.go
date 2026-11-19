@@ -15,6 +15,7 @@ import (
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/apiserver"
 	"github.com/AitorConS/jerboa/internal/image"
+	"github.com/AitorConS/jerboa/internal/netconst"
 	"github.com/AitorConS/jerboa/internal/network"
 	pkg "github.com/AitorConS/jerboa/internal/package"
 	"github.com/AitorConS/jerboa/internal/tools"
@@ -28,6 +29,9 @@ import (
 func TestVolumePersistence(t *testing.T) {
 	requireQEMU(t)
 	requireTAPNetworking(t)
+	// As jerboad does at start: guests join a network only while the guest
+	// network guard is loaded.
+	require.NoError(t, network.InstallGuard(netconst.DNSAnycastIP, network.GuardOptions{}), "install nftables")
 
 	storeDir := t.TempDir()
 	imgStore, err := image.NewStore(filepath.Join(storeDir, "images"))

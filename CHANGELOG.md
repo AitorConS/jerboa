@@ -24,6 +24,22 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Changed
+
+- **On Linux, a VM on a network no longer starts without the guest network
+  guard.** Hosts without `nft` (the `nftables` package) used to log a warning
+  at daemon start and run guests with no isolation at all; `jerboa run` now
+  fails with `guest network isolation is not available` instead. Install it
+  with `sudo apt-get install nftables` (running the installer again does it
+  too) and run the VM again: no daemon restart is needed. `jerboa doctor`
+  shows the state under `network isolation`. To keep running guests without
+  isolation, set `JERBOA_ALLOW_UNGUARDED_NETWORK=1` for the daemon
+  (`sudo systemctl edit jerboad`, then `Environment=...` under `[Service]`).
+  VMs that are already running keep running. The installer and the WSL2
+  distro now install `nftables`. Inside WSL2, whose kernel has no nftables
+  bridge family, the guard is loaded without its per-guest address binding
+  and is not enforced.
+
 ### Fixed
 
 - A package file rewritten twice within a few milliseconds to the same size
@@ -35,6 +51,15 @@ Which versions exist, and where:
   is a systemd service and names `journalctl -u jerboad` (#306).
 - On Windows, a `.wslconfig` that began with two byte-order marks gained
   another `[wsl2]` section on every install (#303).
+
+### Security
+
+- On Linux, guests were attached to their network with no isolation when
+  `nft` was missing, as it was on hosts set up by the installer and in the
+  WSL2 distro: a guest could send with another guest's MAC or IP address and
+  reach guests of other Jerboa networks, and other hosts could route to
+  guests directly. The guard is now required (see Changed above), and
+  `nftables` is installed with Jerboa.
 
 ## [0.60.0] - 2026-11-18
 

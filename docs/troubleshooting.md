@@ -602,6 +602,34 @@ the window or write to the clipboard of your terminal.
 
 **Fix**: pass `--raw` to print the output unfiltered when you trust the guest.
 
+### `guest network isolation is not available, so VMs on networks do not start` (Linux)
+
+A VM on a network starts only while the daemon's nftables rules that isolate
+guests are loaded (see
+[Network isolation]({% link getting-started.md %}#network-isolation-linux)).
+The message carries why they are not: usually `nft not found`, on a host set
+up before the installer added the `nftables` package, or an `nft` error when
+the kernel or another firewall refuses the `jerboa_guard` tables.
+
+**Fix**: install nftables and run the VM again; the daemon loads the rules on
+its own:
+
+```sh
+sudo apt-get install nftables
+jerboa doctor            # network isolation: guest network guard loaded
+```
+
+Running the installer again also installs it. If `nft` is present, the error
+names what it refused. To run guests without isolation instead (not
+recommended: a guest can then spoof other guests and reach the host's
+services), set `JERBOA_ALLOW_UNGUARDED_NETWORK=1` for the daemon:
+
+```sh
+sudo systemctl edit jerboad     # add: [Service]
+                                #      Environment=JERBOA_ALLOW_UNGUARDED_NETWORK=1
+sudo systemctl restart jerboad
+```
+
 ### Published ports stop answering on `127.0.0.1` (Linux)
 
 The daemon log shows `guard: not loaded; route_localnet turned off on jerboa

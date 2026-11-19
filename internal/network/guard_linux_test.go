@@ -50,14 +50,14 @@ func TestCheckManagedBridgeName(t *testing.T) {
 }
 
 func TestGuardRulesetMentionsDNS(t *testing.T) {
-	r := guardRuleset("10.53.0.53")
+	r := guardRuleset("10.53.0.53", rulesetOptions{})
 	if strings.Count(r, "10.53.0.53") != 3 {
 		t.Fatalf("dns address not used in input chain: %s", r)
 	}
 }
 
 func TestGuardRulesetDropsSpoofedLoopbackAndNonIPv4Frames(t *testing.T) {
-	r := guardRuleset("10.53.0.53")
+	r := guardRuleset("10.53.0.53", rulesetOptions{})
 	// Loopback destinations only come in on lo: not from a guest's bridge
 	// and not from another host.
 	if !strings.Contains(r, "type filter hook prerouting priority raw; policy accept;\n\t\tiifname != \"lo\" ip daddr 127.0.0.0/8 drop") {
@@ -68,6 +68,18 @@ func TestGuardRulesetDropsSpoofedLoopbackAndNonIPv4Frames(t *testing.T) {
 	types := strings.Index(r, "ether type != { ip, arp } drop")
 	if mac < 0 || types < mac {
 		t.Fatalf("ether type filter missing or before the MAC check: %s", r)
+	}
+}
+
+// WSL kernels have no nftables bridge family: a ruleset holding the bridge
+// table would fail as a whole there.
+func TestGuardRulesetWithoutBridgeFamily(t *testing.T) {
+	r := guardRuleset("10.53.0.53", rulesetOptions{noBridge: true})
+	if strings.Contains(r, "table bridge") || strings.Contains(r, "ether ") {
+		t.Fatalf("bridge table in a ruleset for a kernel without the bridge family: %s", r)
+	}
+	if !strings.Contains(r, `iifname != "lo" ip daddr 127.0.0.0/8 drop`) {
+		t.Fatalf("loopback guard missing: %s", r)
 	}
 }
 

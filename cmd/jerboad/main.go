@@ -442,9 +442,17 @@ func serve(ctx context.Context, endpoint, authToken, clusterToken, obsToken, qem
 			slog.Warn("jerboad: guest dns address setup failed", "err", err)
 		}
 		// Isolate guest networks from the host's loopback, from each other
-		// and from address spoofing between guests.
-		if err := network.InstallGuard(netconst.DNSAnycastIP); err != nil {
-			slog.Warn("jerboad: guest network guard not installed; guests are not isolated from each other, and published ports use the userspace proxy until it is", "err", err)
+		// and from address spoofing between guests. VMs on networks do not
+		// start while it is not loaded, unless the operator opted out.
+		guardOpts := network.GuardOptions{
+			AllowUnguarded: os.Getenv(network.AllowUnguardedEnv) == "1",
+		}
+		if err := network.InstallGuard(netconst.DNSAnycastIP, guardOpts); err != nil {
+			if !network.CheckGuard().Enforced {
+				slog.Warn("jerboad: guest network guard not installed; guests on networks run without isolation (set by "+network.AllowUnguardedEnv+"=1, or not enforced on WSL)", "err", err)
+			} else {
+				slog.Error("jerboad: guest network guard not installed; VMs on networks will not start until it is (install nftables, or set "+network.AllowUnguardedEnv+"=1 to run them without isolation)", "err", err)
+			}
 		}
 	}
 	if native, ok := mgr.(interface{ RestoreHostRuntime(context.Context) error }); ok {
