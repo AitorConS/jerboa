@@ -14,6 +14,10 @@ var (
 	repositoryRE = regexp.MustCompile(`^[a-z0-9]+(?:[._-][a-z0-9]+)*$`)
 	tagRE        = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
 	digestRE     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	// A registry is a host name or an IPv4 address, or an IPv6 address in
+	// brackets, with an optional port. Nothing else: "user@host" would be
+	// dialled as host while the reference shows the text before the "@".
+	registryRE = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?$`)
 )
 
 // ImageReference names an image in a registry:
@@ -26,9 +30,21 @@ type ImageReference struct {
 	Digest     string
 }
 
+// normalizeRegistry gives the one spelling of a registry host: lowercase,
+// without the root's trailing dot and without the HTTPS default port. The
+// signing rules and the remembered signers are looked up by this name, so
+// "REGISTRY.JERBOA.DEV", "registry.jerboa.dev." and "registry.jerboa.dev:443"
+// must not name a registry other than "registry.jerboa.dev".
+func normalizeRegistry(host string) string {
+	host = strings.ToLower(host)
+	host = strings.TrimSuffix(host, ":443")
+	return strings.TrimSuffix(host, ".")
+}
+
 // ParseImageReference parses s. The first component is a registry when it
 // contains a dot or a colon or is "localhost", as with Docker; otherwise the
 // registry is DefaultRegistry. Without a tag or digest the tag is "latest".
+// The registry is returned in its normalized spelling.
 func ParseImageReference(s string) (ImageReference, error) {
 	var r ImageReference
 	rest := s
@@ -41,7 +57,10 @@ func ParseImageReference(s string) (ImageReference, error) {
 	}
 	parts := strings.Split(rest, "/")
 	if len(parts) == 3 || (len(parts) > 1 && (strings.ContainsAny(parts[0], ".:") || parts[0] == "localhost")) {
-		r.Registry, parts = parts[0], parts[1:]
+		r.Registry, parts = normalizeRegistry(parts[0]), parts[1:]
+		if len(r.Registry) > 253 || !registryRE.MatchString(r.Registry) {
+			return r, fmt.Errorf("image reference %q: invalid registry (want host[:port])", s)
+		}
 	} else {
 		r.Registry = DefaultRegistry
 	}
