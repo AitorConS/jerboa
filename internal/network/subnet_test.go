@@ -101,4 +101,30 @@ func TestHoldsAddress(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, want, held, ip)
 	}
+
+	// Removing the network is seen at once, not after the cache expires.
+	require.NoError(t, s.Remove("app"))
+	held, err = s.HoldsAddress(net.ParseIP("10.100.0.5"))
+	require.NoError(t, err)
+	require.False(t, held)
+}
+
+// A store that cannot be read answers an error every time, never a cached
+// "not a guest".
+func TestHoldsAddressDoesNotCacheAFailedRead(t *testing.T) {
+	root := t.TempDir()
+	s, err := NewStore(root)
+	require.NoError(t, err)
+	_, err = s.Create("app", "10.100.0.0/24", "bridge")
+	require.NoError(t, err)
+	held, err := s.HoldsAddress(net.ParseIP("10.100.0.5"))
+	require.NoError(t, err)
+	require.True(t, held)
+	require.NoError(t, os.RemoveAll(root))
+	require.NoError(t, os.WriteFile(root, nil, 0o600)) // not a directory
+	s.gen.Add(1)                                       // as a change made outside the store
+	for range 2 {
+		_, err := s.HoldsAddress(net.ParseIP("10.100.0.5"))
+		require.Error(t, err)
+	}
 }

@@ -16,6 +16,15 @@ const (
 	// maxFailureSources bounds the table. When it is full and no entry has
 	// recovered its whole budget, new sources share one overflow budget, so
 	// an attacker spreading over many addresses gains nothing by filling it.
+	//
+	// The trade-off, accepted: an attacker who keeps maxFailureSources
+	// sources each failing about once a second (an entry recovers its budget
+	// a second after one failure) also uses up the overflow budget of every
+	// other source, which is then refused, the right token included, until
+	// the attack stops. Keying IPv6 sources by /56 (sourceOf) puts that out of
+	// reach of one customer's prefix; it needs thousands of IPv4 addresses or
+	// separate IPv6 allocations. Guessing a token of 32 or more characters is
+	// out of reach either way; the limiter keeps failures from being cheap.
 	maxFailureSources = 4096
 )
 
@@ -42,13 +51,26 @@ func NewFailureLimiter() *FailureLimiter {
 	return &FailureLimiter{sources: make(map[string]*failureBudget), now: time.Now}
 }
 
-// sourceOf is the connection's source address, never a forwarded header.
+// ipv6SourceBits is the prefix an IPv6 source is counted by: one customer
+// usually gets a /48 or a /56, so counting each address, or each /64, would
+// let one customer spread over the whole table.
+const ipv6SourceBits = 56
+
+// sourceOf is the connection's source address, never a forwarded header: an
+// IPv4 address, or the /56 an IPv6 address lies in.
 func sourceOf(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
 	}
-	return host
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return host
+	}
+	if v4 := ip.To4(); v4 != nil {
+		return v4.String()
+	}
+	return ip.Mask(net.CIDRMask(ipv6SourceBits, 128)).String() + "/56"
 }
 
 // refill brings b up to date at now and returns it.

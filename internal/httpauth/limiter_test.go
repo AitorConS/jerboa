@@ -79,3 +79,18 @@ func TestFailureLimiter_TableIsBounded(t *testing.T) {
 	require.True(t, l.Allow(from("172.16.1.3:1", "")))
 	require.LessOrEqual(t, len(l.sources), maxFailureSources)
 }
+
+// One customer's IPv6 prefix is one source: spreading guesses over its
+// addresses, or its /64s, shares one budget; another /56 has its own.
+func TestFailureLimiter_IPv6SourcesShareTheirPrefix(t *testing.T) {
+	l := NewFailureLimiter()
+	now := time.Unix(1_700_000_000, 0)
+	l.now = func() time.Time { return now }
+	for i := range failureBurst {
+		l.Fail(from(fmt.Sprintf("[2001:db8:0:%x::%x]:1", i, i+1), ""))
+	}
+	require.False(t, l.Allow(from("[2001:db8:0:ff::1]:1", "")), "another /64 of the same /56")
+	require.True(t, l.Allow(from("[2001:db8:0:100::1]:1", "")), "the next /56")
+	require.Len(t, l.sources, 1)
+	require.Equal(t, "192.0.2.7", sourceOf(from("[::ffff:192.0.2.7]:1", "")))
+}

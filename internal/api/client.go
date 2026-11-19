@@ -106,7 +106,10 @@ func Dial(endpoint string) (*Client, error) {
 
 // DialWithToken connects like Dial and, when token is non-empty, performs the
 // Auth.Hello handshake before returning. The same token is reused for any
-// secondary connection the client opens (e.g. ImageBuild).
+// secondary connection the client opens (e.g. ImageBuild). A daemon that
+// answers "busy" is tried again a few times, so the call can block for about
+// two seconds (busyRetryDelays) before it returns that error; it takes no
+// context, and the wait cannot be cut short.
 func DialWithToken(endpoint, token string) (*Client, error) {
 	network, address, err := parseEndpoint(endpoint)
 	if err != nil {
