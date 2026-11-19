@@ -112,24 +112,46 @@ func DialWithToken(endpoint, token string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := dialDaemon(network, address)
-	if err != nil {
-		return nil, fmt.Errorf("api client dial %s: %w", endpoint, err)
-	}
-	c := &Client{
-		endpoint: endpoint,
-		token:    token,
-		conn:     conn,
-		enc:      json.NewEncoder(conn),
-		dec:      json.NewDecoder(conn),
-	}
-	if token != "" {
-		if err := authenticate(conn, c.enc, c.dec, token); err != nil {
-			_ = conn.Close()
+	for attempt := 0; ; attempt++ {
+		conn, err := dialDaemon(network, address)
+		if err != nil {
+			return nil, fmt.Errorf("api client dial %s: %w", endpoint, err)
+		}
+		c := &Client{
+			endpoint: endpoint,
+			token:    token,
+			conn:     conn,
+			enc:      json.NewEncoder(conn),
+			dec:      json.NewDecoder(conn),
+		}
+		if token == "" {
+			return c, nil
+		}
+		err = authenticate(conn, c.enc, c.dec, token)
+		if err == nil {
+			return c, nil
+		}
+		_ = conn.Close()
+		// A busy daemon has every handshake slot of this peer taken, often
+		// by connections that are about to finish or time out; on Windows
+		// every local client shares one peer. Try again briefly before
+		// giving up.
+		if attempt >= len(busyRetryDelays) || !isBusy(err) {
 			return nil, err
 		}
+		time.Sleep(busyRetryDelays[attempt])
 	}
-	return c, nil
+}
+
+// busyRetryDelays are the waits before each new attempt when the daemon
+// answers a handshake with "daemon busy". A var so tests can shorten them.
+var busyRetryDelays = []time.Duration{100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond, time.Second}
+
+// isBusy reports whether err is the daemon's "too many connections waiting to
+// authenticate" answer.
+func isBusy(err error) bool {
+	var ae *authError
+	return errors.As(err, &ae) && ae.code == ErrCodeBusy
 }
 
 // sendAuth authenticates a connection both ways: it asks the daemon for a

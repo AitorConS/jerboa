@@ -5,8 +5,12 @@ package apiserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
+	"os"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,12 +27,21 @@ func startHandshakeServer(t *testing.T, token string, timeout ...time.Duration) 
 
 func newHandshakeServer(t *testing.T, token string, timeout ...time.Duration) (*Server, string) {
 	t.Helper()
+	return newHandshakeServerWith(t, token, func(srv *Server) {
+		if len(timeout) > 0 {
+			srv.handshakeTimeout = timeout[0]
+		}
+	})
+}
+
+// newHandshakeServerWith is newHandshakeServer with setup run on the server
+// before it starts serving.
+func newHandshakeServerWith(t *testing.T, token string, setup func(*Server)) (*Server, string) {
+	t.Helper()
 	srv, err := NewServer(vm.NewMockManager(), nil, "tcp://127.0.0.1:0", nil, "test", nil)
 	require.NoError(t, err)
 	srv.authFailureDelay = 0
-	if len(timeout) > 0 {
-		srv.handshakeTimeout = timeout[0]
-	}
+	setup(srv)
 	srv.SetAuthToken(token)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Serve(ctx) }()
@@ -140,49 +153,106 @@ func TestHandshake_NoProofForAPeerWithoutTheToken(t *testing.T) {
 	require.Empty(t, resp.Result)
 }
 
+func claim(t *testing.T, srv *Server, peer string) (*pendingHandshake, net.Conn) {
+	t.Helper()
+	server, client := net.Pipe()
+	t.Cleanup(func() { _ = server.Close(); _ = client.Close() })
+	h, ok := srv.claimHandshake(peer, server)
+	if !ok {
+		return nil, client
+	}
+	return h, client
+}
+
+func requireClosed(t *testing.T, client net.Conn) {
+	t.Helper()
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_, err := client.Read(make([]byte, 1))
+	require.Error(t, err)
+	require.False(t, errors.Is(err, os.ErrDeadlineExceeded), "the connection was left open")
+}
+
 func TestHandshake_SlotsAreSharedOutPerPeer(t *testing.T) {
 	srv := &Server{handshakes: make(chan struct{}, maxPendingHandshake)}
+	var first []*pendingHandshake
+	var firstClients []net.Conn
 	for range maxPendingPerPeer {
-		require.True(t, srv.claimHandshake("uid:1000"))
+		h, c := claim(t, srv, "uid:1000")
+		require.NotNil(t, h)
+		first, firstClients = append(first, h), append(firstClients, c)
 	}
-	require.False(t, srv.claimHandshake("uid:1000"), "one peer must not take more than its share")
-	require.True(t, srv.claimHandshake("uid:1001"), "another peer still gets a slot")
-	srv.releaseHandshake("uid:1000")
-	require.True(t, srv.claimHandshake("uid:1000"))
+	// One more from the same peer takes the oldest one's slot, not another.
+	h, _ := claim(t, srv, "uid:1000")
+	require.NotNil(t, h)
+	require.Len(t, srv.pending["uid:1000"], maxPendingPerPeer)
+	require.Len(t, srv.handshakes, maxPendingPerPeer)
+	requireClosed(t, firstClients[0])
+	require.False(t, srv.releaseHandshake(first[0]), "an evicted connection has no slot to give back")
+	require.Len(t, srv.handshakes, maxPendingPerPeer)
+	require.True(t, srv.releaseHandshake(first[1]))
+	require.False(t, srv.releaseHandshake(first[1]), "released twice")
+	require.Len(t, srv.handshakes, maxPendingPerPeer-1)
+
+	h, _ = claim(t, srv, "uid:1001")
+	require.NotNil(t, h, "another peer still gets a slot")
 	// A peer that cannot be told apart from others is bound only by the
-	// overall limit.
-	for range maxPendingHandshake - maxPendingPerPeer - 1 {
-		require.True(t, srv.claimHandshake(""))
+	// overall limit, and a full daemon refuses everyone.
+	for range maxPendingHandshake - maxPendingPerPeer {
+		h, _ := claim(t, srv, "")
+		require.NotNil(t, h)
 	}
-	require.False(t, srv.claimHandshake(""))
-	require.False(t, srv.claimHandshake("uid:1002"))
+	h, _ = claim(t, srv, "")
+	require.Nil(t, h)
+	h, _ = claim(t, srv, "uid:1002")
+	require.Nil(t, h)
+}
+
+// Every Windows-side client reaches the WSL daemon as one peer, so any local
+// process holding that peer's slots with idle connections used to lock the
+// CLI out. A client that completes the handshake now gets in: the oldest idle
+// connection gives up its slot.
+func TestHandshake_IdleSquattersCannotLockAPeerOut(t *testing.T) {
+	srv, addr := newHandshakeServerWith(t, "s3cret-token", func(srv *Server) {
+		srv.peerOf = func(net.Conn) string { return "ip:192.0.2.1" }
+	})
+	var squatters []net.Conn
+	for range maxPendingPerPeer {
+		conn, err := net.Dial("tcp", addr)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = conn.Close() })
+		squatters = append(squatters, conn)
+	}
+	require.Eventually(t, func() bool {
+		srv.pendingMu.Lock()
+		defer srv.pendingMu.Unlock()
+		return len(srv.pending["ip:192.0.2.1"]) == maxPendingPerPeer
+	}, 5*time.Second, 10*time.Millisecond)
+
+	c, err := api.DialWithToken("tcp://"+addr, "s3cret-token")
+	require.NoError(t, err)
+	_, err = c.DaemonVersion(context.Background())
+	require.NoError(t, err)
+	_ = c.Close()
+	requireClosed(t, squatters[0])
 }
 
 func TestHandshake_BusyDaemonSaysSo(t *testing.T) {
-	srv, addr := newHandshakeServer(t, "s3cret-token")
-	// Hold every slot the way idle unauthenticated peers would.
+	// Every connection its own peer: only the overall limit applies.
+	var n atomic.Int64
+	srv, addr := newHandshakeServerWith(t, "s3cret-token", func(srv *Server) {
+		srv.peerOf = func(net.Conn) string { return "ip:peer-" + strconv.FormatInt(n.Add(1), 10) }
+	})
 	for range maxPendingHandshake {
 		conn, err := net.Dial("tcp", addr)
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = conn.Close() })
 	}
-	// Probe only once the daemon is full: a probe that arrives first takes a
-	// slot itself and authenticates. Where loopback peers resolve to a uid
-	// (Linux) the per-peer cap fills first; elsewhere the overall one does.
 	require.Eventually(t, func() bool {
 		srv.pendingMu.Lock()
 		defer srv.pendingMu.Unlock()
-		for peer, n := range srv.pending {
-			if peer != "" && n >= maxPendingPerPeer {
-				return true
-			}
-		}
 		return len(srv.handshakes) == maxPendingHandshake
 	}, 5*time.Second, 10*time.Millisecond)
-	require.Eventually(t, func() bool {
-		_, err := api.DialWithToken("tcp://"+addr, "s3cret-token")
-		return err != nil && strings.Contains(err.Error(), "daemon busy")
-	}, 5*time.Second, 50*time.Millisecond)
 	_, err := api.DialWithToken("tcp://"+addr, "s3cret-token")
+	require.ErrorContains(t, err, "daemon busy")
 	require.NotContains(t, err.Error(), "update jerboad")
 }

@@ -403,8 +403,11 @@ and restart the daemon.
 
 The daemon holds a limited number of connections that have not yet proved
 they have the token: 64 in total and 8 from one peer, each with 5 seconds to
-finish. Many commands started at the same moment, a script in a tight loop, or
-a client with the wrong token retrying, fill it.
+finish. A new connection from a peer that already has 8 closes the oldest of
+them instead, so this message means all 64 are taken. Many commands started
+at the same moment from different peers, or clients with the wrong token
+retrying, fill it. `jerboa` retries a few times within about two seconds
+before showing the message.
 
 **Fix**: retry. If it persists, look for the process that keeps connecting
 with a wrong or missing token (`[daemon] token` in `~/.jerboa/config.toml`, or

@@ -55,6 +55,13 @@ Which versions exist, and where:
 - Build and volume-seed contexts are limited to 1,000,000 entries, and every
   entry counts 512 bytes toward the 4 GiB size limit. Directories, empty files
   and links used to cost nothing, so a client could send them without end.
+- Idle connections can no longer lock other clients out of the daemon. Every
+  Windows program reaches the WSL daemon from one address, which had 8
+  handshake slots, so any local process holding 8 idle connections made
+  `jerboa` and Jerboa Desktop fail with `daemon busy`. A new connection from a
+  peer whose slots are full now closes that peer's oldest pending connection
+  instead, and `jerboa` retries a `daemon busy` answer a few times before
+  reporting it.
 
 ### Fixed
 

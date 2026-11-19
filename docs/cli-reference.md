@@ -932,8 +932,12 @@ Environment the daemon reads:
 
 Connections are limited before they authenticate: at most 64 handshakes
 pending in total and 8 per peer, 5 seconds to complete one, and a 500 ms delay
-after a failed one. A client beyond the limit is answered `daemon busy: too
-many connections waiting to authenticate; retry shortly`.
+after a failed one. A ninth connection from one peer closes that peer's oldest
+pending one and takes its place, so idle connections cannot lock out a client
+that authenticates promptly. When all 64 are taken, a client is answered
+`daemon busy: too many connections waiting to authenticate; retry shortly`;
+`jerboa` and `jerboa-agent` retry that four times within about two
+seconds before reporting it.
 
 Observability and store flags (`--metrics-addr`, `--ui-addr`, `--trace-addr`,
 `--log-format`, `--vm-log-max-bytes`, `--vm-store`) are covered in more detail in
