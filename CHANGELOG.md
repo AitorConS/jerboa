@@ -364,6 +364,21 @@ Kernel toolset 0.2.3. Validation evidence:
 - **macOS QEMU guests reach public addresses only.**
   `JERBOA_GUEST_HOST_ACCESS=1 jerboa daemon restart` restores access to the
   Mac's localhost and private ranges. (#165)
+- **`jerboa run <path>` works only over the daemon's Unix socket.** A disk
+  image given as a file path must be a regular file owned by the user who
+  runs the command (root and the daemon's own user are exempt). Over TCP,
+  which is what `install.sh` sets up on Linux and what Windows uses, it is
+  refused with `image paths are accepted only from local clients`; build or
+  pull the image instead. (#160)
+- **`JERBOA_REGISTRY_TOKEN` is sent to one registry only:**
+  `registry.jerboa.dev`, or the host named in `JERBOA_REGISTRY_HOST`. (#164)
+- **HTTP health checks do not follow redirects.** The answer of the checked
+  URL itself decides the result. (#165)
+- **Guest console output is filtered.** `jerboa logs` and
+  `jerboa run --attach` remove terminal control sequences from what a guest
+  prints. `--raw` prints it as is. (#168)
+- **Compose `image:` file paths resolve relative to the compose file**, not
+  to the directory the command runs in. (#168)
 - **Compose volumes and networks are scoped to their compose file.** After
   upgrading, `compose up` creates new, empty volumes; mark a volume
   `external: true` to keep using the old one. (#183)
@@ -394,6 +409,14 @@ Kernel toolset 0.2.3. Validation evidence:
   with GitHub through the registry. `jerboa registry pat` manages personal
   access tokens, and `jerboa registry repo edit` sets a repository's
   description and README. (#145, #147, #156, #164, #192)
+  - `jerboa registry pat create` takes `--expires-in <days>`, `--namespace`
+    (repeatable) and `--delete`, and `pat ls` shows each token's expiry and
+    scope. (#164)
+  - A pull by digest (`ns/repo@sha256:…`) is refused unless that repository
+    published the digest. (#164)
+  - After a successful pull the daemon tells the registry that the repository
+    was pulled, without credentials, for the hub's pull count. Set
+    `DO_NOT_TRACK=1` to skip it. (#157, #164)
 - Every build is recorded as a recipe (`jerboa images recipe`). (#144)
 - Runtime packages are reproducible archives identified by a content digest.
   The package index is signed, and the client verifies it before use. (#139,
@@ -412,8 +435,10 @@ Kernel toolset 0.2.3. Validation evidence:
 ### Security
 
 - The daemon API uses a mutual challenge handshake, so the token never crosses
-  the connection, and limits what an unauthenticated client can hold. (#162,
-  #185, #186)
+  the connection, and limits what an unauthenticated client can hold: 64
+  connections may wait to authenticate at once, 8 of them from the same peer.
+  One more is answered `daemon busy: too many connections waiting to
+  authenticate; retry shortly`. (#162, #185, #186)
 - VMMs run without the daemon's capabilities, in a private runtime directory,
   with QEMU's seccomp sandbox on Linux. (#167, #187)
 - Release manifests older than one already accepted are refused, by the CLI
