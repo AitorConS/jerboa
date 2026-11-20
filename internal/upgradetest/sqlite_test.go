@@ -29,6 +29,11 @@ func openSQLite(t *testing.T, f *upgradetest.Fixture) *vm.SQLiteStore {
 	return store
 }
 
+// sqliteFixedSince is the release whose SQLite store was owner-only, saved
+// the VMs it migrated and recorded the migration, so that a removed VM no
+// longer came back.
+const sqliteFixedSince = "v0.60.0"
+
 func vmNames(store *vm.SQLiteStore) []string {
 	var names []string
 	for _, v := range store.List() {
@@ -46,7 +51,10 @@ func TestSQLiteStoreOfAReleasedVersion(t *testing.T) {
 		db := filepath.Join(dir, "vms.db")
 		before, err := os.Stat(db)
 		require.NoError(t, err)
-		require.NotZero(t, before.Mode().Perm()&0o077, "the released version left the database readable by others")
+		fixed := !f.Before(sqliteFixedSince)
+		if !fixed {
+			require.NotZero(t, before.Mode().Perm()&0o077, "the released version left the database readable by others")
+		}
 
 		store := openSQLite(t, f)
 		// The database holds every VM's environment: owner-only from the
@@ -67,6 +75,16 @@ func TestSQLiteStoreOfAReleasedVersion(t *testing.T) {
 			require.True(t, ok, "VM %q is in the released database", name)
 			assertSameVM(t, recorded, v)
 			assert.Equal(t, vm.StateStopped, v.State, name)
+		}
+		if fixed {
+			// The released version saved what it migrated and recorded it:
+			// the VM removed under it stays removed.
+			assert.Equal(t, len(want.VMs), countRows(t, db, "vms"))
+			assert.Equal(t, 2, countRows(t, db, "migrated_vms"))
+			_, err := store.Get(want.RemovedButLeftOnDisk)
+			require.Error(t, err, "a VM removed under the released version stays removed")
+			assert.ElementsMatch(t, keys(want.VMs), vmNames(store))
+			return
 		}
 		// The released version migrated the file registry into memory only:
 		// its database holds the VMs created after the move and none of the
@@ -94,6 +112,9 @@ func TestSQLiteStoreOfAReleasedVersion(t *testing.T) {
 // starts again: every VM is there once, and a removed one stays removed.
 func TestSQLiteMigrationInterrupted(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
+		if !f.Before(sqliteFixedSince) {
+			t.Skipf("%s completed and recorded the migration itself", f.Version)
+		}
 		dir := filepath.Join(f.SQLiteHome(), ".jerboa", "vms")
 		want := f.Expected.SQLite
 
