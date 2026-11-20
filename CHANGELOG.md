@@ -24,6 +24,8 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-20
+
 ### Changed
 
 - **On Linux, a VM on a network no longer starts without the guest network
@@ -1260,6 +1262,7 @@ release.
 - Windows support through WSL2, and `uni upgrade`.
 
 [Unreleased]: https://github.com/AitorConS/jerboa/commits/main
+[0.61.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.61.0
 [0.60.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.60.0
 [0.59.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.59.0
 [0.58.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.58.0

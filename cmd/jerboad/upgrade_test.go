@@ -329,6 +329,11 @@ func TestUpgrade_DaemonServesAReleasedHome(t *testing.T) {
 // first wrote the current signature format.
 const scopedComposeSince = "v0.56.0"
 
+// composeStateInHomeSince is the release that first kept a compose project's
+// state in ~/.jerboa/compose instead of next to the compose file: there is
+// nothing for this version to take over.
+const composeStateInHomeSince = "v0.60.0"
+
 // TestUpgrade_ComposeProjectFromBeforeScopedNames pins what happens to a
 // project brought up before 0.56.0, whose state names its network and volume
 // by their bare names: this version cannot tell such a state from one written
@@ -411,6 +416,9 @@ func TestUpgrade_ComposeProjectIsTakenOver(t *testing.T) {
 		if f.Before(scopedComposeSince) {
 			t.Skipf("%s: see TestUpgrade_ComposeProjectFromBeforeScopedNames", f.Version)
 		}
+		if !f.Before(composeStateInHomeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectInHome", f.Version)
+		}
 		u := newUpgraded(t, f)
 		client, _ := u.start()
 		want := f.Expected.Compose
@@ -466,6 +474,50 @@ func TestUpgrade_ComposeProjectIsTakenOver(t *testing.T) {
 	})
 }
 
+// TestUpgrade_ComposeProjectInHome opens a project whose released version
+// already kept its state in ~/.jerboa/compose: it is still managed, as it
+// was, and `down` removes what `up` created and the state with it.
+func TestUpgrade_ComposeProjectInHome(t *testing.T) {
+	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
+		if f.Before(composeStateInHomeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectIsTakenOver", f.Version)
+		}
+		u := newUpgraded(t, f)
+		client, _ := u.start()
+		want := f.Expected.Compose
+		project := filepath.Dir(want.File)
+		require.Equal(t, []string{want.StateFile}, newComposeStateFiles(t, f), "the released version keeps the state in ~/.jerboa/compose")
+		assert.Equal(t, want.State, readComposeState(t, want.StateFile))
+
+		var ps []map[string]any
+		u.cliJSON(project, &ps, "compose", "ps", "compose.yaml", "--output", "json")
+		require.Len(t, ps, len(want.PS))
+		for i, row := range want.PS {
+			assertStillPrints(t, row, ps[i], "compose ps", "state")
+			assert.Equal(t, "stopped", ps[i]["state"])
+		}
+		assert.Equal(t, want.State, readComposeState(t, want.StateFile), "reading the project leaves its state as it was")
+		out, err := u.cli(project, "compose", "up", "compose.yaml")
+		require.Error(t, err)
+		assert.Contains(t, out, "already has state")
+
+		out, err = u.cli(project, "compose", "down", "compose.yaml", "--volumes")
+		require.NoError(t, err, out)
+		ctx := context.Background()
+		for _, id := range want.State.Services {
+			_, err := client.Get(ctx, id)
+			require.Error(t, err, "the service's VM is removed")
+		}
+		nets, err := client.NetworkList(ctx)
+		require.NoError(t, err)
+		assert.Len(t, nets, len(f.Expected.Networks)-len(want.State.CreatedNetworks))
+		vols, err := client.VolumeList(ctx)
+		require.NoError(t, err)
+		assert.Len(t, vols, len(f.Expected.Volumes)-len(want.State.CreatedVolumes))
+		assert.Empty(t, newComposeStateFiles(t, f))
+	})
+}
+
 // TestUpgrade_ComposeTakeoverInterrupted leaves the move of the compose
 // state half done, as a CLI killed in the middle does, and expects the
 // project to stay manageable with nothing lost.
@@ -473,6 +525,9 @@ func TestUpgrade_ComposeTakeoverInterrupted(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
 		if f.Before(scopedComposeSince) {
 			t.Skipf("%s: see TestUpgrade_ComposeProjectFromBeforeScopedNames", f.Version)
+		}
+		if !f.Before(composeStateInHomeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectInHome", f.Version)
 		}
 		u := newUpgraded(t, f)
 		client, _ := u.start()
@@ -519,6 +574,9 @@ func TestUpgrade_ComposeStateThatIsNotOurs(t *testing.T) {
 	upgradetest.Each(t, func(t *testing.T, f *upgradetest.Fixture) {
 		if f.Before(scopedComposeSince) {
 			t.Skipf("%s: see TestUpgrade_ComposeProjectFromBeforeScopedNames", f.Version)
+		}
+		if !f.Before(composeStateInHomeSince) {
+			t.Skipf("%s: see TestUpgrade_ComposeProjectInHome", f.Version)
 		}
 		want := f.Expected.Compose
 		project := filepath.Dir(want.File)
