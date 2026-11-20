@@ -161,8 +161,8 @@ project markers (go.mod, package.json, etc.).`,
 				return fmt.Errorf("build: --pkg-source: %w", err)
 			}
 
-			// The image's run defaults, as the [run] table below sets them,
-			// checked before anything is resolved or built: the daemon
+			// The image's run defaults: [run] memory/cpus unless an explicit
+			// flag overrides them, checked before anything is resolved or built: the daemon
 			// refuses to run an image whose defaults it would not accept.
 			runMemory, runCPUs := memory, cpus
 			if info.IsDir() && cfg != nil {
@@ -176,6 +176,9 @@ project markers (go.mod, package.json, etc.).`,
 			if err := image.ValidateRunConfig(image.Config{Memory: runMemory, CPUs: runCPUs}); err != nil {
 				return fmt.Errorf("build: %w (set by --memory, --cpus or [run] in %s)", err, builder.ConfigFileName)
 			}
+			// They are baked into the image manifest and inherited at run time
+			// (see jerboa run).
+			memory, cpus = runMemory, runCPUs
 
 			var pkgFiles []pkg.File
 			if len(pkgs) > 0 {
@@ -284,15 +287,6 @@ project markers (go.mod, package.json, etc.).`,
 					pkgEnv[k] = v
 				}
 
-				// [run] memory/cpus become the image defaults unless overridden
-				// by an explicit flag. They are baked into the image manifest and
-				// inherited at run time (see jerboa run).
-				if !cmd.Flags().Changed("memory") && cfg.Run.Memory != "" {
-					memory = cfg.Run.Memory
-				}
-				if !cmd.Flags().Changed("cpus") && cfg.Run.CPUs != 0 {
-					cpus = cfg.Run.CPUs
-				}
 				// [run] ports: default publish maps recorded in the manifest.
 				runPorts = cfg.Run.Ports
 			}
