@@ -327,9 +327,11 @@ def main_scenario(old, work, snapshot):
     old.wait_log('api', 'probe: mark=compose volume="boot compose\\n"')
     expected['compose'] = {'file': str(project / 'compose.yaml'),
                            'ps': json.loads(old.run('compose', 'ps', 'compose.yaml', '--output', 'json', cwd=project))}
-    state_files = sorted(p.name for p in project.glob('.jerboa-compose-*.json'))
-    expected['compose']['state_file'] = str(project / state_files[0])
-    expected['compose']['state'] = json.loads((project / state_files[0]).read_text())
+    # Up to 0.59 the state sits next to the compose file; from 0.60 in
+    # ~/.jerboa/compose.
+    state_files = sorted(project.glob('.jerboa-compose-*.json')) or sorted((old.home / '.jerboa' / 'compose').glob('*.json'))
+    expected['compose']['state_file'] = str(state_files[0])
+    expected['compose']['state'] = json.loads(state_files[0].read_text())
 
     # A registry login and the package index cache.
     expected['credentials'] = {}
