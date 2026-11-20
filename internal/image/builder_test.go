@@ -475,6 +475,21 @@ func TestBuild_ValidationError(t *testing.T) {
 	}
 }
 
+// What jerboa run would refuse is not built.
+func TestBuild_RefusesRunDefaultsARunWouldRefuse(t *testing.T) {
+	b := NewBuilder(makeStore(t))
+	mkfs := func(context.Context, string, string, string) *exec.Cmd { return nil }
+	for _, cfg := range []BuildConfig{
+		{Memory: "2048MB"},
+		{Memory: "1.5G"},
+		{CPUs: MaxCPUs + 1},
+	} {
+		cfg.Name, cfg.BinaryPath, cfg.MkfsRun, cfg.Layout = "hello", "/bin/true", mkfs, LayoutStandard
+		_, err := b.Build(context.Background(), cfg)
+		require.ErrorContains(t, err, "invalid default", "%+v", cfg)
+	}
+}
+
 func TestBuild_NotELF(t *testing.T) {
 	s := makeStore(t)
 	b := NewBuilder(s)

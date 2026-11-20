@@ -317,3 +317,31 @@ func TestDeprecatedSocketFlagStillSelectsTheEndpoint(t *testing.T) {
 	afCleanError(t, err, "ps: connect to daemon", missing)
 	require.Zero(t, e.dials.Load())
 }
+
+// Run defaults jerboa run would refuse stop the build before anything is
+// built: an image built with them could not be run, nor rebuilt.
+func TestBuildRefusesRunDefaultsARunWouldRefuse(t *testing.T) {
+	e := afIsolate(t)
+	marker := filepath.Join(t.TempDir(), "built")
+	project := func(run string) string {
+		dir := t.TempDir()
+		toml := "[build]\nrun = [\"touch " + filepath.ToSlash(marker) + "\"]\n" + run
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "unikernel.toml"), []byte(toml), 0o600))
+		return dir
+	}
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"flag", []string{"build", "--memory", "2048MB", project("")}},
+		{"run table", []string{"build", project("[run]\nmemory = \"2048MB\"\n")}},
+		{"cpus", []string{"build", "--cpus", "100000", project("")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			res := e.run(tc.args...)
+			require.Error(t, res.err)
+			require.Regexp(t, "(?i)invalid .*(memory|cpu)", res.err.Error())
+			require.NoFileExists(t, marker, "the build ran")
+		})
+	}
+}
