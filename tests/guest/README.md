@@ -9,6 +9,7 @@ Compile the C files as static Linux executables for the guest architecture:
 ```sh
 cc -O2 -Wall -Wextra -static -pthread benchmark_regressions.c -o basic
 cc -O2 -Wall -Wextra -static -pthread clock.c -o clock
+cc -O2 -Wall -Wextra -static -pthread concurrent_append.c -o concurrent-append
 cc -O2 -Wall -Wextra -static -pthread disk_pressure.c -o disk-pressure
 cc -O2 -Wall -Wextra -static -pthread random_write.c -o random-write
 cc -O2 -Wall -Wextra -static -pthread tcp_stream.c -o tcp-stream
@@ -141,6 +142,13 @@ results and reports measured loss; completion does not imply meeting the offered
 rate. On macOS it also records Firecracker metrics once per second in
 `network-metrics.json`. Default native quotas remain enabled. Run measurements
 without other benchmark guests or Docker workloads on that host.
+
+`concurrent_append.c` has four threads append 4 KiB writes to their own file,
+1 GiB each, without preallocation, then verifies every byte. Run it with
+`--cpus 4 --memory 2048 --disk-size 6G` and expect `CONCURRENT APPEND PASS`,
+then boot the same disk with `--reuse-disk` and expect
+`CONCURRENT APPEND RESTART PASS`. A kernel that gives each of these writes an
+extent of its own halts on a failed allocation before the files are written.
 
 `large_write.c` writes and verifies 128 MiB in 16 MiB application writes. Run it
 with `--memory 2048` and expect `LARGE WRITE PASS`, then boot the same disk with

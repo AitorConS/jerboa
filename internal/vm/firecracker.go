@@ -321,10 +321,14 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// committed as a monitored "running" instance. It reuses the normal monitor
 	// with explicit-stop set so teardown (tap, temp files) and restart-suppression
 	// match a clean stop; the failure is returned to the caller, not swallowed.
+	// The monitor runs to completion before Start returns: the VM is then
+	// stopped, so the caller can remove it (run --rm, or the cleanup of a failed
+	// run). The process was killed, so the wait is short; an explicit stop never
+	// restarts.
 	abort := func() {
 		v.SetExplicitStop()
 		_ = cmd.Process.Kill()
-		go m.monitor(v, cmd, exit, sockPath, cfgPath, vmmLog, rootfs)
+		m.monitor(v, cmd, exit, sockPath, cfgPath, vmmLog, rootfs)
 	}
 	if err := awaitFCReady(ctx, sockPath, exit); err != nil {
 		// Before abort: the monitor deletes the config the VMM is asked about.
