@@ -113,17 +113,35 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			fail(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing token")
 			return
 		}
-		var changes map[string]string
+		// description and readme are strings; categories, a list of slugs, is
+		// kept comma-joined so Repo stays a map of strings.
+		var changes map[string]json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&changes); err != nil || len(changes) == 0 {
 			fail(w, http.StatusBadRequest, "BAD_REQUEST", "nothing to change")
 			return
+		}
+		values := map[string]string{}
+		for k, raw := range changes {
+			var v string
+			if k == "categories" {
+				var list []string
+				if err := json.Unmarshal(raw, &list); err != nil {
+					fail(w, http.StatusBadRequest, "BAD_REQUEST", "categories must be a list")
+					return
+				}
+				v = strings.Join(list, ",")
+			} else if err := json.Unmarshal(raw, &v); err != nil {
+				fail(w, http.StatusBadRequest, "BAD_REQUEST", k+" must be a string")
+				return
+			}
+			values[k] = v
 		}
 		s.mu.Lock()
 		key := parts[1] + "/" + parts[2]
 		if s.repos[key] == nil {
 			s.repos[key] = map[string]string{}
 		}
-		for k, v := range changes {
+		for k, v := range values {
 			s.repos[key][k] = v
 		}
 		s.mu.Unlock()

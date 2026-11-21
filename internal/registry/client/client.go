@@ -470,9 +470,12 @@ func (c *Client) DeleteTag(ctx context.Context, token, namespace, repository, ta
 type RepoChanges struct {
 	Description *string `json:"description,omitempty"`
 	Readme      *string `json:"readme,omitempty"`
+	// Categories replaces the repository's category slugs on the hub; an
+	// empty, non-nil list clears them.
+	Categories *[]string `json:"categories,omitempty"`
 }
 
-// EditRepo sets a repository's description or README, which the hub shows.
+// EditRepo sets a repository's description, README or categories, which the hub shows.
 // It needs a push token for the repository.
 func (c *Client) EditRepo(ctx context.Context, token, namespace, repository string, changes RepoChanges) error {
 	return c.do(ctx, http.MethodPatch, c.repo(namespace, repository), token, jsonBody(changes), "application/json", nil)

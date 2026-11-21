@@ -542,12 +542,13 @@ func newRegistryCmd() *cobra.Command {
 
 func newRepoCmd(registry *string) *cobra.Command {
 	repo := &cobra.Command{Use: "repo", Short: "Repository details shown on the hub"}
-	var description, readme string
+	var description, readme, categories string
 	edit := &cobra.Command{
 		Use:   "edit <[registry/]namespace/repository>",
-		Short: "Set a repository's description or README",
+		Short: "Set a repository's description, README or categories",
 		Example: `  jerboa registry repo edit aitorcons/web --description "Static web server"
-  jerboa registry repo edit aitorcons/web --readme README.md`,
+  jerboa registry repo edit aitorcons/web --readme README.md
+  jerboa registry repo edit aitorcons/web --categories web-servers,examples`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, err := naming.ParseImageReference(args[0])
@@ -572,8 +573,17 @@ func newRepoCmd(registry *string) *cobra.Command {
 				text := string(data)
 				changes.Readme = &text
 			}
-			if changes.Description == nil && changes.Readme == nil {
-				return fmt.Errorf("repo edit: set --description, --readme or both")
+			if cmd.Flags().Changed("categories") {
+				list := []string{}
+				for _, c := range strings.Split(categories, ",") {
+					if c = strings.TrimSpace(c); c != "" {
+						list = append(list, c)
+					}
+				}
+				changes.Categories = &list
+			}
+			if changes.Description == nil && changes.Readme == nil && changes.Categories == nil {
+				return fmt.Errorf("repo edit: set --description, --readme or --categories")
 			}
 			cred, err := credentials.For(ref.Registry)
 			if err != nil {
@@ -593,6 +603,7 @@ func newRepoCmd(registry *string) *cobra.Command {
 	}
 	edit.Flags().StringVar(&description, "description", "", "one-line description, at most 200 characters")
 	edit.Flags().StringVar(&readme, "readme", "", "Markdown file to show as the README, or - for stdin (at most 64 KiB)")
+	edit.Flags().StringVar(&categories, "categories", "", "comma-separated category slugs, at most 3, replacing the current ones; empty clears them (databases, web-servers, networking, languages, message-queues, monitoring, security, machine-learning, developer-tools, examples)")
 	repo.AddCommand(edit, newRepoRmCmd(registry))
 	return repo
 }
