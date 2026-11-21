@@ -24,6 +24,13 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Added
+
+- **`jerboa registry repo edit --categories`** files a repository under up to
+  three of the hub's categories (`--categories databases,monitoring`), so CI
+  can set them along with the description and README. The list replaces the
+  current one; `--categories ""` clears it.
+
 ## [0.61.0] - 2026-11-20
 
 ### Changed

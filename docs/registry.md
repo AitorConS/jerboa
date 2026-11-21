@@ -217,6 +217,12 @@ jerboa registry repo edit aitorcons/web --description "Static web server" --read
 
 Either flag can be used alone. `--readme -` reads the README from standard input.
 
+`--categories` files the repository under up to three of the hub's categories, by slug, replacing the ones it had (`--categories ""` clears them): `databases`, `web-servers`, `networking`, `languages`, `message-queues`, `monitoring`, `security`, `machine-learning`, `developer-tools`, `examples`.
+
+```sh
+jerboa registry repo edit aitorcons/web --categories web-servers,examples
+```
+
 ## Deleting
 
 Delete a tag, or a repository with all its tags, description and README:
