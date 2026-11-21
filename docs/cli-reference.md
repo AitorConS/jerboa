@@ -462,7 +462,7 @@ byte-for-byte. See the [registry protocol]({% link registry-protocol.md %}).
 | `registry pat create\|ls\|rm` | Manage personal access tokens for CI (`--registry` selects the host; `create` takes `--expires-in <days>`, `--namespace` and `--delete`) |
 | `registry verify <ref>` | Check an image's signatures as a pull does, without pulling or remembering anything, and show its attestations (`--identity`, `--platform` for a tag of several platforms; v0.57.0 and later) |
 | `registry signers` | List the signers pulls remember per repository (`~/.jerboa/signers.json`); `registry signers forget <repo>` forgets one, for a publisher that changed on purpose (v0.57.0 and later) |
-| `registry repo edit\|rm` | Set a repository's description or README (`edit --description`, `--readme`); delete a tag (`rm ns/repo:tag`) or a repository with all its tags (`rm ns/repo`, which asks unless `--yes`; v0.57.0 and later) |
+| `registry repo edit\|rm` | Set a repository's description, README or categories (`edit --description`, `--readme`, `--categories`); delete a tag (`rm ns/repo:tag`) or a repository with all its tags (`rm ns/repo`, which asks unless `--yes`; v0.57.0 and later) |
 
 ```sh
 jerboa build . --name web

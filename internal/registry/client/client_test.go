@@ -29,6 +29,13 @@ func TestEditRepoSendsOnlyTheFieldsSet(t *testing.T) {
 	require.NoError(t, c.EditRepo(context.Background(), "push-token", "aitorcons", "web", client.RepoChanges{Readme: &readme}))
 	require.Equal(t, map[string]string{"description": description, "readme": readme}, srv.Repo("aitorcons", "web"))
 
+	categories := []string{"web-servers", "examples"}
+	require.NoError(t, c.EditRepo(context.Background(), "push-token", "aitorcons", "web", client.RepoChanges{Categories: &categories}))
+	require.Equal(t, map[string]string{"description": description, "readme": readme, "categories": "web-servers,examples"}, srv.Repo("aitorcons", "web"))
+	none := []string{}
+	require.NoError(t, c.EditRepo(context.Background(), "push-token", "aitorcons", "web", client.RepoChanges{Categories: &none}))
+	require.Equal(t, "", srv.Repo("aitorcons", "web")["categories"])
+
 	require.Error(t, c.EditRepo(context.Background(), "", "aitorcons", "web", client.RepoChanges{Readme: &readme}))
 }
 
