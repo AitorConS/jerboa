@@ -269,11 +269,13 @@ func (m *QEMUManager) Start(ctx context.Context, id string) error {
 	// committed as a monitored "running" instance. It reuses the normal monitor
 	// with the explicit-stop flag set so teardown (tap, cgroup) and
 	// restart-suppression match a clean stop; the failure is returned to the
-	// caller instead of being swallowed as a WARN.
+	// caller instead of being swallowed as a WARN. The monitor runs to
+	// completion before Start returns, so the caller finds the VM stopped and
+	// can remove it.
 	abort := func() {
 		v.SetExplicitStop()
 		_ = cmd.Process.Kill()
-		go m.monitor(v, cmd)
+		m.monitor(v, cmd)
 	}
 
 	// Resource limits are applied only when explicitly requested. If they cannot

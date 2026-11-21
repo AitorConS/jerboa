@@ -24,6 +24,26 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Fixed
+
+- **A guest no longer crashes when several files grow at the same time.**
+  Applications that append to more than one file at once in small writes
+  (parallel downloads, log shippers, databases writing several files) gave
+  each write a storage extent of its own, because the files took turns
+  allocating the next free block. After roughly 600 MiB of such writes the
+  guest kernel ran out of room for its bookkeeping and halted with
+  `frame ... already full` (the VM then hung) or a failed `vector_push`
+  assertion. A new extent that continues a file now reserves room to grow in
+  place, up to 1 MiB, so four parallel writers of 1 GiB each finish in
+  seconds. Unused room stays allocated to the file, at most 1 MiB per file.
+  Random writes into sparse files are not affected by this change and can
+  still exhaust the guest kernel's memory when they create several hundred
+  thousand extents; preallocated files (`fallocate`) avoid that.
+- `jerboa run --rm` left the VM behind, still holding its volumes, when the
+  VMM failed during start (for example a missing library): the cleanup tried
+  to remove the VM before it had stopped, and `jerboa volume rm` then failed
+  with `volume is referenced by VM`. The failed VM is now removed.
+
 ## [0.61.0] - 2026-11-20
 
 ### Changed

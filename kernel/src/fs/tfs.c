@@ -809,19 +809,38 @@ out:
 
 */
 
-static int create_extent(tfs fs, range blocks, boolean uninited, extent *ex)
+/* headroom: storage blocks to allocate past the end of blocks, if available,
+   so that the extent can later grow in place (see fill_gap()). */
+static int create_extent(tfs fs, range blocks, boolean uninited, u64 headroom, extent *ex)
 {
     assert(!fs->fs.ro);
     heap h = fs->fs.h;
-    u64 nblocks = MAX(range_span(blocks), MIN_EXTENT_SIZE >> fs->fs.blocksize_order);
-    nblocks = MIN(range_span(blocks), MAX_EXTENT_SIZE >> fs->fs.blocksize_order);
+    u64 max_blocks = MAX_EXTENT_SIZE >> fs->fs.blocksize_order;
+    u64 nblocks = MIN(range_span(blocks), max_blocks);
 
     tfs_debug("create_extent: blocks %R, uninited %p, nblocks %ld\n", blocks, uninited, nblocks);
     if (!filesystem_reserve_log_space(fs, &fs->next_extend_log_offset, 0, 0) ||
         !filesystem_reserve_log_space(fs, &fs->next_new_log_offset, 0, 0))
         return -ENOSPC;
 
-    u64 start_block = filesystem_allocate_storage(fs, nblocks);
+    u64 start_block = u64_from_pointer(INVALID_ADDRESS);
+    if (headroom && nblocks < max_blocks) {
+        u64 want = MIN(nblocks + headroom, max_blocks);
+        start_block = filesystem_allocate_storage(fs, want);
+        if (start_block != u64_from_pointer(INVALID_ADDRESS)) {
+            range storage_blocks = irangel(start_block, want);
+            tfs_debug("   storage_blocks %R (headroom)\n", storage_blocks);
+            blocks.end = blocks.start + nblocks;
+            *ex = allocate_extent(h, blocks, storage_blocks);
+            if (*ex == INVALID_ADDRESS) {
+                filesystem_free_storage(fs, storage_blocks);
+                return -ENOMEM;
+            }
+            goto out;
+        }
+        /* Not enough contiguous free space: allocate just the range. */
+    }
+    start_block = filesystem_allocate_storage(fs, nblocks);
     while (start_block == u64_from_pointer(INVALID_ADDRESS)) {
         if (nblocks <= (MIN_EXTENT_ALLOC_SIZE >> fs->fs.blocksize_order))
             break;
@@ -838,6 +857,7 @@ static int create_extent(tfs fs, range blocks, boolean uninited, extent *ex)
     *ex = allocate_extent(h, blocks, storage_blocks);
     if (*ex == INVALID_ADDRESS)
         return -ENOMEM;
+  out:
     (*ex)->md = 0;
     if (uninited)
         (*ex)->uninited = INVALID_ADDRESS;
@@ -1129,14 +1149,14 @@ static u64 write_extent(tfsfile f, extent ex, sg_list sg, range blocks, merge m)
     return i.end;
 }
 
-static int fill_gap(tfsfile f, sg_list sg, range blocks, merge m, u64 *edge)
+static int fill_gap(tfsfile f, sg_list sg, range blocks, merge m, u64 headroom, u64 *edge)
 {
-    tfs_debug("   %s: writing new extent blocks %R\n", func_ss, blocks);
+    tfs_debug("   %s: writing new extent blocks %R, headroom 0x%lx\n", func_ss, blocks, headroom);
     extent ex;
     tfs fs = tfs_from_file(f);
     /* Logged uninited even when written now: write_extent() publishes it
      * initialized once its data is durable. */
-    int fss = create_extent(fs, blocks, true, &ex);
+    int fss = create_extent(fs, blocks, true, headroom, &ex);
     if (fss != 0)
         return fss;
     blocks = ex->node.r;
@@ -1944,6 +1964,28 @@ static int extend(tfsfile f, extent ex, sg_list sg, range blocks, merge m, u64 *
     return s;
 }
 
+/* Speculative preallocation for appends.
+ *
+ * A reservation (no merge) maps each write as it is copied into the page
+ * cache. When several files grow at the same time, their small writes take
+ * turns allocating storage: the block after each file's last extent is then
+ * already taken by another file, the extent cannot grow, and every write gets
+ * an extent of its own. Thousands of tiny extents per megabyte bloat the log
+ * and the publication state until a large allocation fails.
+ *
+ * So a new extent that continues the previous one (an append) is allocated
+ * with room to grow in place, as much as the previous extent's length, up to
+ * MIN_EXTENT_ALLOC_SIZE: a growing file's extents double in size until they
+ * reach that, and a file written in a single call or at random offsets gets
+ * no headroom. Unused headroom stays allocated to the extent, at most
+ * MIN_EXTENT_ALLOC_SIZE per file; it is released with the extent. */
+static u64 tfs_append_headroom(tfs fs, rmnode prev, u64 start, merge m)
+{
+    if (m || prev == INVALID_ADDRESS || prev->r.end != start)
+        return 0;
+    return MIN(range_span(prev->r), MIN_EXTENT_ALLOC_SIZE >> fs->fs.blocksize_order);
+}
+
 static status extents_range_handler(tfs fs, tfsfile f, range q, sg_list sg, merge m)
 {
     assert(range_span(q) > 0);
@@ -1982,9 +2024,11 @@ static status extents_range_handler(tfs fs, tfsfile f, range q, sg_list sg, merg
                 }
 
                 /* fill space */
+                u64 headroom = tfs_append_headroom(fs, prev, blocks.start, m);
                 while (blocks.start < limit) {
                     tfs_debug("   fill start 0x%lx, limit 0x%lx\n", blocks.start, limit);
-                    fss = fill_gap(f, sg, irange(blocks.start, limit), m, &blocks.start);
+                    fss = fill_gap(f, sg, irange(blocks.start, limit), m, headroom, &blocks.start);
+                    headroom = 0;
                     if (fss != 0) {
                         status s = timm("result", "unable to create extent");
                         return timm_append(s, "fsstatus", "%d", fss);
@@ -2155,7 +2199,7 @@ static int add_extents(tfs fs, range i, rangemap rm)
     extent ex;
     int fss;
     while (range_span(i)) {
-        fss = create_extent(fs, i, true, &ex);
+        fss = create_extent(fs, i, true, 0, &ex);
         if (fss != 0)
             return fss;
         assert(rangemap_insert(rm, &ex->node));

@@ -249,6 +249,25 @@ func TestFaults_LimitsThatCannotBeAppliedAbortTheStart(t *testing.T) {
 		1500*time.Millisecond, 20*time.Millisecond, "a VM aborted during start was restarted")
 }
 
+// run --rm and the cleanup of a failed run remove the VM as soon as Start
+// returns its error. A VM still "starting" there cannot be removed, stays
+// registered, and keeps its volumes referenced until the daemon restarts.
+func TestFaults_AbortedStartCanBeRemovedAtOnce(t *testing.T) {
+	store := NewMemoryStore()
+	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(always("block").cmd), WithStore(store))
+	mgr.applyLimits = func(*VM, int) error { return errors.New("cgroup: read-only file system") }
+	cfg := faultCfg()
+	cfg.CPUShares = 100
+	v, err := mgr.Create(context.Background(), cfg)
+	require.NoError(t, err)
+
+	require.Error(t, mgr.Start(context.Background(), v.ID))
+	assert.Equal(t, StateStopped, v.GetState())
+	require.NoError(t, mgr.Remove(context.Background(), v.ID))
+	assert.Empty(t, store.List())
+	requireReaped(t, vmPID(v))
+}
+
 func TestFaults_ConcurrentStartLaunchesOneHypervisor(t *testing.T) {
 	spawns := always("block")
 	mgr := NewQEMUManager("fake-qemu", WithCommandFunc(spawns.cmd))
