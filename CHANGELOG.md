@@ -24,6 +24,11 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-22
+
+Kernel toolset 0.2.5. Validation evidence:
+[docs/releases/v0.62.0](https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.62.0).
+
 ### Added
 
 - **`jerboa registry repo edit --categories`** files a repository under up to
@@ -1289,6 +1294,7 @@ release.
 - Windows support through WSL2, and `uni upgrade`.
 
 [Unreleased]: https://github.com/AitorConS/jerboa/commits/main
+[0.62.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.62.0
 [0.61.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.61.0
 [0.60.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.60.0
 [0.59.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.59.0
