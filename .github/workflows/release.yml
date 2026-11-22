@@ -386,7 +386,7 @@ jobs:
         for tool in aarch64-elf-as aarch64-elf-ld aarch64-elf-objcopy cargo codesign; do
           command -v "$tool"
         done
-    - name: Build pinned Firecracker and relocatable dependencies
+    - name: Build pinned Spark and relocatable dependencies
       working-directory: Spark
       run: |
         set -euo pipefail
@@ -394,7 +394,7 @@ jobs:
         GLIB_PREFIX="$PWD/experiments/hvf/build/distribution/native" sh experiments/hvf/build-native.sh
         # Offline license metadata needs workspace dependencies beyond the binary build.
         cargo +1.97.0 fetch --locked --target aarch64-apple-darwin
-        python3 experiments/hvf/distribution/package.py "$RUNNER_TEMP/firecracker-package"
+        python3 experiments/hvf/distribution/package.py "$RUNNER_TEMP/spark-package"
     # The app's x86 guest boot files are this candidate's selected toolset
     # (the same-run build, or the explicitly reused published version), not
     # whatever the stable channel serves while this job runs.
@@ -436,11 +436,11 @@ jobs:
         echo "VERSION=$VERSION" >> "$GITHUB_ENV"
         python3 scripts/package-macos-distribution.py --jerboa-dir dist/macos-arm64 \
           --tools-dir dist/macos-arm64/tools \
-          --firecracker-package "$RUNNER_TEMP/firecracker-package" \
+          --spark-package "$RUNNER_TEMP/spark-package" \
           --output-dir dist/macos-distribution --version "$VERSION" \
           --source-date-epoch "$(git show -s --format=%ct HEAD)"
         BUNDLE="$PWD/dist/macos-distribution/jerboa-$VERSION-macos-arm64"
-        # Checksums, ARM64 Mach-O, ad-hoc signatures, the Firecracker
+        # Checksums, ARM64 Mach-O, ad-hoc signatures, the Spark
         # Hypervisor entitlement, relocatable libraries and --version only.
         python3 scripts/verify-macos-distribution.py "$BUNDLE" --mode adhoc
         python3 scripts/release/candidate.py x86 --check --out "$BUNDLE/bin/tools/x86"
@@ -448,9 +448,9 @@ jobs:
         cp "$BUNDLE/bin/jerboa" dist/macos-release/jerboa-darwin-arm64
         cp "$BUNDLE/bin/jerboad" dist/macos-release/jerboad-darwin-arm64
         # Desktop stages the same verified inputs: CLI, daemon and tools into
-        # Resources/bin, Firecracker's dylibs into Resources/lib.
+        # Resources/bin, Spark's dylibs into Resources/lib.
         JERBOA_VERSION_FILE="$PWD/VERSION.md" sh ../desktop/scripts/stage-macos.sh \
-          "$PWD/dist/macos-arm64" "$RUNNER_TEMP/firecracker-package"
+          "$PWD/dist/macos-arm64" "$RUNNER_TEMP/spark-package"
         test "$(cat ../desktop/vendor/native/engine-version.txt)" = "v$VERSION"
     - name: Build Desktop DMG
       working-directory: desktop
@@ -463,7 +463,7 @@ jobs:
         node --input-type=module -e "import { desktopVersion, syncDesktopVersion } from './scripts/desktop-version.mjs'; syncDesktopVersion('.', desktopVersion(process.env.VERSION))"
         npm run build
         # Ad-hoc app signature: Apple Silicon needs a valid seal to launch it.
-        # signIgnore (electron-builder.yml) keeps Firecracker and its dylibs as built.
+        # signIgnore (electron-builder.yml) keeps Spark and its dylibs as built.
         npx electron-builder --mac --arm64 --publish never -c.mac.identity=-
     - name: Verify the app, bundled engine and DMG
       working-directory: desktop
@@ -473,17 +473,17 @@ jobs:
         RES="$APP/Contents/Resources"
         DMG="dist/jerboa-desktop-$VERSION-macos-arm64.dmg"
         codesign --verify --deep --strict --verbose=2 "$APP"
-        # Firecracker must keep the Hypervisor entitlement or HVF refuses VMs.
-        codesign -d --entitlements - "$RES/bin/firecracker" 2>/dev/null | grep -q com.apple.security.hypervisor
+        # Spark must keep the Hypervisor entitlement or HVF refuses VMs.
+        codesign -d --entitlements - "$RES/bin/spark" 2>/dev/null | grep -q com.apple.security.hypervisor
         test "$(cat "$RES/bin/engine-version.txt")" = "v$VERSION"
         # Any x86 guest files the app ships are the candidate's selected ones.
         if [ -e "$RES/bin/tools/x86" ]; then
           (cd ../jerboa && python3 scripts/release/candidate.py x86 --check --out "../desktop/$RES/bin/tools/x86")
         fi
-        # Run from inside the app: Firecracker resolves @loader_path/../lib.
+        # Run from inside the app: Spark resolves @loader_path/../lib.
         "$RES/bin/jerboa" --version
         "$RES/bin/jerboad" --version
-        "$RES/bin/firecracker" --version
+        "$RES/bin/spark" --version
         hdiutil verify "$DMG"
     - name: Record artifact digests
       id: digest

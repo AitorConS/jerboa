@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/config"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/spf13/cobra"
 )
 
@@ -28,8 +29,8 @@ func newConfigSetCmd() *cobra.Command {
 
 Available keys:
 
-  hypervisor   VM backend to use: auto (default: Firecracker where this
-               host can run it, else QEMU), qemu or firecracker`,
+  hypervisor   VM backend to use: auto (default: ` + hypervisorpkg.Label + ` where this
+               host can run it, else QEMU), qemu or ` + hypervisorpkg.MicroVM,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			key, value := args[0], strings.ToLower(args[1])
@@ -40,11 +41,13 @@ Available keys:
 			}
 			switch strings.ToLower(key) {
 			case "hypervisor":
-				if value != "qemu" && value != "firecracker" && value != "auto" {
-					return fmt.Errorf("hypervisor must be auto, qemu or firecracker, got %q", value)
+				name, err := hypervisorpkg.Parse(value)
+				if err != nil || name == "" {
+					return fmt.Errorf("hypervisor must be %s, got %q", hypervisorpkg.Values(), value)
 				}
-				// auto is stored as no choice: the daemon then runs
-				// Firecracker wherever the host can.
+				value = hypervisorpkg.Public(name)
+				// auto is stored as no choice: the daemon then runs the
+				// microVM backend wherever the host can.
 				cfg.Hypervisor = strings.TrimPrefix(value, "auto")
 			default:
 				return fmt.Errorf("unknown config key %q", key)

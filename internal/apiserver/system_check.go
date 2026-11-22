@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/vm"
 )
@@ -85,9 +86,9 @@ func (s *Server) systemCheck(p api.SystemCheckParams) []api.SystemFinding {
 		if h.Name == "" {
 			return "running"
 		}
-		if h.Name != "firecracker" && h.FirecrackerAvailable {
+		if h.Name != hypervisorpkg.MicroVM && h.FirecrackerAvailable {
 			c.add("hypervisor", api.SeverityInfo, "jerboa config set hypervisor auto, then restart the daemon",
-				"running %s (%s), but this host can run Firecracker, which starts faster", h.Name, h.Reason)
+				"running %s (%s), but this host can run %s, which starts faster", h.Name, h.Reason, hypervisorpkg.Label)
 			return ""
 		}
 		return fmt.Sprintf("%s (%s)", h.Name, h.Reason)

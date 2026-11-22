@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Real package -> API -> Nanos acceptance. Uses an isolated, retained HOME/store.
-Requires JERBOA_TEST_BIN, JERBOA_FIRECRACKER_BIN and JERBOA_PKG_DOCKER_ID.
+Requires JERBOA_TEST_BIN, JERBOA_SPARK_BIN and JERBOA_PKG_DOCKER_ID.
 Run on macOS ARM64 with Go on PATH. No installed binaries are changed.
 """
 import atexit, hashlib, json, os, pathlib, shutil, socket, subprocess, tempfile, time, urllib.request
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 BIN=pathlib.Path(os.environ['JERBOA_TEST_BIN']).resolve()
-FC=pathlib.Path(os.environ['JERBOA_FIRECRACKER_BIN']).resolve()
+FC=pathlib.Path(os.environ['JERBOA_SPARK_BIN']).resolve()
 WORK=pathlib.Path(tempfile.mkdtemp(prefix='jpa-',dir='/tmp'))
 DEST=pathlib.Path(os.environ.get('JERBOA_TEST_OUTPUT',str(BIN)))/('acceptance-'+time.strftime('%Y%m%d-%H%M%S'))
 atexit.register(lambda:shutil.copytree(WORK,DEST,dirs_exist_ok=True))
@@ -74,7 +74,7 @@ for p in packages:
     else:assert p['provenance']['kind']=='local'
 (WORK/'packages.json').write_text(json.dumps(packages,indent=2))
 log=(WORK/'daemon.log').open('w')
-daemon=subprocess.Popen([str(BIN/'jerboad'),'--host',env['JERBOA_HOST'],'--tools-dir',str(BIN/'tools'),'--hypervisor','firecracker','--fc-bin',str(FC)],env=env,stdout=log,stderr=log)
+daemon=subprocess.Popen([str(BIN/'jerboad'),'--host',env['JERBOA_HOST'],'--tools-dir',str(BIN/'tools'),'--hypervisor', 'spark', '--spark-bin',str(FC)],env=env,stdout=log,stderr=log)
 active=[]
 try:
     wait(lambda:cli('status'),'daemon')

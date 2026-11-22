@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 )
@@ -199,8 +200,13 @@ func TestPrintDaemonHypervisor(t *testing.T) {
 	printDaemonHypervisor(&out, api.DaemonHypervisor{})
 	require.Empty(t, out.String(), "an older daemon says nothing")
 
-	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: "firecracker", Reason: "this host can run Firecracker", FirecrackerAvailable: true})
-	require.Equal(t, "hypervisor: firecracker (this host can run Firecracker)\n", out.String())
+	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: hypervisorpkg.MicroVM, Reason: "this host can run " + hypervisorpkg.Label, FirecrackerAvailable: true})
+	require.Equal(t, "hypervisor: "+hypervisorpkg.MicroVM+" (this host can run "+hypervisorpkg.Label+")\n", out.String())
+
+	// A daemon from before the rename to Spark names the backend as Linux does.
+	out.Reset()
+	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: "firecracker", Reason: "r"})
+	require.Equal(t, "hypervisor: "+hypervisorpkg.MicroVM+" (r)\n", out.String())
 
 	out.Reset()
 	printDaemonHypervisor(&out, api.DaemonHypervisor{Name: "qemu", Reason: "chosen in config.toml", FirecrackerAvailable: true})

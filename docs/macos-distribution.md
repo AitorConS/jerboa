@@ -1,15 +1,16 @@
 ---
 layout: default
-title: macOS Firecracker distribution
-description: "The macOS distribution of jerboa: one relocatable ARM64 bundle with the CLI, daemon, native tools and the Firecracker/HVF package for Apple Silicon."
+title: macOS Spark distribution
+description: "The macOS distribution of jerboa: one relocatable ARM64 bundle with the CLI, daemon, native tools and the Spark package for Apple Silicon."
 parent: macOS Apple Silicon
 nav_order: 11
 ---
 
-# macOS Firecracker distribution
+# macOS Spark distribution
 
 The distribution is one relocatable ARM64 bundle containing Jerboa, its native
-tools and the complete Firecracker/HVF package. It targets Apple Silicon and
+tools and the complete package of Spark, Jerboa's Hypervisor.framework fork
+of Firecracker. It targets Apple Silicon and
 macOS 26 or newer. Build it only after the release-candidate binaries from all
 workstreams are final; the example input paths below are review artifacts, not
 immutable release inputs.
@@ -19,24 +20,24 @@ immutable release inputs.
 The `release.yml` workflow builds a complete product candidate on explicit
 request. `build-macos` runs on the GitHub-hosted `macos-26` Apple Silicon
 runner and is required before candidate assembly. It installs ARM64 ELF
-binutils with Homebrew, Go 1.27.4 and Rust 1.97.0. The Desktop and Firecracker
+binutils with Homebrew, Go 1.27.4 and Rust 1.97.0. The Desktop and Spark
 commits are explicit immutable inputs recorded in the signed inventory.
-The Firecracker revision has no default: a release names the commit it ships,
+The Spark revision has no default: a release names the commit it ships,
 after that commit passed the fork's own validation. Native dependencies are built
 from the fork's SHA-256-locked sources and bundled with their licenses.
 
-The job builds the kernel, native tools and Firecracker, runs the Go tests and
+The job builds the kernel, native tools and Spark, runs the Go tests and
 installer/package regressions, then packages the relocatable bundle and verifies
-it in ad-hoc mode. It stages the same native build and Firecracker package into
+it in ad-hoc mode. It stages the same native build and Spark package into
 JerboaDesktop (checked out with the `DESKTOP_REPO_TOKEN` secret), builds the
-self-contained DMG and checks the packaged app: a valid seal, Firecracker's
+self-contained DMG and checks the packaged app: a valid seal, Spark's
 intact Hypervisor entitlement, the bundled engine version, and `--version` of
-the CLI, daemon and Firecracker run from inside `Contents/Resources`.
+the CLI, daemon and Spark run from inside `Contents/Resources`.
 
 GitHub-hosted macOS runners expose no Hypervisor.framework, so CI boots no VMs.
-Before promoting a candidate, run the Firecracker functional suites
-(`test-firecracker-macos.py`, `test-firecracker-network.py`,
-`test-firecracker-stats.py` and `test-jerboa-snapshots.py`) locally on macOS 26
+Before promoting a candidate, run the Spark functional suites
+(`test-spark-macos.py`, `test-spark-network.py`,
+`test-spark-stats.py` and `test-jerboa-snapshots.py`) locally on macOS 26
 against the actual candidate app, as described under [Verification](#verification).
 `scripts/release/native-macos.sh` records the candidate run and app archive hash.
 The separate `promote.yml` workflow requires that evidence and a release review,
@@ -57,7 +58,7 @@ rejects these releases. R2 receives:
 | `releases/vVERSION/manifest.json` and `.minisig` | Signed metadata for pinned installations |
 | `channels/stable.json` and `.minisig` | Signed current release metadata |
 
-The standalone CLI and daemon assets do not include Firecracker, its libraries
+The standalone CLI and daemon assets do not include Spark, its libraries
 or the kernel toolset; the DMG's app does. The Windows installer is mirrored
 into the `desktop` component only when its channel already points at the
 release version. All versioned artifacts are uploaded before the stable channel
@@ -67,7 +68,7 @@ artifact. A successful PR check alone does not publish to R2.
 ## Development bundle
 
 The packaging command stages bytes but never builds, signs, installs, submits or
-publishes them. It first verifies the Firecracker package's own checksums, writes
+publishes them. It first verifies the Spark package's own checksums, writes
 a complete bundle checksum inventory and creates a deterministic `tar.gz`:
 
 ```sh
@@ -75,7 +76,7 @@ epoch=$(git show -s --format=%ct HEAD)
 python3 scripts/package-macos-distribution.py \
   --jerboa-dir dist/astra-pkg-arm64/review-fixes \
   --tools-dir dist/macos-arm64/tools \
-  --firecracker-package ../Spark/experiments/hvf/build/astra-shared-network/review-fixes/package \
+  --spark-package ../Spark/experiments/hvf/build/astra-shared-network/review-fixes/package \
   --output-dir dist/macos-distribution/v0.0.0-dev \
   --version 0.0.0-dev \
   --source-date-epoch "$epoch"
@@ -84,14 +85,14 @@ python3 scripts/verify-macos-distribution.py \
   --mode adhoc
 ```
 
-The layout puts `jerboad`, Firecracker and `tools/` together under `bin/`, which
-matches Jerboa's relative lookup. Firecracker's `@loader_path/../lib` references
+The layout puts `jerboad`, Spark and `tools/` together under `bin/`, which
+matches Jerboa's relative lookup. Spark's `@loader_path/../lib` references
 resolve to the bundled libraries. Its source archives, lockfile, manifest,
-licenses and upstream checksums remain under `share/firecracker/`.
+licenses and upstream checksums remain under `share/spark/`.
 
 Given identical input bytes, version, Git commit, script and
 `SOURCE_DATE_EPOCH`, staging and archive bytes are deterministic. This claim is
-limited to packaging: the example reuses prebuilt Jerboa/tools/Firecracker
+limited to packaging: the example reuses prebuilt Jerboa/tools/Spark
 inputs. To claim that the compiled bytes are reproducible, use the source build
 below and keep its comparison output with the release report.
 
@@ -100,7 +101,7 @@ below and keep its comparison output with the release report.
 `scripts/build-macos-reproducible.py` compiles every ARM64 component from
 source instead of staging prebuilt bytes: `jerboa`/`jerboad` (Go), the native
 tools and kernel/boot images (kernel Makefiles), glib/libintl (Meson), and
-Firecracker/HVF (Cargo). It never signs with an identity, notarizes, installs or
+Spark (Cargo). It never signs with an identity, notarizes, installs or
 publishes.
 
 1. Freeze the sources once, before other work changes them. The snapshot
@@ -146,7 +147,7 @@ The recipe removes build-root and time dependence in these ways:
 - C: `-ffile-prefix-map=<root>=/build`; `ZERO_AR_DATE=1`; `SOURCE_DATE_EPOCH`
   is the frozen Jerboa commit time; `TZ=UTC`, `LC_ALL=C` and a private `HOME`.
 - Mach-O `LC_UUID`: Apple ld hashes the output including the debug map's object
-  paths, and a later `strip` does not recompute it. Host tools and Firecracker
+  paths, and a later `strip` does not recompute it. Host tools and Spark
   are therefore linked with `-Wl,-S`, then stripped with `strip -S`.
 - Go: `-trimpath -buildvcs=false`, `GOTOOLCHAIN=local`, `GOENV=off` and no
   root-specific `CGO_*` flags, because their values feed the Go build ID and
@@ -160,7 +161,7 @@ The recipe removes build-root and time dependence in these ways:
   plus `+snapshot.<tree digest>`, and inert `.git/index`/`.git/HEAD`
   placeholders satisfy `kernel.mk`'s prerequisites.
 
-`compare` checks every file of the Jerboa, tools and Firecracker outputs and of
+`compare` checks every file of the Jerboa, tools and Spark outputs and of
 the final bundle twice: the ad-hoc signed bytes (`sha256`) and, for Mach-O files,
 the bytes with the signature removed (`unsigned_sha256`). It also compares the
 archive hash. Pre-signature equality is what a later Developer ID signature
@@ -184,10 +185,10 @@ unverified until the comparison is repeated there.
 ## Verification
 
 The ad-hoc verifier checks every checksum, Mach-O ARM64 architecture, strict code
-signature validity, exact Firecracker Hypervisor entitlement, absence of
+signature validity, exact Spark Hypervisor entitlement, absence of
 unexpected Jerboa entitlements, and all dynamic-library paths. It extracts to a
 new temporary directory and runs only `--version` for Jerboa, the daemon and
-Firecracker. It does not start or replace the managed daemon, boot a VM, install
+Spark. It does not start or replace the managed daemon, boot a VM, install
 under `/usr/local`, or contact Apple.
 
 Run the functional smoke against the relocated bundle as a separate acceptance
@@ -198,8 +199,8 @@ ports and VMs, then builds an ARM64 fixture and proves HTTP from the guest:
 export PATH="$PWD/../Spark/experiments/hvf/build/guest-tools/go/bin:$PATH"
 bundle="$PWD/dist/macos-distribution/v0.0.0-dev/jerboa-0.0.0-dev-macos-arm64"
 JERBOA_TEST_BIN="$bundle/bin" \
-JERBOA_FIRECRACKER_BIN="$bundle/bin/firecracker" \
-python3 scripts/test-firecracker-macos.py
+JERBOA_SPARK_BIN="$bundle/bin/spark" \
+python3 scripts/test-spark-macos.py
 ```
 
 ## Developer ID and notarized release
@@ -207,7 +208,7 @@ python3 scripts/test-firecracker-macos.py
 Ad-hoc signing is suitable for local development evidence, not public release.
 A distributable release needs a trusted `Developer ID Application` identity for
 every Mach-O, a `Developer ID Installer` identity for the installer, Hardened
-Runtime, the Firecracker Hypervisor entitlement, successful Apple notarization,
+Runtime, the Spark Hypervisor entitlement, successful Apple notarization,
 and a stapled ticket. Use a copy of the reviewed bundle:
 
 ```sh
@@ -230,7 +231,7 @@ This invokes `notarytool submit --wait`, staples and validates the ticket, then
 asks Gatekeeper to assess the installer. Never put Apple credentials in command
 arguments or the repository; create the named Keychain profile separately.
 The signing helper regenerates the bundle checksum inventory after changing the
-Mach-O bytes. It renames the embedded Firecracker `manifest.json` and
+Mach-O bytes. It renames the embedded Spark `manifest.json` and
 `SHA256SUMS` with an `upstream-adhoc` suffix and adds `SIGNING-NOTICE.json`, so
 metadata for pre-signing bytes cannot be mistaken for the signed inventory.
 After notarization, verify both the signed bundle and the stapled
@@ -249,10 +250,10 @@ bundle. Installer scripts and payload files outside
 `/usr/local/libexec/jerboa` are rejected, so an unrelated validly notarized
 package cannot satisfy release verification.
 
-Also run the isolated Firecracker functional suites documented in
-[Firecracker on macOS]({% link macos-firecracker.md %}).
+Also run the isolated Spark functional suites documented in
+[Spark on macOS]({% link macos-spark.md %}).
 
-Before publishing, review the embedded Firecracker README and manifest. A
+Before publishing, review the embedded Spark README and manifest. A
 notarized wrapper cannot turn an experimental dependency with deferred network
 or stability acceptance into a production-supported release. Preserve all
 license/source material and publish the final checksum file through an

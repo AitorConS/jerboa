@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated, reproducible macOS Firecracker process-tree stats acceptance."""
+"""Isolated, reproducible macOS Spark process-tree stats acceptance."""
 import json
 import os
 from pathlib import Path
@@ -13,7 +13,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 OUT = Path(os.getenv("JERBOA_TEST_OUTPUT", str(ROOT / "dist/sol-closure/stats/evidence"))).resolve()
 BIN = Path(os.getenv("JERBOA_TEST_BIN", str(ROOT / "dist/sol-closure/stats/bin"))).resolve()
-FC = Path(os.getenv("JERBOA_FIRECRACKER_BIN", str(ROOT.parent / "Spark/experiments/hvf/build/astra-shared-network/review-fixes/package/bin/firecracker"))).resolve()
+FC = Path(os.getenv("JERBOA_SPARK_BIN", str(ROOT.parent / "Spark/experiments/hvf/build/astra-shared-network/review-fixes/package/bin/spark"))).resolve()
 GO = Path(os.getenv("JERBOA_TEST_GO", str(ROOT.parent / "Spark/experiments/hvf/build/guest-tools/go/bin/go"))).resolve()
 PROGRAM = r'''package main
 import("fmt";"net/http";"os";"runtime";"strconv";"sync";"time")
@@ -37,7 +37,7 @@ def main():
     if missing := [str(path) for path in required if not path.is_file()]:
         raise SystemExit("required test input missing: " + ", ".join(missing))
     OUT.mkdir(parents=True, exist_ok=True)
-    results = {"inputs": {"bin": str(BIN), "firecracker": str(FC), "go": str(GO), "output": str(OUT)}, "semantics": {
+    results = {"inputs": {"bin": str(BIN), "spark": str(FC), "go": str(GO), "output": str(OUT)}, "semantics": {
         "cpu_pct": "sum of host CPU time deltas for the live supervisor/VMM descendant tree divided by wall time; 100% is one logical host CPU",
         "mem_bytes": "sum of current host resident bytes (RSS) for the supervisor/VMM descendant tree; not configured guest RAM and may include resident guest-memory mappings",
         "disk_bytes": "sum of cumulative host process disk I/O bytes for the currently live tree"
@@ -78,7 +78,7 @@ def main():
 
         def start_daemon():
             return subprocess.Popen([str(BIN / "jerboad"), "--host", env["JERBOA_HOST"], "--tools-dir", str(BIN / "tools"),
-                                     "--hypervisor", "firecracker", "--fc-bin", str(FC)], env=env, stdout=log, stderr=log)
+                                     "--hypervisor", "spark", "--spark-bin", str(FC)], env=env, stdout=log, stderr=log)
 
         def host_tree(vm):
             actual_id = inspect(vm)["id"]

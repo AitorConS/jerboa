@@ -1,13 +1,13 @@
 ---
 layout: default
-title: Firecracker snapshots on macOS
-description: "Capture a running Firecracker VM on macOS and restore it in place with jerboa snapshot: commands, limits and the JSON-RPC methods."
+title: Spark snapshots on macOS
+description: "Capture a running Spark VM on macOS and restore it in place with jerboa snapshot: commands, limits and the JSON-RPC methods."
 nav_order: 13
 ---
 
-# Firecracker snapshots on macOS
+# Spark snapshots on macOS
 
-`jerboad` can capture a running Firecracker/HVF VM into a private store and
+`jerboad` can capture a running Spark VM into a private store and
 restore it **in place**: the same stopped VM resumes from the captured instant
 with its ID, MAC, IP, name, aliases and published ports. This is a deliberately
 narrow v1 for local development on the Mac that took the snapshot. It is not a
@@ -17,14 +17,14 @@ for production use.
 ## Requirements and scope
 
 - Apple Silicon, the supported macOS 26 build, and `jerboad
-  --hypervisor firecracker` with a snapshot-capable `Spark` build.
+  --hypervisor spark` with a snapshot-capable `Spark` build.
 - The VM is attached to a named Jerboa network (`unix-stream` switch link).
   VMs on the default slirp network are rejected with `UNSUPPORTED_CAPABILITY`.
 - The VM has **no Jerboa volumes**. A volume is external state the snapshot
   does not contain, so its consistency with guest RAM cannot be guaranteed;
   such VMs are rejected.
 - Restore targets the VM the snapshot was taken from, while it is stopped.
-- Other backends (QEMU, Linux Firecracker) report `UNSUPPORTED_CAPABILITY`.
+- Other backends (QEMU, Firecracker on Linux) report `UNSUPPORTED_CAPABILITY`.
 
 ## CLI and API
 
@@ -64,18 +64,18 @@ restored into it.
 ## Store
 
 Snapshots live in `~/.jerboa/snapshots` (`jerboad --snapshot-dir`). Each entry
-is a `0700` directory containing the fork artifact (`vm.snapshot`) and an
+is a `0700` directory containing the Spark artifact (`vm.snapshot`) and an
 atomically written sidecar, `jerboa-snapshot.json`. The sidecar records the VM
 ID and name, backend, image, CPU/memory, a configuration fingerprint
 (environment values are hashed, not stored), network name, subnet, gateway, IP,
-MAC and aliases, published ports, fork compatibility data, per-component sizes
+MAC and aliases, published ports, Spark compatibility data, per-component sizes
 and SHA-256 digests, and the total size. It never stores socket or temporary
 paths.
 
-- Restore re-hashes every component and requires it to match both the fork
+- Restore re-hashes every component and requires it to match both Spark's
   manifest and the sidecar. Every file must be private (`0600`), owned by the
   daemon user, single-link and not a symlink. Unexpected entries are rejected.
-  The fork repeats its own compatibility and integrity checks on load.
+  Spark repeats its own compatibility and integrity checks on load.
 - Quotas apply before capture, using an estimate (RAM + root disk + kernel),
   and again at publication with the real size. Defaults: 16 snapshots and
   32 GiB total (`--snapshot-max-count`, `--snapshot-max-bytes`, 0 disables).
@@ -147,7 +147,7 @@ Adoption of a completed restore after a daemon kill was observed.
 ## Network policy
 
 The snapshot never widens network permissions. Egress, DNS forwarding and
-listeners come from the daemon's current `--fc-security` policy. The fork
+listeners come from the daemon's current `--spark-security` policy. Spark
 rejects snapshots whose `unix-stream` interface ID or MAC differ, and IP rules
 inside the VMM configuration. A restored VM can reach only what a freshly
 started VM with the same configuration could reach.
@@ -177,19 +177,19 @@ The daemon/CLI acceptance runs an isolated `jerboad` (its own `HOME`,
 export GO="$PWD/../Spark/experiments/hvf/build/guest-tools/go/bin/go"
 B=path/to/jerboa-bundle/bin
 python3 scripts/test-jerboa-snapshots.py --bin-dir path/to/jerboa-under-test \
-  --firecracker-bin "$B/firecracker" --tools-dir "$B/tools" \
+  --spark-bin "$B/spark" --tools-dir "$B/tools" \
   --go-bin "$GO" --output-dir /absolute/output
 ```
 
 It covers create and JSON-RPC restore, negative cases, races and daemon
 `SIGKILL` recovery, and signals only processes carrying its private path.
 
-The low-level fork harness drives the supervisor API directly with Jerboa's
+The low-level Spark harness drives the supervisor API directly with Jerboa's
 switch, without `jerboad`:
 
 ```sh
-python3 scripts/test-firecracker-snapshot-network.py \
-  --firecracker-bin dist/sol-closure/snapshots/bin/firecracker \
+python3 scripts/test-spark-snapshot-network.py \
+  --spark-bin dist/sol-closure/snapshots/bin/spark \
   --seed-snapshot dist/sol-closure/snapshots/seed.snapshot \
   --output-dir dist/sol-closure/snapshots/versioned-run \
   --go-bin "$GO"
@@ -197,7 +197,7 @@ python3 scripts/test-firecracker-snapshot-network.py \
 
 ## Low-level VMM workflow
 
-For reference, the fork API sequence the daemon automates:
+For reference, the Spark API sequence the daemon automates:
 
 ```text
 PUT /actions         {"action_type":"Pause"}

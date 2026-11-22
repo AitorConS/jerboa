@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Real HVF unix-stream snapshot/restore against a recreated Jerboa switch.
 
-The input seed is a Firecracker snapshot of the shared-network smoke guest
+The input seed is a Spark snapshot of the shared-network smoke guest
 (HTTP 8080, UDP 8081, raw TCP 8082, /lookup and /peer). This harness owns the
 switch lifecycle; it does not claim that jerboad currently exposes snapshot RPCs.
 """
@@ -36,12 +36,12 @@ def get(url):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--firecracker-bin',type=Path,required=True)
+    parser.add_argument('--spark-bin',type=Path,required=True)
     parser.add_argument('--seed-snapshot',type=Path,required=True)
     parser.add_argument('--output-dir',type=Path,required=True)
     parser.add_argument('--go-bin',default='go')
     args=parser.parse_args()
-    firecracker=args.firecracker_bin.resolve();seed=args.seed_snapshot.resolve();output=args.output_dir.resolve()
+    spark=args.spark_bin.resolve();seed=args.seed_snapshot.resolve();output=args.output_dir.resolve()
     output.mkdir(parents=True,exist_ok=True);output.chmod(0o700)
     artifacts=Path(tempfile.mkdtemp(prefix='run-',dir=output));artifacts.chmod(0o700)
     temporary=tempfile.TemporaryDirectory(prefix='jbs-',dir='/tmp');run=Path(temporary.name)
@@ -60,7 +60,7 @@ def main():
         process=subprocess.Popen([str(helper),str(link_sock),net['guest_mac'],str(http_port),str(udp_port),str(tcp_port)],stdout=log,stderr=log)
         wait(lambda:link_sock.exists(),'switch');return process,log
     switch,switch_log=start_switch();vmm_log=(run/'vmm.log').open('w')
-    vmm=subprocess.Popen([str(firecracker),'--api-sock',str(vm_sock),'--config-file',str(config)],stdout=vmm_log,stderr=vmm_log)
+    vmm=subprocess.Popen([str(spark),'--api-sock',str(vm_sock),'--config-file',str(config)],stdout=vmm_log,stderr=vmm_log)
     url=f'http://127.0.0.1:{http_port}'
     def reject_load(label):
         code,body=api(vm_sock,'PUT','/snapshot/load',{'snapshot_path':str(snapshot)})

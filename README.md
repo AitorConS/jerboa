@@ -33,7 +33,7 @@ Silicon. On Windows, the `jerboa` CLI runs on the host and talks to `jerboad`
 running inside a dedicated WSL2 distro managed by `jerboa daemon`.
 See [macOS Apple Silicon](docs/macos.md) for the native build and compatibility matrix.
 See [Linux ARM64 packages](docs/packages-arm64.md) for local sysroot packaging,
-Docker imports, package provenance and Firecracker acceptance.
+Docker imports, package provenance and Spark acceptance.
 
 ## Current Capabilities
 
@@ -41,9 +41,10 @@ Docker imports, package provenance and Firecracker acceptance.
   - static ELF binaries
   - Go, Node.js, Python, Rust, and `raw` (package-driven) projects
 - **Run** VMs on:
-  - Firecracker, the default wherever the machine can run it: Linux and WSL2
-    with KVM, and Apple Silicon with macOS 26 through
+  - a microVM engine, the default wherever the machine can run it: Firecracker
+    on Linux and WSL2 with KVM, and on Apple Silicon with macOS 26
     [Spark](https://github.com/AitorConS/Spark), our Hypervisor.framework fork
+    of Firecracker
   - QEMU otherwise (KVM on Linux when available; HVF for native ARM64 guests on macOS)
 - **Distribute** images through a registry (`registry.jerboa.dev` by default):
   - `push` uploads an image's recipe and only the files the registry lacks; `pull` rebuilds the disk locally and verifies it byte for byte
@@ -52,7 +53,7 @@ Docker imports, package provenance and Firecracker acceptance.
   - `jerboa run` pulls an image it does not have yet
 - **Manage**:
   - images and volumes
-  - in-place VM snapshots (macOS, Firecracker)
+  - in-place VM snapshots (macOS, Spark)
   - bridge networks with TAP-backed guest connectivity
   - internal DNS for service discovery
   - compose stacks
@@ -121,15 +122,15 @@ For networking, volumes, DNS, and compose stacks, see
 
 ### macOS Apple Silicon
 
-Native Firecracker requires macOS 26+. Releases publish a self-contained Jerboa
+Spark requires macOS 26+. Releases publish a self-contained Jerboa
 Desktop DMG (the `desktop` component's `darwin-arm64` asset). Its app bundles
-the CLI, daemon, Firecracker (built from Spark), libraries and kernel tools,
+the CLI, daemon, Spark, its libraries and kernel tools,
 starts the user daemon through launchd, offers to add `jerboa` to
 `/usr/local/bin` and updates itself from inside the app. It is not
 Developer ID signed or notarized yet, so allow its first launch in System
 Settings → Privacy & Security. The macOS path of `install.sh` needs a signed
 installer package, which releases do not publish yet. See
-[Firecracker installation and source builds](docs/macos-firecracker.md) and
+[Spark installation and source builds](docs/macos-spark.md) and
 [release infrastructure requirements](docs/macos-distribution.md).
 
 ### Linux

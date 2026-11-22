@@ -481,7 +481,11 @@ def main():
                     raise SystemExit(f'{bindir / binary} is not {args.version}')
                 # The app's binaries are built with the app; record which.
                 digests[binary] = sha256(bindir / binary)
-            daemon_args += ['--tools-dir', str(bindir / 'tools'), '--fc-bin', str(bindir / 'firecracker')]
+            # The app's VMM is bin/spark; releases before the rename ship bin/firecracker.
+            # Their daemons only know --fc-bin and the firecracker value, which later
+            # daemons still accept.
+            vmm = bindir / 'spark' if (bindir / 'spark').exists() else bindir / 'firecracker'
+            daemon_args += ['--tools-dir', str(bindir / 'tools'), '--fc-bin', str(vmm)]
         for home in ('home', 'home-sqlite'):
             (ROOT / home).mkdir()
         main_daemon = Old(bindir, ROOT / 'home', PORT, daemon_args)

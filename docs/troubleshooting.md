@@ -521,7 +521,7 @@ start.
 
 The lock is left behind whenever the guest is not told to shut down:
 
-- **QEMU** (Linux and macOS) and **Firecracker** (Linux and macOS) deliver a
+- **QEMU** (Linux and macOS), **Firecracker** (Linux) and **Spark** (macOS) deliver a
   shutdown to the guest, so `jerboa stop` lets PostgreSQL checkpoint and clear
   its lock. A `stop --force`, a `kill` or a host reboot still leaves the lock
   behind.
@@ -789,9 +789,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o myapp .
 jerboa build ./myapp --name myapp
 ```
 
-### `firecracker/HVF cannot emulate x86 images`
+### `spark cannot emulate x86 images`
 
-The image is x86_64 (or you passed `--emulate-x86`), and Firecracker can only
+The image is x86_64 (or you passed `--emulate-x86`), and Spark can only
 run ARM64 images.
 
 **Fix**: rebuild the image with `--platform linux/arm64`. If you need the x86
@@ -804,13 +804,13 @@ jerboa daemon restart
 jerboa run myimage:latest --emulate-x86
 ```
 
-### `native qemu executable missing` / `native firecracker executable missing`
+### `native qemu executable missing` / `native spark executable missing`
 
 The daemon is configured for an engine that is not installed. This usually
 means `hypervisor` was set to `qemu` but QEMU is not installed. The default,
-`auto`, uses Firecracker on a Mac that has it.
+`auto`, uses Spark on a Mac that has it.
 
-**Fix**: select Firecracker, which ships with the app, or install QEMU:
+**Fix**: select Spark, which ships with the app, or install QEMU:
 
 ```sh
 jerboa config set hypervisor auto   # or: brew install qemu
@@ -833,20 +833,20 @@ start it from a logged-in desktop session (not from a plain SSH login).
 manage the local daemon. To talk to a remote daemon, use regular commands with
 `--host` instead.
 
-### A VM cannot reach the Mac, the local network or the internet (Firecracker)
+### A VM cannot reach the Mac, the local network or the internet (Spark)
 
-By default a Firecracker VM reaches the public internet and resolves external
+By default a Spark VM reaches the public internet and resolves external
 DNS names, but not the Mac itself nor private, shared and link-local
 addresses: a connection to your router, to another machine of your network or
 to a service on the Mac through the VM's gateway is refused. If the internet
 is unreachable too, the daemon was started with a policy file
-(`JERBOA_FIRECRACKER_SECURITY` or `jerboad --fc-security`), which replaces
+(`JERBOA_SPARK_SECURITY` or `jerboad --spark-security`), which replaces
 the default entirely. Traffic between VMs on a network and published ports
 always work.
 
 **Fix**: allow the exact destinations in a policy file and restart the daemon
 with it, or start it without one to go back to the default. See
-[Restricting or widening outbound access]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker).
+[Restricting or widening outbound access]({% link macos-guide.md %}#restricting-or-widening-outbound-access-spark).
 
 ### Cannot connect to the VM's IP from the Mac
 
@@ -862,10 +862,10 @@ curl http://127.0.0.1:8080
 
 ### `UNSUPPORTED_CAPABILITY` on `jerboa snapshot`
 
-Snapshots require the Firecracker engine, a VM on a named network (`--network`)
+Snapshots require the Spark engine, a VM on a named network (`--network`)
 and no volumes.
 
-**Fix**: switch to Firecracker, run the VM with `--network <name>` and without
+**Fix**: switch to Spark, run the VM with `--network <name>` and without
 `-v`, then create the snapshot. Restore only works on the same VM, while it is
 stopped.
 

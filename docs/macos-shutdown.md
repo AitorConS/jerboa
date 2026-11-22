@@ -1,14 +1,14 @@
 ---
 layout: default
-title: Firecracker shutdown on macOS
-description: "How jerboa stops Nanos guests on macOS: a VirtIO input KEYPOWER event under the Firecracker/HVF backend, and how the guest handles it."
+title: Spark shutdown on macOS
+description: "How jerboa stops Nanos guests on macOS: a VirtIO input KEYPOWER event under Spark, and how the guest handles it."
 nav_order: 14
 ---
 
-# Firecracker shutdown on macOS
+# Spark shutdown on macOS
 
 Jerboa requests a guest-visible VirtIO input `KEY_POWER` event when stopping a
-Nanos ELF guest under the macOS Firecracker/HVF backend. The Nanos driver
+Nanos ELF guest under Spark, the macOS backend. The Nanos driver
 re-arms all four event buffers before scheduling `kernel_powerdown()` outside
 interrupt context. Nanos then delivers `SIGTERM` to guest processes and runs
 its normal kernel shutdown path, including `storage_sync()`, before powering
@@ -29,10 +29,10 @@ described as an fsync guarantee.
 The reproducible macOS acceptance is:
 
 ```sh
-python3 scripts/test-firecracker-shutdown.py
+python3 scripts/test-spark-shutdown.py
 ```
 
-Override `JERBOA_SHUTDOWN_FC` to select another compatible Firecracker binary.
+Override `JERBOA_SHUTDOWN_SPARK` to select another compatible Spark binary.
 The test creates an isolated temporary HOME, daemon sockets, dynamic ports,
 volumes and VMs. It covers a normally terminating application, an application
 that ignores `SIGTERM` for the full Nanos grace period, persistence after a new

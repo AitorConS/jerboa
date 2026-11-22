@@ -57,7 +57,7 @@ jerboa version
 ```
 
 The app is self-contained: it includes the CLI, the daemon, the kernel tools
-and the Firecracker runtime. You do not need Homebrew, QEMU or Go to run
+and the Spark runtime. You do not need Homebrew, QEMU or Go to run
 images.
 
 The `install.sh` script does not support macOS yet — use the DMG.
@@ -86,11 +86,13 @@ jerboa daemon stop
 - Its log is at `~/.jerboa/jerboad.log`.
 - Your data (images, volumes, snapshots and settings) lives in `~/.jerboa`.
 
-## Choosing an engine: Firecracker or QEMU
+## Choosing an engine: Spark or QEMU
 
-Jerboa on macOS can run VMs with two engines:
+Jerboa on macOS can run VMs with two engines. Spark is Jerboa's microVM
+engine for the Mac, a fork of Firecracker that runs on Apple's
+Hypervisor.framework.
 
-| | Firecracker (default in the app) | QEMU (optional) |
+| | Spark (default in the app) | QEMU (optional) |
 | --- | --- | --- |
 | Included in the app | Yes | No — install with `brew install qemu` |
 | Boot speed and footprint | Fastest, smallest | Slower, heavier |
@@ -101,20 +103,20 @@ Jerboa on macOS can run VMs with two engines:
 | `--cpu-shares` / `--memory-max` | Not supported | Approximate |
 | vCPUs / RAM per VM | 1–8 vCPUs, 64–8192 MiB (what the VMM declares) | No fixed range |
 
-Use Firecracker unless you need to run x86 images. To switch engines, stop your
+Use Spark unless you need to run x86 images. To switch engines, stop your
 VMs first. Then, in the Desktop app, open **Settings → Engine configuration**,
 choose the **Hypervisor**, click **Save** and then **Restart engine**. From the
 terminal:
 
 ```sh
-jerboa config set hypervisor qemu          # or: firecracker
+jerboa config set hypervisor qemu          # or: spark
 jerboa daemon restart
 ```
 
 Both write the same setting to `~/.jerboa/config.toml`, so the app and the CLI
 always agree.
 
-Left at its default, `auto`, the setting means Firecracker wherever this Mac
+Left at its default, `auto`, the setting means Spark wherever this Mac
 can run it, both in the app and with `jerboa daemon start`, and QEMU
 otherwise. `jerboa daemon status` shows the engine in use and why:
 
@@ -122,10 +124,10 @@ otherwise. `jerboa daemon status` shows the engine in use and why:
 daemon:   running
 endpoint: unix:///Users/you/.jerboa/jerboad.sock
 version:  0.60.0
-hypervisor: firecracker (...)
+hypervisor: spark (...)
 ```
 
-When QEMU is in use on a Mac that could run Firecracker (an older
+When QEMU is in use on a Mac that could run Spark (an older
 `hypervisor = "qemu"` in the config), it adds a hint with the command that
 switches: `jerboa config set hypervisor auto`, then restart the daemon.
 
@@ -192,8 +194,8 @@ jerboa build ./service --platform linux/amd64 --name service-x86
 jerboa run service-x86:latest --emulate-x86 -p 8080:8080
 ```
 
-With Firecracker, `--emulate-x86` fails with
-`firecracker/HVF cannot emulate x86 images`. Rebuild the image for
+With Spark, `--emulate-x86` fails with
+`spark cannot emulate x86 images`. Rebuild the image for
 `linux/arm64`, or switch to QEMU. In the Desktop app, the run dialog shows an
 **Emulate x86 image** option for x86 images; it is only available when the
 hypervisor is set to QEMU.
@@ -236,15 +238,15 @@ Things to know:
   refused. To restore access, start the daemon with
   `JERBOA_GUEST_HOST_ACCESS=1 jerboa daemon restart`. It widens the addresses
   only: link-local addresses stay refused, and each VM keeps its limits on
-  host connections and DNS queries. Firecracker VMs use the policy file below
+  host connections and DNS queries. Spark VMs use the policy file below
   instead.
 - A VM can join one network at a time.
-- With Firecracker, health checks on a VM without `--network` need a published
+- With Spark, health checks on a VM without `--network` need a published
   TCP port. On a named network, health checks work on any port.
 
-### Restricting or widening outbound access (Firecracker)
+### Restricting or widening outbound access (Spark)
 
-By default a Firecracker VM reaches the **public internet** and resolves
+By default a Spark VM reaches the **public internet** and resolves
 external DNS names, but **not your Mac nor your local network**: private,
 shared and link-local addresses are refused, and so is the Mac itself through
 the VM's gateway. Traffic inside a named network and published ports always
@@ -268,7 +270,7 @@ it must list everything your VMs need:
 Then restart the daemon with it:
 
 ```sh
-JERBOA_FIRECRACKER_SECURITY=~/jerboa-policy.json jerboa daemon restart
+JERBOA_SPARK_SECURITY=~/jerboa-policy.json jerboa daemon restart
 ```
 
 Each rule allows one exact IPv4 address, protocol and port. Without
@@ -290,7 +292,7 @@ jerboa volume create service-data --size 64M
 jerboa run service:latest -v service-data:/data -p 127.0.0.1:8080:8080
 ```
 
-With Firecracker a VM can mount up to three volumes. Disk IOPS and throughput
+With Spark a VM can mount up to three volumes. Disk IOPS and throughput
 limits are supported by both engines.
 
 `jerboa system df` shows how much disk the daemon's images, VMs, volumes and
@@ -314,7 +316,7 @@ forced off.
 
 The Mac has no Linux cgroups, so CPU and memory limits behave differently:
 
-| Flag | QEMU | Firecracker |
+| Flag | QEMU | Spark |
 | --- | --- | --- |
 | `--cpus`, `--memory` | Supported | 1–8 vCPUs, 64–8192 MiB (what the VMM declares) |
 | `--cpu-shares` | Lower or higher process priority; not a hard share | Rejected |
@@ -325,7 +327,7 @@ The Mac has no Linux cgroups, so CPU and memory limits behave differently:
 
 ## Snapshots
 
-With Firecracker you can save a running VM and later resume it exactly where it
+With Spark you can save a running VM and later resume it exactly where it
 was — memory, running processes and root disk included. This is handy for
 skipping a slow start-up during local development.
 
@@ -340,7 +342,7 @@ jerboa snapshot rm warm-cache
 
 Requirements and limits:
 
-- Firecracker only, and the VM must be on a **named network** (`--network`).
+- Spark only, and the VM must be on a **named network** (`--network`).
 - VMs with **volumes** cannot be snapshotted.
 - A snapshot restores **the same VM** it was taken from, while that VM is
   stopped. It is not a way to clone VMs or move them to another Mac.
@@ -353,7 +355,7 @@ Requirements and limits:
   including environment variables and secrets. Treat them as sensitive.
 - Snapshots are for local development, not backups.
 
-More detail: [Firecracker snapshots on macOS]({% link macos-snapshots.md %}).
+More detail: [Spark snapshots on macOS]({% link macos-snapshots.md %}).
 
 ## Stats
 
@@ -428,13 +430,13 @@ Clear the endpoint override to return to the local engine.
 - The daemon does not start automatically at login.
 - Your Mac cannot connect to VM IPs directly; use published ports.
 - One network per VM.
-- Firecracker cannot emulate x86. Its VMs reach the public internet but not
+- Spark cannot emulate x86. Its VMs reach the public internet but not
   the Mac nor the local network unless a policy file allows it.
-- CPU and memory limits are approximate (QEMU) or unavailable (Firecracker).
+- CPU and memory limits are approximate (QEMU) or unavailable (Spark).
 - After a daemon crash, running VMs are recovered, but their earlier console
   output is not, and their restart policy no longer applies.
 
 For errors you may hit on the Mac, see
 [Troubleshooting]({% link troubleshooting.md %}#macos-errors). To build Jerboa
 for macOS from source, see [macOS Apple Silicon]({% link macos.md %}) and
-[Firecracker on macOS]({% link macos-firecracker.md %}).
+[Spark on macOS]({% link macos-spark.md %}).

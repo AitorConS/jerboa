@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNativeFCConfig(t *testing.T) {
+func TestNativeSparkConfig(t *testing.T) {
 	m := NewFirecrackerManager("firecracker", "/kernel.img")
 	cfg := Config{Memory: "256M", CPUs: 4, Env: []string{"MARKER=hvf-smoke"},
 		PortMaps: []PortMap{{HostPort: 18080, GuestPort: 8080, BindAddr: "127.0.0.1"}, {HostPort: 18081, GuestPort: 8081, Protocol: ProtocolUDP}},
@@ -59,7 +59,7 @@ func TestNativeFCConfig(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
-func TestNativeFCShutdown(t *testing.T) {
+func TestNativeSparkShutdown(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "fc.sock")
 	listener, err := net.Listen("unix", socket)
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestExplainFCStartPrefersTheVMMsRejection(t *testing.T) {
 	require.ErrorContains(t, err, "unknown field")
 }
 
-func TestNativeFCNetStatsWithoutNetwork(t *testing.T) {
+func TestNativeSparkNetStatsWithoutNetwork(t *testing.T) {
 	// t.TempDir embeds this long test name, which overflows the 104-byte
 	// Unix socket path limit on macOS.
 	dir, err := os.MkdirTemp("", "fcnet")
@@ -286,13 +286,13 @@ func TestNativeFCNetStatsWithoutNetwork(t *testing.T) {
 	require.Zero(t, tx)
 }
 
-func TestNativeFCX86EmulationExplainsQEMU(t *testing.T) {
+func TestNativeSparkX86EmulationExplainsQEMU(t *testing.T) {
 	err := (&FirecrackerManager{}).ValidateImagePlatform("amd64", true)
 	require.ErrorContains(t, err, "jerboa config set hypervisor qemu")
 	require.ErrorContains(t, err, "--platform linux/arm64")
 }
 
-func TestNativeFCSecurityPolicy(t *testing.T) {
+func TestNativeSparkSecurityPolicy(t *testing.T) {
 	m := NewFirecrackerManager("firecracker", "/kernel", WithFCSecurity([]byte(`{"version":1,"egress":[{"protocol":"tcp","address":"192.0.2.10","port":443}]}`)))
 	p, err := m.writeFCConfig("security", Config{Memory: "128M"}, "/root")
 	require.NoError(t, err)
@@ -305,7 +305,7 @@ func TestNativeFCSecurityPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "JSON object")
 }
 
-func TestNativeFCUnsupportedConfigs(t *testing.T) {
+func TestNativeSparkUnsupportedConfigs(t *testing.T) {
 	kernel := filepath.Join(t.TempDir(), "kernel.img")
 	header := make([]byte, 64)
 	copy(header, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
@@ -332,11 +332,11 @@ func TestNativeFCUnsupportedConfigs(t *testing.T) {
 	}
 }
 
-// Opt-in integration test for the Jerboa fixture described in docs/macos-firecracker.md.
-func TestNativeFCGuest(t *testing.T) {
-	bin, kernel, disk := os.Getenv("JERBOA_TEST_FC_BIN"), os.Getenv("JERBOA_TEST_FC_KERNEL"), os.Getenv("JERBOA_TEST_FC_DISK")
+// Opt-in integration test for the Jerboa fixture described in docs/macos-spark.md.
+func TestNativeSparkGuest(t *testing.T) {
+	bin, kernel, disk := os.Getenv("JERBOA_TEST_SPARK_BIN"), os.Getenv("JERBOA_TEST_SPARK_KERNEL"), os.Getenv("JERBOA_TEST_SPARK_DISK")
 	if bin == "" || kernel == "" || disk == "" {
-		t.Skip("set JERBOA_TEST_FC_BIN, JERBOA_TEST_FC_KERNEL and JERBOA_TEST_FC_DISK")
+		t.Skip("set JERBOA_TEST_SPARK_BIN, JERBOA_TEST_SPARK_KERNEL and JERBOA_TEST_SPARK_DISK")
 	}
 	base, err := os.ReadFile(disk)
 	require.NoError(t, err)
@@ -414,7 +414,7 @@ func TestNativeFCGuest(t *testing.T) {
 	require.True(t, os.IsNotExist(err))
 }
 
-func TestNativeFCSharedConfig(t *testing.T) {
+func TestNativeSparkSharedConfig(t *testing.T) {
 	m := NewFirecrackerManager("firecracker", "/kernel")
 	cfg := Config{Memory: "128M", NetworkName: "app", IPAddress: "172.25.0.2", GatewayIP: "172.25.0.1", SubnetMask: "24", nativeSocket: "/private/net.sock", nativeMAC: "02:00:00:00:00:02"}
 	p, err := m.writeFCConfig("shared", cfg, "/root")
@@ -438,7 +438,7 @@ func mustJSON(t *testing.T, v any) []byte {
 	return b
 }
 
-func TestNativeFCSharedPolicyRejectsAmbiguousAuthority(t *testing.T) {
+func TestNativeSparkSharedPolicyRejectsAmbiguousAuthority(t *testing.T) {
 	for _, policy := range []string{`{"version":2}`, `{"version":1,"mode":"development"}`, `{"version":1,"egress":[{"protocol":"icmp","address":"127.0.0.1","port":1}]}`, `{"version":1,"listeners":[{"protocol":"tcp","address":"127.0.0.1","port":80}]}`, `{"version":1,"unknown":true}`} {
 		m := NewFirecrackerManager("fc", "/kernel", WithFCSecurity([]byte(policy)))
 		_, err := m.sharedPolicy()
@@ -446,11 +446,11 @@ func TestNativeFCSharedPolicyRejectsAmbiguousAuthority(t *testing.T) {
 	}
 }
 
-func TestNativeFCSlirpBindContract(t *testing.T) {
+func TestNativeSparkSlirpBindContract(t *testing.T) {
 	for _, bind := range []string{"", "0.0.0.0", "127.0.0.1"} {
 		for _, proto := range []PortProtocol{"", ProtocolTCP, ProtocolUDP} {
 			t.Run(bind+"/"+string(proto), func(t *testing.T) {
-				bin, kernel, disk := os.Getenv("JERBOA_TEST_FC_BIN"), os.Getenv("JERBOA_TEST_FC_KERNEL"), os.Getenv("JERBOA_TEST_FC_DISK")
+				bin, kernel, disk := os.Getenv("JERBOA_TEST_SPARK_BIN"), os.Getenv("JERBOA_TEST_SPARK_KERNEL"), os.Getenv("JERBOA_TEST_SPARK_DISK")
 				if kernel == "" {
 					kernel = "/kernel"
 				}
@@ -479,7 +479,7 @@ func TestNativeFCSlirpBindContract(t *testing.T) {
 				require.Equal(t, []nativeFCListener{{protocol, want, 18993}}, listeners)
 				require.JSONEq(t, `[{"protocol":"tcp","address":"192.0.2.10","port":443}]`, string(c.Security["egress"]))
 				require.Empty(t, c.Security["dns"])
-				if bin != "" && os.Getenv("JERBOA_TEST_FC_KERNEL") != "" && os.Getenv("JERBOA_TEST_FC_DISK") != "" {
+				if bin != "" && os.Getenv("JERBOA_TEST_SPARK_KERNEL") != "" && os.Getenv("JERBOA_TEST_SPARK_DISK") != "" {
 					require.NoError(t, m.checkFCConfig(context.Background(), p))
 				}
 			})
@@ -515,7 +515,7 @@ func TestWaitFCProcessPreservesGuestExit(t *testing.T) {
 	}
 }
 
-func TestNativeFCDefaultPolicyReachesPublicAddressesOnly(t *testing.T) {
+func TestNativeSparkDefaultPolicyReachesPublicAddressesOnly(t *testing.T) {
 	const caps = `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true,"public_egress":true}`
 	m, _ := fcScript(t, t.TempDir(), 0, caps)
 	WithFCDefaultDNS("1.1.1.1:53")(m)
@@ -549,7 +549,7 @@ func TestNativeFCDefaultPolicyReachesPublicAddressesOnly(t *testing.T) {
 	require.Empty(t, c.Security["egress"])
 }
 
-func TestNativeFCSuppliedPolicyReplacesTheDefault(t *testing.T) {
+func TestNativeSparkSuppliedPolicyReplacesTheDefault(t *testing.T) {
 	const caps = `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true,"public_egress":true}`
 	m, _ := fcScript(t, t.TempDir(), 0, caps)
 	WithFCDefaultDNS("1.1.1.1:53")(m)
@@ -581,7 +581,7 @@ func TestNativeFCSuppliedPolicyReplacesTheDefault(t *testing.T) {
 	require.False(t, p.permits("192.168.1.10", 5433, false))
 }
 
-func TestNativeFCDefaultPolicyWithAVMMThatPredatesIt(t *testing.T) {
+func TestNativeSparkDefaultPolicyWithAVMMThatPredatesIt(t *testing.T) {
 	m, _ := fcScript(t, t.TempDir(), 0, `{"max_vcpus":8,"memory_mib":[64,8192],"max_drives":4,"peer_control":true}`)
 	WithFCDefaultDNS("1.1.1.1:53")(m)
 	path, err := m.writeFCConfig("old", Config{Memory: "128M"}, "/root")
@@ -595,7 +595,7 @@ func TestNativeFCDefaultPolicyWithAVMMThatPredatesIt(t *testing.T) {
 	require.Empty(t, c.Security["dns"])
 }
 
-func TestNativeFCDefaultDNSMustBeAnAddress(t *testing.T) {
+func TestNativeSparkDefaultDNSMustBeAnAddress(t *testing.T) {
 	for upstream, want := range map[string]string{"9.9.9.9:53": "9.9.9.9:53", "192.168.1.1:5353": "192.168.1.1:5353", "": "", "dns.example:53": "", "1.1.1.1": "", "1.1.1.1:0": ""} {
 		m := NewFirecrackerManager("fc", "/kernel", WithFCDefaultDNS(upstream))
 		got, err := m.GuestDNSUpstream()

@@ -31,7 +31,7 @@ Stable daemon releases target Linux. The [native macOS ARM64 preview]({% link ma
   - Go, Node.js, Python, Rust, and `raw` projects
 - Run VMs on:
   - QEMU
-  - Firecracker
+  - Firecracker (Linux) and Spark, its macOS fork
 - Manage:
   - images
   - volumes
@@ -51,7 +51,7 @@ Stable daemon releases target Linux. The [native macOS ARM64 preview]({% link ma
 - Port publishing requires a managed network (`--network`).
 - TCP publishing works today through a userspace forwarder.
 - UDP port mappings parse and persist, but the current forwarder skips them with a warning.
-- Native macOS uses the Firecracker/HVF fork or QEMU; Windows uses WSL2.
+- Native macOS uses Spark (the Hypervisor.framework fork of Firecracker) or QEMU; Windows uses WSL2.
 
 ## Repo Shape
 

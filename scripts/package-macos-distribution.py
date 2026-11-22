@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a deterministic Jerboa + Firecracker/HVF macOS ARM64 bundle.
+"""Build a deterministic Jerboa + Spark macOS ARM64 bundle.
 
 This command only stages already-built inputs. It never signs, installs, submits,
 or publishes anything. Run it after all release-candidate binaries are final.
@@ -22,7 +22,7 @@ import tarfile
 EXECUTABLES = {
     "bin/jerboa",
     "bin/jerboad",
-    "bin/firecracker",
+    "bin/spark",
     "bin/tools/mkfs",
     "bin/tools/dump",
 }
@@ -69,28 +69,28 @@ def command_output(*argv: str) -> str:
 
 def verify_upstream_checksums(package: pathlib.Path) -> None:
     sums = package / "SHA256SUMS"
-    require_file(sums, "Firecracker SHA256SUMS")
+    require_file(sums, "Spark SHA256SUMS")
     for number, raw in enumerate(sums.read_text().splitlines(), 1):
         if not raw.strip():
             continue
         try:
             expected, relative = raw.split(None, 1)
         except ValueError as error:
-            raise SystemExit(f"invalid Firecracker SHA256SUMS line {number}") from error
+            raise SystemExit(f"invalid Spark SHA256SUMS line {number}") from error
         relative = relative.lstrip("* ")
         relative_path = pathlib.PurePosixPath(relative)
         if (relative_path.is_absolute() or not relative_path.parts or ".." in relative_path.parts
                 or relative_path.as_posix() != relative or len(expected) != 64
                 or any(character not in "0123456789abcdefABCDEF" for character in expected)):
-            raise SystemExit(f"unsafe/invalid Firecracker SHA256SUMS line {number}")
+            raise SystemExit(f"unsafe/invalid Spark SHA256SUMS line {number}")
         candidate = package / relative
-        require_file(candidate, f"Firecracker checksum member {relative}")
+        require_file(candidate, f"Spark checksum member {relative}")
         try:
             candidate.resolve().relative_to(package.resolve())
         except ValueError as error:
-            raise SystemExit(f"Firecracker checksum member escapes package: {relative}") from error
+            raise SystemExit(f"Spark checksum member escapes package: {relative}") from error
         if digest(candidate) != expected.lower():
-            raise SystemExit(f"Firecracker checksum mismatch: {relative}")
+            raise SystemExit(f"Spark checksum mismatch: {relative}")
 
 
 def load_provenance(path: pathlib.Path) -> dict:
@@ -169,7 +169,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jerboa-dir", required=True, type=pathlib.Path)
     parser.add_argument("--tools-dir", required=True, type=pathlib.Path)
-    parser.add_argument("--firecracker-package", required=True, type=pathlib.Path)
+    parser.add_argument("--spark-package", required=True, type=pathlib.Path)
     parser.add_argument("--output-dir", required=True, type=pathlib.Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--source-date-epoch", required=True, type=int)
@@ -188,14 +188,14 @@ def main() -> None:
 
     validate_input_tree(args.jerboa_dir, "Jerboa input")
     validate_input_tree(args.tools_dir, "tools input")
-    validate_input_tree(args.firecracker_package, "Firecracker input")
+    validate_input_tree(args.spark_package, "Spark input")
     for name in ("jerboa", "jerboad"):
         require_file(args.jerboa_dir / name, name)
     for name in ("mkfs", "dump", "kernel.img", "boot.img", "platform.txt", "kernel-version.txt"):
         require_file(args.tools_dir / name, f"tool {name}")
-    for name in ("bin/firecracker", "lib/libglib-2.0.0.dylib", "lib/libintl.8.dylib", "manifest.json"):
-        require_file(args.firecracker_package / name, f"Firecracker {name}")
-    verify_upstream_checksums(args.firecracker_package)
+    for name in ("bin/spark", "lib/libglib-2.0.0.dylib", "lib/libintl.8.dylib", "manifest.json"):
+        require_file(args.spark_package / name, f"Spark {name}")
+    verify_upstream_checksums(args.spark_package)
     provenance = load_provenance(args.provenance_json) if args.provenance_json else None
     provenance_commit = args.jerboa_git_commit or command_output("git", "rev-parse", "HEAD")
     if len(provenance_commit) != 40 or any(c not in "0123456789abcdef" for c in provenance_commit):
@@ -207,11 +207,11 @@ def main() -> None:
     shutil.copy2(args.jerboa_dir / "jerboa", bundle / "bin/jerboa")
     shutil.copy2(args.jerboa_dir / "jerboad", bundle / "bin/jerboad")
     copy_tree(args.tools_dir, bundle / "bin/tools")
-    shutil.copy2(args.firecracker_package / "bin/firecracker", bundle / "bin/firecracker")
-    copy_tree(args.firecracker_package / "lib", bundle / "lib")
-    metadata = bundle / "share/firecracker"
+    shutil.copy2(args.spark_package / "bin/spark", bundle / "bin/spark")
+    copy_tree(args.spark_package / "lib", bundle / "lib")
+    metadata = bundle / "share/spark"
     metadata.mkdir(parents=True)
-    for entry in sorted(args.firecracker_package.iterdir(), key=lambda path: path.name):
+    for entry in sorted(args.spark_package.iterdir(), key=lambda path: path.name):
         if entry.name in ("bin", "lib"):
             continue
         target = metadata / entry.name
@@ -222,7 +222,7 @@ def main() -> None:
 
     manifest = {
         "format_version": 1,
-        "name": "jerboa-macos-firecracker",
+        "name": "jerboa-macos-spark",
         "version": args.version,
         "platform": "darwin/arm64",
         "minimum_macos": "26.0",
@@ -233,8 +233,8 @@ def main() -> None:
         "inputs": {
             "jerboa_sha256": digest(args.jerboa_dir / "jerboa"),
             "jerboad_sha256": digest(args.jerboa_dir / "jerboad"),
-            "firecracker_manifest_sha256": digest(args.firecracker_package / "manifest.json"),
-            "firecracker_sha256s_sha256": digest(args.firecracker_package / "SHA256SUMS"),
+            "spark_manifest_sha256": digest(args.spark_package / "manifest.json"),
+            "spark_sha256s_sha256": digest(args.spark_package / "SHA256SUMS"),
         },
         "reproducibility_scope": "deterministic staging/archive for identical input bytes; reused inputs are not rebuilt",
     }

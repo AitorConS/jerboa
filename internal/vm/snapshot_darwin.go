@@ -609,7 +609,7 @@ func snapshotEligible(c Config) error {
 	case len(c.Volumes) > 0:
 		return fmt.Errorf("%w: v1 snapshots reject VMs with Jerboa volumes because volume consistency cannot be guaranteed", ErrSnapshotUnsupported)
 	case c.EmulateX86:
-		return fmt.Errorf("%w: x86 emulation is not a Firecracker/HVF configuration", ErrSnapshotUnsupported)
+		return fmt.Errorf("%w: x86 emulation is not a Spark configuration", ErrSnapshotUnsupported)
 	}
 	return nil
 }
