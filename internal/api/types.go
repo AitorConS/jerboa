@@ -213,7 +213,8 @@ type IDParams struct {
 
 // DaemonHypervisor is the hypervisor a daemon runs and what decided it.
 type DaemonHypervisor struct {
-	// Name is "qemu" or "firecracker"; empty from a daemon that does not say.
+	// Name is "qemu" or the microVM backend's public name ("spark" on
+	// macOS, "firecracker" on Linux); empty from a daemon that does not say.
 	Name string
 	// Reason says what decided it: a flag, the config file or the host.
 	Reason string

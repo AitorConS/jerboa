@@ -18,7 +18,7 @@ func (m *FirecrackerManager) explainFCStart(_ context.Context, _ string, err err
 
 func (m *FirecrackerManager) validateFCPlatform(cfg Config) error { return validateDiskIOHost(cfg) }
 func (m *FirecrackerManager) writeNativeFCConfig(_ string, _ Config, _ string) (string, error) {
-	panic("native Firecracker config is only available on macOS")
+	panic("Spark config is only available on macOS")
 }
 func cleanupFCConfig(path string)                               { _ = os.Remove(path) }
 func prepareNativeFCHealth(_ *VM)                               {}
@@ -26,7 +26,7 @@ func awaitFCReady(_ context.Context, _ string, _ *fcExit) error { return nil }
 func waitFCProcess(_ *exec.Cmd, exit *fcExit, _ string) error {
 	<-exit.done
 	if exit.err != nil {
-		return fmt.Errorf("wait for firecracker: %w", exit.err)
+		return fmt.Errorf("wait for "+vmmName+": %w", exit.err)
 	}
 	return nil
 }

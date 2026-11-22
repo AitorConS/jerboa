@@ -61,7 +61,9 @@ Path: `internal/vm/`
 Backends:
 
 - QEMU
-- Firecracker
+- Firecracker (Linux)
+- Spark (macOS): Jerboa's Hypervisor.framework fork of Firecracker. It shares
+  the Firecracker backend code; users see it as `spark`
 
 QEMU enables KVM automatically when `/dev/kvm` is accessible, and otherwise
 falls back to TCG emulation with a warning. Firecracker requires KVM.
@@ -176,7 +178,7 @@ With QEMU, `opt/uni/env` is read from a file readable only by the daemon's
 user (mode 0600) in its private runtime directory, so the values given with
 `-e` (often secrets) never appear on QEMU's command line, where any local user
 could read them with `ps`. The file is deleted when the VM exits. The
-Firecracker backend already kept them in its 0600 VM configuration files.
+Firecracker and Spark backends already kept them in their 0600 VM configuration files.
 
 Recent code and docs use the `opt/uni/*` keys; older `opt/jerboa/*` names are stale.
 

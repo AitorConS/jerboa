@@ -15,7 +15,7 @@ Requisitos:
 
 1. PREPARAR LOS CAMBIOS
 
-Fusiona las PR del motor, Desktop y Firecracker que quieras publicar.
+Fusiona las PR del motor, Desktop y Spark que quieras publicar.
 Comprueba que sus pruebas pasan. No uses ramas de trabajo sin validar.
 
 Prepara la version con una PR. Ejecuta, con el numero sin prefijo v:
@@ -39,7 +39,7 @@ Ejecuta:
 
 Copia los 40 caracteres de cada respuesta. Esos valores son desktop_sha y
 runtime_sha. Comprueba el CI del commit de Desktop, no solo el de una revision
-anterior. El de Firecracker lo comprueba el workflow: rechaza un runtime_sha que
+anterior. El de Spark lo comprueba el workflow: rechaza un runtime_sha que
 no este en main de Spark o cuyas comprobaciones no hayan pasado.
 El workflow captura automaticamente el SHA de Jerboa seleccionado en main.
 

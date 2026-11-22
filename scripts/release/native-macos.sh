@@ -28,13 +28,13 @@ export PATH="$res/bin:$PATH"
 # temporary VM/image state. Keep this invocation explicit: hosted Mac is not valid.
 "$res/bin/jerboa" --version
 "$res/bin/jerboad" --version
-"$res/bin/firecracker" --version
+"$res/bin/spark" --version
 # Native suites accept the staged binaries and build their own isolated fixtures.
-export JERBOA_TEST_BIN="$res/bin" JERBOA_FIRECRACKER_BIN="$res/bin/firecracker"
-python3 scripts/test-firecracker-macos.py
-python3 scripts/test-firecracker-network.py
-JERBOA_TEST_GO="$(command -v go)" JERBOA_TEST_OUTPUT="$work/stats" python3 scripts/test-firecracker-stats.py
-python3 scripts/test-jerboa-snapshots.py --bin-dir "$res/bin" --firecracker-bin "$res/bin/firecracker" \
+export JERBOA_TEST_BIN="$res/bin" JERBOA_SPARK_BIN="$res/bin/spark"
+python3 scripts/test-spark-macos.py
+python3 scripts/test-spark-network.py
+JERBOA_TEST_GO="$(command -v go)" JERBOA_TEST_OUTPUT="$work/stats" python3 scripts/test-spark-stats.py
+python3 scripts/test-jerboa-snapshots.py --bin-dir "$res/bin" --spark-bin "$res/bin/spark" \
   --tools-dir "$res/bin/tools" --go-bin "$(command -v go)" --output-dir "$work/snapshots"
 # A suite that passes and leaves a VM of the candidate running did not clean up.
 # A process on its way out is given a moment before it counts as left behind.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and qualify real PostgreSQL over a two-guest Firecracker/HVF network.
+"""Build and qualify real PostgreSQL over a two-guest Spark network.
 
 Phases (all against one named volume unless stated):
   1. SQL suite, durability settings and SCRAM authentication checks; live
@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if not os.environ.get("JERBOA_TEST_BIN"):
     raise SystemExit("Set JERBOA_TEST_BIN to the updated macOS bundle's bin directory")
 BIN = Path(os.environ["JERBOA_TEST_BIN"]).resolve()
-FC = Path(os.environ.get("JERBOA_FIRECRACKER_BIN", BIN / "firecracker")).resolve()
+FC = Path(os.environ.get("JERBOA_SPARK_BIN", BIN / "spark")).resolve()
 GO = Path(os.environ.get(
     "JERBOA_TEST_GO",
     ROOT / "../Spark/experiments/hvf/build/guest-tools/go/bin/go",
@@ -371,7 +371,7 @@ def main():
     daemon = subprocess.Popen(
         [str(arg) for arg in (
             BIN / "jerboad", "--host", ENV["JERBOA_HOST"], "--tools-dir", BIN / "tools",
-            "--hypervisor", "firecracker", "--fc-bin", FC,
+            "--hypervisor", "spark", "--spark-bin", FC,
         )],
         env=ENV, stdout=daemon_log, stderr=daemon_log,
     )

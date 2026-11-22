@@ -15,7 +15,8 @@ import (
 
 // Config holds global jerboa configuration stored at ~/.jerboa/config.toml.
 type Config struct {
-	// Hypervisor is "qemu" or "firecracker". Empty leaves the choice to the
+	// Hypervisor is "qemu" or the microVM backend ("spark" on macOS,
+	// "firecracker" on Linux; see hypervisor.Parse). Empty leaves the choice to the
 	// daemon, which runs Firecracker wherever the host can (see
 	// internal/hypervisor).
 	Hypervisor string `toml:"hypervisor,omitempty"`

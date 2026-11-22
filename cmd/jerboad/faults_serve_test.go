@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/snapshot"
 	"github.com/AitorConS/jerboa/internal/vm"
 	"github.com/stretchr/testify/assert"
@@ -139,7 +140,7 @@ func TestFaults_ServeRejectsUnknownBackends(t *testing.T) {
 	d.hypervisor = "xen"
 	err = d.fails()
 	require.ErrorContains(t, err, `unknown hypervisor "xen"`)
-	assert.Contains(t, err.Error(), "qemu, firecracker")
+	assert.Contains(t, err.Error(), hypervisorpkg.Values())
 	assert.NoFileExists(t, socketPath(d.endpoint))
 }
 
@@ -429,13 +430,13 @@ func TestFaults_FirecrackerWithoutAKernel(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("on Linux a missing kernel is downloaded")
 	}
-	// Asked for by name, Firecracker without its kernel is an error that
-	// says what is missing and how to provide it.
+	// Asked for by name, Spark without its kernel is an error that says
+	// what is missing and how to provide it.
 	d := newDaemon(t)
-	d.hypervisor = "firecracker"
+	d.hypervisor = hypervisorpkg.Spark
 	err := d.fails()
 	require.ErrorContains(t, err, "kernel")
-	assert.Contains(t, err.Error(), "--fc-kernel")
+	assert.Contains(t, err.Error(), "--spark-kernel")
 	assert.Contains(t, err.Error(), filepath.Join(d.tools, "kernel.img"))
 	assert.NoFileExists(t, socketPath(d.endpoint))
 }

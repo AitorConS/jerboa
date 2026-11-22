@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/snapshot"
 	"github.com/AitorConS/jerboa/internal/vm"
@@ -30,7 +31,7 @@ type snapshotManager interface {
 func (s *Server) snapshots() (snapshotManager, *api.RPCError) {
 	sm, ok := s.mgr.(snapshotManager)
 	if !ok {
-		return nil, &api.RPCError{Code: -32000, Message: vm.ErrSnapshotUnsupported.Error() + ": snapshots require the native macOS Firecracker/HVF backend"}
+		return nil, &api.RPCError{Code: -32000, Message: vm.ErrSnapshotUnsupported.Error() + ": snapshots require Spark, the macOS microVM backend"}
 	}
 	return sm, nil
 }
@@ -206,7 +207,7 @@ func toSnapshotInfo(i snapshot.Info) api.SnapshotInfo {
 		Name:           i.Name,
 		VMID:           i.VMID,
 		VMName:         i.VMName,
-		Backend:        i.Backend,
+		Backend:        publicSnapshotBackend(i.Backend),
 		Image:          i.Image,
 		ImageDigest:    i.ImageDigest,
 		Memory:         i.Memory,
@@ -228,4 +229,14 @@ func toSnapshotInfo(i snapshot.Info) api.SnapshotInfo {
 		out.Ports = append(out.Ports, api.PortMapSpec{HostPort: p.HostPort, GuestPort: p.GuestPort, Protocol: p.Protocol, BindAddr: p.BindAddr})
 	}
 	return out
+}
+
+// publicSnapshotBackend names a snapshot's backend as users know it. Snapshot
+// metadata keeps "firecracker-hvf", which every stored snapshot carries and
+// restore checks; that backend is Spark.
+func publicSnapshotBackend(backend string) string {
+	if backend == "firecracker-hvf" {
+		return hypervisorpkg.Spark
+	}
+	return backend
 }

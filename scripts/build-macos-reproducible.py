@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproducible source build of the Jerboa + Firecracker/HVF macOS ARM64 bundle.
+"""Reproducible source build of the Jerboa + Spark macOS ARM64 bundle.
 
 Subcommands:
 
@@ -162,7 +162,7 @@ def cmd_snapshot(args) -> None:
     archive = out / "source-snapshot.tar"
     subprocess.run(["tar", "-c", "--no-xattrs", "--no-mac-metadata", "-f", str(archive), "-T", str(out / "filelist.txt")],
                    cwd=args.pack, check=True, env=dict(os.environ, COPYFILE_DISABLE="1"))
-    for repository, label in (("jerboa", "jerboa"), ("Spark", "firecracker")):
+    for repository, label in (("jerboa", "jerboa"), ("Spark", "spark")):
         (out / f"{label}-HEAD.txt").write_text(output("git", "-C", args.pack / repository, "rev-parse", "HEAD") + "\n")
         (out / f"{label}-status.txt").write_text(
             output("git", "-C", args.pack / repository, "status", "--porcelain=v1", "-uall") + "\n")
@@ -471,8 +471,8 @@ def build_firecracker(root: pathlib.Path, env: dict, log: Log, lock: dict, destd
         shutil.copytree(paths["cargo_dependency_home"] / relative, cargo_home / relative, symlinks=False)
     remap = " ".join([f"--remap-path-prefix={root}=/build",
                       f"--remap-path-prefix={cargo_home}=/cargo",
-                      f"--remap-path-prefix={fc}=/firecracker"])
-    cflags = f"{prefix_map(root)} -ffile-prefix-map={cargo_home}=/cargo -ffile-prefix-map={fc}=/firecracker"
+                      f"--remap-path-prefix={fc}=/spark"])
+    cflags = f"{prefix_map(root)} -ffile-prefix-map={cargo_home}=/cargo -ffile-prefix-map={fc}=/spark"
     renv = dict(env,
                 PATH=f"{paths['cargo_dependency_home']}/bin:{env['PATH']}",
                 CARGO_HOME=str(cargo_home), RUSTUP_HOME=str(paths["rustup_home"]), RUSTUP_TOOLCHAIN=lock["rust_toolchain"],
@@ -494,8 +494,8 @@ def dependencies(path: pathlib.Path) -> list[str]:
 def package_firecracker(root: pathlib.Path, env: dict, log: Log, destdir: pathlib.Path) -> pathlib.Path:
     """Mirror experiments/hvf/distribution/package.py for a DESTDIR-installed logical prefix."""
     fc = root / "src/Spark"
-    out = root / "out/firecracker-package"
-    executable = out / "bin/firecracker"
+    out = root / "out/spark-package"
+    executable = out / "bin/spark"
     executable.parent.mkdir(parents=True)
     (out / "lib").mkdir()
     shutil.copyfile(root / "cargo-target/aarch64-apple-darwin/release/firecracker", executable)
@@ -574,7 +574,7 @@ def package_firecracker(root: pathlib.Path, env: dict, log: Log, destdir: pathli
                 "rust": env["RUSTUP_TOOLCHAIN"], "rust_dependencies": rust_dependencies,
                 "sdk": output("/usr/bin/xcrun", "--show-sdk-version"),
                 "compiler": output("/usr/bin/clang", "--version"),
-                "git_commit": info["firecracker_head"], "dirty": info["firecracker_dirty"],
+                "git_commit": info["spark_head"], "dirty": info["spark_dirty"],
                 "source_snapshot_tree_digest": info["tree_digest"],
                 "native_prefix": NATIVE_PREFIX,
                 "unsigned_macho_sha256": unsigned,
@@ -616,8 +616,8 @@ def cmd_build(args) -> None:
         "tree_digest": digest,
         "jerboa_head": jerboa_head,
         "jerboa_dirty": bool((snapshot / "jerboa-status.txt").read_text().strip()),
-        "firecracker_head": (snapshot / "firecracker-HEAD.txt").read_text().strip(),
-        "firecracker_dirty": bool((snapshot / "firecracker-status.txt").read_text().strip()),
+        "spark_head": (snapshot / "spark-HEAD.txt").read_text().strip(),
+        "spark_dirty": bool((snapshot / "spark-status.txt").read_text().strip()),
     }
     (root / "snapshot-info.json").write_text(json.dumps(info, indent=2, sort_keys=True) + "\n")
     safe_extract_snapshot(snapshot / "source-snapshot.tar", root / "src")
@@ -649,13 +649,13 @@ def cmd_build(args) -> None:
         ("scripts/package-macos-distribution.py", SCRIPT.with_name("package-macos-distribution.py")),
         ("lock", lock_file))}
     provenance = {"source_snapshot_tree_digest": digest, "recipe_sha256": recipe,
-                  "jerboa_dirty": info["jerboa_dirty"], "firecracker_git_commit": info["firecracker_head"],
-                  "firecracker_dirty": info["firecracker_dirty"], "toolchain_matches_lock": not drift,
+                  "jerboa_dirty": info["jerboa_dirty"], "spark_git_commit": info["spark_head"],
+                  "spark_dirty": info["spark_dirty"], "toolchain_matches_lock": not drift,
                   "x86_tools": "pinned prebuilt input, not rebuilt"}
     (root / "provenance.json").write_text(json.dumps(provenance, indent=2, sort_keys=True) + "\n")
     dist = root / "out/distribution"
     log.run([sys.executable, SCRIPT.with_name("package-macos-distribution.py"),
-             "--jerboa-dir", jerboa_dir, "--tools-dir", kernel["tools_dir"], "--firecracker-package", fc_package,
+             "--jerboa-dir", jerboa_dir, "--tools-dir", kernel["tools_dir"], "--spark-package", fc_package,
              "--output-dir", dist, "--version", args.version, "--source-date-epoch", str(epoch),
              "--source-root", root / "src/jerboa", "--jerboa-git-commit", jerboa_head,
              "--provenance-json", root / "provenance.json"], env)
@@ -672,7 +672,7 @@ def cmd_build(args) -> None:
         "components": {
             "jerboa": inventory(jerboa_dir),
             "tools": inventory(kernel["tools_dir"]),
-            "firecracker-package": inventory(fc_package),
+            "spark-package": inventory(fc_package),
             "bundle": inventory(bundle),
         },
     }

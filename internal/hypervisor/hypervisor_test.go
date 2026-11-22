@@ -14,7 +14,7 @@ func TestChoosePrefersFirecrackerWhereverItCanRun(t *testing.T) {
 	never := func(string) bool { return false }
 
 	got := choose("firecracker", "", probe{lookPath: onPath, isExecutable: never})
-	require.Equal(t, Choice{Name: Firecracker, FCBin: "/usr/bin/firecracker", Reason: "this host can run Firecracker"}, got)
+	require.Equal(t, Choice{Name: Firecracker, FCBin: "/usr/bin/firecracker", Reason: "this host can run " + Label}, got)
 
 	// A bundle keeps the VMM beside the daemon, off PATH.
 	got = choose("firecracker", "/bundle/bin", probe{lookPath: notOnPath, isExecutable: beside})
@@ -33,4 +33,21 @@ func TestDefaultNamesAHypervisor(t *testing.T) {
 	c := Default("firecracker-that-does-not-exist", "")
 	require.Equal(t, QEMU, c.Name)
 	require.NotEmpty(t, c.Reason)
+}
+
+func TestParseAcceptsThePlatformNameAndTheLegacyOne(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"", ""}, {"auto", Auto}, {"QEMU", QEMU}, {MicroVM, Firecracker}, {" " + MicroVM + " ", Firecracker},
+		// What earlier macOS releases wrote, and what Linux calls it.
+		{"firecracker", Firecracker},
+	} {
+		in, want := c.in, c.want
+		got, err := Parse(in)
+		require.NoError(t, err, in)
+		require.Equal(t, want, got, in)
+	}
+	_, err := Parse("xen")
+	require.ErrorContains(t, err, Values())
+	require.Equal(t, MicroVM, Public(Firecracker))
+	require.Equal(t, QEMU, Public(QEMU))
 }

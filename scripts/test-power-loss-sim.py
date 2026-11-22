@@ -141,7 +141,7 @@ class Daemon:
         self.log = (WORK / f"daemon-{label}.log").open("w")
         self.process = subprocess.Popen(
             [str(a) for a in (BIN / "jerboad", "--host", ENV["JERBOA_HOST"], "--tools-dir", BIN / "tools",
-                              "--hypervisor", "firecracker", "--fc-bin", fc)],
+                              "--hypervisor", "spark", "--spark-bin", fc)],
             env=env, stdout=self.log, stderr=self.log,
         )
         wait_for(lambda: cli("status"), "daemon " + label)

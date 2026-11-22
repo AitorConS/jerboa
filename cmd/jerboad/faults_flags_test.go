@@ -228,8 +228,11 @@ func TestFaults_FirecrackerSecurityPolicy(t *testing.T) {
 		requireRefused(t, err, "only supported on macOS")
 		return
 	}
+	requireRefused(t, validate(t, append(sock, "--spark-security", filepath.Join(t.TempDir(), "absent.json"))...),
+		"read the Spark security policy")
+	// The name launchd services of earlier releases pass still works.
 	requireRefused(t, validate(t, append(sock, "--fc-security", filepath.Join(t.TempDir(), "absent.json"))...),
-		"read Firecracker security policy")
+		"read the Spark security policy")
 	for name, content := range map[string]string{
 		"empty":     "",
 		"truncated": `{"egress": [{"cidr": "0.0.0.0/0"`,
@@ -240,7 +243,7 @@ func TestFaults_FirecrackerSecurityPolicy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			// A policy that does not parse must not fall back to the default
 			// one, which is more permissive than what the operator intended.
-			requireRefused(t, validate(t, append(sock, "--fc-security", policy(content))...), "must be valid JSON")
+			requireRefused(t, validate(t, append(sock, "--spark-security", policy(content))...), "must be valid JSON")
 		})
 	}
 }

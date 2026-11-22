@@ -22,7 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNativeFCSupervisorCommand(t *testing.T) {
+func TestNativeSparkSupervisorCommand(t *testing.T) {
 	id := "0123456789ab"
 	sock := nativeFCSocketPath(id)
 	require.True(t, nativeFCSupervisorCommand([]byte("/bin/firecracker --api-sock "+sock+" --config-file /tmp/c.json\n"), id))

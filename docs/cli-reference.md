@@ -61,7 +61,7 @@ origin. Manifests from it must still carry the release signature.
 
 ### `jerboa snapshot`
 
-Local macOS Firecracker/HVF snapshots on named networks:
+Local macOS Spark snapshots on named networks:
 
 ```sh
 jerboa snapshot create <vm> <name>
@@ -113,20 +113,20 @@ Key flags:
 | `--restart` | `never`, `on-failure`, `always[:max-retries]` |
 | `--pull` | When to pull the image from its registry: `missing` (default; only when the daemon does not store it), `always` (pull the tag again first) or `never` (run only a stored image) |
 | `--verify` | Signature verification mode: `off`, `warn`, `enforce` |
-| `--cpu-shares` | cgroup v2 CPU weight (macOS QEMU: process priority; Firecracker: not supported) |
-| `--memory-max` | cgroup v2 memory hard limit (macOS QEMU: VM stopped when exceeded; Firecracker: not supported) |
+| `--cpu-shares` | cgroup v2 CPU weight (macOS QEMU: process priority; Firecracker and Spark: not supported) |
+| `--memory-max` | cgroup v2 memory hard limit (macOS QEMU: VM stopped when exceeded; Firecracker and Spark: not supported) |
 | `--emulate-x86` | macOS only: run an x86_64 image with QEMU emulation |
 | `--disk-iops` | Boot-disk IOPS throttle |
 | `--disk-bps` | Boot-disk throughput throttle |
 | `--disk-io-engine` | Host block I/O engine for every drive: `sync` (default) or `async` (io_uring; Linux 5.10+ only). Async can help parallel I/O but costs extra host CPU and device setup time; benchmark before enabling |
-| `--volume-cache` | Volume flush handling: `writeback` (default; a guest `fsync` reaches host storage on QEMU and Firecracker) or `unsafe` (flushes ignored; faster, but committed data can be lost if the host crashes). Not supported by Firecracker/HVF on macOS |
+| `--volume-cache` | Volume flush handling: `writeback` (default; a guest `fsync` reaches host storage on QEMU, Firecracker and Spark) or `unsafe` (flushes ignored; faster, but committed data can be lost if the host crashes). Not supported by Spark on macOS |
 
 Notes:
 
 - `--attach` requests an opt-in framed `VM.Attach` stream: console bytes remain
   separate from a terminal result, so a failed VM makes the CLI exit nonzero.
   Older daemons still send raw console bytes and cannot report terminal status
-  through attach. On ARM Firecracker, a nonzero guest exit is signaled through
+  through attach. On Spark, a nonzero guest exit is signaled through
   pvpanic and currently surfaces as a generic error (CLI status 1), not the
   guest's exact exit code.
 - Port publishing requires `--network` on Linux and Windows. On macOS, `-p` works without it.
@@ -188,7 +188,7 @@ that succeeds, matching `docker stop`.
 A graceful stop asks the guest to power down. Nanos sends `SIGTERM` to the
 program, waits up to 30 seconds for it to exit, and syncs its filesystems,
 including volumes, before powering off. The request reaches the guest as a
-power button press under QEMU and Firecracker on macOS, and over the VM's
+power button press under QEMU and Spark on macOS, and over the VM's
 vsock device under Firecracker on Linux, where the daemon kills the VMM if the
 guest has not powered off within 40 seconds. A Linux Firecracker guest kernel
 without the vsock power-down handler cannot take the request; its VMM is
@@ -238,7 +238,7 @@ Key flags:
 | `--no-preflight` | Skip the pre-build binary checks (ELF class/arch, shared-library closure, entrypoint presence) |
 | `--size-report[=text\|json]` | Before assembling, print what the image will contain grouped by program, runtime package, npm module, Python distribution and top-level project path. `json` prints every group to stdout (the build summary then goes to stderr) |
 | `--sbom <file>` | Also write the image's CycloneDX SBOM to `<file>`. Every build stores one with the image; `jerboa images sbom <ref>` prints it |
-| `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
+| `--layout` | Disk image layout: `compact` (default; no boot code and no boot filesystem copy of the kernel, which the hypervisor loads itself: Firecracker, Spark, native ARM64 QEMU on macOS, and QEMU with KVM through PVH on Linux) or `standard` (BIOS boot code, needed for x86 emulation on macOS and for QEMU without KVM). x86 images built on macOS default to `standard`. An explicit flag overrides `[build] layout` |
 | `--smoke` | Boot the image once after building, scan serial output for known failure signatures, then stop and remove the test VM |
 | `--allow-unsandboxed` | Honor `[build] sandbox = false` from `unikernel.toml`. Without it a project that sets it fails to build |
 | `--allow-build-network` | Honor `[build] network = true` from `unikernel.toml`. Without it a project that sets it (and has `[build] run` commands) fails to build |
@@ -548,7 +548,7 @@ imports record the requested reference, immutable image ID and available reposit
 digest. Local variants coexist and take precedence over the remote index.
 `jerboa images inspect <ref>` displays image platform and integrated package
 versions, hashes and provenance. See [ARM64 package workflow]({% link packages-arm64.md %})
-for local sysroots, compatibility rules and reproducible Firecracker acceptance.
+for local sysroots, compatibility rules and reproducible Spark acceptance.
 
 Every build is also recorded as a **recipe**: the mkfs manifest with each file
 replaced by its SHA-256, the pinned kernel toolset version, and the expected disk
@@ -821,15 +821,18 @@ Add `--channel beta` to query the beta channel instead of stable.
 
 The command group currently exposes only one writable key:
 
-- `hypervisor`: `auto`, `qemu` or `firecracker`
+- `hypervisor`: `auto`, `qemu`, or the microVM engine: `firecracker` on Linux
+  and Windows, `spark` on macOS
 
-Without a choice (`auto`, the default) the daemon runs Firecracker wherever
-the host can and QEMU otherwise, and logs which and why when it starts:
+Without a choice (`auto`, the default) the daemon runs the microVM engine
+wherever the host can and QEMU otherwise, and logs which and why when it
+starts. On macOS that engine is Spark, Jerboa's Hypervisor.framework fork of
+Firecracker; macOS still accepts `firecracker`, the name earlier releases used.
 
-| Host | Firecracker is used when |
+| Host | The microVM engine is used when |
 |---|---|
 | Linux, and Windows inside the WSL2 distro | `/dev/kvm` opens, a `firecracker` binary is found, and the daemon is root or has `CAP_NET_ADMIN` |
-| macOS | Apple Silicon, macOS 26 or newer, and the bundled `firecracker` is present |
+| macOS | Apple Silicon, macOS 26 or newer, and the bundled `spark` is present |
 
 QEMU remains for hosts without KVM and for x86 emulation on Apple Silicon; set
 `hypervisor` to `qemu` for those. A config file that already names a
@@ -891,7 +894,7 @@ Flags:
 
 - `--rootfs <tarball>` — use a local rootfs instead of downloading the release
 - `--keep-data` — preserve images, VMs, networks and volumes across the reimport
-- `--hypervisor <auto|qemu|firecracker>` — hypervisor to run after restart
+- `--hypervisor <auto|qemu|firecracker>` — hypervisor to run after restart (Windows)
 
 ### `jerboa daemon uninstall`
 ### `jerboa daemon start`
@@ -904,7 +907,7 @@ Flags:
 
 | Flag | Description |
 |---|---|
-| `--hypervisor auto\|qemu\|firecracker` | Hypervisor to run; defaults to the configured one, then `auto` |
+| `--hypervisor auto\|qemu\|firecracker` | Hypervisor to run; defaults to the configured one, then `auto`. On macOS the microVM engine is `spark` |
 | `--metrics-addr <addr>` | Serve Prometheus metrics on this address (e.g. `127.0.0.1:9090`) |
 | `--ui-addr <addr>` | Serve the dashboard on this address (e.g. `127.0.0.1:8080`) |
 | `--trace-addr <addr>` | Export OTLP traces to this address |
@@ -916,8 +919,8 @@ without them keeps the last values. See
 
 `jerboa daemon status` prints whether the daemon answers, its endpoint and
 version, and the hypervisor it runs with the reason it was chosen
-(`hypervisor: firecracker (...)`). When the daemon runs QEMU on a host that
-could run Firecracker, it adds a hint with the command that switches:
+(`hypervisor: firecracker (...)`, or `spark` on macOS). When the daemon runs
+QEMU on a host that could run the microVM engine, it adds a hint with the command that switches:
 `jerboa config set hypervisor auto`, then restart the daemon.
 
 `jerboa daemon logs` flag:
@@ -939,11 +942,13 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--auth-token` | Deprecated: a token on the command line is visible to other local users in `ps`. Use `--auth-token-file` or `JERBOA_AUTH_TOKEN` |
 | `--insecure` | Allow serving a TCP endpoint without an auth token (unsafe). A TCP endpoint with no token is rejected at startup otherwise; a Unix socket needs no token (it is restricted to the owning user with `0600` permissions) |
 | `--qemu` | QEMU binary path (default `qemu-system-x86_64`) |
-| `--hypervisor` | `auto`, `qemu` or `firecracker` (overrides `~/.jerboa/config.toml`; default `auto`: Firecracker where the host can run it, QEMU otherwise) |
-| `--fc-bin` | Firecracker binary path (only with `--hypervisor=firecracker`) |
-| `--fc-kernel` | Firecracker-compatible kernel path (auto-downloaded if omitted) |
-| `--fc-security` | macOS Firecracker: a JSON policy with the outbound and DNS permissions of guests, replacing the default (public addresses only). See [Using Jerboa on macOS]({% link macos-guide.md %}#restricting-or-widening-outbound-access-firecracker) |
-| `--snapshot-dir` | macOS Firecracker: the private snapshot store |
+| `--hypervisor` | `auto`, `qemu`, or `firecracker` on Linux and `spark` on macOS (overrides `~/.jerboa/config.toml`; default `auto`: the microVM engine where the host can run it, QEMU otherwise) |
+| `--fc-bin` | Linux: Firecracker binary path (only with `--hypervisor=firecracker`) |
+| `--fc-kernel` | Linux: Firecracker-compatible kernel path (auto-downloaded if omitted) |
+| `--spark-bin` | macOS: Spark binary path (only with `--hypervisor=spark`) |
+| `--spark-kernel` | macOS: ARM64 ELF kernel path (default `tools/kernel.img`) |
+| `--spark-security` | macOS: a JSON policy with the outbound and DNS permissions of guests, replacing the default (public addresses only). See [Using Jerboa on macOS]({% link macos-guide.md %}#restricting-or-widening-outbound-access-spark) |
+| `--snapshot-dir` | macOS Spark: the private snapshot store |
 | `--snapshot-max-count` | Maximum number of stored snapshots (default `16`; `0` disables the limit) |
 | `--snapshot-max-bytes` | Maximum total bytes of stored snapshots (default 32 GiB; `0` disables the limit) |
 | `--port-publish` | Linux: how published ports reach guests: `auto` (default), `nat`, `nat-lan` or `proxy`. See [Published ports on Linux](#published-ports-on-linux) |
@@ -974,12 +979,12 @@ Environment the daemon reads:
 | `JERBOA_QEMU_SANDBOX=off` | Linux: run QEMU without its seccomp sandbox. By default QEMU runs with `-sandbox on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny` when the binary supports it |
 | `JERBOA_ALLOW_UNGUARDED_NETWORK=1` | Linux: let VMs on networks start while the guest network guard (nftables) is not loaded. Without it such VMs fail to start until `nft` works. Guests then run without isolation: see [Network isolation]({% link getting-started.md %}#network-isolation-linux) |
 | `JERBOA_GUEST_HOST_ACCESS=1` | macOS QEMU: let guests reach the Mac's loopback through the gateway, and private addresses. Linux: let guests open connections to the host's addresses (not its loopback) and to private, shared and link-local addresses outside their network. Off by default |
-| `JERBOA_FIRECRACKER_SECURITY` | macOS: the policy file of `--fc-security`, for a daemon started with `jerboa daemon start` |
+| `JERBOA_SPARK_SECURITY` | macOS: the policy file of `--spark-security`, for a daemon started with `jerboa daemon start` |
 | `JERBOA_PULL_MAX_BLOBS` | Most files one pulled image may list (default `100000`) |
 | `JERBOA_PULL_MAX_BYTES` | Most bytes those files may add up to (default `64G`; a number of bytes, or with a `k`, `m` or `g` suffix) |
 | `JERBOA_PULL_MAX_DISK_SIZE` | Largest disk a pulled image may have, and largest VM disk it may ask for (default `64G`) |
 
-None of these reach the programs the daemon starts. QEMU, Firecracker and
+None of these reach the programs the daemon starts. QEMU, Firecracker, Spark and
 `mkfs` get only `PATH`, `HOME`, `USER`, `LOGNAME`, `TMPDIR`, `TMP`, `TEMP`,
 `LANG`, `LANGUAGE`, `LC_*` and `TZ` from the daemon's environment; a variable
 set for the daemon to pass on to QEMU (a library path, a debug setting) no
@@ -1032,7 +1037,7 @@ Root commands currently exposed by the built CLI:
 - `rmi`
 - `run`
 - `sign`
-- `snapshot` (works on macOS with Firecracker)
+- `snapshot` (works on macOS with Spark)
 - `stats`
 - `status`
 - `stop`

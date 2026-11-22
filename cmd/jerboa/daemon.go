@@ -17,6 +17,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/api"
 	"github.com/AitorConS/jerboa/internal/config"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/release"
 	"github.com/AitorConS/jerboa/internal/wslboot"
 	"github.com/AitorConS/jerboa/internal/wsldistro"
@@ -69,7 +70,7 @@ type daemonOpts struct {
 
 func (o *daemonOpts) bind(c *cobra.Command) {
 	c.Flags().StringVar(&o.hypervisor, "hypervisor", "",
-		"hypervisor to run (auto, qemu or firecracker); defaults to config, then auto")
+		"hypervisor to run ("+hypervisorpkg.Values()+"); defaults to config, then auto")
 	// Observability passthrough: these enable the managed
 	// daemon's metrics/UI/tracing/log-format, which previously required
 	// hand-launching jerboad inside the distro. A provided value is persisted so
@@ -818,17 +819,19 @@ func backupDistro(cmd *cobra.Command) (string, error) {
 }
 
 // printDaemonHypervisor says which hypervisor the daemon runs and why, and
-// how to move a daemon held on QEMU to Firecracker when the host could run it.
+// how to move a daemon held on QEMU to the microVM backend when the host
+// could run it.
 func printDaemonHypervisor(out io.Writer, h api.DaemonHypervisor) {
 	if h.Name == "" {
 		return // a daemon that predates reporting it
 	}
-	line := "hypervisor: " + h.Name
+	// A daemon from before the rename to Spark says "firecracker" on macOS.
+	line := "hypervisor: " + hypervisorpkg.Public(h.Name)
 	if h.Reason != "" {
 		line += " (" + h.Reason + ")"
 	}
 	fmt.Fprintln(out, line)
 	if h.Name == "qemu" && h.FirecrackerAvailable {
-		fmt.Fprintln(out, "hint:       this host can run Firecracker: `jerboa config set hypervisor auto`, then restart the daemon")
+		fmt.Fprintln(out, "hint:       this host can run "+hypervisorpkg.Label+": `jerboa config set hypervisor auto`, then restart the daemon")
 	}
 }

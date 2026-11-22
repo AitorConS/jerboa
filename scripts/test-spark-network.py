@@ -17,13 +17,13 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.environ['JERBOA_TEST_BIN']).resolve()
-FC = Path(os.environ['JERBOA_FIRECRACKER_BIN']).resolve()
+FC = Path(os.environ['JERBOA_SPARK_BIN']).resolve()
 spec = importlib.util.spec_from_file_location('native_smoke', ROOT/'scripts/test-macos.py')
 native = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(native)
 
 def main():
-    with tempfile.TemporaryDirectory(prefix='jb-fc-net-',dir='/tmp') as td:
+    with tempfile.TemporaryDirectory(prefix='jb-spark-net-',dir='/tmp') as td:
         work=Path(td);(work/'home').mkdir();project=work/'app';project.mkdir()
         program=native.PROGRAM.replace('func main(){','''func main(){
  go func(){ln,err:=net.Listen("tcp",":8082");if err!=nil{panic(err)};for{c,err:=ln.Accept();if err!=nil{return};go func(){defer c.Close();b,err:=io.ReadAll(c);if err==nil{c.Write(append([]byte("final:"),b...))}}()}}()
@@ -59,7 +59,7 @@ def main():
         with socket.socket() as s:s.bind(('127.0.0.1',0));halfport=s.getsockname()[1]
         url=f'http://127.0.0.1:{port}'
         with (work/'daemon.log').open('w') as log:
-            args=[str(BIN/'jerboad'),'--host',env['JERBOA_HOST'],'--tools-dir',str(BIN/'tools'),'--hypervisor','firecracker','--fc-bin',str(FC)]
+            args=[str(BIN/'jerboad'),'--host',env['JERBOA_HOST'],'--tools-dir',str(BIN/'tools'),'--hypervisor', 'spark', '--spark-bin',str(FC)]
             daemon=subprocess.Popen(args,env=env,stdout=log,stderr=log)
             try:
                 wait(lambda:cli('status'),'daemon')
@@ -180,7 +180,7 @@ networks:
                     daemon.terminate();daemon.wait(10)
                     policy=work/'security.json'
                     policy.write_text(json.dumps({'version':1,'egress':[{'protocol':'tcp','address':'127.0.0.1','port':host.server_port},{'protocol':'udp','address':'127.0.0.1','port':echo.getsockname()[1]}],'dns':{'address':'127.0.0.1','port':dns.getsockname()[1]}}))
-                    args+=['--fc-security',str(policy)]
+                    args+=['--spark-security',str(policy)]
                     daemon=subprocess.Popen(args,env=env,stdout=log,stderr=log);wait(lambda:cli('status'),'policy daemon')
                     run_policy();wait(lambda:get(url),'authorized client')
                     assert get(url+f'/peer?target=172.25.43.1&port={host.server_port}')=={'host':True}

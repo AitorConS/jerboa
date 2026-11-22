@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mark upstream ad-hoc Firecracker metadata before Developer ID signing."""
+"""Mark upstream ad-hoc Spark metadata before Developer ID signing."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ def main() -> None:
     if len(sys.argv) != 2:
         raise SystemExit(f"Usage: {sys.argv[0]} BUNDLE")
     root = pathlib.Path(sys.argv[1])
-    metadata = root / "share/firecracker"
+    metadata = root / "share/spark"
     renames = {
         metadata / "manifest.json": metadata / "manifest.upstream-adhoc.json",
         metadata / "SHA256SUMS": metadata / "SHA256SUMS.upstream-adhoc",
@@ -44,7 +44,7 @@ def main() -> None:
         source.rename(target)
     notice = {
         "authoritative_signed_inventory": "../../SHA256SUMS",
-        "scope": "The renamed upstream files describe the original pre-Developer-ID ad-hoc Firecracker package; Developer ID signing changed Mach-O bytes.",
+        "scope": "The renamed upstream files describe the original pre-Developer-ID ad-hoc Spark package; Developer ID signing changed Mach-O bytes.",
         "upstream_manifest": "manifest.upstream-adhoc.json",
         "upstream_checksums": "SHA256SUMS.upstream-adhoc",
     }
@@ -53,7 +53,7 @@ def main() -> None:
     manifest = json.loads(manifest_path.read_text())
     manifest["actual_signing"] = "developer-id"
     manifest["notarized"] = False
-    manifest["upstream_firecracker_metadata_scope"] = "renamed files describe pre-Developer-ID ad-hoc inputs"
+    manifest["upstream_spark_metadata_scope"] = "renamed files describe pre-Developer-ID ad-hoc inputs"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     lines = []
     for path in regular_files(root):

@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 
 
-MACHO = ("bin/jerboa", "bin/jerboad", "bin/firecracker", "bin/tools/mkfs", "bin/tools/dump", "lib/libglib-2.0.0.dylib", "lib/libintl.8.dylib")
+MACHO = ("bin/jerboa", "bin/jerboad", "bin/spark", "bin/tools/mkfs", "bin/tools/dump", "lib/libglib-2.0.0.dylib", "lib/libintl.8.dylib")
 ALLOWED_PREFIXES = ("/usr/lib/", "/System/Library/", "@loader_path/")
 
 
@@ -192,15 +192,15 @@ def main() -> None:
         if manifest["platform"] != "darwin/arm64" or manifest["minimum_macos"] != "26.0":
             raise SystemExit("unexpected distribution platform/minimum macOS")
         if manifest.get("actual_signing") == "developer-id":
-            metadata = root / "share/firecracker"
+            metadata = root / "share/spark"
             if (metadata / "manifest.json").exists() or (metadata / "SHA256SUMS").exists():
-                raise SystemExit("signed bundle contains ambiguous pre-signing Firecracker metadata")
+                raise SystemExit("signed bundle contains ambiguous pre-signing Spark metadata")
             for name in ("manifest.upstream-adhoc.json", "SHA256SUMS.upstream-adhoc", "SIGNING-NOTICE.json"):
                 if not (metadata / name).is_file():
                     raise SystemExit(f"signed bundle is missing marked upstream metadata: {name}")
             notice = json.loads((metadata / "SIGNING-NOTICE.json").read_text())
             if notice.get("authoritative_signed_inventory") != "../../SHA256SUMS":
-                raise SystemExit("signed bundle has an invalid Firecracker signing notice")
+                raise SystemExit("signed bundle has an invalid Spark signing notice")
         count = verify_checksums(root)
         for relative in MACHO:
             path = root / relative
@@ -224,14 +224,14 @@ def main() -> None:
                     if not resolved.is_file():
                         raise SystemExit(f"missing bundled dependency in {relative}: {dependency}")
         expected_entitlements = {"com.apple.security.hypervisor": True}
-        if entitlements(root / "bin/firecracker") != expected_entitlements:
-            raise SystemExit("Firecracker must carry exactly the Hypervisor entitlement")
+        if entitlements(root / "bin/spark") != expected_entitlements:
+            raise SystemExit("Spark must carry exactly the Hypervisor entitlement")
         for relative in ("bin/jerboa", "bin/jerboad", "bin/tools/mkfs", "bin/tools/dump"):
             if entitlements(root / relative):
                 raise SystemExit(f"unexpected entitlements: {relative}")
 
         # Relocated, isolated installation smoke. These commands do not start a daemon or VM.
-        for relative in ("bin/jerboa", "bin/jerboad", "bin/firecracker"):
+        for relative in ("bin/jerboa", "bin/jerboad", "bin/spark"):
             result = run(str(root / relative), "--version")
             if not result.stdout.strip():
                 raise SystemExit(f"empty --version output: {relative}")

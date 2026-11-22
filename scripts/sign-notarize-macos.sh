@@ -44,9 +44,9 @@ ditto "$input" "$output"
 for relative in lib/libintl.8.dylib lib/libglib-2.0.0.dylib bin/tools/mkfs bin/tools/dump bin/jerboa bin/jerboad; do
   codesign --force --options runtime --timestamp --sign "$application_identity" "$output/$relative"
 done
-codesign --force --options runtime --timestamp --entitlements "$script_dir/macos-firecracker.entitlements" \
-  --sign "$application_identity" "$output/bin/firecracker"
-for relative in lib/libintl.8.dylib lib/libglib-2.0.0.dylib bin/tools/mkfs bin/tools/dump bin/jerboa bin/jerboad bin/firecracker; do
+codesign --force --options runtime --timestamp --entitlements "$script_dir/macos-spark.entitlements" \
+  --sign "$application_identity" "$output/bin/spark"
+for relative in lib/libintl.8.dylib lib/libglib-2.0.0.dylib bin/tools/mkfs bin/tools/dump bin/jerboa bin/jerboad bin/spark; do
   codesign --verify --strict --verbose=2 "$output/$relative"
 done
 /usr/bin/python3 "$script_dir/update-macos-signing-metadata.py" "$output"
@@ -58,7 +58,7 @@ if [ -n "$pkg" ]; then
   mkdir -p "$package_root/usr/local/libexec"
   ditto "$output" "$package_root/usr/local/libexec/jerboa"
   version=$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$output/distribution-manifest.json")
-  pkgbuild --root "$package_root" --identifier dev.jerboa.firecracker --version "$version" \
+  pkgbuild --root "$package_root" --identifier dev.jerboa.spark --version "$version" \
     --install-location / --sign "$installer_identity" "$pkg"
   pkgutil --check-signature "$pkg"
 fi

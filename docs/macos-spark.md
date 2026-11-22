@@ -1,17 +1,21 @@
 ---
 layout: default
-title: Firecracker on macOS
-description: "Run jerboa on the native Hypervisor.framework Firecracker backend for macOS, built from the Spark checkout."
+title: Spark on macOS
+description: "Run jerboa on Spark, the native Hypervisor.framework microVM backend for macOS (a Firecracker fork)."
 parent: macOS Apple Silicon
 nav_order: 10
 ---
 
-# Firecracker on macOS
+# Spark on macOS
 
-Jerboa supports the native ARM64 Hypervisor.framework backend from the sibling
-`../Spark` checkout. Use its signed macOS executable, not an upstream
-Linux Firecracker binary. The fork requires macOS 26 and Apple Silicon; this
-integration was exercised on the local M5 host. The default engine, `auto`, is Firecracker wherever the VMM is found beside the daemon, on `PATH` or at `JERBOA_FIRECRACKER_BIN`, and QEMU otherwise.
+Spark is Jerboa's microVM backend for macOS: a fork of Firecracker that runs on
+Apple's Hypervisor.framework instead of KVM. It is built from the sibling
+`../Spark` checkout. Spark requires macOS 26 and Apple Silicon; this
+integration was exercised on the local M5 host. The default engine, `auto`, is Spark wherever the `spark` executable is found beside the daemon, on `PATH` or at `JERBOA_SPARK_BIN`, and QEMU otherwise.
+
+Earlier releases called this backend `firecracker` on macOS. That value, the
+`--fc-*` daemon flags and the `JERBOA_FIRECRACKER_*` variables are still
+accepted.
 
 ## Install a published native release
 
@@ -30,7 +34,7 @@ The installer detects macOS/ARM64, verifies the signed release manifest and
 package SHA-256, checks the Developer ID signature and Gatekeeper assessment,
 then installs the complete package at `/usr/local/libexec/jerboa`. Wrappers in
 `/usr/local/bin` preserve relative library and tool lookup. It selects
-Firecracker in the user's config and starts the user's launchd daemon.
+Spark in the user's config and starts the user's launchd daemon.
 Stop running VMs before upgrading; the installer stops the managed daemon.
 
 This route requires a published release whose signed manifest contains the
@@ -47,31 +51,31 @@ tools already exist, rebuilding only the CLI and daemon is sufficient:
 
 ```sh
 go build -o dist/macos-arm64/ ./cmd/jerboa ./cmd/jerboad
-export JERBOA_FIRECRACKER_BIN="$PWD/../Spark/build/macos-arm64/firecracker"
-./dist/macos-arm64/jerboa config set hypervisor firecracker
+export JERBOA_SPARK_BIN="$PWD/../Spark/build/macos-arm64/spark"
+./dist/macos-arm64/jerboa config set hypervisor spark
 ./dist/macos-arm64/jerboa daemon start
 ./dist/macos-arm64/jerboa build examples/hello --platform linux/arm64 --name hello
 ./dist/macos-arm64/jerboa run hello:latest --attach
 ```
 
 Stop existing VMs and the managed daemon before changing backends. To select
-Firecracker for a single managed launch, use `daemon start --hypervisor firecracker`.
-The launcher resolves `JERBOA_FIRECRACKER_BIN`, then a `firecracker` executable
+Spark for a single managed launch, use `daemon start --hypervisor spark`.
+The launcher resolves `JERBOA_SPARK_BIN`, then a `spark` executable
 beside `jerboad`, then PATH or `/opt/homebrew/bin`. It records the absolute path
-in the launchd service. Keep the fork and its native dependencies in place.
+in the launchd service. Keep Spark and its native dependencies in place.
 
 Foreground operation permits explicit kernel and policy selection:
 
 ```sh
 ./dist/macos-arm64/jerboad \
-  --hypervisor firecracker \
-  --fc-bin "$PWD/../Spark/build/macos-arm64/firecracker" \
+  --hypervisor spark \
+  --spark-bin "$PWD/../Spark/build/macos-arm64/spark" \
   --tools-dir "$PWD/dist/macos-arm64/tools"
 ```
 
-On macOS the default kernel is `tools/kernel.img`, an ARM64 ELF. `--fc-kernel`
-overrides it. Jerboa does not download the Linux/x86 Firecracker kernel for this
-backend. The executable retains the fork's own code-signing and entitlement
+On macOS the default kernel is `tools/kernel.img`, an ARM64 ELF. `--spark-kernel`
+overrides it. Jerboa does not download the Linux/x86 kernel used on Linux for this
+backend. The executable retains Spark's own code-signing and entitlement
 requirements; Jerboa does not rebuild or re-sign it.
 
 ## Supported behavior
@@ -86,7 +90,7 @@ Without `--network`, existing private slirp configurations keep guest IP
 `10.0.2.15` and VMM-owned TCP/UDP publishing. Their health checks still require
 a published TCP port.
 
-With `--network`, Firecracker connects its generic Unix Ethernet transport to
+With `--network`, Spark connects its generic Unix Ethernet transport to
 Jerboa's shared gVisor stack and Ethernet switch. QEMU is not required. Jerboa
 allocates guest IPs from the network subnet, accepts `--ip`, and provides direct
 VM-to-VM communication and DNS names/aliases within that network. Overlapping
@@ -129,8 +133,8 @@ communication and service DNS inside that network; names of the network are
 answered locally and never forwarded.
 
 To state the permissions yourself, supply a JSON security object with
-`jerboad --fc-security /absolute/path/policy.json`, or set
-`JERBOA_FIRECRACKER_SECURITY` when starting the managed service. It replaces
+`jerboad --spark-security /absolute/path/policy.json`, or set
+`JERBOA_SPARK_SECURITY` when starting the managed service. It replaces
 the default entirely: `{"version": 1}` closes every outbound connection and
 external DNS, as releases up to 0.58 did by default. For example:
 
@@ -146,7 +150,7 @@ Add `"public_egress": true` to keep public addresses reachable beside the
 exact rules, for instance to also open one address of the local network.
 
 Replace the example destination with the actual endpoint needed by the guest.
-Policy is shared by this daemon's Firecracker VMs. Slirp receives these rules
+Policy is shared by this daemon's Spark VMs. Slirp receives these rules
 in the VMM and adds published listener permissions. For shared networks,
 Jerboa enforces exact IPv4/protocol/port egress rules and uses only `dns` as its
 external resolver. `JERBOA_DNS_UPSTREAM` does not override a supplied policy.
@@ -184,17 +188,17 @@ connections.
   VMs with volumes are rejected; snapshots are local-development artifacts,
   not portable backups. Established TCP connections are not preserved. See
   [snapshot requirements and acceptance]({% link macos-snapshots.md %}).
-- x86 emulation requires QEMU; Firecracker rejects `--emulate-x86`.
+- x86 emulation requires QEMU; Spark rejects `--emulate-x86`.
 - Stop requests a VirtIO power-button shutdown. The updated Nanos kernel sends
   SIGTERM and synchronizes kernel-held writes before powering off. A compatible
-  updated fork binary is required alongside this kernel. The VMM forces exit
+  updated Spark binary is required alongside this kernel. The VMM forces exit
   after 35 seconds, with a separate 40-second Jerboa bound; force-stop/kill and
   timeout do not guarantee a flush. Application-only buffers still require
   application cleanup. See [shutdown behavior]({% link macos-shutdown.md %}).
 - Host CPU shares and memory watchdog limits are rejected. Disk limits map to
-  the fork's aggregate device limits: 1-1000000 IOPS and 1 MiB/s-1 TiB/s.
-  Omitted values retain the fork's defaults, not unlimited I/O.
-- Native Firecracker statistics aggregate the live supervisor/VMM process
+  Spark's aggregate device limits: 1-1000000 IOPS and 1 MiB/s-1 TiB/s.
+  Omitted values retain Spark's defaults, not unlimited I/O.
+- Spark statistics aggregate the live supervisor/VMM process
   tree, with persistent CPU deltas and PID/start-time identity checks. RSS is
   host resident memory, not guest-internal used RAM. Native accounting requires
   cgo; see [statistics semantics]({% link macos-stats.md %}).
@@ -203,24 +207,24 @@ connections.
 
 ```sh
 go test ./...
-python3 scripts/test-firecracker-macos.py
-JERBOA_TEST_BIN="$PWD/dist/macos-arm64" python3 scripts/test-firecracker-network.py
+python3 scripts/test-spark-macos.py
+JERBOA_TEST_BIN="$PWD/dist/macos-arm64" python3 scripts/test-spark-network.py
 ```
 
 The standalone smoke uses a temporary home, builds its own ARM64 guest through
 Jerboa, and exercises one/four CPU boots, environment, persistent volumes,
 TCP/UDP, occupied ports, guest exit, daemon recovery, failure restart and stop.
-It uses `JERBOA_FIRECRACKER_BIN` or the sibling fork's build path. It does not
+It uses `JERBOA_SPARK_BIN` or the sibling Spark build path. It does not
 replace the user's managed daemon.
 
-An additional manager-level test can use the fork's optional Jerboa demo disk
+An additional manager-level test can use Spark's optional Jerboa demo disk
 (HTTP 8080, UDP echo 8081, `MARKER=hvf-smoke`, `/shutdown`):
 
 ```sh
-JERBOA_TEST_FC_BIN="$PWD/../Spark/build/macos-arm64/firecracker" \
-JERBOA_TEST_FC_KERNEL="$PWD/dist/macos-arm64/tools/kernel.img" \
-JERBOA_TEST_FC_DISK="$PWD/../Spark/build/macos-arm64/demo/root.img" \
-go test ./internal/vm -run TestNativeFC -v
+JERBOA_TEST_SPARK_BIN="$PWD/../Spark/build/macos-arm64/spark" \
+JERBOA_TEST_SPARK_KERNEL="$PWD/dist/macos-arm64/tools/kernel.img" \
+JERBOA_TEST_SPARK_DISK="$PWD/../Spark/build/macos-arm64/demo/root.img" \
+go test ./internal/vm -run TestNativeSpark -v
 ```
 
 ## Shared networks and Compose
@@ -280,8 +284,8 @@ Unscoped dotted queries infer their scope from the final suffix.
 
 For an isolated build, put the rebuilt CLI and daemon in a separate directory
 and link its `tools` directory to the existing ARM64 tools. Set
-`JERBOA_TEST_BIN` to that directory and `JERBOA_FIRECRACKER_BIN` to the signed
-fork executable. `test-firecracker-network.py` covers IPAM, IP/name/alias
+`JERBOA_TEST_BIN` to that directory and `JERBOA_SPARK_BIN` to the signed
+Spark executable. `test-spark-network.py` covers IPAM, IP/name/alias
 traffic, isolation, unpublished health, TCP/UDP bindings and collisions,
 daemon SIGKILL/restart, Compose and default/explicit outbound and DNS policies.
 The tests use a temporary HOME and a separate daemon socket.

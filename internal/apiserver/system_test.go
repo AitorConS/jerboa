@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/AitorConS/jerboa/internal/image"
 	"github.com/AitorConS/jerboa/internal/network"
 	"github.com/AitorConS/jerboa/internal/snapshot"
@@ -641,7 +642,7 @@ func TestSystemCheck_HealthyDaemonIsAllOK(t *testing.T) {
 	require.NoError(t, err)
 	e.vm("app", running, vm.Config{ImagePath: disk, NetworkName: "appnet", Volumes: []vm.VolumeMount{{DiskPath: vol.DiskPath}}})
 	require.NoError(t, os.WriteFile(filepath.Join(e.root, "tools", "kernel.img"), []byte("k"), 0o600))
-	e.s.SetHypervisor(api.DaemonHypervisor{Name: "firecracker", Reason: "this host can run it", FirecrackerAvailable: true})
+	e.s.SetHypervisor(api.DaemonHypervisor{Name: hypervisorpkg.MicroVM, Reason: "this host can run it", FirecrackerAvailable: true})
 
 	for _, deep := range []bool{false, true} {
 		findings := e.check(deep)
@@ -662,11 +663,11 @@ func TestSystemCheck_Hypervisor(t *testing.T) {
 	e.s.SetHypervisor(api.DaemonHypervisor{Name: "qemu", Reason: "chosen in config.toml", FirecrackerAvailable: true})
 	f := worst(e.check(false), "hypervisor")
 	assert.Equal(t, api.SeverityInfo, f.Severity)
-	assert.Contains(t, f.Message, "can run Firecracker")
+	assert.Contains(t, f.Message, "can run "+hypervisorpkg.Label)
 	assert.Contains(t, f.Hint, "hypervisor auto")
 
 	e.s.SetHypervisor(api.DaemonHypervisor{Name: "qemu", Reason: "no KVM"})
-	assert.Equal(t, api.SeverityOK, worst(e.check(false), "hypervisor").Severity, "QEMU is right where Firecracker cannot run")
+	assert.Equal(t, api.SeverityOK, worst(e.check(false), "hypervisor").Severity, "QEMU is right where the microVM backend cannot run")
 }
 
 func TestSystemCheck_DiskSpace(t *testing.T) {

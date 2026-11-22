@@ -116,12 +116,12 @@ class RPC:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--bin-dir', type=Path, required=True, help='directory with the jerboa and jerboad under test')
-    parser.add_argument('--firecracker-bin', type=Path, required=True)
+    parser.add_argument('--spark-bin', type=Path, required=True)
     parser.add_argument('--tools-dir', type=Path, required=True)
     parser.add_argument('--go-bin', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
-    bindir, firecracker, tools = args.bin_dir.resolve(), args.firecracker_bin.resolve(), args.tools_dir.resolve()
+    bindir, spark, tools = args.bin_dir.resolve(), args.spark_bin.resolve(), args.tools_dir.resolve()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     artifacts = Path(tempfile.mkdtemp(prefix='run-', dir=output))
@@ -140,7 +140,7 @@ def main():
     log_path = work / 'daemon.log'
     log = log_path.open('a')
     base_args = [str(bindir / 'jerboad'), '--host', env['JERBOA_HOST'], '--tools-dir', str(tools),
-                 '--hypervisor', 'firecracker', '--fc-bin', str(firecracker), '--snapshot-max-count', '4']
+                 '--hypervisor', 'spark', '--spark-bin', str(spark), '--snapshot-max-count', '4']
     state = {'daemon': None}
 
     def cli(*argv, ok=True, timeout=240):
@@ -185,7 +185,7 @@ def main():
         rows = []
         for line in out.splitlines():
             pid, _, command = line.strip().partition(' ')
-            if str(work) in command and 'firecracker' in command and fragment in command:
+            if str(work) in command and 'spark' in command and fragment in command:
                 rows.append((int(pid), command))
         return rows
 

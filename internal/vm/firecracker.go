@@ -165,11 +165,11 @@ func (m *FirecrackerManager) Store() Store { return m.store }
 // Create registers a new VM with the given config.
 func (m *FirecrackerManager) Create(_ context.Context, cfg Config) (*VM, error) {
 	if err := validateVMConfig(cfg); err != nil {
-		return nil, fmt.Errorf("firecracker create: %w", err)
+		return nil, fmt.Errorf(vmmName+" create: %w", err)
 	}
 	v, err := m.store.Create(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("firecracker create: %w", err)
+		return nil, fmt.Errorf(vmmName+" create: %w", err)
 	}
 	return v, nil
 }
@@ -179,22 +179,22 @@ func (m *FirecrackerManager) Create(_ context.Context, cfg Config) (*VM, error) 
 func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	v, release, err := m.claimVM(id, "start")
 	if err != nil {
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 	defer release()
 	if err := m.validateFCPlatform(v.Cfg); err != nil {
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 	if err := validatePortNetwork(v.Cfg); err != nil {
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 	// The API and vsock sockets, the config file and the VMM log live in the
 	// private runtime dir; without one the VM is not started.
 	if _, err := vmRuntimeDir(); err != nil {
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 	if err := v.transition(StateStarting); err != nil {
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 
 	// Give this VM its own uniquely named TAP device. Several VMs can share a
@@ -209,7 +209,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	// before launching, so the guest is reachable on the host network.
 	if runtime.GOOS != "darwin" && v.Cfg.NetworkName != "" {
 		if err := setupTAPNetwork(v.Cfg); err != nil {
-			slog.Warn("firecracker start: network setup failed", "vm_id", id, "err", err)
+			slog.Warn(vmmName+" start: network setup failed", "vm_id", id, "err", err)
 		}
 	}
 
@@ -221,14 +221,14 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	rootfs := m.rootfsPath(id)
 	if err := prepareBootDisk(rootfs, v.Cfg.ImagePath, v.Cfg.ImageDigest, v.Cfg.MinDiskSize, m.trustedImage); err != nil {
 		_ = v.transition(StateStopped)
-		return fmt.Errorf("firecracker start %s: copy rootfs: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: copy rootfs: %w", id, err)
 	}
 
 	cleanup, err := m.prepareFCHost(v)
 	if err != nil {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(rootfs)
-		return fmt.Errorf("firecracker host network: %w", err)
+		return fmt.Errorf(vmmName+" host network: %w", err)
 	}
 	hostOwned := true
 	defer func() {
@@ -241,7 +241,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if err != nil {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(rootfs)
-		return fmt.Errorf("firecracker start %s: write config: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: write config: %w", id, err)
 	}
 	configOwned := true
 	defer func() {
@@ -262,14 +262,14 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 			_ = v.transition(StateStopped)
 			_ = os.Remove(cfgPath)
 			_ = os.Remove(rootfs)
-			return fmt.Errorf("firecracker start %s: create vmm log: %w", id, err)
+			return fmt.Errorf(vmmName+" start %s: create vmm log: %w", id, err)
 		}
 	}
 	if err := m.preflightFCConfig(ctx, v.Cfg, cfgPath); err != nil {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(rootfs)
 		_ = os.Remove(vmmLog)
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 	cmd := m.mkCmd(ctx, m.fcBin, "--api-sock", sockPath, "--config-file", m.cfgPathForProcess(cfgPath), "--log-path", vmmLog)
 	if runtime.GOOS == "darwin" {
@@ -296,7 +296,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		_ = v.transition(StateStopped)
 		_ = os.Remove(cfgPath)
 		_ = os.Remove(rootfs)
-		return fmt.Errorf("firecracker start %s: launch: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: launch: %w", id, err)
 	}
 	configOwned = false
 	hostOwned = false
@@ -334,7 +334,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		// Before abort: the monitor deletes the config the VMM is asked about.
 		err = m.explainFCStart(ctx, cfgPath, err)
 		abort()
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 
 	// Resource limits are applied only when explicitly requested. If they cannot
@@ -343,7 +343,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 	if v.Cfg.CPUShares > 0 || v.Cfg.MemoryMax > 0 {
 		if err := m.applyLimits(v, cmd.Process.Pid); err != nil {
 			abort()
-			return fmt.Errorf("firecracker start %s: %w", id, err)
+			return fmt.Errorf(vmmName+" start %s: %w", id, err)
 		}
 	}
 
@@ -352,14 +352,14 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		// Kill would leave cmd.Wait unrun (zombie) and leak the rootfs copy, the
 		// config file, the VMM log, the API socket, and the tap device.
 		abort()
-		return fmt.Errorf("firecracker start %s: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: %w", id, err)
 	}
 	// A running VM the registry has no record of is an orphan after the next
 	// daemon start: nothing would know its process, tap or disk. If the state
 	// cannot be written (a full disk), the start fails and the process goes.
 	if err := m.store.Save(v); err != nil {
 		abort()
-		return fmt.Errorf("firecracker start %s: record running state: %w", id, err)
+		return fmt.Errorf(vmmName+" start %s: record running state: %w", id, err)
 	}
 
 	// A published port that never binds is a broken run, so a port-forwarder start
@@ -369,7 +369,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 		fwd, fwdErr := network.PublishPorts(v.Cfg.IPAddress, v.Cfg.bridge(), toNetworkPortForwards(v.Cfg.PortMaps))
 		if fwdErr != nil {
 			abort()
-			return fmt.Errorf("firecracker start %s: publish ports: %w", id, fwdErr)
+			return fmt.Errorf(vmmName+" start %s: publish ports: %w", id, fwdErr)
 		}
 		v.mu.Lock()
 		v.portFwd = fwd
@@ -394,7 +394,7 @@ func (m *FirecrackerManager) Start(ctx context.Context, id string) error {
 func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 	v, release, err := m.claimVM(id, "stop")
 	if err != nil {
-		return fmt.Errorf("firecracker stop %s: %w", id, err)
+		return fmt.Errorf(vmmName+" stop %s: %w", id, err)
 	}
 	defer release()
 	// Stopping an already-stopped VM is a no-op (idempotent), like `docker stop`.
@@ -402,7 +402,7 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 		return nil
 	}
 	if err := v.transition(StateStopping); err != nil {
-		return fmt.Errorf("firecracker stop %s: %w", id, err)
+		return fmt.Errorf(vmmName+" stop %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
 	m.hchecker.Stop(v.ID)
@@ -426,7 +426,7 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 	//
 	// id may be a name or ID prefix; the endpoint is named after the resolved ID.
 	if err := m.shutdownAPI(m.shutdownPath(v.ID)); err != nil {
-		slog.Info("firecracker stop: guest did not accept the shutdown request, terminating the VMM", "vm_id", v.ID, "err", err)
+		slog.Info(vmmName+" stop: guest did not accept the shutdown request, terminating the VMM", "vm_id", v.ID, "err", err)
 		if sigErr := proc.signal(syscall.SIGTERM); sigErr != nil && !errors.Is(sigErr, os.ErrProcessDone) {
 			_ = proc.kill()
 			return nil
@@ -440,7 +440,7 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 	case <-ctx.Done():
 	}
 	if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-		return fmt.Errorf("firecracker stop %s: kill after grace: %w", id, err)
+		return fmt.Errorf(vmmName+" stop %s: kill after grace: %w", id, err)
 	}
 	return nil
 }
@@ -449,7 +449,7 @@ func (m *FirecrackerManager) Stop(ctx context.Context, id string) error {
 func (m *FirecrackerManager) Kill(_ context.Context, id string) error {
 	v, release, err := m.claimVM(id, "kill")
 	if err != nil {
-		return fmt.Errorf("firecracker kill %s: %w", id, err)
+		return fmt.Errorf(vmmName+" kill %s: %w", id, err)
 	}
 	defer release()
 	// Killing an already-stopped VM is a no-op (idempotent).
@@ -457,7 +457,7 @@ func (m *FirecrackerManager) Kill(_ context.Context, id string) error {
 		return nil
 	}
 	if err := v.transition(StateStopping); err != nil {
-		return fmt.Errorf("firecracker kill %s: %w", id, err)
+		return fmt.Errorf(vmmName+" kill %s: %w", id, err)
 	}
 	_ = m.store.Save(v)
 	m.hchecker.Stop(v.ID)
@@ -468,7 +468,7 @@ func (m *FirecrackerManager) Kill(_ context.Context, id string) error {
 	v.mu.RUnlock()
 	if proc != nil {
 		if err := proc.kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-			return fmt.Errorf("firecracker kill %s: %w", id, err)
+			return fmt.Errorf(vmmName+" kill %s: %w", id, err)
 		}
 	}
 	return nil
@@ -488,15 +488,15 @@ func (m *FirecrackerManager) Signal(ctx context.Context, id string, sig os.Signa
 func (m *FirecrackerManager) Remove(_ context.Context, id string) error {
 	v, release, err := m.claimVM(id, "remove")
 	if err != nil {
-		return fmt.Errorf("firecracker remove %s: %w", id, err)
+		return fmt.Errorf(vmmName+" remove %s: %w", id, err)
 	}
 	defer release()
 	if st := v.GetState(); st != StateStopped && st != StateCreated {
-		return fmt.Errorf("firecracker remove %s: vm is %s, must be stopped first", id, st)
+		return fmt.Errorf(vmmName+" remove %s: vm is %s, must be stopped first", id, st)
 	}
 	m.hchecker.Stop(v.ID)
 	if err := m.store.Remove(v.ID); err != nil {
-		return fmt.Errorf("firecracker remove %s: %w", id, err)
+		return fmt.Errorf(vmmName+" remove %s: %w", id, err)
 	}
 	return nil
 }
@@ -505,7 +505,7 @@ func (m *FirecrackerManager) Remove(_ context.Context, id string) error {
 func (m *FirecrackerManager) Get(id string) (*VM, error) {
 	v, err := m.store.Resolve(id)
 	if err != nil {
-		return nil, fmt.Errorf("firecracker get %s: %w", id, err)
+		return nil, fmt.Errorf(vmmName+" get %s: %w", id, err)
 	}
 	return v, nil
 }
@@ -573,7 +573,7 @@ func recordFCExit(log io.Writer, attached io.Writer, err error) {
 	if err == nil {
 		return
 	}
-	message := fmt.Sprintf("[firecracker error] %v\n", err)
+	message := fmt.Sprintf("["+vmmName+" error] %v\n", err)
 	_, _ = io.WriteString(log, message)
 	if attached != nil {
 		_, _ = io.WriteString(attached, message)
@@ -597,7 +597,7 @@ func watchFCExit(cmd *exec.Cmd) *fcExit {
 }
 
 func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPath, cfgPath, vmmLog, rootfs string) {
-	defer recoverGoroutine("firecracker monitor", v.ID)
+	defer recoverGoroutine(vmmName+" monitor", v.ID)
 	exitErr := waitFCProcess(cmd, exit, sockPath)
 	now := time.Now()
 	v.mu.Lock()
@@ -626,14 +626,14 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPat
 		fwd.Close()
 	}
 	if v.Cfg.NetworkName != "" {
-		teardownTAPNetwork(v.Cfg, v.ID, "firecracker monitor")
+		teardownTAPNetwork(v.Cfg, v.ID, vmmName+" monitor")
 	}
 
 	// If the VM died with no serial output (e.g. Firecracker couldn't start the
 	// microVM), surface the VMM log so `jerboa logs` shows the actual error.
 	if exitErr != nil && len(v.logBuf.Bytes()) == 0 {
 		if data, err := m.readVMMLog(vmmLog); err == nil && len(data) > 0 {
-			_, _ = v.logBuf.Write([]byte("[firecracker error]\n"))
+			_, _ = v.logBuf.Write([]byte("[" + vmmName + " error]\n"))
 			_, _ = v.logBuf.Write(data)
 		}
 	}
@@ -654,7 +654,7 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPat
 	_ = os.Remove(rootfs)
 
 	if err := v.transition(StateStopped); err != nil {
-		slog.Debug("firecracker monitor: transition to stopped", "vm_id", v.ID, "err", err)
+		slog.Debug(vmmName+" monitor: transition to stopped", "vm_id", v.ID, "err", err)
 	}
 	if err := m.store.Save(v); err != nil {
 		// Not fatal: the next daemon start finds the process gone and marks
@@ -685,7 +685,7 @@ func (m *FirecrackerManager) monitor(v *VM, cmd *exec.Cmd, exit *fcExit, sockPat
 		count := v.RestartCount
 		v.mu.RUnlock()
 		if count >= max {
-			slog.Info("firecracker monitor: max retries reached", "vm_id", v.ID, "retries", count)
+			slog.Info(vmmName+" monitor: max retries reached", "vm_id", v.ID, "retries", count)
 			return
 		}
 	}
@@ -701,18 +701,18 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	old.mu.RUnlock()
 
 	backoff := restartBackoff(restartCount)
-	slog.Info("firecracker monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
+	slog.Info(vmmName+" monitor: restarting vm", "vm_id", old.ID, "attempt", restartCount+1, "backoff", backoff)
 	time.Sleep(backoff)
 
 	defer m.claims.setRestartPending(old.ID, false)
 	_, release, err := m.claimVM(old.ID, opRestart)
 	if err != nil {
-		slog.Info("firecracker monitor: restart skipped", "vm_id", old.ID, "err", err)
+		slog.Info(vmmName+" monitor: restart skipped", "vm_id", old.ID, "err", err)
 		return
 	}
 	defer release()
 	if st := old.GetState(); st != StateStopped {
-		slog.Info("firecracker monitor: restart skipped; vm is no longer stopped", "vm_id", old.ID, "state", st)
+		slog.Info(vmmName+" monitor: restart skipped; vm is no longer stopped", "vm_id", old.ID, "state", st)
 		return
 	}
 
@@ -723,7 +723,7 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	ctx := context.Background()
 	newVM, err := m.store.Create(old.Cfg)
 	if err != nil {
-		slog.Error("firecracker monitor: failed to create replacement vm", "vm_id", old.ID, "err", err)
+		slog.Error(vmmName+" monitor: failed to create replacement vm", "vm_id", old.ID, "err", err)
 		if m.metrics != nil {
 			m.metrics.RecordError()
 		}
@@ -735,15 +735,15 @@ func (m *FirecrackerManager) restartVM(old *VM) {
 	_ = m.store.Save(newVM)
 
 	if err := m.Start(ctx, newVM.ID); err != nil {
-		slog.Error("firecracker monitor: failed to start replacement vm", "vm_id", newVM.ID, "err", err)
+		slog.Error(vmmName+" monitor: failed to start replacement vm", "vm_id", newVM.ID, "err", err)
 		if m.metrics != nil {
 			m.metrics.RecordError()
 		}
 		return
 	}
-	slog.Info("firecracker monitor: replacement vm started", "old_id", old.ID, "new_id", newVM.ID)
+	slog.Info(vmmName+" monitor: replacement vm started", "old_id", old.ID, "new_id", newVM.ID)
 	if err := m.store.Remove(old.ID); err != nil {
-		slog.Warn("firecracker monitor: failed to remove old vm", "vm_id", old.ID, "err", err)
+		slog.Warn(vmmName+" monitor: failed to remove old vm", "vm_id", old.ID, "err", err)
 	}
 }
 
@@ -818,19 +818,19 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 	// VMM that was killed leaves behind.
 	vsockPath := fcVsockPath(id)
 	if err := os.Remove(vsockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("remove stale firecracker vsock socket: %w", err)
+		return "", fmt.Errorf("remove stale "+vmmName+" vsock socket: %w", err)
 	}
 	fcCfg.Vsock = &fcVsock{GuestCID: fcGuestCID, UDSPath: vsockPath}
 
 	if m.metricsDir != "" {
 		// Firecracker opens an existing metrics file; it does not create one.
 		if err := os.MkdirAll(m.metricsDir, 0o700); err != nil {
-			return "", fmt.Errorf("create firecracker metrics dir: %w", err)
+			return "", fmt.Errorf("create "+vmmName+" metrics dir: %w", err)
 		}
 		metricsPath := filepath.Join(m.metricsDir, "fc-"+id+"-metrics.json")
 		f, err := os.OpenFile(metricsPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
-			return "", fmt.Errorf("create firecracker metrics file: %w", err)
+			return "", fmt.Errorf("create "+vmmName+" metrics file: %w", err)
 		}
 		_ = f.Close()
 		fcCfg.Metrics = &fcMetrics{MetricsPath: metricsPath}
@@ -839,11 +839,11 @@ func (m *FirecrackerManager) writeFCConfig(id string, cfg Config, rootfsPath str
 	m.rewriteConfigPaths(&fcCfg)
 	data, err := json.MarshalIndent(fcCfg, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("marshal firecracker config: %w", err)
+		return "", fmt.Errorf("marshal "+vmmName+" config: %w", err)
 	}
 	cfgPath := fcConfigPath(id)
 	if err := os.WriteFile(cfgPath, data, 0600); err != nil {
-		return "", fmt.Errorf("write firecracker config: %w", err)
+		return "", fmt.Errorf("write "+vmmName+" config: %w", err)
 	}
 	return cfgPath, nil
 }

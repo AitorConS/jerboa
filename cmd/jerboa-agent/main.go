@@ -12,6 +12,7 @@ import (
 
 	"github.com/AitorConS/jerboa/internal/agent"
 	"github.com/AitorConS/jerboa/internal/config"
+	hypervisorpkg "github.com/AitorConS/jerboa/internal/hypervisor"
 	"github.com/spf13/cobra"
 )
 
@@ -59,7 +60,7 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cfg.Distro, "distro", "", "WSL distro for daemon launch")
 	cmd.Flags().StringVar(&cfg.User, "user", "", "WSL user for daemon launch")
 	cmd.Flags().BoolVar(&cfg.Sudo, "sudo", false, "run jerboad through sudo inside WSL")
-	cmd.Flags().StringVar(&cfg.Hypervisor, "hypervisor", "", "hypervisor to run (qemu or firecracker)")
+	cmd.Flags().StringVar(&cfg.Hypervisor, "hypervisor", "", "hypervisor to run ("+hypervisorpkg.Values()+")")
 	cmd.Flags().StringVar(&cfg.JerboadPath, "jerboad-path", "", "jerboad binary path inside WSL")
 	if runtime.GOOS == "windows" && cfg.User == "" {
 		cfg.Distro = agent.DefaultWindowsDistro()
