@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AitorConS/jerboa/internal/api"
+	"github.com/AitorConS/jerboa/internal/naming"
 	"github.com/AitorConS/jerboa/internal/signing"
 	"github.com/spf13/cobra"
 )
@@ -44,6 +46,7 @@ func newRunCmd(socketPath *string) *cobra.Command {
 
 		diskIOEngine string
 		volumeCache  string
+		pullPolicy   string
 	)
 	cmd := &cobra.Command{
 		Use:   "run <image>",
@@ -64,21 +67,10 @@ func newRunCmd(socketPath *string) *cobra.Command {
 				}
 			}
 
-			// The image is run by the name:tag given, so its own manifest
-			// supplies the run defaults; the digest that was verified is sent
-			// along and the daemon refuses to run any other disk. Running by
-			// the digest instead would take the defaults from the disk's
-			// shared manifest, which another tag of the same disk wrote.
-			expectedDigest := ""
-			if verify != "off" && imageRef != "" {
-				digest, err := imageDigest(cmd, socketPath, imageRef)
-				if err != nil {
-					return err
-				}
-				expectedDigest = digest
-			}
-			if err := verifyImageSignature(cmd, socketPath, imageRef, expectedDigest, verify); err != nil {
-				return err
+			// The flags that decide how the image is found and checked are
+			// read before anything reaches the daemon.
+			if err := checkImageFlags(imageRef, verify, pullPolicy); err != nil {
+				return fmt.Errorf("run: %w", err)
 			}
 
 			portMaps, err := api.ParsePortMaps(ports)
@@ -165,20 +157,17 @@ func newRunCmd(socketPath *string) *cobra.Command {
 			}
 
 			params := api.RunParams{
-				EmulateX86: emulateX86,
-				Image:      imageRef,
-				ImagePath:  imagePath,
-				// Set by --verify: the disk whose signature was checked.
-				ExpectedDigest: expectedDigest,
-				Memory:         reqMemory,
-				CPUs:           reqCPUs,
-				NetworkName:    network,
-				Env:            env,
-				Name:           name,
-				AutoRemove:     rm,
-				Volumes:        volSpecs,
-				Attach:         !detach,
-				IPAddress:      ipAddr,
+				EmulateX86:  emulateX86,
+				ImagePath:   imagePath,
+				Memory:      reqMemory,
+				CPUs:        reqCPUs,
+				NetworkName: network,
+				Env:         env,
+				Name:        name,
+				AutoRemove:  rm,
+				Volumes:     volSpecs,
+				Attach:      !detach,
+				IPAddress:   ipAddr,
 				// A user-supplied --ip is a static address the daemon must reserve
 				// and conflict-check. Dynamic addresses are allocated by the daemon.
 				StaticIP:   cmd.Flags().Changed("ip"),
@@ -224,6 +213,39 @@ func newRunCmd(socketPath *string) *cobra.Command {
 			}
 			params.PortMaps = portMaps
 
+			// Every check above is local or about the network: only now is the
+			// daemon asked for the image, and pulls it when it is missing.
+			storedDigest := ""
+			if imageRef != "" {
+				imageRef, storedDigest, err = ensureImage(cmd, *socketPath, imageRef, pullPolicy)
+				if err != nil {
+					return fmt.Errorf("run: %w", err)
+				}
+			}
+
+			// The image is run by the name:tag given, so its own manifest
+			// supplies the run defaults; the digest that was verified is sent
+			// along and the daemon refuses to run any other disk. Running by
+			// the digest instead would take the defaults from the disk's
+			// shared manifest, which another tag of the same disk wrote.
+			expectedDigest := ""
+			if verify != "off" && imageRef != "" {
+				expectedDigest = storedDigest
+				if expectedDigest == "" {
+					digest, err := imageDigest(cmd, socketPath, imageRef)
+					if err != nil {
+						return err
+					}
+					expectedDigest = digest
+				}
+			}
+			if err := verifyImageSignature(cmd, socketPath, imageRef, expectedDigest, verify); err != nil {
+				return err
+			}
+			params.Image = imageRef
+			// Set by --verify: the disk whose signature was checked.
+			params.ExpectedDigest = expectedDigest
+
 			startTime := time.Now()
 			info, err := client.Run(cmd.Context(), params)
 			if err != nil {
@@ -264,6 +286,7 @@ func newRunCmd(socketPath *string) *cobra.Command {
 	cmd.Flags().StringVar(&healthCheck, "health-check", "", "health check: tcp:PORT or http:PORT:/path")
 	cmd.Flags().StringVar(&restart, "restart", "", "restart policy: never, on-failure, always[:max-retries]")
 	cmd.Flags().StringVar(&verify, "verify", "off", "image signature verification: off, warn, enforce")
+	cmd.Flags().StringVar(&pullPolicy, "pull", pullMissing, "pull the image from its registry: missing (when it is not stored here), always, or never")
 	cmd.Flags().Uint64Var(&cpuShares, "cpu-shares", 0, "CPU weight (1-10000; Linux cgroup, macOS scheduler priority)")
 	cmd.Flags().StringVar(&memoryMax, "memory-max", "", "memory limit (e.g. 512M; Linux hard limit, macOS RSS watchdog)")
 	cmd.Flags().Uint64Var(&diskIOPS, "disk-iops", 0, "disk I/O throttle: max IOPS for boot disk (0=no limit)")
@@ -525,4 +548,79 @@ func parseByteSize(flag, s string) (int64, error) {
 		return 0, fmt.Errorf("%s: %s is too large", flag, s)
 	}
 	return val * multiplier, nil
+}
+
+const (
+	pullMissing = "missing"
+	pullAlways  = "always"
+	pullNever   = "never"
+)
+
+// ensureImage makes sure the daemon stores the image a run names, pulling
+// it as jerboa pull does when policy asks for it: always, or when the store
+// does not hold it (missing). It returns the name:tag to run, which after a
+// pull is the one the daemon stored (a digest reference is stored under a
+// tag made from the digest), and its disk digest when it was looked up
+// (empty with --pull never). A name that is not a registry reference
+// (namespace/repository) can only be a local image. Any other failure to
+// look the image up ends the run there.
+func ensureImage(cmd *cobra.Command, endpoint, ref, policy string) (string, string, error) {
+	if policy == pullNever {
+		return ref, "", nil
+	}
+	if policy == pullMissing {
+		c, err := api.Dial(endpoint)
+		if err != nil {
+			return "", "", fmt.Errorf("connect to daemon: %w", err)
+		}
+		m, err := c.ImageGet(cmd.Context(), ref)
+		_ = c.Close()
+		switch {
+		case err == nil:
+			if m.DiskDigest == "" {
+				return "", "", fmt.Errorf("the daemon reported no disk digest for %s", ref)
+			}
+			return ref, m.DiskDigest, nil
+		case isMethodNotFound(err):
+			// A daemon without an image store: the run reports what it can do.
+			return ref, "", nil
+		case !api.IsNotFound(err):
+			return "", "", err
+		}
+	}
+	if _, err := naming.ParseImageReference(ref); err != nil {
+		if policy == pullAlways {
+			return "", "", fmt.Errorf("--pull always: %w", err)
+		}
+		return "", "", fmt.Errorf("image %s is not stored here, and it is not a registry reference to pull (namespace/repository[:tag]): build it with jerboa build, or check the name with jerboa images", ref)
+	}
+	res, err := pullImage(cmd, endpoint, ref, pullOptions{})
+	if err != nil {
+		return "", "", fmt.Errorf("pull %s: %w", ref, err)
+	}
+	return res.Image.Name + ":" + res.Image.Tag, res.Image.DiskDigest, nil
+}
+
+// checkImageFlags checks --verify and --pull, which need nothing from the
+// daemon to be refused.
+func checkImageFlags(imageRef, verify, pull string) error {
+	switch pull {
+	case pullMissing, pullAlways, pullNever:
+	default:
+		return fmt.Errorf("--pull must be missing, always or never, not %q", pull)
+	}
+	policy, err := signing.ParseVerifyPolicy(verify)
+	if err != nil {
+		return err
+	}
+	if policy == signing.VerifyEnforce && imageRef == "" {
+		return fmt.Errorf("verify: signature verification requires a name:tag image, not a file path")
+	}
+	return nil
+}
+
+// isMethodNotFound reports whether the daemon does not offer the call.
+func isMethodNotFound(err error) bool {
+	var rpc *api.RPCError
+	return errors.As(err, &rpc) && rpc != nil && rpc.Code == -32601
 }

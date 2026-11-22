@@ -395,7 +395,7 @@ func (s *Store) resolveRefName(ref string) (string, string, error) {
 	if sha, ok := s.findBySHA(refs, ref); ok {
 		return sha, "", nil
 	}
-	return "", "", fmt.Errorf("%s not found", ref)
+	return "", "", fmt.Errorf("%s %w", ref, ErrNotFound)
 }
 
 // Tag gives the image ref resolves to another name:tag, as a second tag of
@@ -475,6 +475,9 @@ func (s *Store) SetRecipe(ref, digest string) error {
 // ErrNoSBOM reports that an image has no stored SBOM: it was pulled, or
 // built before images recorded one.
 var ErrNoSBOM = errors.New("image has no SBOM")
+
+// ErrNotFound is the error for a reference the store holds no image for.
+var ErrNotFound = errors.New("not found")
 
 const sbomFile = "sbom.cdx.json"
 

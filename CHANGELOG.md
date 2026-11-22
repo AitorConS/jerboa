@@ -24,6 +24,32 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Added
+
+- **`jerboa run` pulls an image it does not have**, as `docker run` does:
+  `jerboa run jerboa/traefik` on a machine without the image pulls it first,
+  with the same signature check and output as `jerboa pull`, then runs it.
+  `--pull always` pulls the tag again before every run, and `--pull never`
+  runs only an image the daemon already stores (the old behaviour). A local
+  name that is not a registry reference, such as `web:latest`, is never
+  pulled: the error says to build it. (#332)
+
+### Changed
+
+- **`jerboa pull` shows each step on its own line**, with a spinner on a
+  terminal: resolving the tag, checking its signatures (who signed it, in one
+  line, such as `AitorConS/jerboa-images (publish.yml on main)`, then what
+  was signed, the commit and the run), and downloading, with the time it
+  took. The image and its full digest come last, on
+  `Pulled <image> (<platform>)` and `Digest: sha256:…` lines; the digest was
+  previously a line of its own. `jerboa registry verify` still prints every
+  attestation in full. (#332)
+- **A command given the wrong number of arguments says which ones it got**
+  and the likely cause: an argument that is only whitespace (a space after
+  the `\` that was meant to continue the line), an empty one (an unset
+  variable), or a second value for a flag; then the command's usage line.
+  (#332)
+
 ## [0.62.0] - 2026-11-22
 
 Kernel toolset 0.2.5. Validation evidence:
