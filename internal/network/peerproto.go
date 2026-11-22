@@ -7,7 +7,7 @@ import (
 	"sync/atomic"
 )
 
-// Peer control protocol shared with the macOS VMM (firecracker-macos
+// Peer control protocol shared with the macOS VMM (Spark
 // src/hvf-vmm/native/peer_proto.h). The switch stays the control plane: it
 // hands two VMMs on one network the ends of a SOCK_DGRAM socketpair, and
 // unicast frames between them then skip the switch. Every message is 32 wire

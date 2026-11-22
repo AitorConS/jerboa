@@ -1,7 +1,7 @@
 ---
 layout: default
 title: Firecracker on macOS
-description: "Run jerboa on the native Hypervisor.framework Firecracker backend for macOS, built from the firecracker-macos checkout."
+description: "Run jerboa on the native Hypervisor.framework Firecracker backend for macOS, built from the Spark checkout."
 parent: macOS Apple Silicon
 nav_order: 10
 ---
@@ -9,7 +9,7 @@ nav_order: 10
 # Firecracker on macOS
 
 Jerboa supports the native ARM64 Hypervisor.framework backend from the sibling
-`../firecracker-macos` checkout. Use its signed macOS executable, not an upstream
+`../Spark` checkout. Use its signed macOS executable, not an upstream
 Linux Firecracker binary. The fork requires macOS 26 and Apple Silicon; this
 integration was exercised on the local M5 host. The default engine, `auto`, is Firecracker wherever the VMM is found beside the daemon, on `PATH` or at `JERBOA_FIRECRACKER_BIN`, and QEMU otherwise.
 
@@ -47,7 +47,7 @@ tools already exist, rebuilding only the CLI and daemon is sufficient:
 
 ```sh
 go build -o dist/macos-arm64/ ./cmd/jerboa ./cmd/jerboad
-export JERBOA_FIRECRACKER_BIN="$PWD/../firecracker-macos/build/macos-arm64/firecracker"
+export JERBOA_FIRECRACKER_BIN="$PWD/../Spark/build/macos-arm64/firecracker"
 ./dist/macos-arm64/jerboa config set hypervisor firecracker
 ./dist/macos-arm64/jerboa daemon start
 ./dist/macos-arm64/jerboa build examples/hello --platform linux/arm64 --name hello
@@ -65,7 +65,7 @@ Foreground operation permits explicit kernel and policy selection:
 ```sh
 ./dist/macos-arm64/jerboad \
   --hypervisor firecracker \
-  --fc-bin "$PWD/../firecracker-macos/build/macos-arm64/firecracker" \
+  --fc-bin "$PWD/../Spark/build/macos-arm64/firecracker" \
   --tools-dir "$PWD/dist/macos-arm64/tools"
 ```
 
@@ -217,9 +217,9 @@ An additional manager-level test can use the fork's optional Jerboa demo disk
 (HTTP 8080, UDP echo 8081, `MARKER=hvf-smoke`, `/shutdown`):
 
 ```sh
-JERBOA_TEST_FC_BIN="$PWD/../firecracker-macos/build/macos-arm64/firecracker" \
+JERBOA_TEST_FC_BIN="$PWD/../Spark/build/macos-arm64/firecracker" \
 JERBOA_TEST_FC_KERNEL="$PWD/dist/macos-arm64/tools/kernel.img" \
-JERBOA_TEST_FC_DISK="$PWD/../firecracker-macos/build/macos-arm64/demo/root.img" \
+JERBOA_TEST_FC_DISK="$PWD/../Spark/build/macos-arm64/demo/root.img" \
 go test ./internal/vm -run TestNativeFC -v
 ```
 

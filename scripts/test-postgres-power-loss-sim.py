@@ -44,7 +44,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-REPLAY = (ROOT / "../firecracker-macos/experiments/hvf/durability/crash_replay.py").resolve()
+REPLAY = (ROOT / "../Spark/experiments/hvf/durability/crash_replay.py").resolve()
 BIN = Path(os.environ["JERBOA_TEST_BIN"]).resolve()
 FC = Path(os.environ["DURA_FC_JOURNAL"]).resolve()
 GO = Path(os.environ["JERBOA_TEST_GO"]).resolve()

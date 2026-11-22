@@ -13,8 +13,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 OUT = Path(os.getenv("JERBOA_TEST_OUTPUT", str(ROOT / "dist/sol-closure/stats/evidence"))).resolve()
 BIN = Path(os.getenv("JERBOA_TEST_BIN", str(ROOT / "dist/sol-closure/stats/bin"))).resolve()
-FC = Path(os.getenv("JERBOA_FIRECRACKER_BIN", str(ROOT.parent / "firecracker-macos/experiments/hvf/build/astra-shared-network/review-fixes/package/bin/firecracker"))).resolve()
-GO = Path(os.getenv("JERBOA_TEST_GO", str(ROOT.parent / "firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go"))).resolve()
+FC = Path(os.getenv("JERBOA_FIRECRACKER_BIN", str(ROOT.parent / "Spark/experiments/hvf/build/astra-shared-network/review-fixes/package/bin/firecracker"))).resolve()
+GO = Path(os.getenv("JERBOA_TEST_GO", str(ROOT.parent / "Spark/experiments/hvf/build/guest-tools/go/bin/go"))).resolve()
 PROGRAM = r'''package main
 import("fmt";"net/http";"os";"runtime";"strconv";"sync";"time")
 var(mu sync.Mutex; held [][]byte)

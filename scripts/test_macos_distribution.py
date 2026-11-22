@@ -250,14 +250,14 @@ class ReproducibleBuildTests(unittest.TestCase):
 
     def test_snapshot_relative_link_inside_tree_allowed(self):
         with tempfile.TemporaryDirectory() as directory:
-            link = tarfile.TarInfo("firecracker-macos/fuzz/IN")
+            link = tarfile.TarInfo("Spark/fuzz/IN")
             link.type = tarfile.SYMTYPE
             link.linkname = "../corpus"
-            archive = self.snapshot_archive(directory, [self.member("firecracker-macos/corpus"), (link, None)])
+            archive = self.snapshot_archive(directory, [self.member("Spark/corpus"), (link, None)])
             target = pathlib.Path(directory) / "extract"
             target.mkdir()
             REPRO.safe_extract_snapshot(archive, target)
-            self.assertTrue((target / "firecracker-macos/fuzz/IN").is_symlink())
+            self.assertTrue((target / "Spark/fuzz/IN").is_symlink())
 
     def test_snapshot_chained_links_cannot_escape(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -33,7 +33,7 @@ func main(){
 def main():
     if os.uname().sysname != "Darwin" or os.uname().machine != "arm64":
         raise SystemExit("requires macOS arm64")
-    go = ROOT.parent / "firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go"
+    go = ROOT.parent / "Spark/experiments/hvf/build/guest-tools/go/bin/go"
     if not (go.is_file() and FC.is_file()):
         raise SystemExit("reference Go or signed Firecracker missing")
     EVIDENCE.mkdir(parents=True, exist_ok=True)

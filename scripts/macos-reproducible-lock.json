@@ -53,10 +53,10 @@
   "native_prefix": "/opt/jerboa-hvf-native",
   "paths": {
     "aarch64_elf_binutils": "/opt/homebrew/opt/aarch64-elf-binutils/bin",
-    "cargo_dependency_home": "../firecracker-macos/experiments/hvf/build/cargo",
+    "cargo_dependency_home": "../Spark/experiments/hvf/build/cargo",
     "go_module_download_cache": "~/go/pkg/mod/cache/download",
-    "go_root": "../firecracker-macos/experiments/hvf/build/guest-tools/go",
-    "rustup_home": "../firecracker-macos/experiments/hvf/build/rustup",
+    "go_root": "../Spark/experiments/hvf/build/guest-tools/go",
+    "rustup_home": "../Spark/experiments/hvf/build/rustup",
     "x86_tools": "dist/claude-closure/reproducibilidad/pinned-inputs/tools-x86"
   },
   "rust_toolchain": "1.97.0",

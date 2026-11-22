@@ -45,7 +45,7 @@ BIN = Path(os.environ["JERBOA_TEST_BIN"]).resolve()
 FC = Path(os.environ.get("JERBOA_FIRECRACKER_BIN", BIN / "firecracker")).resolve()
 GO = Path(os.environ.get(
     "JERBOA_TEST_GO",
-    ROOT / "../firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go",
+    ROOT / "../Spark/experiments/hvf/build/guest-tools/go/bin/go",
 )).resolve()
 FIXTURE = ROOT / "tests/fixtures/postgres-arm64"
 EVIDENCE_ROOT = Path(os.environ.get("JERBOA_TEST_EVIDENCE", ROOT / "dist/claude-followup/shutdown")).resolve()

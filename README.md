@@ -41,11 +41,15 @@ Docker imports, package provenance and Firecracker acceptance.
   - static ELF binaries
   - Go, Node.js, Python, Rust, and `raw` (package-driven) projects
 - **Run** VMs on:
-  - QEMU (KVM on Linux when available; HVF for native ARM64 guests on macOS)
-  - Firecracker (Linux/KVM and native macOS ARM64/HVF fork)
+  - Firecracker, the default wherever the machine can run it: Linux and WSL2
+    with KVM, and Apple Silicon with macOS 26 through
+    [Spark](https://github.com/AitorConS/Spark), our Hypervisor.framework fork
+  - QEMU otherwise (KVM on Linux when available; HVF for native ARM64 guests on macOS)
 - **Distribute** images through a registry (`registry.jerboa.dev` by default):
   - `push` uploads an image's recipe and only the files the registry lacks; `pull` rebuilds the disk locally and verifies it byte for byte
   - Sigstore signatures from trusted publishers, verified before anything is downloaded
+  - official images under `jerboa/` (Redis, nginx, Traefik, Prometheus and more), browsable on [hub.jerboa.dev](https://hub.jerboa.dev)
+  - `jerboa run` pulls an image it does not have yet
 - **Manage**:
   - images and volumes
   - in-place VM snapshots (macOS, Firecracker)
@@ -63,6 +67,7 @@ Docker imports, package provenance and Firecracker acceptance.
 ### Runtime constraints worth knowing up front
 
 - Stable releases target Linux and Windows/WSL2; native macOS ARM64 is a development preview.
+- On Linux, guests reach neither the host nor private networks, and a VM on a network needs `nftables` for that isolation.
 - On Linux, port publishing requires a managed network (`-p/--port` requires `--network`) — there is no SLIRP fallback.
 - Linux publishes TCP and UDP ports through kernel NAT (nftables), the default where it is available. The userspace proxy, used with `jerboad --port-publish proxy`, on WSL2 and where kernel NAT is missing, forwards TCP only and skips UDP mappings with a warning.
 - macOS provides userspace networks, guest DNS, TCP/UDP forwarding and optional explicit x86 emulation.
@@ -104,6 +109,9 @@ jerboa build examples/hello --name hello --lang go
 jerboa run hello:latest
 jerboa ps
 jerboa logs <vm-id>
+
+# Or run an official image: the first run pulls it and checks its signature
+jerboa run jerboa/redis
 ```
 
 For networking, volumes, DNS, and compose stacks, see
@@ -115,8 +123,9 @@ For networking, volumes, DNS, and compose stacks, see
 
 Native Firecracker requires macOS 26+. Releases publish a self-contained Jerboa
 Desktop DMG (the `desktop` component's `darwin-arm64` asset). Its app bundles
-the CLI, daemon, Firecracker, libraries and kernel tools, starts the user daemon
-through launchd and offers to add `jerboa` to `/usr/local/bin`. It is not
+the CLI, daemon, Firecracker (built from Spark), libraries and kernel tools,
+starts the user daemon through launchd, offers to add `jerboa` to
+`/usr/local/bin` and updates itself from inside the app. It is not
 Developer ID signed or notarized yet, so allow its first launch in System
 Settings → Privacy & Security. The macOS path of `install.sh` needs a signed
 installer package, which releases do not publish yet. See
@@ -132,6 +141,9 @@ systemd service):
 curl -fsSL https://jerboa.dev/install.sh | sudo bash
 jerboa status
 ```
+
+`jerboa doctor` checks the result. To remove everything, including images
+and volumes, run the installer with `--uninstall` (`--keep-data` keeps them).
 
 ### Windows
 

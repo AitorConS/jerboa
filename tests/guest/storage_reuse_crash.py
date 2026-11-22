@@ -3,7 +3,7 @@
 metadata releasing it is durable (tests/guest/storage_reuse.c).
 
 Needs the macOS test VMM built with -DHVF_CRASH_JOURNAL (see
-firecracker-macos/experiments/hvf/durability). The first boot writes and is
+Spark/experiments/hvf/durability). The first boot writes and is
 killed at REUSE CRASH POINT. From the journal of the /data volume, every cut a
 host power loss could leave is rebuilt: the writes before each successful
 F_FULLFSYNC, plus the following interval's writes with any single write

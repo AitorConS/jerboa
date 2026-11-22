@@ -36,6 +36,11 @@ Which versions exist, and where:
 
 ### Changed
 
+- **The macOS VMM is now called Spark** and lives at
+  [AitorConS/Spark](https://github.com/AitorConS/Spark), formerly
+  `AitorConS/firecracker-macos`. Source builds and scripts expect a sibling
+  `Spark` checkout: rename an existing `firecracker-macos` directory. The
+  bundled executable is still `firecracker`. (#333)
 - **`jerboa pull` shows each step on its own line**, with a spinner on a
   terminal: resolving the tag, checking its signatures (who signed it, in one
   line, such as `AitorConS/jerboa-images (publish.yml on main)`, then what

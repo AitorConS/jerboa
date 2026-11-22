@@ -3,7 +3,7 @@
 
 Subcommands:
 
-  snapshot  Freeze Jerboa and firecracker-macos working trees (tracked, modified
+  snapshot  Freeze Jerboa and Spark working trees (tracked, modified
             and untracked non-ignored files plus pinned vendored sources) into a
             tar with a content manifest. Dirty changes are included on purpose.
   lock      Fingerprint the local toolchain into a lock file (maintainer step).
@@ -34,7 +34,7 @@ import tempfile
 SCRIPT = pathlib.Path(__file__).resolve()
 JERBOA = SCRIPT.parents[1]
 PACK = JERBOA.parent
-FIRECRACKER = PACK / "firecracker-macos"
+FIRECRACKER = PACK / "Spark"
 DEFAULT_LOCK = SCRIPT.with_name("macos-reproducible-lock.json")
 
 # Logical install prefix for glib. Only install names/strings see it; the
@@ -113,18 +113,18 @@ def git_lines(repo: pathlib.Path, *argv: str) -> list[str]:
 
 # Git-ignored files that the build nevertheless needs (generated upstream headers).
 IGNORED_REQUIRED_FILES = (
-    "firecracker-macos/src/hvf-vmm/vendor/libslirp/src/libslirp-version.h",
+    "Spark/src/hvf-vmm/vendor/libslirp/src/libslirp-version.h",
 )
 
 
 def snapshot_file_list(pack: pathlib.Path) -> list[str]:
     names = set()
-    for repository in ("jerboa", "firecracker-macos"):
+    for repository in ("jerboa", "Spark"):
         for name in git_lines(pack / repository, "ls-files", "-co", "--exclude-standard"):
             names.add(f"{repository}/{name}")
     # Ignored but required, pinned inputs: kernel vendored sources (without .git)
     # and the SHA-256-locked native source archives.
-    for extra in ("jerboa/kernel/vendor", "firecracker-macos/experiments/hvf/build/distribution/downloads"):
+    for extra in ("jerboa/kernel/vendor", "Spark/experiments/hvf/build/distribution/downloads"):
         for current, directories, files in os.walk(pack / extra):
             directories[:] = sorted(d for d in directories if d != ".git")
             for name in files:
@@ -162,7 +162,7 @@ def cmd_snapshot(args) -> None:
     archive = out / "source-snapshot.tar"
     subprocess.run(["tar", "-c", "--no-xattrs", "--no-mac-metadata", "-f", str(archive), "-T", str(out / "filelist.txt")],
                    cwd=args.pack, check=True, env=dict(os.environ, COPYFILE_DISABLE="1"))
-    for repository, label in (("jerboa", "jerboa"), ("firecracker-macos", "firecracker")):
+    for repository, label in (("jerboa", "jerboa"), ("Spark", "firecracker")):
         (out / f"{label}-HEAD.txt").write_text(output("git", "-C", args.pack / repository, "rev-parse", "HEAD") + "\n")
         (out / f"{label}-status.txt").write_text(
             output("git", "-C", args.pack / repository, "status", "--porcelain=v1", "-uall") + "\n")
@@ -188,7 +188,7 @@ def safe_extract_snapshot(archive: pathlib.Path, target: pathlib.Path) -> None:
             path = pathlib.PurePosixPath(member.name)
             if path.is_absolute() or ".." in path.parts or not path.parts:
                 raise SystemExit(f"unsafe snapshot member: {member.name}")
-            if path.parts[0] not in ("jerboa", "firecracker-macos"):
+            if path.parts[0] not in ("jerboa", "Spark"):
                 raise SystemExit(f"unexpected snapshot root: {member.name}")
             if not (member.isfile() or member.isdir() or member.issym()):
                 raise SystemExit(f"unsupported snapshot member type: {member.name}")
@@ -260,9 +260,9 @@ def lock_paths(lock: dict) -> dict:
 
 
 DEFAULT_PATHS = {
-    "go_root": "../firecracker-macos/experiments/hvf/build/guest-tools/go",
-    "rustup_home": "../firecracker-macos/experiments/hvf/build/rustup",
-    "cargo_dependency_home": "../firecracker-macos/experiments/hvf/build/cargo",
+    "go_root": "../Spark/experiments/hvf/build/guest-tools/go",
+    "rustup_home": "../Spark/experiments/hvf/build/rustup",
+    "cargo_dependency_home": "../Spark/experiments/hvf/build/cargo",
     "go_module_download_cache": "~/go/pkg/mod/cache/download",
     "aarch64_elf_binutils": "/opt/homebrew/opt/aarch64-elf-binutils/bin",
     "x86_tools": "dist/claude-closure/reproducibilidad/pinned-inputs/tools-x86",
@@ -422,7 +422,7 @@ def build_go(root: pathlib.Path, env: dict, log: Log, lock: dict, version: str) 
 
 
 def build_glib(root: pathlib.Path, env: dict, log: Log) -> pathlib.Path:
-    fc = root / "src/firecracker-macos"
+    fc = root / "src/Spark"
     locked = json.loads((fc / "experiments/hvf/distribution/sources.json").read_text())
     downloads = fc / "experiments/hvf/build/distribution/downloads"
     for name, source in sorted(locked.items()):
@@ -463,7 +463,7 @@ def build_glib(root: pathlib.Path, env: dict, log: Log) -> pathlib.Path:
 
 def build_firecracker(root: pathlib.Path, env: dict, log: Log, lock: dict, destdir: pathlib.Path) -> pathlib.Path:
     paths = lock_paths(lock)
-    fc = root / "src/firecracker-macos"
+    fc = root / "src/Spark"
     cargo_home = root / "cargo-home"
     # Copy only authenticated dependency archives/databases; extracted sources and
     # compiled objects are never shared between builds.
@@ -493,7 +493,7 @@ def dependencies(path: pathlib.Path) -> list[str]:
 
 def package_firecracker(root: pathlib.Path, env: dict, log: Log, destdir: pathlib.Path) -> pathlib.Path:
     """Mirror experiments/hvf/distribution/package.py for a DESTDIR-installed logical prefix."""
-    fc = root / "src/firecracker-macos"
+    fc = root / "src/Spark"
     out = root / "out/firecracker-package"
     executable = out / "bin/firecracker"
     executable.parent.mkdir(parents=True)
@@ -621,9 +621,9 @@ def cmd_build(args) -> None:
     }
     (root / "snapshot-info.json").write_text(json.dumps(info, indent=2, sort_keys=True) + "\n")
     safe_extract_snapshot(snapshot / "source-snapshot.tar", root / "src")
-    for required in ("jerboa/go.sum", "jerboa/kernel/vendor/lwip/.vendored", "firecracker-macos/Cargo.lock",
-                     "firecracker-macos/experiments/hvf/distribution/sources.json",
-                     "firecracker-macos/experiments/hvf/entitlements.plist", "firecracker-macos/.cargo/config.toml"):
+    for required in ("jerboa/go.sum", "jerboa/kernel/vendor/lwip/.vendored", "Spark/Cargo.lock",
+                     "Spark/experiments/hvf/distribution/sources.json",
+                     "Spark/experiments/hvf/entitlements.plist", "Spark/.cargo/config.toml"):
         if not (root / "src" / required).is_file():
             raise SystemExit(f"snapshot lacks required input: {required}")
     toolbin = root / "toolbin"
@@ -734,7 +734,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     snap = sub.add_parser("snapshot")
-    snap.add_argument("--pack", type=pathlib.Path, default=PACK, help="directory containing jerboa and firecracker-macos")
+    snap.add_argument("--pack", type=pathlib.Path, default=PACK, help="directory containing jerboa and Spark")
     snap.add_argument("--output", type=pathlib.Path, required=True)
     snap.set_defaults(func=cmd_snapshot)
     lock = sub.add_parser("lock")

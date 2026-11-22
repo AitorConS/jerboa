@@ -11,7 +11,7 @@ name: Build release candidate
         required: true
         type: string
       runtime_sha:
-        description: Exact 40-character firecracker-macos commit SHA
+        description: Exact 40-character Spark commit SHA
         required: true
         type: string
       kernel_version:
@@ -356,10 +356,10 @@ jobs:
         path: jerboa
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        repository: AitorConS/firecracker-macos
+        repository: AitorConS/Spark
         ref: ${{ needs.inputs.outputs.runtime_sha }}
         persist-credentials: false
-        path: firecracker-macos
+        path: Spark
     - name: Checkout JerboaDesktop
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
@@ -387,7 +387,7 @@ jobs:
           command -v "$tool"
         done
     - name: Build pinned Firecracker and relocatable dependencies
-      working-directory: firecracker-macos
+      working-directory: Spark
       run: |
         set -euo pipefail
         python3 experiments/hvf/distribution/build-native-deps.py
