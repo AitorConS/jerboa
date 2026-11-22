@@ -24,6 +24,8 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-11-22
+
 ### Added
 
 - **`jerboa run` pulls an image it does not have**, as `docker run` does:
@@ -1335,6 +1337,7 @@ release.
 - Windows support through WSL2, and `uni upgrade`.
 
 [Unreleased]: https://github.com/AitorConS/jerboa/commits/main
+[0.63.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.63.0
 [0.62.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.62.0
 [0.61.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.61.0
 [0.60.0]: https://github.com/AitorConS/jerboa/tree/main/docs/releases/v0.60.0
