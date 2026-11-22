@@ -32,7 +32,7 @@ Which versions exist, and where:
   `--pull always` pulls the tag again before every run, and `--pull never`
   runs only an image the daemon already stores (the old behaviour). A local
   name that is not a registry reference, such as `web:latest`, is never
-  pulled: the error says to build it.
+  pulled: the error says to build it. (#332)
 
 ### Changed
 
@@ -43,11 +43,12 @@ Which versions exist, and where:
   took. The image and its full digest come last, on
   `Pulled <image> (<platform>)` and `Digest: sha256:…` lines; the digest was
   previously a line of its own. `jerboa registry verify` still prints every
-  attestation in full.
+  attestation in full. (#332)
 - **A command given the wrong number of arguments says which ones it got**
   and the likely cause: an argument that is only whitespace (a space after
   the `\` that was meant to continue the line), an empty one (an unset
   variable), or a second value for a flag; then the command's usage line.
+  (#332)
 
 ## [0.62.0] - 2026-11-22
 
