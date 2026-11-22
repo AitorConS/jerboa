@@ -394,47 +394,9 @@ See jerboa registry verify and signers.`,
 					return fmt.Errorf("pull: %w", err)
 				}
 			}
-			ref, err := naming.ParseImageReference(args[0])
-			if err != nil {
+			if _, err := pullImage(cmd, *endpoint, args[0], pullOptions{platform: platform, identity: identity, verify: verify}); err != nil {
 				return fmt.Errorf("pull: %w", err)
 			}
-			v, err := verificationFor(ref, identity, verify)
-			if err != nil {
-				return fmt.Errorf("pull: %w", err)
-			}
-			c, err := api.Dial(*endpoint)
-			if err != nil {
-				return fmt.Errorf("pull: connect to daemon: %w", err)
-			}
-			defer func() { _ = c.Close() }()
-			// Verified before the daemon fetches anything, and the daemon pulls
-			// the recipe that verified, not what the tag names a moment later:
-			// an image that fails the check never reaches the store.
-			subject, err := resolveSubject(cmd.Context(), ref, platform)
-			if err != nil {
-				return fmt.Errorf("pull: %w", err)
-			}
-			results, err := verifySubject(cmd.Context(), cmd.OutOrStdout(), ref, subject, v)
-			if err != nil {
-				return fmt.Errorf("pull: %w; nothing was pulled", err)
-			}
-			if results != nil {
-				printVerified(cmd.OutOrStdout(), subject, results)
-			}
-			res, err := c.ImagePull(cmd.Context(), api.ImagePullParams{Reference: args[0], NoCount: transfer.DoNotTrack(), Platform: platform, Recipe: subject})
-			if err != nil {
-				return fmt.Errorf("pull: %w", err)
-			}
-			// A daemon older than this CLI resolves the tag itself.
-			if res.Recipe != subject {
-				err := fmt.Errorf("the daemon pulled %s, not %s, the recipe that was checked: update the daemon", res.Recipe, subject)
-				if rmErr := c.ImageRemove(cmd.Context(), res.Image.Name+":"+res.Image.Tag); rmErr != nil {
-					return fmt.Errorf("pull: %w (and removing the pulled image failed: %w)", err, rmErr)
-				}
-				return fmt.Errorf("pull: %w; the pulled image was removed", err)
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Pulled %s:%s (%s): fetched %d of %d files (%s) in %d requests\n%s\n",
-				termField(res.Image.Name), termField(res.Image.Tag), termField(res.Image.Platform), res.BlobsFetched, res.Blobs, humanBytes(res.BytesFetched), res.Requests, termField(res.Image.DiskDigest))
 			return nil
 		},
 	}

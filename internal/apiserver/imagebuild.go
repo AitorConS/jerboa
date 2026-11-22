@@ -308,6 +308,9 @@ func (s *Server) handleImageGet(params json.RawMessage) (any, *api.RPCError) {
 		return nil, &api.RPCError{Code: -32602, Message: "invalid params: " + err.Error()}
 	}
 	m, _, err := s.imgStore.Get(p.Ref)
+	if errors.Is(err, image.ErrNotFound) {
+		return nil, &api.RPCError{Code: api.CodeNotFound, Message: err.Error()}
+	}
 	if err != nil {
 		return nil, &api.RPCError{Code: -32000, Message: err.Error()}
 	}

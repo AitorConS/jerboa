@@ -81,7 +81,10 @@ connections do not survive; snapshots are not portable backups. See
 
 Create and start a VM from:
 
-- an image reference like `hello:latest`
+- an image reference like `hello:latest` or `jerboa/traefik`. An image the
+  daemon does not store is pulled first when it is a registry reference
+  (`namespace/repository[:tag]`), with the same steps and signature check as
+  `jerboa pull`; `--pull` changes that
 - a disk image path on the daemon's filesystem. This is accepted only from a
   client connected through the daemon's Unix socket; the path must be
   absolute, name a regular file, and the file must belong to the calling user
@@ -108,6 +111,7 @@ Key flags:
 | `--ip` | Static guest IP, requires `--network`; omitted, the daemon allocates one from the network's subnet |
 | `--health-check` | `tcp:PORT` or `http:PORT:/path`. Probed every 10 s with a 3 s timeout; 3 failures in a row mark the VM unhealthy. An HTTP probe is healthy on any 2xx or 3xx status and does not follow redirects: a redirect is the answer |
 | `--restart` | `never`, `on-failure`, `always[:max-retries]` |
+| `--pull` | When to pull the image from its registry: `missing` (default; only when the daemon does not store it), `always` (pull the tag again first) or `never` (run only a stored image) |
 | `--verify` | Signature verification mode: `off`, `warn`, `enforce` |
 | `--cpu-shares` | cgroup v2 CPU weight (macOS QEMU: process priority; Firecracker: not supported) |
 | `--memory-max` | cgroup v2 memory hard limit (macOS QEMU: VM stopped when exceeded; Firecracker: not supported) |

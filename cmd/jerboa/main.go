@@ -136,6 +136,7 @@ func newRootCmd() *cobra.Command {
 	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		root.AddCommand(newDaemonCmd())
 	}
+	explainArgCounts(root)
 	return root
 }
 
