@@ -97,6 +97,8 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run(ok=False,JERBOA_PORT='99999')
     run(ok=False,HYPERVISOR='invalid')
     run(ok=False,HYPERVISOR='firecracker')
+    # Spark is the macOS VMM; Linux refuses it.
+    run(ok=False,HYPERVISOR='spark')
     # A daemon that exits before it listens: nothing on its port.
     closed=socket.socket(); closed.bind(('127.0.0.1',0)); closed_port=str(closed.getsockname()[1]); closed.close()
     result=run(ok=False,DAEMON_STOPS='1',JERBOA_PORT=closed_port)
@@ -226,9 +228,11 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     manifest['components']['macos']={'version':'v0.51.2','platforms':{'darwin-arm64':{
         'sha256':digest,'url':'https://releases.jerboa.dev/macos/v0.51.2/jerboa-0.51.2-macos-arm64.pkg'}}}
     (root/'manifest').write_text(json.dumps(manifest))
-    env.update(OS='Darwin', ARCH='arm64', UID_MOCK='501', HYPERVISOR='firecracker', HOME=str(root/'home'))
+    env.update(OS='Darwin', ARCH='arm64', UID_MOCK='501', HYPERVISOR='spark', HOME=str(root/'home'))
     (root/'calls').write_text('')
     run()
+    # The name earlier releases used is still accepted.
+    run(HYPERVISOR='firecracker')
     run('--version','0.51.2')
     calls=(root/'calls').read_text()
     assert '/macos/v0.51.2/jerboa-0.51.2-macos-arm64.pkg' in calls
@@ -276,7 +280,7 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     (root/'calls').write_text('')
     run('--uninstall')
     calls=(root/'calls').read_text()
-    assert 'launchctl' not in calls and 'pkgutil --forget dev.jerboa.firecracker' in calls
+    assert 'launchctl' not in calls and 'pkgutil --forget dev.jerboa.spark' in calls and 'pkgutil --forget dev.jerboa.firecracker' in calls
     assert not (root/'usr/local/bin/jerboa').exists() and foreign.exists()
     assert not (root/'usr/local/libexec/jerboa').exists()
     assert (root/'home/.jerboa').exists()

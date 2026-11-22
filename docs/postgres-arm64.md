@@ -201,7 +201,7 @@ python3 scripts/test-postgres-arm64.py
 
 Optional overrides:
 
-- `JERBOA_FIRECRACKER_BIN`: VMM override; otherwise uses `JERBOA_TEST_BIN/firecracker`. `JERBOA_TEST_BIN` is required.
+- `JERBOA_SPARK_BIN`: VMM override; otherwise uses `JERBOA_TEST_BIN/spark`. `JERBOA_TEST_BIN` is required.
 - `JERBOA_TEST_EVIDENCE`: evidence directory. The default is `dist/claude-closure/postgres`.
 - `JERBOA_PG_KILL_ROUNDS`: number of abrupt-stop rounds. The default is 3.
 - `JERBOA_PG_NEGATIVE_CONTROL`: run the fsync-off control. The default is `1`.

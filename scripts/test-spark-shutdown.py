@@ -15,7 +15,7 @@ DEFAULT_ART = ROOT / "dist/sol-closure/shutdown"
 BIN = Path(os.getenv("JERBOA_SHUTDOWN_BIN_DIR", str(DEFAULT_ART)))
 NEW_TOOLS = Path(os.getenv("JERBOA_SHUTDOWN_TOOLS", str(DEFAULT_ART / "tools")))
 OLD_TOOLS = Path(os.getenv("JERBOA_SHUTDOWN_OLD_TOOLS", str(ROOT / "dist/macos-arm64/tools")))
-FC = Path(os.getenv("JERBOA_SHUTDOWN_FC", str(DEFAULT_ART / "vmm/firecracker")))
+SPARK = Path(os.getenv("JERBOA_SHUTDOWN_SPARK") or os.getenv("JERBOA_SHUTDOWN_FC") or str(DEFAULT_ART / "vmm/spark"))
 EVIDENCE = Path(os.getenv("JERBOA_SHUTDOWN_EVIDENCE_DIR", str(DEFAULT_ART)))
 PROGRAM = r'''package main
 import("encoding/json";"fmt";"net/http";"os";"os/signal";"runtime";"syscall")
@@ -34,8 +34,8 @@ def main():
     if os.uname().sysname != "Darwin" or os.uname().machine != "arm64":
         raise SystemExit("requires macOS arm64")
     go = ROOT.parent / "Spark/experiments/hvf/build/guest-tools/go/bin/go"
-    if not (go.is_file() and FC.is_file()):
-        raise SystemExit("reference Go or signed Firecracker missing")
+    if not (go.is_file() and SPARK.is_file()):
+        raise SystemExit("reference Go or signed Spark missing")
     EVIDENCE.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="jsh-", dir="/tmp") as td:
         work = Path(td)
@@ -47,7 +47,7 @@ def main():
         (project / "go.mod").write_text("module shutdown-acceptance\n\ngo 1.25\n")
         (project / "unikernel.toml").write_text('[build]\nlang="go"\ndirs=["/data"]\n')
         evidence = EVIDENCE / "acceptance-evidence.json"
-        result = {"workspace": str(work), "firecracker": str(FC), "events": []}
+        result = {"workspace": str(work), "spark": str(SPARK), "events": []}
         env = dict(os.environ, HOME=str(home), JERBOA_AUTH_TOKEN="shutdown-isolated")
         env["PATH"] = str(go.parent) + os.pathsep + env.get("PATH", "")
         env["GOCACHE"] = subprocess.check_output([str(go), "env", "GOCACHE"], text=True).strip()
@@ -63,7 +63,7 @@ def main():
             env["JERBOA_HOST"] = "unix://" + str(sock)
             log_handle = (EVIDENCE / f"daemon-{name}.log").open("w")
             daemon = subprocess.Popen([str(BIN / "jerboad"), "--host", env["JERBOA_HOST"],
-                "--tools-dir", str(tools), "--hypervisor", "firecracker", "--fc-bin", str(FC)],
+                "--tools-dir", str(tools), "--hypervisor", "spark", "--spark-bin", str(SPARK)],
                 env=env, stdout=log_handle, stderr=log_handle)
             wait_for(lambda: sock.exists(), f"daemon {name}", 10)
 

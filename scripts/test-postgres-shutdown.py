@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Qualify clean PostgreSQL shutdown on `jerboa stop` over Firecracker/HVF.
+"""Qualify clean PostgreSQL shutdown on `jerboa stop` over Spark.
 
 Nanos turns the VM power button into a process-directed SIGTERM with a 30 s
 guest timeout, and the host forces the VMM after 35 s. The threaded PostgreSQL
@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if not os.environ.get("JERBOA_TEST_BIN"):
     raise SystemExit("Set JERBOA_TEST_BIN to the macOS bundle's bin directory")
 BIN = Path(os.environ["JERBOA_TEST_BIN"]).resolve()
-FC = Path(os.environ.get("JERBOA_FIRECRACKER_BIN", BIN / "firecracker")).resolve()
+FC = Path(os.environ.get("JERBOA_SPARK_BIN", BIN / "spark")).resolve()
 GO = Path(os.environ.get(
     "JERBOA_TEST_GO",
     ROOT / "../Spark/experiments/hvf/build/guest-tools/go/bin/go",
@@ -371,7 +371,7 @@ def main():
     print("Evidence:", WORK, "->", DEST, flush=True)
     RESULT["bundle_bin"] = str(BIN)
     RESULT["binary_sha256"] = {
-        name: sha256(BIN / name) for name in ("jerboa", "jerboad", "firecracker", "tools/kernel.img") if (BIN / name).exists()
+        name: sha256(BIN / name) for name in ("jerboa", "jerboad", "spark", "tools/kernel.img") if (BIN / name).exists()
     }
     snapshot, patched, unpatched = snapshot_fixture()
 
@@ -401,7 +401,7 @@ def main():
     daemon = subprocess.Popen(
         [str(arg) for arg in (
             BIN / "jerboad", "--host", ENV["JERBOA_HOST"], "--tools-dir", BIN / "tools",
-            "--hypervisor", "firecracker", "--fc-bin", FC,
+            "--hypervisor", "spark", "--spark-bin", FC,
         )],
         env=ENV, stdout=daemon_log, stderr=daemon_log,
     )

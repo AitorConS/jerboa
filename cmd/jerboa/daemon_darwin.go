@@ -130,14 +130,18 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 	if hypervisor == "" {
 		hypervisor = cfg.Hypervisor
 	}
+	hypervisor, err = hypervisorpkg.Parse(hypervisor)
+	if err != nil {
+		return err
+	}
 	if hypervisor == "" || hypervisor == hypervisorpkg.Auto {
-		// Firecracker wherever this Mac can run it: the VMM beside the
-		// daemon in a bundle, or the one JERBOA_FIRECRACKER_BIN names.
-		fc := "firecracker"
-		if env := os.Getenv("JERBOA_FIRECRACKER_BIN"); env != "" {
-			fc = env
+		// Spark wherever this Mac can run it: the VMM beside the daemon in
+		// a bundle, or the one JERBOA_SPARK_BIN names.
+		spark := hypervisorpkg.DefaultBin
+		if env := sparkEnv("BIN"); env != "" {
+			spark = env
 		}
-		hypervisor = hypervisorpkg.Default(fc, filepath.Dir(bin)).Name
+		hypervisor = hypervisorpkg.Default(spark, filepath.Dir(bin)).Name
 	}
 	hypervisorArgs, err := nativeHypervisorArgs(hypervisor, filepath.Dir(bin))
 	if err != nil {
@@ -189,14 +193,14 @@ func nativeDaemonCommand(cmd *cobra.Command, action string, opts daemonOpts) err
 
 func nativeHypervisorArgs(hypervisor, binDir string) (string, error) {
 	name, flag := "qemu-system-aarch64", "--qemu"
-	if hypervisor == "firecracker" {
-		name, flag = "firecracker", "--fc-bin"
+	if hypervisor == hypervisorpkg.Firecracker {
+		name, flag = hypervisorpkg.DefaultBin, "--spark-bin"
 	} else if hypervisor != "qemu" {
 		return "", fmt.Errorf("unknown macOS hypervisor %q", hypervisor)
 	}
 	bin := ""
-	if hypervisor == "firecracker" {
-		bin = os.Getenv("JERBOA_FIRECRACKER_BIN")
+	if hypervisor == hypervisorpkg.Firecracker {
+		bin = sparkEnv("BIN")
 	}
 	if bin == "" {
 		bin = filepath.Join(binDir, name)
@@ -212,17 +216,26 @@ func nativeHypervisorArgs(hypervisor, binDir string) (string, error) {
 		return "", err
 	}
 	if info, err := os.Stat(bin); err != nil || !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
-		return "", fmt.Errorf("native %s executable missing at %s", hypervisor, bin)
+		return "", fmt.Errorf("native %s executable missing at %s", hypervisorpkg.Public(hypervisor), bin)
 	}
-	args := "<string>--hypervisor</string><string>" + xmlText(hypervisor) + "</string><string>" + flag + "</string><string>" + xmlText(bin) + "</string>"
-	if hypervisor == "firecracker" {
-		if policy := os.Getenv("JERBOA_FIRECRACKER_SECURITY"); policy != "" {
+	args := "<string>--hypervisor</string><string>" + xmlText(hypervisorpkg.Public(hypervisor)) + "</string><string>" + flag + "</string><string>" + xmlText(bin) + "</string>"
+	if hypervisor == hypervisorpkg.Firecracker {
+		if policy := sparkEnv("SECURITY"); policy != "" {
 			policy, err = filepath.Abs(policy)
 			if err != nil {
 				return "", err
 			}
-			args += "<string>--fc-security</string><string>" + xmlText(policy) + "</string>"
+			args += "<string>--spark-security</string><string>" + xmlText(policy) + "</string>"
 		}
 	}
 	return args, nil
+}
+
+// sparkEnv reads JERBOA_SPARK_<name>, or JERBOA_FIRECRACKER_<name>, the
+// variable's name before the macOS VMM was renamed to Spark.
+func sparkEnv(name string) string {
+	if v := os.Getenv("JERBOA_SPARK_" + name); v != "" {
+		return v
+	}
+	return os.Getenv("JERBOA_FIRECRACKER_" + name)
 }

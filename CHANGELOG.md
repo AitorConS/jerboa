@@ -39,8 +39,18 @@ Which versions exist, and where:
 - **The macOS VMM is now called Spark** and lives at
   [AitorConS/Spark](https://github.com/AitorConS/Spark), formerly
   `AitorConS/firecracker-macos`. Source builds and scripts expect a sibling
-  `Spark` checkout: rename an existing `firecracker-macos` directory. The
-  bundled executable is still `firecracker`. (#333)
+  `Spark` checkout: rename an existing `firecracker-macos` directory. (#333)
+- **On macOS the microVM engine is `spark` everywhere you see it**: in
+  `jerboa config set hypervisor spark`, `jerboa daemon start --hypervisor
+  spark`, `jerboa daemon status`, `jerboa doctor`, errors and logs. The
+  bundled executable is `bin/spark`, the daemon flags are `--spark-bin`,
+  `--spark-kernel` and `--spark-security`, and the environment variables
+  `JERBOA_SPARK_BIN` and `JERBOA_SPARK_SECURITY`. Nothing needs changing:
+  `hypervisor = "firecracker"` in an existing config, the `--fc-*` flags and
+  the `JERBOA_FIRECRACKER_*` variables are still accepted. The macOS
+  installer package is now `dev.jerboa.spark`; `install.sh --uninstall`
+  forgets both it and the old `dev.jerboa.firecracker`. Linux and Windows
+  keep Firecracker and its names. (#PRNUM)
 - **`jerboa pull` shows each step on its own line**, with a spinner on a
   terminal: resolving the tag, checking its signatures (who signed it, in one
   line, such as `AitorConS/jerboa-images (publish.yml on main)`, then what

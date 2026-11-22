@@ -9,7 +9,7 @@ nav_order: 11
 
 A package can be created from a local Linux ELF and sysroot without Docker.
 Docker is needed only for `pkg from-docker` or to prepare a fixture. Builds and
-Firecracker boots use the native macOS tools.
+Spark boots use the native macOS tools.
 
 The guest program must be a Linux ARM64 ELF, not a native macOS Mach-O binary.
 This workflow is available in the source-built macOS preview; it does not imply
@@ -64,8 +64,8 @@ jerboa images inspect dynamic:latest
 jerboa run dynamic:latest -p 127.0.0.1:8080:8080
 ```
 
-Configure the isolated or development daemon with the signed macOS Firecracker
-fork and its complete dependency package; see [Firecracker on macOS]({% link macos-firecracker.md %}).
+Configure the isolated or development daemon with the signed Spark executable
+and its complete dependency package; see [Spark on macOS]({% link macos-spark.md %}).
 Docker import never executes an entrypoint shell or automatically imports its
 environment. A multiprocess Linux program does not become a Nanos application
 by being packaged. PostgreSQL is outside this acceptance fixture.
@@ -143,7 +143,7 @@ from installed binaries. Build the fixture image locally; no push is needed:
 
 ```sh
 mkdir -p dist/astra-pkg-arm64
-# Use the Go toolchain and signed Firecracker package from your checkout.
+# Use the Go toolchain and signed Spark package from your checkout.
 go build -o dist/astra-pkg-arm64/jerboa ./cmd/jerboa
 go build -race -o dist/astra-pkg-arm64/jerboad ./cmd/jerboad
 cp -R dist/macos-arm64/tools dist/astra-pkg-arm64/tools
@@ -151,11 +151,11 @@ cp -R dist/macos-arm64/tools dist/astra-pkg-arm64/tools
 docker build --platform linux/arm64 \
   --iidfile dist/astra-pkg-arm64/image-id tests/fixtures/pkg-arm64
 export JERBOA_TEST_BIN="$PWD/dist/astra-pkg-arm64"
-export JERBOA_FIRECRACKER_BIN="/path/to/signed/package/bin/firecracker"
+export JERBOA_SPARK_BIN="/path/to/signed/package/bin/spark"
 export JERBOA_PKG_DOCKER_ID="$(cat dist/astra-pkg-arm64/image-id)"
 python3 scripts/test-pkg-arm64.py
-python3 scripts/test-firecracker-macos.py
-python3 scripts/test-firecracker-network.py
+python3 scripts/test-spark-macos.py
+python3 scripts/test-spark-network.py
 ```
 
 The package acceptance script uses a fresh short `/tmp` path for `HOME`, daemon

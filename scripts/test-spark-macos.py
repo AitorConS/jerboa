@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the native CLI/daemon against the macOS Firecracker fork."""
+"""Exercise the native CLI/daemon against the Spark, the macOS VMM."""
 import json
 import os
 from pathlib import Path
@@ -12,7 +12,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.getenv('JERBOA_TEST_BIN', str(ROOT / 'dist/macos-arm64')))
-FC = Path(os.getenv('JERBOA_FIRECRACKER_BIN', str(ROOT.parent / 'Spark/build/macos-arm64/firecracker')))
+FC = Path(os.getenv('JERBOA_SPARK_BIN', str(ROOT.parent / 'Spark/build/macos-arm64/spark')))
 PROGRAM = r'''package main
 import("encoding/json";"fmt";"net";"net/http";"os";"runtime";"strconv";"time")
 func main(){
@@ -30,7 +30,7 @@ def main():
     if os.uname().sysname != 'Darwin' or os.uname().machine != 'arm64':
         raise SystemExit('Requires macOS ARM64 with Hypervisor.framework')
     if not shutil.which('go') or not FC.is_file():
-        raise SystemExit('Put Go on PATH and set JERBOA_FIRECRACKER_BIN to the signed fork executable')
+        raise SystemExit('Put Go on PATH and set JERBOA_SPARK_BIN to the signed Spark executable')
     with tempfile.TemporaryDirectory(prefix='jerboa-fc-test-', dir='/tmp') as td:
         work = Path(td)
         (work / 'home').mkdir()
@@ -66,7 +66,7 @@ def main():
             raise RuntimeError('Timed out: ' + label)
 
         with (work / 'daemon.log').open('w') as log:
-            daemon = subprocess.Popen([str(BIN / 'jerboad'), '--host', env['JERBOA_HOST'], '--tools-dir', str(BIN / 'tools'), '--hypervisor', 'firecracker', '--fc-bin', str(FC.resolve())], env=env, stdout=log, stderr=log)
+            daemon = subprocess.Popen([str(BIN / 'jerboad'), '--host', env['JERBOA_HOST'], '--tools-dir', str(BIN / 'tools'), '--hypervisor', 'spark', '--spark-bin', str(FC.resolve())], env=env, stdout=log, stderr=log)
             active = []
             try:
                 wait_for(lambda: (work / 'daemon.sock').exists(), 'daemon startup')
@@ -100,7 +100,7 @@ def main():
                     if count == 1:
                         daemon.kill()
                         daemon.wait(timeout=10)
-                        daemon = subprocess.Popen([str(BIN / 'jerboad'), '--host', env['JERBOA_HOST'], '--tools-dir', str(BIN / 'tools'), '--hypervisor', 'firecracker', '--fc-bin', str(FC.resolve())], env=env, stdout=log, stderr=log)
+                        daemon = subprocess.Popen([str(BIN / 'jerboad'), '--host', env['JERBOA_HOST'], '--tools-dir', str(BIN / 'tools'), '--hypervisor', 'spark', '--spark-bin', str(FC.resolve())], env=env, stdout=log, stderr=log)
                         wait_for(lambda: json.loads(cli('inspect', vm))['state'] == 'running', 'daemon recovery')
                         assert get()['count'] == count
                     with urllib.request.urlopen(url + '/shutdown', timeout=2) as response:
@@ -108,7 +108,7 @@ def main():
                     wait_for(lambda: json.loads(cli('inspect', vm))['state'] == 'stopped', 'guest exit')
                     cli('rm', vm)
                     active.remove(vm)
-                    print(f'Firecracker/HVF: {cpus} CPU, bind={bind or "omitted"}, HTTP/UDP, environment, volume count={count}, port collision and guest exit OK', flush=True)
+                    print(f'Spark: {cpus} CPU, bind={bind or "omitted"}, HTTP/UDP, environment, volume count={count}, port collision and guest exit OK', flush=True)
                 # The bound is the VMM's: one that does not declare it has four.
                 declared = subprocess.run([str(FC), '--capabilities'], capture_output=True, text=True)
                 max_cpus = json.loads(declared.stdout)['max_vcpus'] if declared.returncode == 0 else 4

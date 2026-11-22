@@ -365,7 +365,7 @@ class SigningMetadataTests(unittest.TestCase):
     def test_upstream_hash_metadata_is_renamed_and_marked(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
-            metadata = root / "share/firecracker"
+            metadata = root / "share/spark"
             metadata.mkdir(parents=True)
             (metadata / "manifest.json").write_text("{}")
             (metadata / "SHA256SUMS").write_text("old")

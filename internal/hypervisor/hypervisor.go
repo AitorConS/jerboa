@@ -18,14 +18,15 @@ const (
 // Choice is the hypervisor to run and why.
 type Choice struct {
 	Name string
-	// FCBin is the Firecracker binary found, when Name is Firecracker.
+	// FCBin is the microVM executable found, when Name is Firecracker.
 	FCBin string
 	// Reason says what decided it, for the daemon's log and for errors.
 	Reason string
 }
 
-// Default picks Firecracker whenever this host can run it, and QEMU
-// otherwise. fcBin is the Firecracker binary to look for, by name or path;
+// Default picks the microVM backend (Firecracker on Linux, Spark on macOS)
+// whenever this host can run it, and QEMU otherwise. fcBin is the microVM
+// executable to look for, by name or path;
 // binDir, when not empty, is also searched (the directory of the daemon in a
 // bundle).
 func Default(fcBin, binDir string) Choice {
@@ -34,7 +35,7 @@ func Default(fcBin, binDir string) Choice {
 
 // probe is what the choice depends on, so tests can state a host.
 type probe struct {
-	// unsupported is why this host cannot run Firecracker at all, or "".
+	// unsupported is why this host cannot run the microVM backend at all, or "".
 	unsupported  string
 	lookPath     func(string) (string, error)
 	isExecutable func(string) bool
@@ -53,7 +54,7 @@ func choose(fcBin, binDir string, p probe) Choice {
 	if bin == "" {
 		return Choice{Name: QEMU, Reason: "no " + fcBin + " binary was found"}
 	}
-	return Choice{Name: Firecracker, FCBin: bin, Reason: "this host can run Firecracker"}
+	return Choice{Name: Firecracker, FCBin: bin, Reason: "this host can run " + Label}
 }
 
 func hostProbe() probe {

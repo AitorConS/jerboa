@@ -114,7 +114,7 @@ directory. A release candidate cannot be built while this job fails.
 ## Prepare a candidate
 
 1. Merge validated engine and Desktop changes. Choose exact 40-character Desktop
-   and Firecracker commits. The candidate refuses a `runtime_sha` that is not on
+   and Spark commits. The candidate refuses a `runtime_sha` that is not on
    the main branch of `AitorConS/Spark` or whose check runs did not
    all succeed.
 2. Run `python3 scripts/release/prepare-release.py X.Y.Z` and merge the result.
@@ -137,7 +137,7 @@ directory. A release candidate cannot be built while this job fails.
      manifest and every downloaded file are verified. Do not use this option
      when the release is meant to deliver Linux kernel fixes.
    Dispatch **Build release candidate** (`release.yml`) on `main`, providing the
-   product version, Desktop SHA, Firecracker SHA, kernel source and kernel version.
+   product version, Desktop SHA, Spark SHA, kernel source and kernel version.
 4. Approve the KVM validation environment after reviewing the source revisions.
 5. Wait for validation, the selected toolset's QEMU/KVM and Firecracker boot
    checks, Linux builds, Mac packaging, Windows packaging and the full Windows
@@ -366,7 +366,7 @@ Mac continues to use ad-hoc signatures and the documented preview installation f
 Production Developer ID/notarization requires a certificate and Apple credentials;
 `sign-notarize-macos.sh` contains the runtime signing procedure. Windows uses
 `CSC_LINK`/`CSC_KEY_PASSWORD` when configured. Configure and test these identities before
-claiming signed/notarized distribution. Do not remove the Firecracker hypervisor
+claiming signed/notarized distribution. Do not remove Spark's hypervisor
 entitlement when signing nested binaries. Native-runner provisioning and commercial
 signing credentials are external prerequisites, not fabricated by CI.
 

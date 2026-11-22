@@ -13,7 +13,7 @@ import (
 func newSnapshotCmd(socketPath *string, outputFmt *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "snapshot",
-		Short: "Create and restore in-place VM snapshots (macOS Firecracker/HVF)",
+		Short: "Create and restore in-place VM snapshots (macOS, Spark)",
 		Long: `Snapshots capture a running Firecracker/HVF VM attached to a named network
 (RAM, vCPU and device state and its ephemeral root disk) into the daemon's
 private store. Restore is in place: the same stopped VM resumes with its ID,

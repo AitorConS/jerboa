@@ -9,7 +9,7 @@ nav_order: 9
 
 The native macOS port is a **development preview**. The CLI, daemon, Desktop and filesystem tools run as ARM64 processes on macOS. ARM64 unikernels run directly in QEMU with Apple's Hypervisor.framework (HVF). No Linux host VM, WSL or Rosetta is used. HVF failures are errors; there is no silent TCG fallback.
 
-The QEMU port covers the VM, image, volume, shared-network, DNS, health-check, restart, Compose and observability workflows. Linux-specific mechanisms have explicit native alternatives below; scheduler priority and a sampled memory watchdog are **not equivalent to cgroup isolation**. The local Firecracker macOS fork is also supported through a separate [Firecracker/HVF backend]({% link macos-firecracker.md %}), with a smaller compatibility surface.
+The QEMU port covers the VM, image, volume, shared-network, DNS, health-check, restart, Compose and observability workflows. Linux-specific mechanisms have explicit native alternatives below; scheduler priority and a sampled memory watchdog are **not equivalent to cgroup isolation**. [Spark]({% link macos-spark.md %}), Jerboa's Hypervisor.framework fork of Firecracker, is also supported as a separate backend with a smaller compatibility surface.
 
 The published stable kernel toolset targets Linux/x86_64. Native builds compile their own ARM64 tools. Optional x86 compatibility downloads only signature/checksum-verified guest boot artifacts, keeping all host tools native.
 
@@ -61,16 +61,16 @@ Managed launches accept and persist `--metrics-addr`, `--ui-addr`, `--trace-addr
 
 ## Desktop
 
-With sibling `jerboa`, `Spark` and `JerboaDesktop` checkouts, stage the native build and the Firecracker package:
+With sibling `jerboa`, `Spark` and `JerboaDesktop` checkouts, stage the native build and the Spark package:
 
 ```sh
 cd ../JerboaDesktop
 pnpm install
-./scripts/stage-macos.sh ../jerboa/dist/macos-arm64 <firecracker-package>
+./scripts/stage-macos.sh ../jerboa/dist/macos-arm64 <spark-package>
 pnpm run dist:mac
 ```
 
-The ARM64 DMG is written to `dist/` and requires macOS 26+. Its app is self-contained: `Contents/Resources/bin` holds the CLI, daemon, kernel tools, Firecracker and `engine-version.txt`, and `Contents/Resources/lib` the libraries Firecracker loads, so no QEMU install is needed. Finder launches use the same native launchd lifecycle as the CLI with `--hypervisor firecracker` unless `hypervisor` is configured; the app refuses to start the engine outside Applications because launchd keeps the absolute daemon path. Once the engine runs it offers to install `/usr/local/bin/jerboa` and `jerboad` wrappers (administrator prompt) and leaves commands it did not create, such as the pkg installer's, untouched. The native engine updates with the app, rather than through WSL distro updates.
+The ARM64 DMG is written to `dist/` and requires macOS 26+. Its app is self-contained: `Contents/Resources/bin` holds the CLI, daemon, kernel tools, Spark and `engine-version.txt`, and `Contents/Resources/lib` the libraries Spark loads, so no QEMU install is needed. Finder launches use the same native launchd lifecycle as the CLI with `--hypervisor spark` unless `hypervisor` is configured; the app refuses to start the engine outside Applications because launchd keeps the absolute daemon path. Once the engine runs it offers to install `/usr/local/bin/jerboa` and `jerboad` wrappers (administrator prompt) and leaves commands it did not create, such as the pkg installer's, untouched. The native engine updates with the app, rather than through WSL distro updates.
 
 On a release, `build-macos` in the candidate workflow builds the runtime and this DMG on a GitHub-hosted macOS 26 runner and stages it as the `desktop` component's `darwin-arm64` asset. A separate promotion publishes it together with the Windows installer after candidate validation. Neither the runtime nor the DMG is Developer ID signed or notarized yet (binaries keep ad-hoc signatures), so macOS blocks the first launch of a downloaded copy until it is allowed in System Settings → Privacy & Security. See [distribution]({% link macos-distribution.md %}). Windows keeps its WSL lifecycle, but both installers share the same coordinated product release.
 
@@ -98,7 +98,7 @@ On a release, `build-macos` in the candidate workflow builds the runtime and thi
 | Disk IOPS/BPS limits | QEMU block throttling |
 | Daemon crash recovery | Reconnects surviving QEMU processes to networks, published ports, probes and collectors |
 | Metrics / dashboard / tracing | Shared daemon implementation; managed launchd flags supported |
-| Firecracker | Native macOS fork available; see [Firecracker/HVF]({% link macos-firecracker.md %}) for its supported scope |
+| Firecracker | Available on macOS as [Spark]({% link macos-spark.md %}), a native fork; see its page for the supported scope |
 | Image registries, package stores, signing and cluster RPC | Shared implementation; Go test suite passes, external service deployments not retested here |
 
 ### Native alternatives and exact Linux semantics
@@ -107,7 +107,7 @@ Native network addresses belong to the userspace stack, so arbitrary macOS host 
 
 `--cpu-shares` maps larger weights to higher scheduler priority. `--memory-max` observes resident memory and kills the QEMU process when a sample exceeds the requested budget. Both modes appear as warnings in `jerboa inspect`; they do not provide the same resource-isolation guarantees as Linux cgroup v2. The guest's own RAM remains configured by `--memory`.
 
-For exact cgroup semantics or upstream Linux Firecracker, run the existing Linux daemon and connect the native macOS CLI/Desktop to it. The native Firecracker/HVF fork is a separate local backend. An SSH tunnel can expose the authenticated daemon's loopback endpoint without publishing the RPC service:
+For exact cgroup semantics or upstream Linux Firecracker, run the existing Linux daemon and connect the native macOS CLI/Desktop to it. Spark, the native fork, is a separate local backend. An SSH tunnel can expose the authenticated daemon's loopback endpoint without publishing the RPC service:
 
 ```sh
 ssh -N -L 17890:127.0.0.1:7890 linux-host
@@ -115,7 +115,7 @@ ssh -N -L 17890:127.0.0.1:7890 linux-host
 jerboa --host tcp://127.0.0.1:17890 ps
 ```
 
-The Linux daemon must already listen on `127.0.0.1:7890`. Set Desktop's endpoint override to the tunneled endpoint and configure its matching token. This alternative requires a Linux machine; it does not turn the local ARM64 engine into Firecracker. No remote Linux environment was provisioned in this migration.
+The Linux daemon must already listen on `127.0.0.1:7890`. Set Desktop's endpoint override to the tunneled endpoint and configure its matching token. This alternative requires a Linux machine; it does not turn the local ARM64 engine into Linux Firecracker. No remote Linux environment was provisioned in this migration.
 
 ### Existing x86 images and packages
 

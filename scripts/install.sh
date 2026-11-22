@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Installs Jerboa on Linux x86_64 or macOS 26+ Apple Silicon.
-# macOS installs the signed/notarized native Firecracker bundle and launchd daemon.
+# macOS installs the signed/notarized native bundle (with Spark, the macOS VMM)
+# and launchd daemon.
 # On Linux: the daemon binary, firecracker,
 # qemu, and the runtime dependencies, plus a systemd service to run it.
 #
@@ -30,7 +31,7 @@
 #                         FIRECRACKER_VERSION or FC_ARCH is not a default pin
 #   FC_ARCH               firecracker arch              (default x86_64)
 #   JERBOA_PORT           daemon loopback TCP port      (default 7890)
-#   HYPERVISOR            auto, qemu or firecracker     (default auto: firecracker
+#   HYPERVISOR            Linux: auto, qemu or firecracker (default auto: firecracker
 #                         where KVM is present, qemu otherwise)
 #   RELEASE_BASE          release origin (default https://releases.jerboa.dev)
 set -euo pipefail
@@ -111,8 +112,8 @@ Usage: sudo bash install.sh [--version VERSION]
 
 Requires Debian/Ubuntu with systemd on x86_64 Linux, or macOS 26+ Apple Silicon.
 On macOS run without sudo; Homebrew supplies jq and minisign if missing.
-The signed native package uses Firecracker; sudo is requested for package installation.
-Without KVM the installer sets up QEMU (software emulation, slower);
+The signed native package uses Spark, the macOS VMM; sudo is requested for package installation.
+On Linux, without KVM the installer sets up QEMU (software emulation, slower);
 HYPERVISOR=firecracker or HYPERVISOR=qemu forces one.
 HELP
 }
@@ -136,7 +137,7 @@ if [ "${VERSION}" != latest ]; then
 	[[ "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die "invalid version: ${VERSION}"
 fi
 [[ "${RELEASE_BASE}" =~ ^https://[^[:space:]]+$ ]] || die "RELEASE_BASE must be an HTTPS origin"
-case "${HYPERVISOR}" in auto|qemu|firecracker) ;; *) die "HYPERVISOR must be auto, qemu or firecracker" ;; esac
+case "${HYPERVISOR}" in auto|qemu|firecracker|spark) ;; *) die "HYPERVISOR must be auto, qemu, firecracker (Linux) or spark (macOS)" ;; esac
 [[ "${JERBOA_PORT}" =~ ^[0-9]{1,5}$ ]] || die "JERBOA_PORT must be between 1 and 65535"
 JERBOA_PORT=$((10#${JERBOA_PORT}))
 [ "${JERBOA_PORT}" -ge 1 ] && [ "${JERBOA_PORT}" -le 65535 ] || die "JERBOA_PORT must be between 1 and 65535"
@@ -144,9 +145,9 @@ JERBOA_PORT=$((10#${JERBOA_PORT}))
 install_macos() {
 	[ "$(uname -m)" = arm64 ] || die "macOS requires Apple Silicon; run from a native ARM64 terminal (not Rosetta)"
 	macos_version="$(sw_vers -productVersion)"
-	[ "${macos_version%%.*}" -ge 26 ] || die "Firecracker requires macOS 26 or newer"
-	[ "${HYPERVISOR}" != qemu ] || die "the macOS package installer supports HYPERVISOR=firecracker"
-	HYPERVISOR=firecracker
+	[ "${macos_version%%.*}" -ge 26 ] || die "Spark requires macOS 26 or newer"
+	[ "${HYPERVISOR}" != qemu ] || die "the macOS package installer supports HYPERVISOR=spark"
+	HYPERVISOR=spark
 	[ "$(id -u)" -ne 0 ] || die "run the macOS installer without sudo; it requests elevation when installing the package"
 	for dependency in jq minisign; do
 		if ! command -v "${dependency}" >/dev/null 2>&1; then
@@ -196,10 +197,10 @@ install_macos() {
 		sudo install -d /usr/local/bin
 		sudo install -m 0755 "${tmp}/${binary}" "/usr/local/bin/${binary}"
 	done
-	/usr/local/libexec/jerboa/bin/jerboa config set hypervisor firecracker
-	/usr/local/libexec/jerboa/bin/jerboa daemon start --hypervisor firecracker
+	/usr/local/libexec/jerboa/bin/jerboa config set hypervisor spark
+	/usr/local/libexec/jerboa/bin/jerboa daemon start --hypervisor spark
 	[ -z "${FRESH_GENERATED:-}" ] || record_fresh "${state}"
-	log "done. Jerboa ${VERSION} with native Firecracker is installed"
+	log "done. Jerboa ${VERSION} with Spark is installed"
 	echo "    verify: /usr/local/bin/jerboa status"
 }
 # remove_user_data deletes one user's ~/.jerboa: images, volumes, snapshots,
@@ -235,7 +236,10 @@ uninstall_macos() {
 		log "removing /usr/local/libexec/jerboa"
 		sudo rm -rf /usr/local/libexec/jerboa
 	fi
-	sudo pkgutil --forget dev.jerboa.firecracker >/dev/null 2>&1 || true
+	# dev.jerboa.firecracker is the package's name before the rename to Spark.
+	for package in dev.jerboa.spark dev.jerboa.firecracker; do
+		sudo pkgutil --forget "${package}" >/dev/null 2>&1 || true
+	done
 	[ "${KEEP_DATA}" -eq 1 ] || remove_user_data "${HOME:-}"
 	log "done. Jerboa is uninstalled"
 }
@@ -292,6 +296,7 @@ fi
 command -v apt-get >/dev/null 2>&1 || die "this installer targets Debian/Ubuntu (apt-get not found)"
 command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
 [ -d /run/systemd/system ] || die "systemd must be running as the system manager"
+[ "${HYPERVISOR}" != spark ] || die "HYPERVISOR=spark is macOS only; on Linux use auto, qemu or firecracker"
 # Firecracker wherever the machine can run it; QEMU is the fallback.
 if [ "${HYPERVISOR}" = auto ]; then
 	if [ -e /dev/kvm ]; then

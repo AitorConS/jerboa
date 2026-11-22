@@ -42,7 +42,7 @@ func (m *FirecrackerManager) RestoreHostRuntime(ctx context.Context) error {
 		}
 		socket := m.vmSockPath(v.ID)
 		if err := awaitFCReachable(ctx, socket); err != nil {
-			return fmt.Errorf("restore Firecracker %s: %w", v.ID, err)
+			return fmt.Errorf("restore Spark VM %s: %w", v.ID, err)
 		}
 		cleanup, err := m.prepareFCHost(v)
 		if err != nil {
@@ -163,7 +163,7 @@ func (m *FirecrackerManager) checkFCConfig(ctx context.Context, path string) err
 		out, err = m.mkCmd(ctx, m.fcBin, "--no-api", "--config-file", path, "--check-config").CombinedOutput()
 		if err == nil {
 			if !m.noPeerControl.Swap(true) {
-				slog.Info("firecracker: VMM has no direct VM-to-VM links; frames between VMs use the switch")
+				slog.Info("spark: this Spark has no direct VM-to-VM links; frames between VMs use the switch")
 			}
 			return nil
 		}
@@ -362,7 +362,7 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 		return errFCX86Emulation()
 	}
 	if cfg.VolumeCache == VolumeCacheUnsafe {
-		return fmt.Errorf("Firecracker/HVF always forwards guest flushes to host storage; --volume-cache unsafe is not supported")
+		return fmt.Errorf("Spark always forwards guest flushes to host storage; --volume-cache unsafe is not supported")
 	}
 	if err := validateHostConfig(cfg, m.kernelImage); err != nil {
 		return err
@@ -374,10 +374,10 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 	// The bounds are the VMM's, not Jerboa's: a newer VMM raises them alone.
 	caps := m.fcCapabilities()
 	if cfg.CPUs > caps.MaxVCPUs || mem < caps.MemoryMiB[0] || mem > caps.MemoryMiB[1] {
-		return fmt.Errorf("Firecracker/HVF requires 1-%d CPUs and %d-%d MiB RAM", caps.MaxVCPUs, caps.MemoryMiB[0], caps.MemoryMiB[1])
+		return fmt.Errorf("Spark requires 1-%d CPUs and %d-%d MiB RAM", caps.MaxVCPUs, caps.MemoryMiB[0], caps.MemoryMiB[1])
 	}
 	if len(cfg.Volumes) > caps.MaxDrives-1 {
-		return fmt.Errorf("Firecracker/HVF supports at most %d volumes plus the root disk", caps.MaxDrives-1)
+		return fmt.Errorf("Spark supports at most %d volumes plus the root disk", caps.MaxDrives-1)
 	}
 	if cfg.NetworkName == "" && cfg.IPAddress != "" {
 		return fmt.Errorf("custom guest IP requires a named network")
@@ -393,16 +393,16 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 		}
 	}
 	if cfg.TapName != "" {
-		return fmt.Errorf("Firecracker/HVF does not support TAP")
+		return fmt.Errorf("Spark does not support TAP")
 	}
 	if len(cfg.PortMaps) > 64 {
-		return fmt.Errorf("Firecracker/HVF supports at most 64 port mappings")
+		return fmt.Errorf("Spark supports at most 64 port mappings")
 	}
 	if cfg.CPUShares > 0 || cfg.MemoryMax > 0 {
-		return fmt.Errorf("Firecracker/HVF does not support Jerboa host CPU/memory limits")
+		return fmt.Errorf("Spark does not support Jerboa host CPU/memory limits")
 	}
 	if cfg.DiskIOPS > 1000000 || cfg.DiskBPS < 0 || (cfg.DiskBPS > 0 && (cfg.DiskBPS < 1<<20 || cfg.DiskBPS > 1<<40)) {
-		return fmt.Errorf("Firecracker/HVF disk limits require 1-1000000 IOPS and 1 MiB/s-1 TiB/s")
+		return fmt.Errorf("Spark disk limits require 1-1000000 IOPS and 1 MiB/s-1 TiB/s")
 	}
 	if cfg.HealthCheck != nil && cfg.NetworkName == "" {
 		for _, p := range cfg.PortMaps {
@@ -410,7 +410,7 @@ func (m *FirecrackerManager) validateFCPlatform(cfg Config) error {
 				return nil
 			}
 		}
-		return fmt.Errorf("Firecracker/HVF health checks require a published TCP guest port")
+		return fmt.Errorf("Spark health checks require a published TCP guest port")
 	}
 	return nil
 }
@@ -520,7 +520,7 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 	}
 	for name, data := range map[string]string{"env": strings.Join(cfg.Env, "\n"), "mounts": strings.Join(mounts, "\n"), "network": netcfg} {
 		if len(data) > 65536 {
-			return "", fmt.Errorf("Firecracker/HVF firmware %s exceeds 64 KiB", name)
+			return "", fmt.Errorf("Spark firmware %s exceeds 64 KiB", name)
 		}
 		p := filepath.Join(dir, name)
 		if err := os.WriteFile(p, []byte(data), 0600); err != nil {
@@ -601,7 +601,7 @@ func (m *FirecrackerManager) writeNativeFCConfig(id string, cfg Config, rootfs s
 func cleanupFCConfig(path string) { _ = os.RemoveAll(filepath.Dir(path)) }
 
 func prepareNativeFCHealth(v *VM) {
-	v.AddWarning("Firecracker/HVF stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush")
+	v.AddWarning("Spark stop requests guest shutdown; forced timeout or kill cannot guarantee guest filesystem flush")
 	if v.Cfg.HealthCheck == nil || v.Cfg.NetworkName != "" {
 		return
 	}
