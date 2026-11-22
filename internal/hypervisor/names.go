@@ -47,14 +47,13 @@ func Values() string {
 // wrote into config files and service definitions.
 func Parse(value string) (string, error) {
 	v := strings.ToLower(strings.TrimSpace(value))
-	switch {
-	case v == "":
-		return "", nil
-	case v == Auto || v == QEMU:
+	// Not a switch: off macOS MicroVM and legacyMicroVM are the same constant,
+	// which a switch would reject as a duplicate case.
+	if v == "" || v == Auto || v == QEMU {
 		return v, nil
-	case v == MicroVM || v == legacyMicroVM:
-		return Firecracker, nil
-	default:
-		return "", fmt.Errorf("hypervisor must be %s, got %q", Values(), value)
 	}
+	if v == MicroVM || v == legacyMicroVM {
+		return Firecracker, nil
+	}
+	return "", fmt.Errorf("hypervisor must be %s, got %q", Values(), value)
 }
