@@ -50,7 +50,7 @@ Which versions exist, and where:
   the `JERBOA_FIRECRACKER_*` variables are still accepted. The macOS
   installer package is now `dev.jerboa.spark`; `install.sh --uninstall`
   forgets both it and the old `dev.jerboa.firecracker`. Linux and Windows
-  keep Firecracker and its names. (#PRNUM)
+  keep Firecracker and its names. (#335)
 - **`jerboa pull` shows each step on its own line**, with a spinner on a
   terminal: resolving the tag, checking its signatures (who signed it, in one
   line, such as `AitorConS/jerboa-images (publish.yml on main)`, then what
