@@ -195,7 +195,7 @@ Run on Apple Silicon macOS with Docker available. Explicitly select an updated b
 
 ```sh
 JERBOA_TEST_BIN="/path/to/updated-bundle/bin" \
-JERBOA_TEST_GO="$PWD/../firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go" \
+JERBOA_TEST_GO="$PWD/../Spark/experiments/hvf/build/guest-tools/go/bin/go" \
 python3 scripts/test-postgres-arm64.py
 ```
 
@@ -240,7 +240,7 @@ The storage chain on macOS is:
 1. PostgreSQL `fsync`/`fdatasync`.
 2. Nanos commits page-cache writes and the TFS metadata log.
 3. Nanos sends a virtio-blk `FLUSH` request.
-4. The HVF VMM (`firecracker-macos/src/hvf-vmm/native/devices.c`) writes through `pwrite()` and answers `FLUSH` only after host `fcntl(F_FULLFSYNC)` succeeds. Interrupted calls are retried; unsupported operations and I/O errors are reported to the guest, without silently falling back to weaker `fsync()`.
+4. The HVF VMM (`Spark/src/hvf-vmm/native/devices.c`) writes through `pwrite()` and answers `FLUSH` only after host `fcntl(F_FULLFSYNC)` succeeds. Interrupted calls are retried; unsupported operations and I/O errors are reported to the guest, without silently falling back to weaker `fsync()`.
 
 What this does and does not cover:
 

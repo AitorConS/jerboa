@@ -2,7 +2,7 @@
 """Simulated host power loss for Nanos TFS volumes on the macOS HVF VMM.
 
 This is NOT a physical power-cut test. It uses a test-only VMM built with
--DHVF_CRASH_JOURNAL (firecracker-macos/experiments/hvf/durability), which
+-DHVF_CRASH_JOURNAL (Spark/experiments/hvf/durability), which
 journals every guest write and every successful F_FULLFSYNC. After the VMM is
 killed, crash_replay.py rebuilds the disk a power cut could leave:
 
@@ -45,7 +45,7 @@ import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-REPLAY = (ROOT / "../firecracker-macos/experiments/hvf/durability/crash_replay.py").resolve()
+REPLAY = (ROOT / "../Spark/experiments/hvf/durability/crash_replay.py").resolve()
 BIN = Path(os.environ["JERBOA_TEST_BIN"]).resolve()
 FC_JOURNAL = Path(os.environ["DURA_FC_JOURNAL"]).resolve()
 FC_PROD = Path(os.environ["DURA_FC_PROD"]).resolve() if os.environ.get("DURA_FC_PROD") else None

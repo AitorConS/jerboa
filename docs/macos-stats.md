@@ -51,7 +51,7 @@ group, duplicate children, child exit, PID reuse, a replacement child, a
 three-sample transient omission and adoption baselining:
 
 ```sh
-../firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go test -race \
+../Spark/experiments/hvf/build/guest-tools/go/bin/go test -race \
   ./internal/vm -run 'TestDarwinStats|TestNativeStats' -count=1 -v
 ```
 
@@ -60,13 +60,13 @@ four-vCPU and 192 MiB guest loads, compares Jerboa with host `ps`, exercises a
 failed-guest restart and kills/restarts only its own daemon for adoption:
 
 ```sh
-../firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go build \
+../Spark/experiments/hvf/build/guest-tools/go/bin/go build \
   -o dist/sol-closure/stats/bin/jerboa ./cmd/jerboa
-../firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go build -race \
+../Spark/experiments/hvf/build/guest-tools/go/bin/go build -race \
   -o dist/sol-closure/stats/bin/jerboad ./cmd/jerboad
 ln -sfn ../../../macos-arm64/tools dist/sol-closure/stats/bin/tools
 JERBOA_TEST_BIN="$PWD/dist/sol-closure/stats/bin" \
-JERBOA_FIRECRACKER_BIN="$PWD/../firecracker-macos/experiments/hvf/build/astra-shared-network/review-fixes/package/bin/firecracker" \
+JERBOA_FIRECRACKER_BIN="$PWD/../Spark/experiments/hvf/build/astra-shared-network/review-fixes/package/bin/firecracker" \
 JERBOA_TEST_OUTPUT="$PWD/dist/sol-closure/stats/evidence" \
 python3 scripts/test-firecracker-stats.py
 ```

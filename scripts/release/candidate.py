@@ -52,7 +52,7 @@ REBUILD = ('rebuild the candidate: dispatch "Build release candidate" again on m
 # and every release build sets it with this linker flag.
 FLOOR_SOURCE = Path('internal/release/freshness.go')
 FLOOR_FLAG = '-X github.com/AitorConS/jerboa/internal/release.MinStableGenerated='
-RUNTIME_REPOSITORY = 'AitorConS/firecracker-macos'
+RUNTIME_REPOSITORY = 'AitorConS/Spark'
 CHANGELOG_SCRIPT = Path(__file__).with_name('changelog.py')
 
 REQUIRED = {'cli': {'windows-amd64', 'linux-amd64', 'linux-arm64', 'darwin-arm64'},

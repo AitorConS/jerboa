@@ -115,7 +115,7 @@ directory. A release candidate cannot be built while this job fails.
 
 1. Merge validated engine and Desktop changes. Choose exact 40-character Desktop
    and Firecracker commits. The candidate refuses a `runtime_sha` that is not on
-   the main branch of `AitorConS/firecracker-macos` or whose check runs did not
+   the main branch of `AitorConS/Spark` or whose check runs did not
    all succeed.
 2. Run `python3 scripts/release/prepare-release.py X.Y.Z` and merge the result.
    It names the `Unreleased` section of `CHANGELOG.md` after the version (dated

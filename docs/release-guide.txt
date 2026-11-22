@@ -4,7 +4,7 @@ PUBLICAR JERBOA Y SU KERNEL
 Repositorios:
   Motor y publicador: AitorConS/jerboa
   Desktop: AitorConS/JerboaDesktop
-  Firecracker macOS: AitorConS/firecracker-macos
+  Spark (Firecracker para macOS): AitorConS/Spark
   Web de descargas: AitorConS/Jerboa_Docs
 
 Requisitos:
@@ -35,12 +35,12 @@ Cambiar estos archivos no publica por si solo.
 
 Ejecuta:
   gh api repos/AitorConS/JerboaDesktop/commits/main --jq .sha
-  gh api repos/AitorConS/firecracker-macos/commits/main --jq .sha
+  gh api repos/AitorConS/Spark/commits/main --jq .sha
 
 Copia los 40 caracteres de cada respuesta. Esos valores son desktop_sha y
 runtime_sha. Comprueba el CI del commit de Desktop, no solo el de una revision
 anterior. El de Firecracker lo comprueba el workflow: rechaza un runtime_sha que
-no este en main de firecracker-macos o cuyas comprobaciones no hayan pasado.
+no este en main de Spark o cuyas comprobaciones no hayan pasado.
 El workflow captura automaticamente el SHA de Jerboa seleccionado en main.
 
 Alternativa web: repositorio > main > Commits > abrir commit > copiar SHA completo.

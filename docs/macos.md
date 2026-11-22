@@ -61,7 +61,7 @@ Managed launches accept and persist `--metrics-addr`, `--ui-addr`, `--trace-addr
 
 ## Desktop
 
-With sibling `jerboa`, `firecracker-macos` and `JerboaDesktop` checkouts, stage the native build and the Firecracker package:
+With sibling `jerboa`, `Spark` and `JerboaDesktop` checkouts, stage the native build and the Firecracker package:
 
 ```sh
 cd ../JerboaDesktop

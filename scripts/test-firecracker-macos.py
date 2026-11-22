@@ -12,7 +12,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 BIN = Path(os.getenv('JERBOA_TEST_BIN', str(ROOT / 'dist/macos-arm64')))
-FC = Path(os.getenv('JERBOA_FIRECRACKER_BIN', str(ROOT.parent / 'firecracker-macos/build/macos-arm64/firecracker')))
+FC = Path(os.getenv('JERBOA_FIRECRACKER_BIN', str(ROOT.parent / 'Spark/build/macos-arm64/firecracker')))
 PROGRAM = r'''package main
 import("encoding/json";"fmt";"net";"net/http";"os";"runtime";"strconv";"time")
 func main(){

@@ -17,7 +17,7 @@ for production use.
 ## Requirements and scope
 
 - Apple Silicon, the supported macOS 26 build, and `jerboad
-  --hypervisor firecracker` with a snapshot-capable `firecracker-macos` build.
+  --hypervisor firecracker` with a snapshot-capable `Spark` build.
 - The VM is attached to a named Jerboa network (`unix-stream` switch link).
   VMs on the default slirp network are rejected with `UNSUPPORTED_CAPABILITY`.
 - The VM has **no Jerboa volumes**. A volume is external state the snapshot
@@ -174,7 +174,7 @@ The daemon/CLI acceptance runs an isolated `jerboad` (its own `HOME`,
 `TMPDIR`, socket and dynamic ports) against real HVF guests:
 
 ```sh
-export GO="$PWD/../firecracker-macos/experiments/hvf/build/guest-tools/go/bin/go"
+export GO="$PWD/../Spark/experiments/hvf/build/guest-tools/go/bin/go"
 B=path/to/jerboa-bundle/bin
 python3 scripts/test-jerboa-snapshots.py --bin-dir path/to/jerboa-under-test \
   --firecracker-bin "$B/firecracker" --tools-dir "$B/tools" \

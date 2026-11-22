@@ -75,7 +75,7 @@ epoch=$(git show -s --format=%ct HEAD)
 python3 scripts/package-macos-distribution.py \
   --jerboa-dir dist/astra-pkg-arm64/review-fixes \
   --tools-dir dist/macos-arm64/tools \
-  --firecracker-package ../firecracker-macos/experiments/hvf/build/astra-shared-network/review-fixes/package \
+  --firecracker-package ../Spark/experiments/hvf/build/astra-shared-network/review-fixes/package \
   --output-dir dist/macos-distribution/v0.0.0-dev \
   --version 0.0.0-dev \
   --source-date-epoch "$epoch"
@@ -105,7 +105,7 @@ publishes.
 
 1. Freeze the sources once, before other work changes them. The snapshot
    contains tracked, modified and untracked non-ignored files of `jerboa` and
-   `firecracker-macos`, the vendored kernel sources, the SHA-256-locked native
+   `Spark`, the vendored kernel sources, the SHA-256-locked native
    source archives and the few ignored generated headers the build needs. Dirty
    changes are included on purpose; `content-manifest.txt` and `tree-digest.txt`
    identify the exact content, not just `HEAD`:
@@ -195,7 +195,7 @@ step. The test creates its own short-lived HOME, daemon socket, image store,
 ports and VMs, then builds an ARM64 fixture and proves HTTP from the guest:
 
 ```sh
-export PATH="$PWD/../firecracker-macos/experiments/hvf/build/guest-tools/go/bin:$PATH"
+export PATH="$PWD/../Spark/experiments/hvf/build/guest-tools/go/bin:$PATH"
 bundle="$PWD/dist/macos-distribution/v0.0.0-dev/jerboa-0.0.0-dev-macos-arm64"
 JERBOA_TEST_BIN="$bundle/bin" \
 JERBOA_FIRECRACKER_BIN="$bundle/bin/firecracker" \
