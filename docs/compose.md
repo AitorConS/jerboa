@@ -30,7 +30,7 @@ services:
     cpus: 1
     depends_on: [db]
     networks: [app]
-    ip: 10.100.0.10
+    ip: <vm-ip>
     environment:
       - PORT=8080
     ports:
@@ -43,7 +43,7 @@ services:
 networks:
   app:
     driver: bridge
-    subnet: 10.100.0.0/24
+    subnet: <cidr>
 
 volumes:
   data:
@@ -60,17 +60,18 @@ services:
     networks:
       app:
         aliases: [database, primary]   # extra names for the service
-        ipv4_address: 10.100.0.20      # same as `ip:` on the service
+        ipv4_address: <vm-ip>          # same as `ip:` on the service
 
 networks:
   app:
     ipam:
       config:
-        - subnet: 10.100.0.0/24  # same as `subnet:` on the network
+        - subnet: <cidr>         # same as `subnet:` on the network
 ```
 
 With the short form (`networks: [app]`), write the names as `aliases:
-[database]` on the service itself. A network takes one IPv4 subnet. `ipam.config[].gateway` is rejected: the
+[database]` on the service itself. A network takes one IPv4 subnet in a
+private range. `ipam.config[].gateway` is rejected: the
 gateway is always the first host of the subnet. An alias shared by several
 services is answered with all of them (see
 [Service Discovery]({% link getting-started.md %}#service-discovery-guest-dns)).
@@ -98,7 +99,7 @@ file the caller owns; see [`jerboa run`]({% link cli-reference.md %}#jerboa-run-
 
 - only the first network in `networks:` is actually wired to a service instance
 - services reach each other by service name over the daemon's guest DNS (e.g. a `web` service connects to `db:5432`); see [Service Discovery]({% link getting-started.md %}#service-discovery-guest-dns)
-- `ip:` pins a service to a static address on its network; without it the daemon's IPAM allocates one. Name resolution works either way, so `ip:` is only needed when a fixed address is required
+- `ip:` pins a service to a static address inside its network's subnet; without it the daemon's IPAM allocates one. Name resolution works either way, so `ip:` is only needed when a fixed address is required
 - top-level volumes and networks belong to the stack: `compose up` creates them
   under names scoped to the compose file (`compose-<hash>-<name>`), so two stacks
   never share a volume or a network by naming the same one

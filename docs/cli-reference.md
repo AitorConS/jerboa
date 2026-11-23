@@ -967,7 +967,7 @@ The daemon runs as `root` inside the dedicated distro. The client persists rende
 | `--cluster-addr` | HTTP address for the cluster gossip endpoint (e.g. `:7946`); empty disables cluster. Requires a cluster token |
 | `--cluster-token-file` | File (mode `0600`) with the token shared by all cluster nodes (env: `JERBOA_CLUSTER_TOKEN`). It must be at least 32 characters (`openssl rand -hex 32`) |
 | `--insecure-cluster` | Serve gossip without a cluster token (unsafe) |
-| `--join` | Comma-separated seed node addresses to join (e.g. `10.0.0.2:7946,10.0.0.3:7946`) |
+| `--join` | Comma-separated seed node addresses to join (e.g. `192.0.2.2:7946,192.0.2.3:7946`) |
 
 Environment the daemon reads:
 

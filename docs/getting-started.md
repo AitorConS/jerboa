@@ -321,10 +321,10 @@ jerboa dns list --network app
 
 Joining a network assigns the VM a guest IP automatically: the daemon's IPAM
 hands out the next free address from the network's subnet. Pass `--ip` only
-when you need a fixed address:
+when you need a fixed address inside that subnet:
 
 ```bash
-jerboa run myapp:latest --network app --ip 10.100.0.10 -p 8080:80
+jerboa run myapp:latest --network app --ip <vm-ip> -p 8080:80
 ```
 
 Important (Linux and Windows):
@@ -429,7 +429,7 @@ MAC and IP address there, and VMs start even when the rules cannot be loaded
 `jerboa` WSL2 distro. With WSL2's default NAT networking the port is **not**
 reachable at `localhost:<port>` on the Windows host — reach it at the distro IP
 instead (the host shown by `jerboa daemon status`, e.g.
-`http://172.25.x.x:8080`). To make `localhost` work like Docker Desktop, enable
+`http://<distro-ip>:8080`). To make `localhost` work like Docker Desktop, enable
 mirrored networking by adding the following to `%USERPROFILE%\.wslconfig` and
 running `wsl --shutdown`:
 
