@@ -30,7 +30,7 @@ services:
     cpus: 1
     depends_on: [db]
     networks: [app]
-    ip: <vm-ip>
+    ip: 192.168.77.10
     environment:
       - PORT=8080
     ports:
@@ -43,7 +43,7 @@ services:
 networks:
   app:
     driver: bridge
-    subnet: <cidr>
+    subnet: 192.168.77.0/24
 
 volumes:
   data:
@@ -60,13 +60,13 @@ services:
     networks:
       app:
         aliases: [database, primary]   # extra names for the service
-        ipv4_address: <vm-ip>          # same as `ip:` on the service
+        ipv4_address: 192.168.77.20    # same as `ip:` on the service
 
 networks:
   app:
     ipam:
       config:
-        - subnet: <cidr>         # same as `subnet:` on the network
+        - subnet: 192.168.77.0/24  # same as `subnet:` on the network
 ```
 
 With the short form (`networks: [app]`), write the names as `aliases:

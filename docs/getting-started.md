@@ -321,10 +321,12 @@ jerboa dns list --network app
 
 Joining a network assigns the VM a guest IP automatically: the daemon's IPAM
 hands out the next free address from the network's subnet. Pass `--ip` only
-when you need a fixed address inside that subnet:
+when you need a fixed address. Set the subnet yourself, then choose an address
+inside it:
 
 ```bash
-jerboa run myapp:latest --network app --ip <vm-ip> -p 8080:80
+jerboa network create pinned --subnet 192.168.77.0/24
+jerboa run myapp:latest --network pinned --ip 192.168.77.10 -p 8080:80
 ```
 
 Important (Linux and Windows):
