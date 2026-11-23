@@ -425,7 +425,9 @@ jobs:
         set -euo pipefail
         # tools/x86 is already staged, so this does not fetch from stable.
         sh scripts/build-macos.sh --with-x86
-        go test -race ./cmd/... ./internal/...
+        # The upgrade tests replay every darwin fixture with injected
+        # failures; each release adds one, so the 10m default is too short.
+        go test -race -timeout 30m ./cmd/... ./internal/...
         python3 scripts/test_macos_distribution.py
         python3 scripts/test-install.py
     - name: Package and verify the relocatable runtime
