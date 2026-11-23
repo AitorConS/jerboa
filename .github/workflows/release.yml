@@ -50,7 +50,7 @@ jobs:
       with:
         persist-credentials: false
     # lock verifies the live stable manifest's signature with jerboa-verify.
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
@@ -93,7 +93,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
@@ -218,7 +218,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
@@ -279,7 +279,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
@@ -368,7 +368,7 @@ jobs:
         path: desktop
         persist-credentials: false
         ref: ${{ needs.inputs.outputs.desktop_sha }}
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
@@ -658,7 +658,7 @@ jobs:
         echo "label=jerboa-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >>"$GITHUB_OUTPUT"
     - name: Mint a runner registration token
       id: app-token
-      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
       with:
         app-id: ${{ vars.WINDOWS_RUNNER_APP_ID }}
         private-key: ${{ secrets.WINDOWS_RUNNER_APP_PRIVATE_KEY }}
@@ -702,7 +702,7 @@ jobs:
         persist-credentials: false
     # The examples are built with the host's toolchains (Go for hello, pip
     # for the Flask app's wheels); the runner image has neither.
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
@@ -790,7 +790,7 @@ jobs:
     - name: Mint a runner management token
       id: app-token
       if: always()
-      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+      uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
       with:
         app-id: ${{ vars.WINDOWS_RUNNER_APP_ID }}
         private-key: ${{ secrets.WINDOWS_RUNNER_APP_PRIVATE_KEY }}
@@ -835,7 +835,7 @@ jobs:
       with:
         name: mkfs-darwin-arm64
         path: ${{ runner.temp }}/artifacts/mkfs-darwin-arm64
-    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+    - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
       with:
         go-version: 1.27.4
         cache: false
