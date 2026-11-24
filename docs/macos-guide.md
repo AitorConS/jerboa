@@ -220,7 +220,7 @@ network reach each other by name, and each VM gets an IP from the network's
 subnet:
 
 ```sh
-jerboa network create app --subnet 172.25.0.0/24
+jerboa network create app --subnet 192.168.77.0/24
 jerboa run postgres-arm64:latest --name db --network app --health-check tcp:5432
 jerboa run backend:latest --network app -e DATABASE_HOST=db -p 127.0.0.1:8080:8080
 ```
@@ -380,7 +380,7 @@ services:
     health_check: tcp:5432
     networks:
       app:
-        ipv4_address: 172.25.0.10
+        ipv4_address: 192.168.77.10
         aliases: [database]
   backend:
     image: backend-arm64:latest
@@ -392,7 +392,7 @@ networks:
   app:
     ipam:
       config:
-        - subnet: 172.25.0.0/24
+        - subnet: 192.168.77.0/24
 ```
 
 Every image in the stack must be ARM64 (or run with QEMU emulation). Each
