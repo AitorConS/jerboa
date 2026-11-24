@@ -24,6 +24,13 @@ Which versions exist, and where:
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh --uninstall` on Linux removes the `jerboa_guard` nftables
+  tables** (`inet` and `bridge`). They used to stay loaded until the next
+  firewall reload or reboot. They are left in place, with a note, while a
+  `jerboad` is still running. (#343)
+
 ## [0.63.0] - 2026-11-22
 
 ### Added
