@@ -230,8 +230,8 @@ go test ./internal/vm -run TestNativeSpark -v
 ## Shared networks and Compose
 
 ```sh
-jerboa network create app --subnet 172.25.0.0/24
-jerboa run service:latest --name postgres --network app --ip 172.25.0.10 \
+jerboa network create app --subnet 192.168.77.0/24
+jerboa run service:latest --name postgres --network app --ip 192.168.77.10 \
   --health-check tcp:5432
 jerboa run backend:latest --network app -e DATABASE_HOST=postgres \
   -p 127.0.0.1:8080:8080
@@ -255,7 +255,7 @@ services:
     health_check: tcp:5432
     networks:
       app:
-        ipv4_address: 172.25.0.10
+        ipv4_address: 192.168.77.10
         aliases: [database]
   backend:
     image: backend-arm64:latest
@@ -267,7 +267,7 @@ networks:
   app:
     ipam:
       config:
-        - subnet: 172.25.0.0/24
+        - subnet: 192.168.77.0/24
 ```
 
 Services without attachments join an implicit network whose generated name is
