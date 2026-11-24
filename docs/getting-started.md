@@ -329,6 +329,10 @@ jerboa network create pinned --subnet 192.168.77.0/24
 jerboa run myapp:latest --network pinned --ip 192.168.77.10 -p 8080:80
 ```
 
+On Linux, `network create` refuses a subnet that overlaps an address or route
+the host already has. If your LAN uses `192.168.77.0/24`, pick another private
+`/24`.
+
 Important (Linux and Windows):
 
 - `-p/--port` requires `--network`

@@ -71,7 +71,9 @@ networks:
 
 With the short form (`networks: [app]`), write the names as `aliases:
 [database]` on the service itself. A network takes one IPv4 subnet in a
-private range. `ipam.config[].gateway` is rejected: the
+private range; on Linux it must not overlap the host's own addresses or routes
+(see [`network create`]({% link cli-reference.md %}#jerboa-network-create-name)).
+`ipam.config[].gateway` is rejected: the
 gateway is always the first host of the subnet. An alias shared by several
 services is answered with all of them (see
 [Service Discovery]({% link getting-started.md %}#service-discovery-guest-dns)).
