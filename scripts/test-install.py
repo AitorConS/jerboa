@@ -41,6 +41,7 @@ elif name=='zstd':
 elif name=='tar':
     out=pathlib.Path(args[-1])/'release-v1.17.0-x86_64'; out.mkdir()
     (out/'firecracker-v1.17.0-x86_64').write_bytes(b'firecracker')
+elif name=='pgrep': sys.exit(0 if os.environ.get('DAEMON_RUNNING') else 1)
 elif name=='minisign': sys.exit(1 if os.environ.get('BAD_SIGNATURE') else 0)
 elif name=='sw_vers': print(os.environ.get('MACOS_VERSION','26.0'))
 elif name in ['pkgutil','spctl']:
@@ -70,7 +71,7 @@ elif name=='install':
 
 with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     root=Path(tmp); bin=root/'mocks'; bin.mkdir()
-    for name in ['uname','id','getent','curl','zstd','minisign','sha256sum','install','apt-get','systemctl','modprobe','useradd','usermod','groupadd','chown','tar','sw_vers','shasum','pkgutil','spctl','sudo','brew','userdel','groupdel','launchctl']:
+    for name in ['uname','id','getent','curl','zstd','minisign','sha256sum','install','apt-get','systemctl','modprobe','useradd','usermod','groupadd','chown','tar','sw_vers','shasum','pkgutil','spctl','sudo','brew','userdel','groupdel','launchctl','nft','pgrep']:
         p=bin/name; p.write_text(MOCK); p.chmod(0o755)
     script=source.read_text()
     for path in ['/Applications','/usr/local/bin','/usr/local/libexec/jerboa','/var/lib/jerboa','/etc/jerboa','/etc/systemd/system','/etc/modules-load.d','/run/systemd/system','/dev/kvm']:
@@ -207,6 +208,8 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run('--uninstall','--keep-data')
     calls=(root/'calls').read_text()
     assert 'systemctl disable --now jerboad.service' in calls and 'userdel' not in calls
+    # The guard tables go even with --keep-data: they are runtime state.
+    for family in ['inet','bridge']: assert f'nft delete table {family} jerboa_guard' in calls,calls
     for gone in ['usr/local/bin/jerboa','usr/local/bin/jerboad','usr/local/bin/firecracker','etc/systemd/system/jerboad.service','etc/modules-load.d/jerboa-kvm.conf']:
         assert not (root/gone).exists(),gone
     for kept in ['var/lib/jerboa/.jerboa/images','etc/jerboa/daemon.env','home/.jerboa/config.toml']:
@@ -217,12 +220,17 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run('--uninstall')
     calls=(root/'calls').read_text()
     assert 'userdel jerboa' in calls and 'apt-get' not in calls and 'curl' not in calls
+    for family in ['inet','bridge']: assert f'nft delete table {family} jerboa_guard' in calls,calls
     for gone in ['usr/local/bin/jerboa','usr/local/bin/jerboad','usr/local/bin/firecracker','etc/systemd/system/jerboad.service','var/lib/jerboa','etc/jerboa','home/.jerboa']:
         assert not (root/gone).exists(),gone
     assert (root/'home/other/file').read_text()=='keep'
     assert (root/'usr/local/bin').is_dir()
     run('--uninstall')
-    print('PASS: uninstall with and without data, twice, and root required.')
+    # A jerboad that is still running keeps its guard: its VMs depend on it.
+    (root/'calls').write_text('')
+    run('--uninstall',DAEMON_RUNNING='1')
+    assert 'nft delete' not in (root/'calls').read_text()
+    print('PASS: uninstall with and without data, twice, root required, guard kept while jerboad runs.')
     print('PASS: version parsing, latest/pinned URLs, signed historical manifests, zstd variants with fallback, platform checks, QEMU without KVM, upgrades, token preservation, signature/checksum/download failures, firecracker checksum, channel and freshness.')
 
     manifest['components']['macos']={'version':'v0.51.2','platforms':{'darwin-arm64':{

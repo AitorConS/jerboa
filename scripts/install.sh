@@ -253,6 +253,20 @@ uninstall_linux() {
 		rm -f "${UNIT}"
 		systemctl daemon-reload || true
 	fi
+	# The daemon leaves its nftables guard loaded when it stops (it reinstalls
+	# it on start); with the daemon gone nothing would maintain or remove it.
+	# While a jerboad is still running (a stop that failed, or one started by
+	# hand) its VMs still depend on the guard, so it stays.
+	if command -v nft >/dev/null 2>&1; then
+		if pgrep -x jerboad >/dev/null 2>&1; then
+			log "jerboad is still running: leaving its jerboa_guard nftables tables in place"
+			echo "    Stop it, then remove them: sudo nft delete table inet jerboa_guard; sudo nft delete table bridge jerboa_guard"
+		else
+			log "removing the jerboa_guard nftables tables"
+			nft delete table inet jerboa_guard 2>/dev/null || true
+			nft delete table bridge jerboa_guard 2>/dev/null || true
+		fi
+	fi
 	log "removing binaries from ${PREFIX}"
 	rm -f "${PREFIX}/jerboa" "${PREFIX}/jerboad" "${PREFIX}/firecracker"
 	rm -f /etc/modules-load.d/jerboa-kvm.conf

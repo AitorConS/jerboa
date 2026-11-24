@@ -589,9 +589,10 @@ snapshots, registry credentials and settings. Back up what you need first.
   curl -fsSL https://jerboa.dev/install.sh | sudo bash -s -- --uninstall
   ```
 
-  It stops and removes the `jerboad` service, the binaries, the `jerboa` system
-  user, `/var/lib/jerboa`, `/etc/jerboa` and your `~/.jerboa`. Add `--keep-data`
-  to remove only the programs and the service. Packages the installer added
+  It stops and removes the `jerboad` service, its `jerboa_guard` nftables
+  tables, the binaries, the `jerboa` system user, `/var/lib/jerboa`,
+  `/etc/jerboa` and your `~/.jerboa`. Add `--keep-data` to remove only the
+  programs, the service and the guard tables. Packages the installer added
   with `apt` (QEMU, iptables, nftables…) are left in place.
 
 ---
