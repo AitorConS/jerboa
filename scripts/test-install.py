@@ -70,7 +70,7 @@ elif name=='install':
 
 with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     root=Path(tmp); bin=root/'mocks'; bin.mkdir()
-    for name in ['uname','id','getent','curl','zstd','minisign','sha256sum','install','apt-get','systemctl','modprobe','useradd','usermod','groupadd','chown','tar','sw_vers','shasum','pkgutil','spctl','sudo','brew','userdel','groupdel','launchctl']:
+    for name in ['uname','id','getent','curl','zstd','minisign','sha256sum','install','apt-get','systemctl','modprobe','useradd','usermod','groupadd','chown','tar','sw_vers','shasum','pkgutil','spctl','sudo','brew','userdel','groupdel','launchctl','nft']:
         p=bin/name; p.write_text(MOCK); p.chmod(0o755)
     script=source.read_text()
     for path in ['/Applications','/usr/local/bin','/usr/local/libexec/jerboa','/var/lib/jerboa','/etc/jerboa','/etc/systemd/system','/etc/modules-load.d','/run/systemd/system','/dev/kvm']:
@@ -207,6 +207,8 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run('--uninstall','--keep-data')
     calls=(root/'calls').read_text()
     assert 'systemctl disable --now jerboad.service' in calls and 'userdel' not in calls
+    # The guard tables go even with --keep-data: they are runtime state.
+    for family in ['inet','bridge']: assert f'nft delete table {family} jerboa_guard' in calls,calls
     for gone in ['usr/local/bin/jerboa','usr/local/bin/jerboad','usr/local/bin/firecracker','etc/systemd/system/jerboad.service','etc/modules-load.d/jerboa-kvm.conf']:
         assert not (root/gone).exists(),gone
     for kept in ['var/lib/jerboa/.jerboa/images','etc/jerboa/daemon.env','home/.jerboa/config.toml']:
@@ -217,6 +219,7 @@ with tempfile.TemporaryDirectory(prefix='jerboa-install-test-') as tmp:
     run('--uninstall')
     calls=(root/'calls').read_text()
     assert 'userdel jerboa' in calls and 'apt-get' not in calls and 'curl' not in calls
+    for family in ['inet','bridge']: assert f'nft delete table {family} jerboa_guard' in calls,calls
     for gone in ['usr/local/bin/jerboa','usr/local/bin/jerboad','usr/local/bin/firecracker','etc/systemd/system/jerboad.service','var/lib/jerboa','etc/jerboa','home/.jerboa']:
         assert not (root/gone).exists(),gone
     assert (root/'home/other/file').read_text()=='keep'
