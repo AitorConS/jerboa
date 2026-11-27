@@ -176,56 +176,18 @@ jobs:
       run: make kernel && make -C kernel tools
     - name: Build CLI
       run: make build
+    # Daemons, networks and jerboa-bench: scripts/nightly-image-bench.sh runs
+    # them under sudo when the runner lacks CAP_NET_ADMIN, as the E2E tests do.
     - name: Start QEMU and Firecracker daemons
-      run: |
-        BENCH_ROOT=$(mktemp -d)
-        BENCH_TOOLS="${BENCH_ROOT}/tools"
-        mkdir -p "${BENCH_TOOLS}" "${BENCH_ROOT}/qemu" "${BENCH_ROOT}/fc"
-        # Stage the freshly built kernel toolchain so the QEMU daemon resolves
-        # mkfs/boot.img/kernel.img locally instead of downloading a release.
-        cp kernel/output/tools/bin/mkfs "${BENCH_TOOLS}/mkfs"
-        cp kernel/output/platform/pc/boot/boot.img "${BENCH_TOOLS}/boot.img"
-        cp kernel/output/platform/pc/bin/kernel.img "${BENCH_TOOLS}/kernel.img"
-        echo "BENCH_ROOT=${BENCH_ROOT}" >> "$GITHUB_ENV"
-        HOME="${BENCH_ROOT}/qemu" ./dist/jerboad --host "unix://${BENCH_ROOT}/qemu.sock" --tools-dir "${BENCH_TOOLS}" \
-          --store "${BENCH_ROOT}/qemu/images" > "${BENCH_ROOT}/qemu.log" 2>&1 &
-        echo "QEMU_PID=$!" >> "$GITHUB_ENV"
-        # The Firecracker daemon downloads kernel-fc.img on first start; it
-        # uses the staged mkfs so both images come from this commit.
-        HOME="${BENCH_ROOT}/fc" ./dist/jerboad --host "unix://${BENCH_ROOT}/fc.sock" --hypervisor firecracker \
-          --tools-dir "${BENCH_TOOLS}" --store "${BENCH_ROOT}/fc/images" \
-          --fc-metrics-dir "${BENCH_ROOT}/fc-metrics" > "${BENCH_ROOT}/fc.log" 2>&1 &
-        echo "FC_PID=$!" >> "$GITHUB_ENV"
-        for i in $(seq 1 120); do
-          [ -S "${BENCH_ROOT}/qemu.sock" ] && [ -S "${BENCH_ROOT}/fc.sock" ] && break
-          sleep 1
-        done
-        [ -S "${BENCH_ROOT}/qemu.sock" ] || { cat "${BENCH_ROOT}/qemu.log"; exit 1; }
-        [ -S "${BENCH_ROOT}/fc.sock" ] || { cat "${BENCH_ROOT}/fc.log"; exit 1; }
-        HOME="${BENCH_ROOT}/qemu" ./dist/jerboa --host "unix://${BENCH_ROOT}/qemu.sock" network create benchq --subnet 10.231.0.0/24
-        HOME="${BENCH_ROOT}/fc" ./dist/jerboa --host "unix://${BENCH_ROOT}/fc.sock" network create benchfc --subnet 10.232.0.0/24
+      run: scripts/nightly-image-bench.sh start
     - name: Run jerboa-bench
-      run: |
-        go build -o dist/jerboa-bench ./cmd/jerboa-bench
-        RUNTIMES=(
-          --runtime "qemu=jerboa,host=unix://${BENCH_ROOT}/qemu.sock,network=benchq,store=${BENCH_ROOT}/qemu/images"
-          --runtime "fc=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images"
-          --runtime "fc-compact=jerboa,host=unix://${BENCH_ROOT}/fc.sock,network=benchfc,store=${BENCH_ROOT}/fc/images,layout=compact"
-        )
-        if docker info >/dev/null 2>&1; then
-          RUNTIMES+=(--runtime docker=docker)
-        else
-          echo "::notice::docker unavailable on this runner; benchmarking Jerboa backends only"
-        fi
-        ./dist/jerboa-bench --jerboa ./dist/jerboa "${RUNTIMES[@]}" \
-          --runs 30 --warmup 3 --seed "${GITHUB_RUN_ID}" \
-          --idle-sample 5s --load-duration 5s --load-concurrency 16 --load-direct \
-          --out bench-image.json | tee bench-summary.txt
+      run: scripts/nightly-image-bench.sh run
+    - name: Daemon and VM logs
+      if: failure()
+      run: scripts/nightly-image-bench.sh diagnose
     - name: Stop daemons
       if: always()
-      run: |
-        [ -n "${QEMU_PID}" ] && kill "${QEMU_PID}" 2>/dev/null || true
-        [ -n "${FC_PID}" ] && kill "${FC_PID}" 2>/dev/null || true
+      run: scripts/nightly-image-bench.sh stop
     - name: Write job summary
       if: always()
       run: |
@@ -254,11 +216,7 @@ jobs:
     # VM disks and logs in /tmp.
     - name: Remove the benchmark directory
       if: always()
-      run: |
-        # Only the directory this job made: it holds both daemons' homes.
-        if [ -n "${BENCH_ROOT:-}" ] && [ -d "${BENCH_ROOT}/qemu" ] && [ -d "${BENCH_ROOT}/fc" ]; then
-          rm -rf -- "${BENCH_ROOT}"
-        fi
+      run: scripts/nightly-image-bench.sh clean
     if: inputs.suite != 'kernel'
   fuzz-extended:
     name: Fuzz (extended)
